@@ -46,8 +46,15 @@ warn() {
 
 # Copy licence and readme files that exist into a package directory.
 copy_docs() {
+  local dest="$1"
+  if [ -f "$ROOT/README.md" ]; then cp "$ROOT/README.md" "$dest/"; fi
+  copy_licenses "$dest"
+}
+
+# Copy project and third-party attribution records into a package directory.
+copy_licenses() {
   local dest="$1" f
-  for f in README.md LICENSE LICENSE-MIT LICENSE-APACHE COPYRIGHT; do
+  for f in LICENSE LICENSE-MIT LICENSE-APACHE NOTICE ATTRIBUTION.md COPYRIGHT; do
     if [ -f "$ROOT/$f" ]; then cp "$ROOT/$f" "$dest/"; fi
   done
   copy_font_licences "$dest"

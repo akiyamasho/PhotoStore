@@ -103,11 +103,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # Executable and icon carry the display name (CFBundleExecutable / CFBundleIconFile).
 cp "$WORK/bin/photostore" "$APP/Contents/MacOS/PhotoStore"
 cp "$ROOT/assets/app-icon/photostore.icns" "$APP/Contents/Resources/PhotoStore.icns"
-# Licences of the embedded craft-fonts fonts (only when built with CRAFT_FONTS_DIR).
-if [ -n "${CRAFT_FONTS_DIR:-}" ]; then
-  mkdir -p "$APP/Contents/Resources/Licenses"
-  copy_font_licences "$APP/Contents/Resources/Licenses"
-fi
+# Project and third-party licence records, including embedded craft-fonts licences when present.
+mkdir -p "$APP/Contents/Resources/Licenses"
+copy_licenses "$APP/Contents/Resources/Licenses"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" \
   -e "s/@BUILD_SHA@/${PHOTOCRAFT_BUILD_SHA:-unknown}/g" \
   "$HERE/Info.plist.in" >"$APP/Contents/Info.plist"
