@@ -63,6 +63,10 @@ pub fn bindings(app: &PhotocraftApp) -> Vec<(String, KeyboardShortcut)> {
     };
     let ui = crate::menus::UI_COMMANDS.iter().map(|(id, _, _, sc)| (*id, if aliased(id, *sc) { None } else { prefs.shortcut(id, *sc) }));
     let engine = photocraft_engine::command_specs().iter().map(|c| (c.id, prefs.shortcut(c.id, c.shortcut)));
+    let tools = crate::state::Tool::ALL.iter().map(|t| {
+        let id = crate::shortcuts::tool_id(*t);
+        (id, prefs.shortcut(id, None))
+    });
     let own: std::collections::HashSet<&str> = crate::menus::UI_COMMANDS
         .iter()
         .map(|c| c.0)
@@ -88,7 +92,7 @@ pub fn bindings(app: &PhotocraftApp) -> Vec<(String, KeyboardShortcut)> {
     // A key the user assigned in Edit › Keyboard Shortcuts belongs to that command, ahead of any
     // default that still names it (#1272): OK clears the old owner's row, but that row can be
     // another id for the same item, or a default the dialog doesn't list.
-    let mut candidates: Vec<(&str, Option<&str>)> = actions.chain(ui).chain(engine).chain(catalog).chain(overrides).chain(secondary).collect();
+    let mut candidates: Vec<(&str, Option<&str>)> = actions.chain(ui).chain(engine).chain(tools).chain(catalog).chain(overrides).chain(secondary).collect();
     candidates.sort_by_key(|(id, sc)| !(sc.is_some() && prefs.shortcuts.get(*id).map(String::as_str) == *sc));
     let mut all: Vec<(String, KeyboardShortcut)> = Vec::new();
     for (id, sc) in candidates {
@@ -283,6 +287,25 @@ fn label(id: &str) -> String {
 
 /// Run a shortcut's command like its menu item (dialogs included), or say why it can't run.
 pub fn dispatch(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str) {
+    if matches!(id, "tools.previousBrush" | "tools.nextBrush" | "tools.firstBrush" | "tools.lastBrush") {
+        let names: Vec<String> = app.session.tools.presets.iter().map(|p| p.name.clone()).collect();
+        if !names.is_empty() {
+            let at = app.session.tools.current_preset.as_ref().and_then(|n| names.iter().position(|p| p.eq_ignore_ascii_case(n))).unwrap_or(0);
+            let next = match id {
+                "tools.previousBrush" => at.checked_sub(1).unwrap_or(names.len() - 1),
+                "tools.nextBrush" => (at + 1) % names.len(),
+                "tools.firstBrush" => 0,
+                _ => names.len() - 1,
+            };
+            let _ = app.run("tools.setBrush", json!({"preset": names[next]}));
+        }
+        return;
+    }
+    if id.starts_with("tools.tool.") && crate::shortcuts::select_tool_command(app, id) {
+        let outcome = Outcome::Ran;
+        ctx.data_mut(|d| d.get_temp_mut_or_default::<Vec<(String, Outcome)>>(log_id()).push((id.to_string(), outcome)));
+        return;
+    }
     let action = id.strip_prefix(crate::actions::SHORTCUT_PREFIX);
     let command_id = if action.is_some() { "actions.play" } else { id };
     let outcome = if !crate::menus::is_enabled(app, command_id) {

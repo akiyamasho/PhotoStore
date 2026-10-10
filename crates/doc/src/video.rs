@@ -3,6 +3,7 @@
 //! shared clock. Frame-animation and video-timeline modes both reduce to "which frame is current".
 
 use serde::{Deserialize, Serialize};
+use crate::LayerId;
 
 use photocraft_raster::Surface;
 
@@ -18,11 +19,13 @@ pub enum VideoSource {
 /// A video layer's frame stack (Layer › Video Layers). The layer's displayed content surface is a
 /// cache of `frames[timeline.current]`, which the engine keeps in sync as the playhead moves.
 ///
-/// Frames are full raster surfaces held in memory. (`.pcraft` persistence of the stack is a
-/// follow-up; a saved document keeps the current frame as the layer's raster content.)
+/// Frames are full raster surfaces held in memory and are persisted by the native format.
 #[derive(Clone, Debug)]
 pub struct VideoData {
     pub frames: Vec<Surface>,
+    /// Per-frame display duration in milliseconds. Missing entries use the layer fps.
+    pub frame_delays_ms: Vec<u32>,
+    pub keyframes: Vec<VideoKeyframe>,
     pub source: VideoSource,
     pub fps: f32,
     /// Show the altered (painted) frames rather than the original footage.
@@ -31,7 +34,8 @@ pub struct VideoData {
 
 impl VideoData {
     pub fn new(frames: Vec<Surface>, fps: f32) -> Self {
-        VideoData { frames: if frames.is_empty() { Vec::new() } else { frames }, source: VideoSource::Blank, fps, show_altered: true }
+        let count = frames.len();
+        VideoData { frames: if frames.is_empty() { Vec::new() } else { frames }, frame_delays_ms: vec![0; count], keyframes: Vec::new(), source: VideoSource::Blank, fps, show_altered: true }
     }
     pub fn len(&self) -> usize {
         self.frames.len()
@@ -45,11 +49,51 @@ impl VideoData {
 // by shape, not contents — enough for change detection.
 impl PartialEq for VideoData {
     fn eq(&self, o: &Self) -> bool {
-        self.frames.len() == o.frames.len() && self.source == o.source && self.fps == o.fps && self.show_altered == o.show_altered
+        self.frames.len() == o.frames.len() && self.frame_delays_ms == o.frame_delays_ms && self.keyframes == o.keyframes && self.source == o.source && self.fps == o.fps && self.show_altered == o.show_altered
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VideoKeyframe {
+    pub frame: usize,
+    pub x: f32,
+    pub y: f32,
+    pub opacity: f32,
+}
+
 /// The document timeline.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TimelineMode {
+    #[default]
+    Video,
+    FrameAnimation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TimelineLoop {
+    Once,
+    Loop,
+    PingPong,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FrameLayerState {
+    pub layer: LayerId,
+    pub visible: bool,
+    pub opacity: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LayerTimelineRange {
+    pub layer: LayerId,
+    pub start: usize,
+    pub end: usize,
+}
+
+impl Default for TimelineLoop {
+    fn default() -> Self { Self::Loop }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Timeline {
     /// Frames per second.
@@ -63,12 +107,28 @@ pub struct Timeline {
     pub work_start: usize,
     /// Work-area end frame (exclusive).
     pub work_end: usize,
+    /// Timeline interpretation used by the Timeline panel.
+    #[serde(default)]
+    pub mode: TimelineMode,
+    /// Playback loop policy.
+    #[serde(default)]
+    pub loop_mode: TimelineLoop,
+    /// Display the previous frame as a translucent onion-skin reference.
+    #[serde(default)]
+    pub onion_skin: bool,
+    /// Per-frame visibility/opacity snapshots used by Frame Animation mode.
+    #[serde(default)]
+    pub frame_states: Vec<Vec<FrameLayerState>>,
+    #[serde(default)]
+    pub frame_delays_ms: Vec<u32>,
+    #[serde(default)]
+    pub layer_ranges: Vec<LayerTimelineRange>,
 }
 
 impl Timeline {
     pub fn new(duration: usize, fps: f32) -> Self {
         let d = duration.max(1);
-        Timeline { fps: valid_fps(fps), duration: d, current: 0, work_start: 0, work_end: d }
+        Timeline { fps: valid_fps(fps), duration: d, current: 0, work_start: 0, work_end: d, mode: TimelineMode::Video, loop_mode: TimelineLoop::Loop, onion_skin: false, frame_states: Vec::new(), frame_delays_ms: vec![0; d.min(1_000_000)], layer_ranges: Vec::new() }
     }
 
     /// Keep every index inside `0..duration` and the work area non-empty.
@@ -129,7 +189,7 @@ mod tests {
         t.step(i64::MIN);
         assert_eq!(t.current, 0);
         for duration in [0, usize::MAX] {
-            let mut t = Timeline { fps: f32::INFINITY, duration, current: usize::MAX, work_start: 0, work_end: 0 };
+            let mut t = Timeline { fps: f32::INFINITY, duration, current: usize::MAX, work_start: 0, work_end: 0, ..Timeline::new(1, 30.0) };
             t.step(1);
             assert_eq!(t.current, duration.saturating_sub(1));
             t.clamp();

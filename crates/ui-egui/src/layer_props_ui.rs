@@ -131,6 +131,18 @@ pub fn properties(app: &mut PhotocraftApp, ui: &mut egui::Ui, layer: &Layer) {
             ui.add_space(ROW_GAP);
         }
     }
+    if matches!(layer.content, LayerContent::Smart(_)) {
+        crate::smart_ui::properties(app, ui, layer);
+        ui.add_space(ROW_GAP);
+    } else if crate::menus::is_enabled(app, "layer.smartObjects.convertToSmartObject")
+        && crate::props_layout::section(ui, "smart-object-convert", tl!("Smart Object"))
+    {
+        let w = ui.available_width();
+        if widgets::secondary_button(ui, tl!("Convert to Smart Object"), w).clicked() {
+            run.push(("layer.smartObjects.convertToSmartObject".into(), json!({"layer": layer.id.0})));
+        }
+        ui.add_space(ROW_GAP);
+    }
     // Gradient fills: their gradient first, as in Photoshop's Properties panel.
     if matches!(layer.content, LayerContent::Fill(photocraft_doc::Fill::Gradient { .. })) {
         crate::gradient_ui::properties(app, ui, layer);

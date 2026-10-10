@@ -1678,6 +1678,7 @@ fn keyboard_shortcuts(s: &mut Session, p: &Value) -> Result<Value> {
                 "unknown": plan.unknown,
                 "unreadable": plan.unreadable,
                 "alternates": plan.alternates,
+                "unsupported": plan.unsupported,
                 "toolKeys": set.tool_keys,
             }));
             let mut next = p.clone();

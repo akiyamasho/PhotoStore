@@ -2,11 +2,112 @@
 //! (eye toggles; double-click a filter to re-open its dialog with the recorded parameters).
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
-use photocraft_doc::{Layer, LayerContent, SmartObject};
+use photocraft_doc::{Layer, LayerContent, SmartObject, SmartSource};
 use serde_json::{Value, json};
 
 use crate::theme::Tokens;
 use crate::{PhotocraftApp, icons};
+
+fn run_status(app: &mut PhotocraftApp, id: &str, params: Value) {
+    if let Err(e) = crate::menus::invoke(app, &egui::Context::default(), id, params) {
+        app.ui.status = e;
+        app.ui.status_error = true;
+    }
+}
+
+fn smart_button(app: &mut PhotocraftApp, ui: &mut egui::Ui, layer: u64, label: &str, id: &str) -> bool {
+    let enabled = crate::menus::is_enabled(app, id);
+    ui.add_enabled(enabled, egui::Button::new(label)).clicked()
+        .then(|| run_status(app, id, json!({"layer": layer}))).is_some()
+}
+
+/// Route Smart Object commands that require a path through the app's asynchronous picker.
+/// Returns `None` for commands that can be sent directly to the command registry.
+pub fn invoke_file_action(app: &mut PhotocraftApp, id: &str, layer: u64) -> Option<Result<Value, String>> {
+    let command = id.to_string();
+    match id {
+        "layer.smartObjects.replaceContents" | "layer.smartObjects.relinkToFile" => Some(app.pick_file_bytes_filtered(
+            &["psd", "psb", "png", "jpg", "jpeg", "tif", "tiff"],
+            move |app, path, _| app.run(&command, json!({"layer": layer, "path": path})),
+        )),
+        "layer.smartObjects.exportContents" | "layer.smartObjects.convertToLinked" => {
+            Some(app.pick_save("smart-object.psd", move |app, path| app.run(&command, json!({"layer": layer, "path": path}))))
+        }
+        _ => None,
+    }
+}
+
+/// Smart Object Properties controls. File based commands use the same asynchronous native picker
+/// as the rest of the app; the command itself still receives the selected path and layer id.
+pub fn properties(app: &mut PhotocraftApp, ui: &mut egui::Ui, layer: &Layer) {
+    let LayerContent::Smart(sm) = &layer.content else { return };
+    if !crate::props_layout::section(ui, "smart-object", tl!("Smart Object")) {
+        return;
+    }
+    let id = layer.id.0;
+    let source = match &sm.source {
+        SmartSource::Embedded { file_name, .. } => format!("{} · Embedded", file_name),
+        SmartSource::Linked { path } => format!("{} · Linked", std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(path)),
+    };
+    ui.label(egui::RichText::new(source).color(Tokens::get(ui.ctx()).text_dim));
+    ui.add_space(4.0);
+    ui.horizontal_wrapped(|ui| {
+        if smart_button(app, ui, id, tl!("Edit Contents"), "layer.smartObjects.editContents") {
+            return;
+        }
+        if smart_button(app, ui, id, tl!("New Smart Object via Copy"), "layer.smartObjects.newSmartObjectViaCopy") {
+            return;
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        if crate::menus::is_enabled(app, "layer.smartObjects.replaceContents")
+            && ui.button(tl!("Replace Contents…")).clicked()
+        {
+            if let Err(e) = app.pick_file_bytes_filtered(&["psd", "psb", "png", "jpg", "jpeg", "tif", "tiff"], move |app, path, _| {
+                app.run("layer.smartObjects.replaceContents", json!({"layer": id, "path": path}))
+            }) {
+                app.ui.status = e;
+                app.ui.status_error = true;
+            }
+        }
+        if crate::menus::is_enabled(app, "layer.smartObjects.exportContents")
+            && ui.button(tl!("Export Contents…")).clicked()
+        {
+            if let Err(e) = app.pick_save("smart-object.psd", move |app, path| {
+                app.run("layer.smartObjects.exportContents", json!({"layer": id, "path": path}))
+            }) {
+                app.ui.status = e;
+                app.ui.status_error = true;
+            }
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        match &sm.source {
+            SmartSource::Linked { .. } => {
+                if smart_button(app, ui, id, tl!("Convert to Embedded"), "layer.smartObjects.convertToEmbedded") {}
+                if smart_button(app, ui, id, tl!("Relink…"), "layer.smartObjects.relinkToFile") {
+                    return;
+                }
+                if smart_button(app, ui, id, tl!("Update"), "layer.smartObjects.updateModifiedContent") {}
+            }
+            SmartSource::Embedded { .. } => {
+                if crate::menus::is_enabled(app, "layer.smartObjects.convertToLinked")
+                    && ui.button(tl!("Convert to Linked…")).clicked()
+                {
+                    if let Err(e) = app.pick_save("smart-object.psd", move |app, path| {
+                        app.run("layer.smartObjects.convertToLinked", json!({"layer": id, "path": path}))
+                    }) {
+                        app.ui.status = e;
+                        app.ui.status_error = true;
+                    }
+                }
+            }
+        }
+    });
+    if !sm.smart_filters.is_empty() {
+        ui.label(format!("{} Smart Filters", sm.smart_filters.len()));
+    }
+}
 
 /// Smart-object badge in the bottom-right corner of a layer thumbnail.
 pub fn thumb_badge(ui: &egui::Ui, l: &Layer, thumb: Rect) {

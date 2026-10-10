@@ -1,0 +1,13 @@
+Use case: logo-brand
+Asset type: square macOS app icon for a photo storage and management app
+Primary request: Create a polished minimal app icon for “PhotoStore,” inspired by the visual clarity of a professional photo editing app icon with a distinct twist. Use a deep navy rounded-square tile with a luminous cyan “Ps” monogram (capital P, lowercase s) centered prominently. Add a subtle folded corner or cyan offset edge to give the mark its own identity while remaining simple and readable at small sizes.
+Scene/backdrop: transparent outside the rounded-square tile
+Subject: deep navy rounded-square app tile with a cyan Ps monogram and restrained folded-corner detail
+Style/medium: clean flat polished raster graphic, crisp geometric letterforms, premium macOS icon design
+Composition/framing: centered square icon, generous margins, monogram dominant, balanced optical alignment, no surrounding objects
+Lighting/mood: subtle luminous cyan edge glow, refined and modern, high contrast
+Color palette: deep navy background, bright luminous cyan accents, restrained tonal variation
+Materials/textures: smooth clean surfaces, no grain, no photorealism
+Text (verbatim): "Ps"
+Constraints: exactly one icon, transparent outside the tile, preserve a clean silhouette, readable at small size
+Avoid: any other text, words, slogan, watermark, camera symbol, extra objects, gradients that obscure the lettering, overly 3D treatment, copied Adobe branding or logo

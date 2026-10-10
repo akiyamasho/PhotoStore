@@ -1,7 +1,8 @@
 //! Photoshop keyboard shortcut sets (`.kys`, Edit › Keyboard Shortcuts › Save Set): parsing and
 //! matching rows to our commands (#1163). `edit.keyboardShortcuts {"importKys": <xml>}` applies a
 //! set here; the app's Keyboard Shortcuts dialog fills its overrides from the same plan
-//! (`photocraft_ui_egui::kys_import`).
+//! (`photocraft_ui_egui::kys_import`). Tool rows are retained and mapped by stable numeric ids;
+//! localized labels are used only for dynamic command rows.
 //!
 //! A `.kys` is XML: `<command kind="static|dynamic" name="Gaussian Blur...">` rows, each with
 //! one or more `<shortcut>Control+Opt+Cmd+G</shortcut>`, then the `<tool>` keys. Photoshop
@@ -26,6 +27,19 @@ pub const MAX_BYTES: usize = 4 << 20;
 pub struct KysCommand {
     pub name: String,
     pub shortcuts: Vec<String>,
+    /// Photoshop's stable command id.  Labels are localized and are only a fallback.
+    pub id: Option<String>,
+    pub kind: Option<String>,
+}
+
+/// A tool row keeps its explicit empty value: an empty key means that an existing binding is
+/// intentionally removed, rather than omitted from the import.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KysTool {
+    pub name: String,
+    pub kind: u32,
+    pub id: Option<String>,
+    pub shortcut: Option<String>,
 }
 
 /// The parsed set: its name, its command rows and how many tools carry a key.
@@ -35,6 +49,7 @@ pub struct KysSet {
     /// which a saved set spells `$$$/FileName/Presets/KeyboardCustomization/texcuts=texcuts`.
     pub name: Option<String>,
     pub commands: Vec<KysCommand>,
+    pub tools: Vec<KysTool>,
     pub tool_keys: usize,
 }
 
@@ -61,11 +76,24 @@ pub fn parse(text: &str) -> Result<KysSet, String> {
                     .filter(|n| n.is_element() && n.tag_name().name() == "shortcut")
                     .filter_map(|n| n.text().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string))
                     .collect();
-                if !shortcuts.is_empty() {
-                    set.commands.push(KysCommand { name: name.to_string(), shortcuts });
-                }
+                set.commands.push(KysCommand {
+                    name: name.to_string(),
+                    shortcuts,
+                    id: node.attribute("id").map(str::to_string),
+                    kind: node.attribute("kind").map(str::to_string),
+                });
             }
-            "tool" if node.text().is_some_and(|t| !t.trim().is_empty()) => set.tool_keys += 1,
+            "tool" => {
+                let kind = node.attribute("type").and_then(|s| s.parse().ok()).unwrap_or(0);
+                let shortcut = node.text().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+                if shortcut.is_some() { set.tool_keys += 1; }
+                set.tools.push(KysTool {
+                    name: node.attribute("name").unwrap_or_default().to_string(),
+                    kind,
+                    id: node.attribute("key").map(str::to_string),
+                    shortcut,
+                });
+            }
             _ => {}
         }
     }
@@ -83,6 +111,8 @@ pub struct Plan {
     pub unreadable: Vec<String>,
     /// Second and later shortcuts of a row, which have no place here.
     pub alternates: usize,
+    /// Tool and command rows whose stable id is known to Photoshop but unsupported here.
+    pub unsupported: Vec<String>,
 }
 
 /// One command a row may match: its id, its label and its default shortcut.
@@ -92,6 +122,69 @@ pub struct Candidate {
     pub default: Option<String>,
 }
 
+/// Stable Photoshop ids are preferred over localized labels.  Keep this table small and
+/// explicit: silently guessing an unrelated command is worse than reporting an unsupported row.
+pub fn stable_command_id(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "10" => "file.new", "20" => "file.open", "30" => "file.save", "31" => "file.close", "33" => "file.saveAs", "34" => "file.revert", "36" => "app.quit", "37" => "file.closeAll",
+        "101" => "edit.undo", "103" => "edit.cut", "104" => "edit.copy", "105" => "edit.paste", "132" => "edit.redo", "133" => "edit.toggleLastState",
+        "1004" => "view.zoomIn", "1005" => "view.zoomOut", "1016" => "select.deselect", "1017" => "select.all", "1018" => "select.inverse", "1190" => "view.actualPixels", "1192" => "view.fitOnScreen",
+        "1042" => "edit.fill", "1044" => "crop", "1107" => "edit.copyMerged", "1135" => "layer.duplicate", "1166" => "layer.mergeLayers", "1801" => "image.adjustments.levels", "1802" => "image.adjustments.curves", "1805" => "image.adjustments.hueSaturation",
+        "2207" => "edit.transform.freeTransform", "2211" => "edit.transform.flipHorizontal", "2212" => "edit.transform.flipVertical", "2711" => "layer.arrange.bringToFront", "2712" => "layer.arrange.bringForward", "2713" => "layer.arrange.sendBackward", "2714" => "layer.arrange.sendToBack",
+        "2980" => "layer.smartObjects.convertToSmartObject",
+        "2981" => "layer.smartObjects.newSmartObjectViaCopy",
+        "6332" => "layer.smartObjects.editContents",
+        "6340" => "layer.smartObjects.relinkToFile",
+        "6342" => "layer.smartObjects.updateModifiedContent",
+        "4418" => "timeline.nextFrame",
+        "4419" => "timeline.previousFrame",
+        "4412" => "timeline.toggleOnionSkin",
+        "4462" => "timeline.delete",
+        "4469" => "timeline.makeFramesFromLayers",
+        _ => return None,
+    })
+}
+
+pub fn tool_command_id(kind: u32, key_id: Option<&str>) -> Option<&'static str> {
+    match (kind, key_id) {
+        (1, Some("1819113074")) => Some("tools.tool.move"),
+        (1, Some("1919380852")) => Some("tools.tool.rectMarquee"), (1, Some("1701604724")) => Some("tools.tool.ellipseMarquee"),
+        (1, Some("1818325871")) => Some("tools.tool.lasso"), (1, Some("1885826926")) => Some("tools.tool.polygonLasso"), (1, Some("1835819379")) => Some("tools.tool.magneticLasso"),
+        (1, Some("2002873956")) => Some("tools.tool.magicWand"),
+        (1, Some("1886286946")) => Some("tools.tool.brush"),
+        (1, Some("1885695587")) => Some("tools.tool.pencil"),
+        (1, Some("1701994867")) => Some("tools.tool.eraser"), (1, Some("1936028257")) => Some("tools.tool.backgroundEraser"), (1, Some("1835364961")) => Some("tools.tool.magicEraser"),
+        (1, Some("1651401812")) => Some("tools.tool.gradient"),
+        (1, Some("1651860331")) => Some("tools.tool.paintBucket"),
+        (1, Some("1954038392")) => Some("tools.tool.type"), (1, Some("1954038358")) => Some("tools.tool.verticalType"),
+        (1, Some("1751215716")) => Some("tools.tool.hand"),
+        (1, Some("1919906932")) => Some("tools.tool.rotateView"),
+        (1, Some("2054123373")) => Some("tools.tool.zoom"),
+        (1, Some("1668444016")) => Some("tools.tool.crop"), (1, Some("1885565552")) => Some("tools.tool.crop"), (1, Some("1399612244")) => Some("tools.tool.slice"), (1, Some("1399608148")) => Some("tools.tool.sliceSelect"),
+        (1, Some("1702454628")) => Some("tools.tool.eyedropper"), (1, Some("1835360596")) => Some("tools.tool.ruler"), (1, Some("1417180225")) => Some("tools.tool.note"), (1, Some("1668248942")) => Some("tools.tool.count"),
+        (1, Some("1667327604")) => Some("tools.tool.remove"), (1, Some("1936746562")) => Some("tools.tool.spotHealing"), (1, Some("1937010029")) => Some("tools.tool.healing"), (1, Some("1886675816")) => Some("tools.tool.patch"), (1, Some("1919118704")) => Some("tools.tool.contentAwareMove"), (1, Some("1919182201")) => Some("tools.tool.redEye"),
+        (1, Some("1937006957")) => Some("tools.tool.cloneStamp"), (1, Some("1937010032")) => Some("tools.tool.patternStamp"),
+        (1, Some("1651275122")) => Some("tools.tool.blur"),
+        (1, Some("1936220530")) => Some("tools.tool.sharpen"),
+        (1, Some("1936553316")) => Some("tools.tool.smudge"),
+        (1, Some("1685021799")) => Some("tools.tool.dodge"), (1, Some("1651864174")) => Some("tools.tool.burn"), (1, Some("1935766645")) => Some("tools.tool.sponge"),
+        (1, Some("1885695572")) | (1, Some("1836082542")) | (1, Some("1668310382")) => Some("tools.tool.pen"),
+        (1, Some("1885565780")) => Some("tools.tool.directSelection"), (1, Some("1886677089")) => Some("tools.tool.pathSelection"),
+        (1, Some("1382376308")) => Some("tools.tool.rectangle"), (1, Some("1164734579")) => Some("tools.tool.ellipseShape"), (1, Some("1416778600")) => Some("tools.tool.triangle"), (1, Some("1349479545")) => Some("tools.tool.polygon"), (1, Some("1818848852")) => Some("tools.tool.line"), (1, Some("1131762536")) => Some("tools.tool.customShape"),
+        (7, _) => Some("tools.decreaseBrushSize"),
+        (8, _) => Some("tools.increaseBrushSize"),
+        (9, _) => Some("tools.decreaseBrushHardness"),
+        (10, _) => Some("tools.increaseBrushHardness"),
+        (11, _) => Some("tools.previousBrush"),
+        (12, _) => Some("tools.nextBrush"),
+        (13, _) => Some("tools.firstBrush"),
+        (14, _) => Some("tools.lastBrush"),
+        (2, _) => Some("tools.defaultColors"),
+        (3, _) => Some("tools.swapColors"),
+        _ => None,
+    }
+}
+
 /// Photoshop's label and ours compared loosely: case, a trailing ellipsis (`...` or `…`) and
 /// surrounding space do not count.
 fn key(label: &str) -> String {
@@ -99,29 +192,44 @@ fn key(label: &str) -> String {
     l.trim_end_matches('…').trim().to_lowercase()
 }
 
-/// The engine's own candidates: every command in a menu, in command order.
+/// The engine's own candidates, including no-menu timeline and smart-object commands. Stable
+/// Photoshop ids can therefore resolve commands that are absent from the visible menu.
 pub fn command_candidates() -> Vec<Candidate> {
-    crate::command_specs()
+    let mut out: Vec<Candidate> = crate::command_specs()
         .iter()
-        .filter(|c| !c.menu.is_empty())
+        .filter(|c| !c.menu.is_empty() || c.id.starts_with("timeline.") || c.id.starts_with("layer.smartObjects."))
         .map(|c| Candidate { id: c.id.to_string(), label: c.label.to_string(), default: c.shortcut.map(str::to_string) })
-        .collect()
+        .collect();
+    out.extend([("tools.previousBrush", "Previous Brush"), ("tools.nextBrush", "Next Brush"), ("tools.firstBrush", "First Brush"), ("tools.lastBrush", "Last Brush")].into_iter().map(|(id, label)| Candidate { id: id.into(), label: label.into(), default: None }));
+    for id in [
+        "tools.tool.move", "tools.tool.rectMarquee", "tools.tool.ellipseMarquee", "tools.tool.lasso", "tools.tool.polygonLasso", "tools.tool.magneticLasso", "tools.tool.magicWand", "tools.tool.brush", "tools.tool.pencil", "tools.tool.mixerBrush", "tools.tool.eraser", "tools.tool.backgroundEraser", "tools.tool.magicEraser", "tools.tool.gradient", "tools.tool.paintBucket", "tools.tool.type", "tools.tool.verticalType", "tools.tool.hand", "tools.tool.rotateView", "tools.tool.zoom", "tools.tool.eyedropper", "tools.tool.ruler", "tools.tool.note", "tools.tool.count", "tools.tool.crop", "tools.tool.slice", "tools.tool.sliceSelect", "tools.tool.pen", "tools.tool.pathSelection", "tools.tool.directSelection", "tools.tool.rectangle", "tools.tool.ellipseShape", "tools.tool.triangle", "tools.tool.polygon", "tools.tool.line", "tools.tool.customShape"
+    ] {
+        if !out.iter().any(|c| c.id == id) { out.push(Candidate { id: id.into(), label: id.into(), default: None }); }
+    }
+    out
 }
 
 /// Match the rows to `candidates` (see the module notes for the tie-breaks). One command may be
 /// listed under several labels (the menu's Settings… is the command's General…); under each
 /// label it counts once.
 pub fn plan(candidates: impl IntoIterator<Item = Candidate>, set: &KysSet) -> Plan {
+    let candidates: Vec<Candidate> = candidates.into_iter().collect();
     let mut by_label: HashMap<String, Vec<(String, Option<String>)>> = HashMap::new();
-    for c in candidates {
+    for c in &candidates {
         let entry = by_label.entry(key(&c.label)).or_default();
         if !entry.iter().any(|(id, _)| *id == c.id) {
-            entry.push((c.id, c.default));
+            entry.push((c.id.clone(), c.default.clone()));
         }
     }
     let mut plan = Plan::default();
     for row in &set.commands {
-        let Some(candidates) = by_label.get(&key(&row.name)) else {
+        let stable = row.id.as_deref().and_then(stable_command_id);
+        let stable_candidate = stable.and_then(|id| candidates.iter().find(|c| c.id == id));
+        if stable.is_some() && stable_candidate.is_none() {
+            plan.unsupported.push(row.name.clone());
+            continue;
+        }
+        let Some(candidates) = stable_candidate.map(|c| vec![(c.id.clone(), c.default.clone())]).or_else(|| by_label.get(&key(&row.name)).cloned()) else {
             plan.unknown.push(row.name.clone());
             continue;
         };
@@ -142,6 +250,25 @@ pub fn plan(candidates: impl IntoIterator<Item = Candidate>, set: &KysSet) -> Pl
             let default = default.as_deref().and_then(normalize_shortcut);
             let sc = default.filter(|d| imported.contains(d)).unwrap_or(sc);
             plan.set.insert(id.clone(), sc);
+        }
+    }
+    for tool in &set.tools {
+        let Some(id) = tool_command_id(tool.kind, tool.id.as_deref()) else {
+            let taskspace = tool.name.to_ascii_lowercase().contains("3d") || tool.name.to_ascii_lowercase().contains("artboard") || tool.name.to_ascii_lowercase().contains("material");
+            if !taskspace { plan.unsupported.push(tool.name.clone()); }
+            continue;
+        };
+        let Some(sc) = tool.shortcut.as_deref().and_then(normalize_shortcut) else {
+            // Empty tool entries are explicit clears when the tool has a known command id.
+            if tool.shortcut.is_none() {
+                plan.set.insert(id.to_string(), String::new());
+            }
+            continue;
+        };
+        if candidates.iter().any(|c| c.id == id) {
+            plan.set.insert(id.to_string(), sc);
+        } else {
+            plan.unsupported.push(tool.name.clone());
         }
     }
     plan
@@ -179,6 +306,7 @@ mod tests {
         assert_eq!(p.unknown, ["Hide Photoshop"]);
         assert_eq!(p.unreadable, ["Odd"]);
         assert_eq!(p.alternates, 1);
+        assert!(p.unsupported.is_empty());
     }
 
     #[test]
@@ -186,5 +314,30 @@ mod tests {
         let big = format!("<photoshop-keyboard-shortcuts>{}</photoshop-keyboard-shortcuts>", " ".repeat(MAX_BYTES));
         assert!(parse(&big).unwrap_err().contains("4 MiB"));
         assert!(parse("<other/>").unwrap_err().contains("not a keyboard shortcut set"));
+    }
+
+    #[test]
+    fn localized_stable_ids_and_explicit_tool_clears_survive() {
+        let set = parse(r#"<photoshop-keyboard-shortcuts>
+          <command kind="static" id="2980" name="スマートオブジェクトに変換"><shortcut>Cmd+Shift+S</shortcut></command>
+          <command kind="static" id="4418" name="次のフレーム"><shortcut>F2</shortcut></command>
+          <tool name="ブラシツール" type="1" key="1886286946">A</tool>
+          <tool name="ブラシサイズを減少" type="7">S</tool>
+          <tool name="アートボードツール" type="1" key="1098019924"></tool>
+        </photoshop-keyboard-shortcuts>"#).unwrap();
+        assert_eq!(set.tools.len(), 3);
+        let p = plan(
+            [
+                c("layer.smartObjects.convertToSmartObject", "Convert", None),
+                c("timeline.nextFrame", "Next Frame", None),
+                c("tools.tool.brush", "Brush Tool", Some("B")),
+                c("tools.decreaseBrushSize", "Decrease Brush Size", Some("[")),
+            ],
+            &set,
+        );
+        assert_eq!(p.set.get("layer.smartObjects.convertToSmartObject"), Some(&"Cmd+Shift+S".to_string()));
+        assert_eq!(p.set.get("timeline.nextFrame"), Some(&"F2".to_string()));
+        assert_eq!(p.set.get("tools.tool.brush"), Some(&"A".to_string()));
+        assert_eq!(p.set.get("tools.decreaseBrushSize"), Some(&"S".to_string()));
     }
 }

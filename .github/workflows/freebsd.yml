@@ -9,13 +9,6 @@ name: FreeBSD
 # or dependency change: a drifted dependency still shows up within a day. PRs that change the
 # FreeBSD packaging itself still run it.
 on:
-  schedule:
-    - cron: "17 2 * * *"
-  pull_request:
-    paths:
-      - .github/workflows/freebsd.yml
-      - packaging/freebsd/**
-      - packaging/env.sh
   workflow_dispatch:
 
 concurrency:
@@ -60,5 +53,5 @@ jobs:
             # The release package, as release.yml builds it. Free the debug build's disk first.
             rm -rf target/debug
             CARGO_BUILD_JOBS=4 bash packaging/freebsd/package.sh
-            tar -tzf dist/release/photocraft-*-freebsd-x86_64.tar.gz \
-              | grep -E '/bin/photocraft$|/bin/photocraft-cli$|/share/applications/ai\.storyteller\.photocraft\.desktop$|/share/doc/photocraft/LICENSE-MIT$'
+            tar -tzf dist/release/photostore-*-freebsd-x86_64.tar.gz \
+              | grep -E '/bin/photostore$|/bin/photostore-cli$|/share/applications/ai\.photostore\.app\.desktop$|/share/doc/photostore/LICENSE-MIT$'

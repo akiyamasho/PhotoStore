@@ -20,6 +20,38 @@ pub(crate) struct ClonePreviewCache {
     texture: egui::TextureHandle,
 }
 
+pub(crate) struct OnionSkinCache {
+    pub key: String,
+    pub texture: egui::TextureHandle,
+}
+
+fn draw_onion_skin(app: &mut PhotocraftApp, painter: &egui::Painter, xf: &ViewXform, idx: usize, output: Option<u32>) {
+    let Some(st) = app.session.documents().get(idx) else { return };
+    let Some(timeline) = &st.doc.timeline else { return };
+    if !timeline.onion_skin || timeline.current == 0 { app.onion_preview = None; return; }
+    let previous = timeline.current - 1;
+    let key = format!("{}:{}:{}:{}:{}", st.doc.id.0, st.revision, previous, st.doc.size.width, output.unwrap_or(0));
+    if app.onion_preview.as_ref().is_none_or(|cache| cache.key != key) {
+        let mut preview = (*st.doc).clone();
+        if let Some(t) = &mut preview.timeline { t.current = previous; }
+        photocraft_engine::sync_video(&mut preview);
+        let longest = preview.size.width.max(preview.size.height);
+        let factor = longest.div_ceil(MAX_TEXTURE).max(1);
+        let (w, h) = ((preview.size.width / factor).max(1), (preview.size.height / factor).max(1));
+        let full = photocraft_compose::render_reduced(&preview, w, h);
+        let image = display_image(None, &full);
+        let texture = match app.onion_preview.take() {
+            Some(mut cache) => { cache.texture.set(image, TextureOptions::LINEAR); cache.texture }
+            None => painter.ctx().load_texture("timeline-onion-skin", image, TextureOptions::LINEAR),
+        };
+        app.onion_preview = Some(OnionSkinCache { key, texture });
+    }
+    let Some(cache) = &app.onion_preview else { return };
+    let alpha = Color32::from_rgba_unmultiplied(80, 170, 255, 76);
+    let size = [st.doc.size.width as f32, st.doc.size.height as f32];
+    paint_mapped_image(painter, xf, cache.texture.id(), Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), size, alpha);
+}
+
 /// A transient source image beneath the brush outline; never part of the document render.
 fn draw_clone_preview(app: &mut PhotocraftApp, painter: &egui::Painter, xf: &ViewXform, at: [f64; 2], output: Option<u32>) {
     use photocraft_engine::presets::clone_source::{Mapping, transform_matrix};
@@ -2314,6 +2346,7 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
             }
         }
     }
+    draw_onion_skin(app, &painter, &xf, idx, output);
     // Channels panel: alpha / Quick Mask overlays and single-channel views (channel_view.rs).
     if let Some(tex) = crate::channel_view::ensure(app, &ctx, idx) {
         if view.rotation.abs() > 0.05 {

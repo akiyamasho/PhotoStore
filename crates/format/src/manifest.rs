@@ -164,6 +164,10 @@ pub struct SurfaceM {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VideoDataM {
     pub frames: Vec<SurfaceM>,
+    #[serde(default)]
+    pub frame_delays_ms: Vec<u32>,
+    #[serde(default)]
+    pub keyframes: Vec<photocraft_doc::VideoKeyframe>,
     pub source: photocraft_doc::VideoSource,
     pub fps: f32,
     #[serde(default)]

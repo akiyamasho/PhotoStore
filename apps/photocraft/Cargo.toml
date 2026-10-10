@@ -3,8 +3,8 @@ name = "photocraft"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-default-run = "photocraft"
-description = "Photocraft: an open-source, native image editor"
+default-run = "photostore"
+description = "PhotoStore: an open-source, native image editor"
 build = "build.rs"
 
 [features]
@@ -91,5 +91,9 @@ name = "mac_menu_appkit"
 harness = false
 
 [build-dependencies]
-# Icon + VERSIONINFO for photocraft.exe; build.rs only uses it when targeting Windows.
+# Icon + VERSIONINFO for photostore.exe; build.rs only uses it when targeting Windows.
 winresource = "0.1"
+
+[[bin]]
+name = "photostore"
+path = "src/main.rs"

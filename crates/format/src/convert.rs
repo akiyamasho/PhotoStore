@@ -115,6 +115,8 @@ fn opt_blob(b: &Option<Arc<Vec<u8>>>, sink: &mut dyn Sink) -> Option<Hash> {
 fn video_m(v: &photocraft_doc::VideoData, sink: &mut dyn Sink) -> crate::manifest::VideoDataM {
     crate::manifest::VideoDataM {
         frames: v.frames.iter().map(|f| surface_m(f, sink)).collect(),
+        frame_delays_ms: v.frame_delays_ms.clone(),
+        keyframes: v.keyframes.clone(),
         source: v.source.clone(),
         fps: v.fps,
         show_altered: v.show_altered,
@@ -309,7 +311,9 @@ pub(crate) struct Loader<'a> {
 impl Loader<'_> {
     fn video(&mut self, m: &crate::manifest::VideoDataM) -> Result<photocraft_doc::VideoData> {
         let frames = m.frames.iter().map(|f| self.surface(f)).collect::<Result<Vec<_>>>()?;
-        Ok(photocraft_doc::VideoData { frames, source: m.source.clone(), fps: m.fps, show_altered: m.show_altered })
+        let mut frame_delays_ms = m.frame_delays_ms.clone();
+        frame_delays_ms.resize(frames.len(), 0);
+        Ok(photocraft_doc::VideoData { frames, frame_delays_ms, keyframes: m.keyframes.clone(), source: m.source.clone(), fps: m.fps, show_altered: m.show_altered })
     }
 
     fn surface(&mut self, m: &SurfaceM) -> Result<Surface> {

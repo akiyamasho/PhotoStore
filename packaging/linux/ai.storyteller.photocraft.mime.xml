@@ -2,9 +2,9 @@
 <!-- shared-mime-info definitions for types the system database may not have.
      Installed to /usr/share/mime/packages/ (update-mime-database runs on install). -->
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
-  <mime-type type="application/x-photocraft">
-    <comment>PhotoCraft document</comment>
-    <icon name="ai.storyteller.photocraft"/>
+  <mime-type type="application/x-photostore">
+    <comment>PhotoStore document</comment>
+    <icon name="ai.photostore.app"/>
     <glob pattern="*.pcraft"/>
   </mime-type>
   <mime-type type="image/x-psb">

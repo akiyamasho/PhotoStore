@@ -399,7 +399,7 @@ fn persist(app: &mut PhotocraftApp, now: f64) -> Option<f64> {
                 app.ui.status = format!("Couldn't save preferences: {e}. Retrying…");
                 app.ui.status_error = true;
             } else if failures == SAVE_NOTICE_AFTER {
-                let lines = vec![e, "PhotoCraft keeps retrying; until a save succeeds, preference changes are lost when it closes.".into()];
+        let lines = vec![e, "PhotoStore keeps retrying; until a save succeeds, preference changes are lost when it closes.".into()];
                 let id = crate::notices::post(app, "Preferences can't be saved", lines, true, None);
                 app.prefs_rt.save_retry.notice = Some(id);
             }
@@ -603,7 +603,7 @@ pub fn shortcut_items(app: &PhotocraftApp) -> Vec<(String, String, Vec<String>, 
     let mut tools = Vec::new();
     let mut layer = Vec::new();
     for c in photocraft_engine::command_specs() {
-        if seen.insert(c.id.to_string()) && c.shortcut.is_some() {
+        if seen.insert(c.id.to_string()) && (c.shortcut.is_some() || c.id.starts_with("timeline.") || c.id.starts_with("layer.smartObjects.")) {
             let item = (c.id.to_string(), c.label.to_string(), c.menu.iter().map(|s| s.to_string()).collect::<Vec<_>>(), c.shortcut.map(Into::into));
             if c.menu.is_empty() && tools_key(c.id) {
                 tools.push((item.0, item.1, vec!["Tools".to_string()], item.3));
@@ -619,6 +619,15 @@ pub fn shortcut_items(app: &PhotocraftApp) -> Vec<(String, String, Vec<String>, 
     let at = out.iter().rposition(|i| i.2.first().map(String::as_str) == Some("Layer")).map_or(out.len(), |i| i + 1);
     out.splice(at..at, layer);
     out.extend(tools);
+    for (id, label) in [("tools.previousBrush", "Previous Brush"), ("tools.nextBrush", "Next Brush"), ("tools.firstBrush", "First Brush"), ("tools.lastBrush", "Last Brush")] {
+        if seen.insert(id.to_string()) { out.push((id.to_string(), label.to_string(), vec!["Tools".into(), "Brushes".into()], None)); }
+    }
+    for tool in crate::state::Tool::ALL {
+        let id = crate::shortcuts::tool_id(tool).to_string();
+        if seen.insert(id.clone()) {
+            out.push((id, tool.label().to_string(), vec!["Tools".into()], crate::shortcuts::default_shortcut(&crate::shortcuts::tool_id(tool))));
+        }
+    }
     for (id, label, def) in prefs::TEMPORARY_TOOLS {
         if seen.insert(id.to_string()) {
             out.push((id.to_string(), label.to_string(), vec!["Tools".into(), "Temporary".into()], Some(def.to_string())));
@@ -1022,7 +1031,7 @@ fn prefs_body(ui: &mut egui::Ui, f: &mut Map<String, Value>, system: Option<egui
                     f.get("__order").and_then(|o| o.get(&section)).and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
                 if !has_visible_fields(&values, &section) {
                     ui.add_space(4.0);
-                    ui.label(RichText::new(tl!("These settings aren't available in PhotoCraft yet.")).color(t.text_faint));
+                    ui.label(RichText::new(tl!("These settings aren't available in PhotoStore yet.")).color(t.text_faint));
                 } else if let Some(obj) = values.get_mut(&section).and_then(Value::as_object_mut) {
                     section_fields(ui, &section, obj, &order, lang, system);
                     if section == "fileHandling" {
@@ -1525,7 +1534,7 @@ fn shortcuts_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String
             }
             if ui.button(tl!("Reset All to Defaults")).clicked() {
                 overrides.clear();
-                message = tl!("All shortcuts reset to PhotoCraft defaults.").into();
+                message = tl!("All shortcuts reset to PhotoStore defaults.").into();
             }
             // A Photoshop set (`.kys`) fills the overrides; the file arrives after this frame
             // and `kys_import` writes the dialog's fields then (#1163).

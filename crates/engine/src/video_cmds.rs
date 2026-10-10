@@ -1,10 +1,10 @@
 //! Layer › Video Layers (and Rasterize › Video). A video layer holds a stack of frames; the
 //! layer's displayed raster content is the frame at the timeline playhead, kept in sync by [`sync`]
 //! after any edit or navigation. Paint, fills and filters edit that displayed content, so [`store`]
-//! writes it back into the playhead's frame before anything re-syncs. Headless and scriptable. Frame persistence in `.pcraft` is a
-//! follow-up; a saved document keeps the current frame as the layer's content.
+//! writes it back into the playhead's frame before anything re-syncs. Headless and scriptable. Native
+//! `.pcraft` files persist the complete frame stack.
 
-use photocraft_doc::{Document, Layer, LayerContent, Timeline, VideoData};
+use photocraft_doc::{Document, FrameLayerState, Layer, LayerContent, Timeline, VideoData};
 use photocraft_raster::Surface;
 use serde_json::{Value, json};
 
@@ -15,11 +15,43 @@ use crate::{EngineError, Result, Session};
 pub fn sync(doc: &mut Document) {
     let cur = doc.timeline.as_ref().map_or(0, |t| t.current);
     sync_layers(&mut doc.layers, cur);
+    if let Some(t) = &doc.timeline
+        && let Some(states) = t.frame_states.get(cur)
+    {
+        apply_states(&mut doc.layers, states);
+    }
+    if let Some(t) = &doc.timeline { apply_ranges(&mut doc.layers, cur, &t.layer_ranges); }
+}
+
+fn apply_ranges(layers: &mut [Layer], frame: usize, ranges: &[photocraft_doc::LayerTimelineRange]) {
+    for layer in layers {
+        if let Some(range) = ranges.iter().find(|r| r.layer == layer.id) {
+            layer.visible = frame >= range.start && frame < range.end.max(range.start.saturating_add(1));
+        }
+        if let Some(children) = layer.children_mut() { apply_ranges(children, frame, ranges); }
+    }
+}
+
+fn apply_states(layers: &mut [Layer], states: &[FrameLayerState]) {
+    for layer in layers {
+        if let Some(state) = states.iter().find(|s| s.layer == layer.id) {
+            layer.visible = state.visible;
+            layer.opacity = state.opacity;
+        }
+        if let Some(children) = layer.children_mut() { apply_states(children, states); }
+    }
 }
 
 fn sync_layers(layers: &mut [Layer], cur: usize) {
     for l in layers.iter_mut() {
-        let frame = l.video.as_ref().and_then(|v| v.frames.get(cur.min(v.frames.len().saturating_sub(1)))).cloned();
+        let transform = l.video.as_ref().map(|v| keyframe_transform(v, cur));
+        if let Some((_, _, opacity)) = transform { l.opacity = opacity; }
+        let frame = l.video.as_ref().and_then(|v| v.frames.get(cur.min(v.frames.len().saturating_sub(1)))).map(|surface| {
+            let (dx, dy, _) = transform.unwrap_or((0.0, 0.0, 1.0));
+            let dx = dx.round().clamp(-1_000_000.0, 1_000_000.0) as i32;
+            let dy = dy.round().clamp(-1_000_000.0, 1_000_000.0) as i32;
+            if dx == 0 && dy == 0 { surface.clone() } else { surface.translated(dx, dy, surface.content_bounds()) }
+        });
         if let Some(f) = frame
             && let LayerContent::Raster(s) = &mut l.content
         {
@@ -31,19 +63,51 @@ fn sync_layers(layers: &mut [Layer], cur: usize) {
     }
 }
 
+fn keyframe_transform(video: &VideoData, frame: usize) -> (f32, f32, f32) {
+    let mut points = video.keyframes.iter().collect::<Vec<_>>();
+    points.sort_by_key(|k| k.frame);
+    let Some(first) = points.first() else { return (0.0, 0.0, 1.0) };
+    if frame <= first.frame { return (first.x, first.y, first.opacity.clamp(0.0, 1.0)); }
+    for pair in points.windows(2) {
+        let a = pair[0]; let b = pair[1];
+        if frame <= b.frame {
+            let span = b.frame.saturating_sub(a.frame).max(1) as f32;
+            let u = (frame.saturating_sub(a.frame) as f32 / span).clamp(0.0, 1.0);
+            return (a.x + (b.x - a.x) * u, a.y + (b.y - a.y) * u, (a.opacity + (b.opacity - a.opacity) * u).clamp(0.0, 1.0));
+        }
+    }
+    points.last().map_or((0.0, 0.0, 1.0), |k| (k.x, k.y, k.opacity.clamp(0.0, 1.0)))
+}
+
 /// Keep edits made to every video layer's displayed content (paint, fills, filters) by writing it
 /// back into its frame at the playhead. Call before moving the playhead or re-syncing.
 pub fn store(doc: &mut Document) {
     let cur = doc.timeline.as_ref().map_or(0, |t| t.current);
     store_layers(&mut doc.layers, cur);
+    if let Some(t) = &mut doc.timeline
+        && !t.frame_states.is_empty()
+        && let Some(states) = t.frame_states.get_mut(cur)
+    {
+        states.clear(); collect_states(&doc.layers, states);
+    }
+}
+
+fn collect_states(layers: &[Layer], states: &mut Vec<FrameLayerState>) {
+    for layer in layers {
+        states.push(FrameLayerState { layer: layer.id, visible: layer.visible, opacity: layer.opacity });
+        if let Some(children) = layer.children() { collect_states(children, states); }
+    }
 }
 
 fn store_layers(layers: &mut [Layer], cur: usize) {
     for l in layers.iter_mut() {
         if let (Some(v), LayerContent::Raster(s)) = (&mut l.video, &l.content) {
             let at = cur.min(v.frames.len().saturating_sub(1));
+            let (dx, dy, _) = keyframe_transform(v, cur);
+            let dx = dx.round().clamp(-1_000_000.0, 1_000_000.0) as i32;
+            let dy = dy.round().clamp(-1_000_000.0, 1_000_000.0) as i32;
             if let Some(f) = v.frames.get_mut(at) {
-                *f = s.clone();
+                *f = if dx == 0 && dy == 0 { s.clone() } else { s.translated(-dx, -dy, s.content_bounds()) };
             }
         }
         if let Some(ch) = l.children_mut() {
@@ -124,6 +188,8 @@ fn duplicate_frame(s: &mut Session, _p: &Value) -> Result<Value> {
     edit_video(s, "Duplicate Frame", |v, cur| {
         if let Some(f) = v.frames.get(cur).cloned() {
             v.frames.insert(cur + 1, f);
+            let delay = v.frame_delays_ms.get(cur).copied().unwrap_or(0);
+            v.frame_delays_ms.insert(cur + 1, delay);
         }
         Ok(())
     })
@@ -133,7 +199,31 @@ fn delete_frame(s: &mut Session, _p: &Value) -> Result<Value> {
     edit_video(s, "Delete Frame", |v, cur| {
         if v.frames.len() > 1 && cur < v.frames.len() {
             v.frames.remove(cur);
+            if cur < v.frame_delays_ms.len() { v.frame_delays_ms.remove(cur); }
         }
+        Ok(())
+    })
+}
+
+fn set_frame_delay(s: &mut Session, p: &Value) -> Result<Value> {
+    let delay = p.get("delayMs").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()).filter(|n| *n <= 600_000).ok_or_else(|| EngineError::BadParams { cmd: "timeline.setFrameDelay".into(), msg: "`delayMs` must be an integer from 0 to 600000".into() })?;
+    edit_video(s, "Set Frame Delay", move |v, cur| {
+        if v.frame_delays_ms.len() < v.frames.len() { v.frame_delays_ms.resize(v.frames.len(), 0); }
+        if let Some(slot) = v.frame_delays_ms.get_mut(cur) { *slot = delay; }
+        Ok(())
+    })
+}
+
+fn keyframe(s: &mut Session, p: &Value, remove: bool) -> Result<Value> {
+    let frame = p.get("frame").and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok()).unwrap_or_else(|| s.active().and_then(|st| st.doc.timeline.as_ref().map(|t| t.current)).unwrap_or(0));
+    let x = p.get("x").and_then(Value::as_f64).filter(|v| v.is_finite() && v.abs() <= 1_000_000.0).unwrap_or(0.0) as f32;
+    let y = p.get("y").and_then(Value::as_f64).filter(|v| v.is_finite() && v.abs() <= 1_000_000.0).unwrap_or(0.0) as f32;
+    let opacity = p.get("opacity").and_then(Value::as_f64).filter(|v| v.is_finite() && (0.0..=1.0).contains(v)).unwrap_or(1.0) as f32;
+    edit_video(s, if remove { "Delete Video Keyframe" } else { "Add Video Keyframe" }, move |v, _| {
+        if frame >= v.frames.len().max(1) { return Err(EngineError::BadParams { cmd: if remove { "timeline.deleteKeyframe" } else { "timeline.addKeyframe" }.into(), msg: "frame is outside the video layer".into() }); }
+        v.keyframes.retain(|k| k.frame != frame);
+        if !remove { v.keyframes.push(photocraft_doc::VideoKeyframe { frame, x, y, opacity }); }
+        v.keyframes.sort_by_key(|k| k.frame);
         Ok(())
     })
 }
@@ -414,6 +504,9 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("layer.videoLayers.insertBlankFrame", "Insert Blank Frame", vl, active_video, |s, p| insert_blank(s, p)),
         spec!("layer.videoLayers.duplicateFrame", "Duplicate Frame", vl, active_video, |s, p| duplicate_frame(s, p)),
         spec!("layer.videoLayers.deleteFrame", "Delete Frame", vl, active_video, |s, p| delete_frame(s, p)),
+        spec!("timeline.setFrameDelay", "Set Frame Delay", &["Timeline"], active_video, |s, p| set_frame_delay(s, p)),
+        spec!("timeline.addKeyframe", "Add Video Keyframe", &["Timeline"], active_video, |s, p| keyframe(s, p, false)),
+        spec!("timeline.deleteKeyframe", "Delete Video Keyframe", &["Timeline"], active_video, |s, p| keyframe(s, p, true)),
         spec!("layer.videoLayers.restoreFrame", "Restore Frame", vl, active_video, |s, p| restore_frame(s, p)),
         spec!("layer.videoLayers.restoreAllFrames", "Restore All Frames", vl, active_video, |s, p| restore_all(s, p)),
         spec!("layer.videoLayers.showAlteredVideo", "Show Altered Video", vl, active_video, |s, p| show_altered(s, p)),

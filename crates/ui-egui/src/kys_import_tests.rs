@@ -61,7 +61,7 @@ fn app() -> PhotocraftApp {
 fn parses_rows_shortcuts_entities_and_tool_keys() {
     let set = parse(SAMPLE).unwrap();
     assert_eq!(set.commands.len(), 11);
-    assert_eq!(set.commands[2], KysCommand { name: "Undo".into(), shortcuts: vec!["Cmd+Z".into(), "F1".into()] });
+    assert_eq!(set.commands[2], KysCommand { name: "Undo".into(), shortcuts: vec!["Cmd+Z".into(), "F1".into()], id: Some("101".into()), kind: Some("static".into()) });
     assert_eq!(set.commands[7].name, "Black & White...");
     assert_eq!(set.tool_keys, 1, "the empty Default Colors row carries no key");
 }
@@ -104,7 +104,7 @@ fn rows_match_our_commands_by_label_with_photoshop_tie_breaks() {
 #[test]
 fn an_unreadable_shortcut_is_reported_not_imported() {
     let app = app();
-    let set = super::KysSet { name: None, commands: vec![KysCommand { name: "Undo".into(), shortcuts: vec!["Cmd+Shift+Ctrl".into()] }], tool_keys: 0 };
+    let set = super::KysSet { name: None, commands: vec![KysCommand { name: "Undo".into(), shortcuts: vec!["Cmd+Shift+Ctrl".into()], id: None, kind: None }], tools: vec![], tool_keys: 0 };
     let p = plan(&app, &set);
     assert!(p.set.is_empty());
     assert_eq!(p.unreadable, vec!["Undo".to_string()]);

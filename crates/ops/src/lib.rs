@@ -159,6 +159,11 @@ impl History {
         self.undo.len()
     }
 
+    /// Number of redoable states currently available.
+    pub fn future_len(&self) -> usize {
+        self.redo.len()
+    }
+
     /// Rename the current step (e.g. after folding several steps into one with [`Self::purge_last`]).
     pub fn set_current_label(&mut self, label: impl Into<String>) {
         self.current_label = label.into();

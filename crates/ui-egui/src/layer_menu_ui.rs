@@ -78,6 +78,18 @@ pub fn entries(l: &Layer, multi: bool, has_selection: bool) -> Vec<Entry> {
             LayerContent::Shape(_) => v.push(Some(("Rasterize Layer", "layer.rasterize.shape"))),
             LayerContent::Smart(_) => {
                 v.push(Some((tl!("Edit Contents"), "layer.smartObjects.editContents")));
+                v.push(Some(("New Smart Object via Copy", "layer.smartObjects.newSmartObjectViaCopy")));
+                v.push(Some(("Replace Contents…", "layer.smartObjects.replaceContents")));
+                v.push(Some(("Export Contents…", "layer.smartObjects.exportContents")));
+                if let LayerContent::Smart(sm) = &l.content {
+                    if matches!(&sm.source, photocraft_doc::SmartSource::Linked { .. }) {
+                        v.push(Some(("Relink to File…", "layer.smartObjects.relinkToFile")));
+                        v.push(Some(("Update Modified Content", "layer.smartObjects.updateModifiedContent")));
+                        v.push(Some(("Convert to Embedded", "layer.smartObjects.convertToEmbedded")));
+                    } else {
+                        v.push(Some(("Convert to Linked…", "layer.smartObjects.convertToLinked")));
+                    }
+                }
                 v.push(Some((tl!("Convert to Layers"), "layer.smartObjects.convertToLayers")));
                 v.push(Some(("Rasterize Layer", "layer.rasterize.smartObject")));
             }
@@ -443,7 +455,20 @@ mod tests {
         s.execute("layer.smartObjects.convertToSmartObject", json!({})).unwrap();
         let ids: Vec<_> = entries(&layer(&s), false, false).into_iter().flatten().map(|e| e.1).collect();
         let edit = ids.iter().position(|id| *id == "layer.smartObjects.editContents").expect("Edit Contents entry");
-        assert_eq!(ids[edit + 1..edit + 3], ["layer.smartObjects.convertToLayers", "layer.rasterize.smartObject"]);
+        assert_eq!(
+            ids[edit + 1..edit + 10],
+            [
+                "layer.smartObjects.newSmartObjectViaCopy",
+                "layer.smartObjects.replaceContents",
+                "layer.smartObjects.exportContents",
+                "layer.smartObjects.convertToLinked",
+                "layer.smartObjects.convertToLayers",
+                "layer.rasterize.smartObject",
+                "layer.layerMask.revealAll",
+                "layer.createClippingMask",
+                "layer.linkLayers",
+            ]
+        );
     }
 
     /// Right-clicking inside a multi-layer selection offers one Rasterize item for the whole

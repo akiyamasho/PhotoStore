@@ -10,8 +10,6 @@ name: Perf (nightly)
 # the `perf-baseline` artifact and commit it as perf/baseline.json in a PR.
 
 on:
-  schedule:
-    - cron: "23 3 * * *"
   workflow_dispatch:
     inputs:
       quick:

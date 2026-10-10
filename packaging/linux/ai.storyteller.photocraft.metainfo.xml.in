@@ -2,17 +2,17 @@
 <!-- AppStream metadata (software centres, Flathub). Template: package.sh and the Flatpak
      manifest substitute @VERSION@ and @DATE@ from Cargo.toml and the build date. -->
 <component type="desktop-application">
-  <id>ai.storyteller.photocraft</id>
+  <id>ai.photostore.app</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT OR Apache-2.0</project_license>
-  <name>PhotoCraft</name>
+  <name>PhotoStore</name>
   <summary>Edit photos and layered PSD documents</summary>
   <developer id="ai.storyteller">
     <name>Learning Machines LLC</name>
   </developer>
   <description>
     <p>
-      PhotoCraft is an open-source, native image editor with the familiar menus,
+      PhotoStore is an open-source, native image editor with the familiar menus,
       shortcuts, panels and tools professionals expect: layers, masks, adjustment
       layers, layer styles, type and brushes.
     </p>
@@ -23,12 +23,12 @@
       <li>Every action is a command, scriptable from a CLI, a JSON control channel and an MCP server</li>
     </ul>
   </description>
-  <launchable type="desktop-id">ai.storyteller.photocraft.desktop</launchable>
-  <icon type="stock">ai.storyteller.photocraft</icon>
+  <launchable type="desktop-id">ai.photostore.app.desktop</launchable>
+  <icon type="stock">ai.photostore.app</icon>
   <!-- Only url types known to appstream 0.15 (Ubuntu 22.04, where CI validates): no vcs-browser. -->
-  <url type="homepage">https://getartcraft.com/apps/photocraft</url>
-  <url type="bugtracker">https://github.com/storytold/photocraft/issues</url>
-  <url type="help">https://github.com/storytold/photocraft</url>
+  <url type="homepage">https://getartcraft.com/apps/photostore</url>
+  <url type="bugtracker">https://github.com/akiyamasho/PhotoStore/issues</url>
+  <url type="help">https://github.com/akiyamasho/PhotoStore</url>
   <url type="contact">https://discord.gg/artcraft</url>
   <categories>
     <category>Graphics</category>
@@ -44,7 +44,7 @@
   <screenshots>
     <screenshot type="default">
       <caption>Editing The Great Wave off Kanagawa with type layers and adjustment layers</caption>
-      <image>https://raw.githubusercontent.com/storytold/photocraft/main/docs/images/photocraft-demo.jpg</image>
+      <image>https://raw.githubusercontent.com/storytold/photostore/main/docs/images/photostore-demo.jpg</image>
     </screenshot>
   </screenshots>
   <branding>
@@ -60,8 +60,8 @@
     <control>tablet</control>
   </supports>
   <provides>
-    <binary>photocraft</binary>
-    <mediatype>application/x-photocraft</mediatype>
+    <binary>photostore</binary>
+    <mediatype>application/x-photostore</mediatype>
     <mediatype>image/x-paintnet</mediatype>
     <mediatype>image/openraster</mediatype>
     <mediatype>image/vnd.adobe.photoshop</mediatype>

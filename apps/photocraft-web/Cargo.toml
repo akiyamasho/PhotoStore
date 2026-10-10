@@ -1,6 +1,6 @@
 [package]
 name = "photocraft-web"
-description = "Photocraft in the browser (eframe web runner, WebGPU with WebGL2 fallback)"
+description = "PhotoStore in the browser (eframe web runner, WebGPU with WebGL2 fallback)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,7 +15,7 @@ heif = ["photocraft-codecs/heif"]
 workspace = true
 
 [[bin]]
-name = "photocraft-web"
+name = "photostore-web"
 path = "src/main.rs"
 
 [dependencies]

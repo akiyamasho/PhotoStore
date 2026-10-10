@@ -7,12 +7,6 @@ name: Windows ARM64
 # Nightly on main (dependency and runner-image drift shows up within a day), and on PRs that
 # change the Windows packaging itself.
 on:
-  pull_request:
-    paths:
-      - .github/workflows/windows-arm64.yml
-      - packaging/windows/**
-  schedule:
-    - cron: "41 4 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -51,7 +45,7 @@ jobs:
         run: ./packaging/windows/package.ps1 -Arch arm64
       - uses: actions/upload-artifact@v4
         with:
-          name: photocraft-windows-arm64
+          name: photostore-windows-arm64
           path: dist/arm64/*
           if-no-files-found: error
           retention-days: 7
@@ -64,7 +58,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: photocraft-windows-arm64
+          name: photostore-windows-arm64
           path: dist
       - name: Install the MSI, check it, run it, uninstall it
         shell: pwsh
@@ -73,8 +67,8 @@ jobs:
           $msi = (Get-ChildItem dist/*.msi | Select-Object -First 1).FullName
           $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/l*v', 'install.log' -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 60; throw "msiexec /i exited $($p.ExitCode)" }
-          $dir = Join-Path $env:ProgramFiles 'PhotoCraft'
-          foreach ($exe in 'photocraft.exe', 'photocraft-cli.exe') {
+          $dir = Join-Path $env:ProgramFiles 'PhotoStore'
+          foreach ($exe in 'photostore.exe', 'photostore-cli.exe') {
             $path = Join-Path $dir $exe
             if (-not (Test-Path $path)) { throw "$exe not installed in $dir" }
             $bytes = [System.IO.File]::ReadAllBytes($path)
@@ -83,11 +77,11 @@ jobs:
             Write-Output "ok $path (ARM64)"
           }
           # The installed CLI runs natively on ARM64.
-          $cli = Join-Path $dir 'photocraft-cli.exe'
+          $cli = Join-Path $dir 'photostore-cli.exe'
           $out = & $cli --version 2>&1 | Out-String
-          if ($LASTEXITCODE -ne 0) { Write-Output $out; throw "photocraft-cli --version exited $LASTEXITCODE" }
-          Write-Output "ok photocraft-cli --version: $($out.Trim())"
+          if ($LASTEXITCODE -ne 0) { Write-Output $out; throw "photostore-cli --version exited $LASTEXITCODE" }
+          Write-Output "ok photostore-cli --version: $($out.Trim())"
           $p = Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "msiexec /x exited $($p.ExitCode)" }
-          if (Test-Path (Join-Path $dir 'photocraft.exe')) { throw 'uninstall left photocraft.exe behind' }
+          if (Test-Path (Join-Path $dir 'photostore.exe')) { throw 'uninstall left photostore.exe behind' }
           Write-Output 'ok uninstalled'

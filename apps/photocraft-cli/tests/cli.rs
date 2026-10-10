@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use serde_json::{Value, json};
 
 fn bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_photocraft-cli"))
+    Command::new(env!("CARGO_BIN_EXE_photostore-cli"))
 }
 
 fn tmp(name: &str) -> PathBuf {

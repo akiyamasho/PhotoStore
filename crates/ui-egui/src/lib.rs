@@ -524,6 +524,7 @@ pub struct PhotocraftApp {
     /// Pointer position over the canvas (document px), for the Info panel and status bar.
     pub(crate) hover_doc: Option<[f64; 2]>,
     pub(crate) clone_preview: Option<crate::canvas::ClonePreviewCache>,
+    pub(crate) onion_preview: Option<crate::canvas::OnionSkinCache>,
     /// Info panel sample cache: ((x, y, revision, Sample Size), composite RGBA).
     info_sample: Option<(InfoSampleKey, [f32; 4])>,
     /// Guide being dragged (from a ruler or with the Move tool).
@@ -639,6 +640,7 @@ impl PhotocraftApp {
             crop: Default::default(),
             hover_doc: None,
             clone_preview: None,
+            onion_preview: None,
             info_sample: None,
             os_clip_sig: None,
             clip_external: false,
@@ -1358,6 +1360,9 @@ impl eframe::App for PhotocraftApp {
         if chrome && self.ui.panels.dock {
             panels::right_dock(self, ui);
         }
+        // The Timeline is a true bottom dock, so it reserves canvas space before the central area
+        // is laid out. Other windows remain overlays below.
+        timeline_ui::windows(self, &ctx);
         let t = theme::Tokens::get(&ctx);
         let backdrop = if chrome { prefs_ui::pasteboard_color(self).unwrap_or(t.canvas) } else { egui::Color32::BLACK };
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(backdrop)).show(ui, |ui| {
@@ -1369,7 +1374,6 @@ impl eframe::App for PhotocraftApp {
         gradient_ui::editor_window(self, &ctx);
         type_panels_ui::windows(self, &ctx);
         analysis_ui::windows(self, &ctx);
-        timeline_ui::windows(self, &ctx);
         workspace_ui::windows(self, &ctx);
         palette::show(self, &ctx);
         dialogs::show(self, &ctx);

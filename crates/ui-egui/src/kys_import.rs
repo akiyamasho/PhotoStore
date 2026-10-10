@@ -58,7 +58,12 @@ pub fn import_text(app: &mut PhotocraftApp, file_name: &str, text: &str) -> Resu
     if !plan.unknown.is_empty() {
         let u = plan.unknown.len().to_string();
         message.push(' ');
-        message.push_str(&crate::i18n::fmt(tl!("{n} commands are not in PhotoCraft."), &[("n", &u)]));
+        message.push_str(&crate::i18n::fmt(tl!("{n} commands are not in PhotoStore."), &[("n", &u)]));
+    }
+    if !plan.unsupported.is_empty() {
+        let u = plan.unsupported.len().to_string();
+        message.push(' ');
+        message.push_str(&crate::i18n::fmt(tl!("{n} imported entries are unsupported in PhotoStore."), &[("n", &u)]));
     }
     f.insert("tab".into(), json!(0));
     f.insert("overrides".into(), json!(overrides));
@@ -73,6 +78,7 @@ pub fn import_text(app: &mut PhotocraftApp, file_name: &str, text: &str) -> Resu
         "unknown": plan.unknown,
         "unreadable": plan.unreadable,
         "alternates": plan.alternates,
+        "unsupported": plan.unsupported,
         "toolKeys": set.tool_keys,
     }))
 }
@@ -182,7 +188,7 @@ pub fn show_offer(app: &mut PhotocraftApp, ctx: &egui::Context) {
     let n = offer.changes.to_string();
     let line = crate::i18n::fmt(
         tl!(
-            "PhotoCraft found your keyboard shortcut set {set} from another image editor on this computer: {n} of its shortcuts differ from PhotoCraft's. Import it?"
+            "PhotoStore found your keyboard shortcut set {set} from another image editor on this computer: {n} of its shortcuts differ from PhotoStore's. Import it?"
         ),
         &[("set", &offer.set), ("n", &n)],
     );

@@ -79,6 +79,9 @@ pub fn effective_shortcut(app: &PhotocraftApp, id: &str, default: Option<&str>) 
 
 /// Default (unmodified) shortcut of a command id.
 pub fn default_shortcut(id: &str) -> Option<String> {
+    if let Some(tool) = crate::state::Tool::ALL.iter().find(|&&t| tool_id(t) == id) {
+        return (tool.key() != '\0').then(|| tool.key().to_string());
+    }
     crate::menus::UI_COMMANDS
         .iter()
         .find(|c| c.0 == id)
@@ -87,6 +90,31 @@ pub fn default_shortcut(id: &str) -> Option<String> {
         .or_else(|| crate::menu_catalog::CATALOG.iter().find(|c| c.3 == id).and_then(|c| c.2))
         .or_else(|| photocraft_engine::prefs::TEMPORARY_TOOLS.iter().find(|t| t.0 == id).map(|t| t.2))
         .map(str::to_string)
+}
+
+/// Stable, language independent ids for the tool groups shown in Keyboard Shortcuts.
+pub fn tool_id(tool: Tool) -> &'static str {
+    match tool {
+        Tool::Move => "tools.tool.move", Tool::RectMarquee => "tools.tool.rectMarquee", Tool::EllipseMarquee => "tools.tool.ellipseMarquee",
+        Tool::Lasso => "tools.tool.lasso", Tool::PolygonLasso => "tools.tool.polygonLasso", Tool::MagneticLasso => "tools.tool.magneticLasso",
+        Tool::MagicWand => "tools.tool.magicWand", Tool::QuickSelection => "tools.tool.quickSelection", Tool::ObjectSelection => "tools.tool.objectSelection",
+        Tool::Brush => "tools.tool.brush", Tool::Pencil => "tools.tool.pencil", Tool::MixerBrush => "tools.tool.mixerBrush",
+        Tool::Eraser => "tools.tool.eraser", Tool::BackgroundEraser => "tools.tool.backgroundEraser", Tool::MagicEraser => "tools.tool.magicEraser",
+        Tool::Gradient => "tools.tool.gradient", Tool::PaintBucket => "tools.tool.paintBucket", Tool::Type => "tools.tool.type", Tool::VerticalType => "tools.tool.verticalType",
+        Tool::Hand => "tools.tool.hand", Tool::RotateView => "tools.tool.rotateView", Tool::Zoom => "tools.tool.zoom",
+        Tool::Remove => "tools.tool.remove", Tool::SpotHealing => "tools.tool.spotHealing", Tool::Healing => "tools.tool.healing", Tool::Patch => "tools.tool.patch", Tool::ContentAwareMove => "tools.tool.contentAwareMove", Tool::RedEye => "tools.tool.redEye",
+        Tool::CloneStamp => "tools.tool.cloneStamp", Tool::PatternStamp => "tools.tool.patternStamp", Tool::HistoryBrush => "tools.tool.historyBrush", Tool::Blur => "tools.tool.blur", Tool::Sharpen => "tools.tool.sharpen", Tool::Smudge => "tools.tool.smudge",
+        Tool::Dodge => "tools.tool.dodge", Tool::Burn => "tools.tool.burn", Tool::Sponge => "tools.tool.sponge", Tool::Pen => "tools.tool.pen", Tool::PathSelection => "tools.tool.pathSelection", Tool::DirectSelection => "tools.tool.directSelection",
+        Tool::Rectangle => "tools.tool.rectangle", Tool::EllipseShape => "tools.tool.ellipseShape", Tool::Triangle => "tools.tool.triangle", Tool::Polygon => "tools.tool.polygon", Tool::Line => "tools.tool.line", Tool::CustomShape => "tools.tool.customShape",
+        Tool::Eyedropper => "tools.tool.eyedropper", Tool::Ruler => "tools.tool.ruler", Tool::Note => "tools.tool.note", Tool::Count => "tools.tool.count",
+        Tool::Crop => "tools.tool.crop", Tool::Slice => "tools.tool.slice", Tool::SliceSelect => "tools.tool.sliceSelect",
+    }
+}
+
+pub fn select_tool_command(app: &mut PhotocraftApp, id: &str) -> bool {
+    let Some(tool) = Tool::ALL.into_iter().find(|t| tool_id(*t) == id) else { return false };
+    app.ui.tool = tool;
+    true
 }
 
 /// With ⇧ held the OS reports the shifted character as the logical key (US layout): ⇧; is `:`.
@@ -416,7 +444,7 @@ pub fn handle(app: &mut PhotocraftApp, ctx: &egui::Context) {
     let shift_switch = app.session.prefs().tools.use_shift_key_for_tool_switch;
     for t in Tool::ALL {
         let Some(k) = Key::from_name(&t.key().to_string()) else { continue };
-        let cycle_shift = shift_switch && ctx.input_mut(|i| i.consume_key(Modifiers::SHIFT, k));
+        let cycle_shift = ctx.input_mut(|i| i.consume_key(Modifiers::SHIFT, k));
         if cycle_shift || pressed(k) {
             let group: Vec<Tool> = Tool::ALL.iter().copied().filter(|x| x.key() == t.key()).collect();
             app.ui.tool = match group.iter().position(|x| *x == app.ui.tool) {

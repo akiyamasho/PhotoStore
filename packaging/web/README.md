@@ -1,13 +1,13 @@
-# Hosting PhotoCraft for the web
+# Hosting PhotoStore for the web
 
-`photocraft-web-<version>.zip` (from the GitHub release, or `packaging/web/package.sh`) holds a
-static site in `photocraft-web-<version>/`:
+`photostore-web-<version>.zip` (from the GitHub release, or `packaging/web/package.sh`) holds a
+static site in `photostore-web-<version>/`:
 
 | File | What it is |
 |---|---|
 | `index.html` | The page. It loads everything through relative URLs. |
-| `photocraft-web-<hash>.js` | wasm-bindgen glue (generated, ES module) |
-| `photocraft-web-<hash>_bg.wasm` | The app: about 19 MiB raw, 8 MiB with gzip, 5.6 MiB with Brotli (see [Sizes](#sizes)) |
+| `photostore-web-<hash>.js` | wasm-bindgen glue (generated, ES module) |
+| `photostore-web-<hash>_bg.wasm` | The app: about 19 MiB raw, 8 MiB with gzip, 5.6 MiB with Brotli (see [Sizes](#sizes)) |
 | `_headers`, `.htaccess` | Sample header rules for Netlify/Cloudflare Pages and Apache |
 | `fonts/` (optional) | Fonts loaded on demand, listed in `fonts/manifest.txt` (see [Fonts](#fonts)) |
 
@@ -22,9 +22,9 @@ There is no server-side code. Upload the folder's contents anywhere that serves 
 From the repository root (Docker is the only build prerequisite):
 
 ```sh
-docker build --load -t photocraft-web:local .
-docker run -d --name photocraft-web --restart unless-stopped \
-  -p 8080:8080 photocraft-web:local
+docker build --load -t photostore-web:local .
+docker run -d --name photostore-web --restart unless-stopped \
+  -p 8080:8080 photostore-web:local
 ```
 
 Open **http://localhost:8080/**. The multi-stage `Dockerfile` builds the existing Rust/Wasm
@@ -53,13 +53,13 @@ a builder with more memory, pass `--build-arg CARGO_PROFILE_WASM_RELEASE_LTO=fat
 For a public deployment, put an HTTPS reverse proxy or your hosting platform's TLS endpoint
 in front of container port 8080. With a reverse proxy on the same host, bind only loopback
 (`-p 127.0.0.1:8080:8080`); with a proxy container, connect both through a Docker network.
-HTTPS enables WebGPU and browser clipboard APIs. If hosting under `/photocraft/`, redirect
-`/photocraft` to `/photocraft/` and strip that prefix when proxying to the container. Relative
+HTTPS enables WebGPU and browser clipboard APIs. If hosting under `/photostore/`, redirect
+`/photostore` to `/photostore/` and strip that prefix when proxying to the container. Relative
 asset URLs then work without rebuilding. For example, in an existing HTTPS NGINX server:
 
 ```nginx
-location = /photocraft { return 301 /photocraft/; }
-location /photocraft/ {
+location = /photostore { return 301 /photostore/; }
+location /photostore/ {
     proxy_pass http://127.0.0.1:8080/;
 }
 ```
@@ -78,8 +78,8 @@ Measured on the 0.2.x build (`packaging/web/package.sh`; gzip `-9`, Brotli quali
 
 | File | Raw | gzip | Brotli |
 |---|---|---|---|
-| `photocraft-web-<hash>_bg.wasm` | 19,680,726 bytes (18.8 MiB) | 8,177,260 (7.8 MiB) | 5,868,731 (5.6 MiB) |
-| `photocraft-web-<hash>.js` | about 160 KB | about 23 KB | about 20 KB |
+| `photostore-web-<hash>_bg.wasm` | 19,680,726 bytes (18.8 MiB) | 8,177,260 (7.8 MiB) | 5,868,731 (5.6 MiB) |
+| `photostore-web-<hash>.js` | about 160 KB | about 23 KB | about 20 KB |
 
 Per-file upload limits: Cloudflare Pages and Workers static assets reject any file over
 **25 MiB** (26,214,400 bytes). The wasm fits, and `packaging/web/package.sh` fails the build if
@@ -92,7 +92,7 @@ speed) plus `wasm-opt -Oz`.
 
 All URLs in `index.html` are relative (`public_url = "./"` in `apps/photocraft-web/Trunk.toml`),
 so the site works at a domain root (`https://example.com/`), under a prefix
-(`https://example.com/tools/photocraft/`) and from a CDN bucket. The asset names carry a content
+(`https://example.com/tools/photostore/`) and from a CDN bucket. The asset names carry a content
 hash, so they can be cached forever. Only `index.html` needs revalidation.
 
 ## Required server settings
@@ -107,7 +107,7 @@ hash, so they can be cached forever. Only `index.html` needs revalidation.
   `.js` files, and `no-cache` on `index.html`.
 - **HTTPS:** WebGPU (and the clipboard) only work in a secure context, which means `https://`
   or `http://localhost`. Over plain HTTP elsewhere, the app falls back to WebGL2.
-- **No special isolation headers:** PhotoCraft doesn't use `SharedArrayBuffer`, so it doesn't
+- **No special isolation headers:** PhotoStore doesn't use `SharedArrayBuffer`, so it doesn't
   need `Cross-Origin-Opener-Policy` or `Cross-Origin-Embedder-Policy`. If your site already sends
   COEP `require-corp`, also send `Cross-Origin-Resource-Policy: same-origin` (or `cross-origin`
   when the files live on a CDN) on the app's files.
@@ -115,7 +115,7 @@ hash, so they can be cached forever. Only `index.html` needs revalidation.
 nginx example:
 
 ```nginx
-location /photocraft/ {
+location /photostore/ {
     types { application/wasm wasm; text/javascript js; text/html html; }
     gzip on;
     gzip_types application/wasm text/javascript text/html;
@@ -165,8 +165,8 @@ fetches them with `fetch()`, so a Content Security Policy needs them allowed by 
 
 ```html
 <iframe
-  src="https://example.com/photocraft/"
-  title="PhotoCraft image editor"
+  src="https://example.com/photostore/"
+  title="PhotoStore image editor"
   style="width: 100%; height: 720px; border: 0;"
   allow="fullscreen; clipboard-read; clipboard-write"
   allowfullscreen>
@@ -186,7 +186,7 @@ fetches them with `fetch()`, so a Content Security Policy needs them allowed by 
 
 ## Renderer selection and fallback flags
 
-PhotoCraft renders with wgpu. It uses **WebGPU** when the browser has it and falls back to
+PhotoStore renders with wgpu. It uses **WebGPU** when the browser has it and falls back to
 **WebGL2** on its own. URL query flags override this, and they work on the iframe `src` too:
 
 | Flag | Effect |
@@ -195,6 +195,6 @@ PhotoCraft renders with wgpu. It uses **WebGPU** when the browser has it and fal
 | `?webgl` | Force the WebGL2 backend (useful when a WebGPU driver misbehaves) |
 | `?cpu` | Force the CPU canvas path (slowest, most compatible) |
 
-For example: `<iframe src="https://example.com/photocraft/?webgl" ...>`.
+For example: `<iframe src="https://example.com/photostore/?webgl" ...>`.
 
 A browser with neither WebGPU nor WebGL2 gets a message in place of the app.
