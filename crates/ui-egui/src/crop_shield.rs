@@ -2,7 +2,7 @@
 //! options", #1919): whether the area outside the crop box shows at all (Show Cropped Area, H),
 //! and the shield dimming it (Enable Crop Shield: Match Canvas or a custom colour, an opacity, and
 //! Auto Adjust Opacity, which lightens it while the box is dragged). Photoshop's defaults: all on,
-//! Match Canvas, 75 %. PhotoCraft always works like Photoshop's Classic Mode, so the menu has no
+//! Match Canvas, 75 %. PhotoStore always works like Photoshop's Classic Mode, so the menu has no
 //! Use Classic Mode or Auto Center Preview.
 //!
 //! The state lives in `ToolOptions::crop_shield` ([`CropShield`]), which `ui.inspect` reports and
@@ -12,7 +12,7 @@
 use egui::{Color32, Key, Modifiers};
 use serde::{Deserialize, Serialize};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::state::Tool;
 
 /// Photoshop's default shield opacity, percent.
@@ -84,23 +84,23 @@ pub fn fill(s: &CropShield, canvas: Color32, editing: bool) -> Option<Color32> {
 }
 
 /// The pasteboard colour the shield matches: Preferences › Interface's, else the theme's canvas.
-pub fn canvas_color(app: &PhotocraftApp, ctx: &egui::Context) -> Color32 {
+pub fn canvas_color(app: &PhotoStoreApp, ctx: &egui::Context) -> Color32 {
     crate::prefs_ui::pasteboard_color(app).unwrap_or_else(|| crate::theme::Tokens::get(ctx).canvas)
 }
 
 /// The shield over the pending crop box now ([`fill`]).
-pub fn current(app: &PhotocraftApp, ctx: &egui::Context) -> Option<Color32> {
+pub fn current(app: &PhotoStoreApp, ctx: &egui::Context) -> Option<Color32> {
     fill(&app.ui.tool_options.crop_shield, canvas_color(app, ctx), app.crop.drag.is_some())
 }
 
 /// Show Cropped Area is off with the Crop tool showing a box: nothing outside it shows.
-pub fn hides_outside(app: &PhotocraftApp) -> bool {
+pub fn hides_outside(app: &PhotoStoreApp) -> bool {
     app.ui.tool == Tool::Crop && app.ui.crop_rect.is_some() && !app.ui.tool_options.crop_shield.show_cropped_area
 }
 
 /// H with the Crop tool showing a box and no drag in progress toggles Show Cropped Area. Returns
 /// true when the key was used; otherwise H stays the Hand tool key.
-pub fn keys(app: &mut PhotocraftApp, ctx: &egui::Context) -> bool {
+pub fn keys(app: &mut PhotoStoreApp, ctx: &egui::Context) -> bool {
     if app.ui.tool != Tool::Crop || app.ui.crop_rect.is_none() || app.crop.drag.is_some() {
         return false;
     }
@@ -153,15 +153,15 @@ pub fn options_button(s: &mut CropShield, ui: &mut egui::Ui) -> bool {
     pick
 }
 
-/// Custom…: PhotoCraft's Color Picker on the custom shield colour; OK sets it
+/// Custom…: PhotoStore's Color Picker on the custom shield colour; OK sets it
 /// (`color_picker_ui::confirm`, target `cropShield`).
-pub fn pick_custom_color(app: &mut PhotocraftApp) -> u64 {
+pub fn pick_custom_color(app: &mut PhotoStoreApp) -> u64 {
     let rgb = app.ui.tool_options.crop_shield.custom_color.map(|v| v as f32 / 255.0);
     crate::color_picker_ui::open_for_target(app, "cropShield", "Color Picker (Crop Shield Color)", rgb)
 }
 
 /// The Color Picker's OK for the custom shield colour (`"#rrggbb"`).
-pub fn set_custom_color(app: &mut PhotocraftApp, hex: &str) -> Result<(), String> {
+pub fn set_custom_color(app: &mut PhotoStoreApp, hex: &str) -> Result<(), String> {
     let rgb = crate::color_picker_ui::parse_hex(hex).ok_or_else(|| format!("not a colour: {hex}"))?;
     let s = &mut app.ui.tool_options.crop_shield;
     s.custom_color = rgb.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
@@ -246,14 +246,14 @@ mod tests {
         assert_eq!(serde_json::to_value(ShieldColor::MatchCanvas).unwrap(), "matchCanvas");
     }
 
-    fn press_h(app: &mut PhotocraftApp) {
+    fn press_h(app: &mut PhotoStoreApp) {
         let ctx = egui::Context::default();
         ctx.input_mut(|i| i.events.push(egui::Event::Key { key: Key::H, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }));
         crate::shortcuts::handle(app, &ctx);
     }
 
-    fn crop_app() -> PhotocraftApp {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    fn crop_app() -> PhotoStoreApp {
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", serde_json::json!({"width": 200, "height": 120})).unwrap();
         app.ui.tool = Tool::Crop;
         crate::crop_ui::ensure_frame(&mut app);
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn h_stays_the_hand_key_without_a_crop_box() {
         // No document: no box, so H picks the Hand tool.
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.ui.tool = Tool::Crop;
         press_h(&mut app);
         assert_eq!(app.ui.tool, Tool::Hand);

@@ -4,8 +4,8 @@
 //! the panel turns the difference into one `tools.setBrush` call.
 
 use egui::{Color32, RichText, Sense, Stroke, pos2, vec2};
-use photocraft_engine::BrushSettings;
-use photocraft_engine::paint::{self, BrushPreset, Control, Dynamic, MAX_BRUSH_SIZE, MaskMode, Pattern, PatternStyle, TipShape};
+use photostore_engine::BrushSettings;
+use photostore_engine::paint::{self, BrushPreset, Control, Dynamic, MAX_BRUSH_SIZE, MaskMode, Pattern, PatternStyle, TipShape};
 
 use crate::brush_preview;
 use crate::theme::{self, Tokens};

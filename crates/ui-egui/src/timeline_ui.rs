@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::hash::{Hash, Hasher};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::theme::Tokens;
 
 /// Timeline panel view state.
@@ -68,7 +68,7 @@ impl std::fmt::Debug for TimelineUi {
     }
 }
 
-fn frame_thumbnails(app: &mut PhotocraftApp, ctx: &egui::Context, tl: &photocraft_doc::Timeline) -> (usize, Vec<Option<egui::TextureId>>) {
+fn frame_thumbnails(app: &mut PhotoStoreApp, ctx: &egui::Context, tl: &photostore_doc::Timeline) -> (usize, Vec<Option<egui::TextureId>>) {
     let Some(st) = app.session.active() else { return (0, Vec::new()) };
     let video = st.active_layer.and_then(|id| st.doc.layer(id)).and_then(|layer| layer.video.as_ref());
     let history = (st.history.past_len(), st.history.future_len());
@@ -77,7 +77,7 @@ fn frame_thumbnails(app: &mut PhotocraftApp, ctx: &egui::Context, tl: &photocraf
         st.doc.layers.iter().for_each(|layer| {
             (layer.id, layer.video.as_ref().map(|v| v.frames.len())).hash(&mut hasher);
         });
-        (matches!(tl.mode, photocraft_doc::TimelineMode::FrameAnimation), tl.duration, tl.frame_states.len(), tl.layer_ranges.len(), tl.frame_delays_ms.len()).hash(&mut hasher);
+        (matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation), tl.duration, tl.frame_states.len(), tl.layer_ranges.len(), tl.frame_delays_ms.len()).hash(&mut hasher);
         hasher.finish()
     };
     let content_changed = app.ui.timeline.thumb_last_history != Some(history)
@@ -112,8 +112,8 @@ fn frame_thumbnails(app: &mut PhotocraftApp, ctx: &egui::Context, tl: &photocraf
         } else {
             let mut snapshot = (*st.doc).clone();
             if let Some(timeline) = &mut snapshot.timeline { timeline.current = frame; }
-            photocraft_engine::sync_video(&mut snapshot);
-            let reduced = photocraft_compose::render_reduced(&snapshot, 64.min(snapshot.size.width.max(1)), 64.min(snapshot.size.height.max(1)));
+            photostore_engine::sync_video(&mut snapshot);
+            let reduced = photostore_compose::render_reduced(&snapshot, 64.min(snapshot.size.width.max(1)), 64.min(snapshot.size.height.max(1)));
             let pixels: Vec<u8> = reduced.px.iter().flat_map(|p| p.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)).collect();
             egui::ColorImage::from_rgba_unmultiplied([reduced.rect.width() as usize, reduced.rect.height() as usize], &pixels)
         };
@@ -126,7 +126,7 @@ fn frame_thumbnails(app: &mut PhotocraftApp, ctx: &egui::Context, tl: &photocraf
 }
 
 /// Menu checkmark for Window › Timeline.
-pub fn checked(app: &PhotocraftApp, id: &str) -> Option<bool> {
+pub fn checked(app: &PhotoStoreApp, id: &str) -> Option<bool> {
     (id == "window.panel.timeline").then_some(app.ui.timeline.open)
 }
 
@@ -136,7 +136,7 @@ pub fn handles(id: &str) -> bool {
 }
 
 /// Toggle the Timeline panel.
-pub fn menu(app: &mut PhotocraftApp, id: &str, _params: &Value) -> Option<Result<Value, String>> {
+pub fn menu(app: &mut PhotoStoreApp, id: &str, _params: &Value) -> Option<Result<Value, String>> {
     if id == "window.panel.timeline" {
         app.ui.timeline.open = !app.ui.timeline.open;
         return Some(Ok(json!({ "open": app.ui.timeline.open })));
@@ -145,7 +145,7 @@ pub fn menu(app: &mut PhotocraftApp, id: &str, _params: &Value) -> Option<Result
 }
 
 /// Render the Timeline panel.
-pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
+pub fn windows(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     if !app.ui.timeline.open {
         return;
     }
@@ -206,15 +206,15 @@ pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
             Some(tl) => {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(tl!("Mode")).color(t.text_dim));
-                    let frame_mode = matches!(tl.mode, photocraft_doc::TimelineMode::FrameAnimation);
+                    let frame_mode = matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation);
                     if ui.selectable_label(!frame_mode, tl!("Video Timeline")).clicked() { act = Some(("timeline.setMode", json!({"mode":"video"}))); }
                     if ui.selectable_label(frame_mode, tl!("Frame Animation")).clicked() { act = Some(("timeline.setMode", json!({"mode":"frameAnimation"}))); }
                     ui.separator();
-                    let loop_label = match tl.loop_mode { photocraft_doc::TimelineLoop::Once => tl!("Once"), photocraft_doc::TimelineLoop::Loop => tl!("Loop"), photocraft_doc::TimelineLoop::PingPong => tl!("Ping-pong") };
+                    let loop_label = match tl.loop_mode { photostore_doc::TimelineLoop::Once => tl!("Once"), photostore_doc::TimelineLoop::Loop => tl!("Loop"), photostore_doc::TimelineLoop::PingPong => tl!("Ping-pong") };
                     egui::ComboBox::from_id_salt("timeline-loop").selected_text(loop_label).show_ui(ui, |ui| {
-                        if ui.selectable_label(matches!(tl.loop_mode, photocraft_doc::TimelineLoop::Once), tl!("Once")).clicked() { act = Some(("timeline.setLoop", json!({"mode":"once"}))); }
-                        if ui.selectable_label(matches!(tl.loop_mode, photocraft_doc::TimelineLoop::Loop), tl!("Loop")).clicked() { act = Some(("timeline.setLoop", json!({"mode":"loop"}))); }
-                        if ui.selectable_label(matches!(tl.loop_mode, photocraft_doc::TimelineLoop::PingPong), tl!("Ping-pong")).clicked() { act = Some(("timeline.setLoop", json!({"mode":"pingPong"}))); }
+                        if ui.selectable_label(matches!(tl.loop_mode, photostore_doc::TimelineLoop::Once), tl!("Once")).clicked() { act = Some(("timeline.setLoop", json!({"mode":"once"}))); }
+                        if ui.selectable_label(matches!(tl.loop_mode, photostore_doc::TimelineLoop::Loop), tl!("Loop")).clicked() { act = Some(("timeline.setLoop", json!({"mode":"loop"}))); }
+                        if ui.selectable_label(matches!(tl.loop_mode, photostore_doc::TimelineLoop::PingPong), tl!("Ping-pong")).clicked() { act = Some(("timeline.setLoop", json!({"mode":"pingPong"}))); }
                     });
                     if ui.selectable_label(tl.onion_skin, tl!("Onion Skin")).clicked() { act = Some(("timeline.toggleOnionSkin", json!({}))); }
                 });
@@ -288,7 +288,7 @@ pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
                 painter.line_segment([egui::pos2(px, ruler.top()), egui::pos2(px, ruler.bottom())], egui::Stroke::new(2.0, t.accent));
                 if response.clicked() || response.dragged() { if let Some(pos) = response.interact_pointer_pos() { let f = (((pos.x - ruler.left()) / ruler.width()).clamp(0.0, 1.0) * tl.duration.saturating_sub(1) as f32).round() as u64; act = Some(("timeline.setFrame", json!({"frame":f}))); } }
                 ui.separator();
-                if matches!(tl.mode, photocraft_doc::TimelineMode::FrameAnimation) {
+                if matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation) {
                     ui.horizontal(|ui| {
                         if crate::widgets::secondary_button(ui, "+", 28.0).clicked() { act = Some(("timeline.insertFrame", json!({}))); }
                         if crate::widgets::secondary_button(ui, "⧉", 28.0).clicked() { act = Some(("timeline.duplicateFrame", json!({}))); }
@@ -331,7 +331,7 @@ pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(tl!("Layer tracks")).strong().color(t.text));
-                    if matches!(tl.mode, photocraft_doc::TimelineMode::FrameAnimation) && crate::widgets::secondary_button(ui, tl!("Make Frames From Layers"), 180.0).clicked() { act = Some(("timeline.makeFramesFromLayers", json!({}))); }
+                    if matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation) && crate::widgets::secondary_button(ui, tl!("Make Frames From Layers"), 180.0).clicked() { act = Some(("timeline.makeFramesFromLayers", json!({}))); }
                 });
                 egui::ScrollArea::vertical().max_height(130.0).show(ui, |ui| {
                     for (layer_id, name, video) in &layer_rows {
@@ -394,14 +394,14 @@ pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
     if app.ui.timeline.playing {
         if let Some(t) = app.session.active().and_then(|d| d.doc.timeline.clone()) {
             let now = ctx.input(|i| i.time);
-            let period = if matches!(t.mode, photocraft_doc::TimelineMode::FrameAnimation) { active_delay.or(animation_delay).map_or(1.0 / f64::from(t.fps.max(1.0)), |d| if d == 0 { 1.0 / f64::from(t.fps.max(1.0)) } else { f64::from(d) / 1000.0 }) } else { 1.0 / f64::from(t.fps.max(1.0)) };
+            let period = if matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation) { active_delay.or(animation_delay).map_or(1.0 / f64::from(t.fps.max(1.0)), |d| if d == 0 { 1.0 / f64::from(t.fps.max(1.0)) } else { f64::from(d) / 1000.0 }) } else { 1.0 / f64::from(t.fps.max(1.0)) };
             if now - app.ui.timeline.last_time >= period {
                 app.ui.timeline.last_time = now;
                 let last = t.work_end.saturating_sub(1).min(t.duration.saturating_sub(1));
                 let next = match t.loop_mode {
-                    photocraft_doc::TimelineLoop::Once => { if t.current >= last { app.ui.timeline.playing = false; t.current } else { t.current + 1 } }
-                    photocraft_doc::TimelineLoop::Loop => if t.current >= last { t.work_start } else { t.current + 1 },
-                    photocraft_doc::TimelineLoop::PingPong => { let direction = if app.ui.timeline.play_direction == 0 { 1 } else { app.ui.timeline.play_direction }; if t.current >= last { app.ui.timeline.play_direction = -1; t.current.saturating_sub(1) } else if t.current <= t.work_start { app.ui.timeline.play_direction = 1; t.current.saturating_add(1) } else if direction < 0 { t.current.saturating_sub(1) } else { t.current.saturating_add(1) } }
+                    photostore_doc::TimelineLoop::Once => { if t.current >= last { app.ui.timeline.playing = false; t.current } else { t.current + 1 } }
+                    photostore_doc::TimelineLoop::Loop => if t.current >= last { t.work_start } else { t.current + 1 },
+                    photostore_doc::TimelineLoop::PingPong => { let direction = if app.ui.timeline.play_direction == 0 { 1 } else { app.ui.timeline.play_direction }; if t.current >= last { app.ui.timeline.play_direction = -1; t.current.saturating_sub(1) } else if t.current <= t.work_start { app.ui.timeline.play_direction = 1; t.current.saturating_add(1) } else if direction < 0 { t.current.saturating_sub(1) } else { t.current.saturating_add(1) } }
                 };
                 let _ = app.run("timeline.setFrame", json!({ "frame": next as u64 }));
             }

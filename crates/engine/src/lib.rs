@@ -1,4 +1,4 @@
-//! The Photocraft engine façade: open documents, history, and the command registry.
+//! The PhotoStore engine façade: open documents, history, and the command registry.
 //!
 //! Every user-visible action is a command with a stable id (Photoshop-style, such as
 //! `layer.newAdjustmentLayer.invert`) and JSON parameters. Every frontend goes through the same
@@ -111,14 +111,14 @@ mod wia_cmds;
 
 use std::sync::Arc;
 
-use photocraft_doc::{Document, LayerId};
-use photocraft_ops::{History, LayerTarget};
+use photostore_doc::{Document, LayerId};
+use photostore_ops::{History, LayerTarget};
 use serde_json::Value;
 
 pub use commands::{CommandSpec, command_specs};
-pub use photocraft_doc as doc;
-pub use photocraft_paint as paint;
-pub use photocraft_paint::BrushSettings;
+pub use photostore_doc as doc;
+pub use photostore_paint as paint;
+pub use photostore_paint::BrushSettings;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -143,13 +143,13 @@ pub type Result<T> = std::result::Result<T, EngineError>;
 
 /// The pixels of a raster layer (typically one a command just created), as an error instead
 /// of a panic if the layer has none.
-pub(crate) fn pixels_mut(l: &mut photocraft_doc::Layer) -> Result<&mut photocraft_raster::Surface> {
+pub(crate) fn pixels_mut(l: &mut photostore_doc::Layer) -> Result<&mut photostore_raster::Surface> {
     let id = l.id;
     l.surface_mut().ok_or_else(|| EngineError::Other(format!("layer {id:?} has no pixels")))
 }
 
 /// The active document's active layer, for `enabled` predicates.
-pub(crate) fn active_layer_of(s: &Session) -> std::result::Result<&photocraft_doc::Layer, String> {
+pub(crate) fn active_layer_of(s: &Session) -> std::result::Result<&photostore_doc::Layer, String> {
     let d = s.active().ok_or("no document open")?;
     d.active_layer.and_then(|id| d.doc.layer(id)).ok_or_else(|| "no active layer".into())
 }
@@ -175,7 +175,7 @@ pub struct DocState {
     pub revision: u64,
     pub saved_revision: u64,
     /// Area changed by the latest revision (None = assume everything changed).
-    pub last_damage: Option<photocraft_geom::Rect>,
+    pub last_damage: Option<photostore_geom::Rect>,
     /// Coalescing key of the latest history step (see [`Session::execute`]'s `coalesce` param).
     pub coalesce: Option<String>,
     /// Channels panel: targeted channel and eye toggles (view state, not history).
@@ -245,17 +245,17 @@ impl DocState {
 pub struct ToolState {
     pub foreground: [f32; 4],
     pub background: [f32; 4],
-    pub brush: photocraft_paint::BrushSettings,
+    pub brush: photostore_paint::BrushSettings,
     /// Brush presets (built-ins plus user presets; see `brush.presets.*`).
-    pub presets: Vec<photocraft_paint::BrushPreset>,
+    pub presets: Vec<photostore_paint::BrushPreset>,
     /// Bumped whenever `presets` changes ([`Session::brush_presets_changed`]); the preset store
     /// syncs when it moves.
     pub presets_rev: u64,
     /// Mixer Brush paint carried between strokes.
-    pub mixer: photocraft_paint::mixer::MixerState,
+    pub mixer: photostore_paint::mixer::MixerState,
     /// The coalescing key of the running `tools.setBrush` gesture and the brush before it, so the
     /// gesture journals as one call ([`brush_cmds::coalesce_journal`]).
-    pub brush_gesture: Option<(String, photocraft_paint::BrushSettings)>,
+    pub brush_gesture: Option<(String, photostore_paint::BrushSettings)>,
     /// Name of the preset the current brush was last picked from. Kept across later edits (the
     /// preset stays "the current brush" so `brush.presets.update` can overwrite it); cleared when
     /// the brush is reset or the preset is gone.
@@ -295,11 +295,11 @@ impl Default for ToolState {
             foreground: [0.0, 0.0, 0.0, 1.0],
             background: [1.0, 1.0, 1.0, 1.0],
             // Photoshop's Brush tool starts at 10 % Smoothing.
-            brush: photocraft_paint::BrushSettings {
-                smoothing: photocraft_paint::brush::Smoothing { amount: 0.1, ..Default::default() },
+            brush: photostore_paint::BrushSettings {
+                smoothing: photostore_paint::brush::Smoothing { amount: 0.1, ..Default::default() },
                 ..Default::default()
             },
-            presets: photocraft_paint::presets::builtin(),
+            presets: photostore_paint::presets::builtin(),
             presets_rev: 0,
             mixer: Default::default(),
             brush_gesture: None,
@@ -323,16 +323,16 @@ pub struct Session {
     pub clipboard: Option<edit_cmds::Clip>,
     /// Layer › Layer Style › Copy Layer Style: effects, blend mode, fill opacity and the Advanced
     /// Blending switches.
-    pub style_clipboard: Option<(photocraft_doc::Effects, photocraft_color::BlendMode, f32, photocraft_doc::AdvancedBlending)>,
+    pub style_clipboard: Option<(photostore_doc::Effects, photostore_color::BlendMode, f32, photostore_doc::AdvancedBlending)>,
     /// Shape path context menu: copied vector fill and stroke styles.
-    pub path_fill_clipboard: Option<photocraft_doc::Fill>,
-    pub path_stroke_clipboard: Option<photocraft_doc::ShapeStroke>,
+    pub path_fill_clipboard: Option<photostore_doc::Fill>,
+    pub path_stroke_clipboard: Option<photostore_doc::ShapeStroke>,
     /// Colour management: proofing state, monitor profile, display transforms.
     pub color: color_cmds::ColorState,
     /// Open Edit Contents documents and the smart objects they update.
     pub smart_links: Vec<smart_cmds::SmartLink>,
     /// Type › Save Default Type Styles: character and paragraph style new type layers start from.
-    pub type_defaults: Option<(photocraft_doc::text::CharStyle, photocraft_doc::text::ParagraphStyle)>,
+    pub type_defaults: Option<(photostore_doc::text::CharStyle, photostore_doc::text::ParagraphStyle)>,
     /// Quick Mask Options (colour, opacity, colour indicates) used when entering Quick Mask.
     pub quick_mask_options: channel_cmds::QuickMaskOptions,
     /// Colour channel the running command may change (a single colour channel is targeted).
@@ -358,7 +358,7 @@ pub struct Session {
     /// Gate for every command the session runs, including the ones a command runs on its own
     /// behalf and `actions.play` steps. Untrusted sessions (MCP, the control channel) install
     /// the same check a top-level request sees. `None` runs everything, which is what a local
-    /// UI and `photocraft-cli run` do.
+    /// UI and `photostore-cli run` do.
     pub authorize: Option<fn(&str, &serde_json::Value) -> Result<()>>,
     /// Background jobs (see [`jobs`]).
     jobs: jobs::Jobs,
@@ -417,7 +417,7 @@ impl Session {
     pub fn add_document(&mut self, mut doc: Document, path: Option<String>) -> usize {
         // Persisted IDs can overlap the allocator, so check every replacement too.
         while self.docs.iter().any(|st| st.doc.id == doc.id) {
-            doc.id = photocraft_doc::DocId::fresh();
+            doc.id = photostore_doc::DocId::fresh();
         }
         let mut st = DocState::new(doc, path);
         st.history.max_states = self.prefs.get().performance.history_states.max(1) as usize;
@@ -528,7 +528,7 @@ impl Session {
         }
         st.coalesce = key;
         st.revision += 1;
-        st.last_damage = unchanged.then_some(photocraft_geom::Rect::EMPTY);
+        st.last_damage = unchanged.then_some(photostore_geom::Rect::EMPTY);
         Ok(r)
     }
 
@@ -547,18 +547,18 @@ impl Session {
         if clean {
             st.saved_revision = st.revision;
         }
-        st.last_damage = Some(photocraft_geom::Rect::EMPTY);
+        st.last_damage = Some(photostore_geom::Rect::EMPTY);
         Ok(())
     }
 
     /// Re-renders the pixels of type layers whose font arrived after they were drawn (the web
-    /// build fetches served fonts on demand, `photocraft_text::served`). The layers' model is
+    /// build fetches served fonts on demand, `photostore_text::served`). The layers' model is
     /// unchanged, so this is no history step and leaves a clean document clean. Unknown documents
     /// and layers are skipped. A document a background job is computing from must not move under
     /// it: its layers are returned, to try again later.
-    pub fn refresh_type_layers(&mut self, layers: &[(photocraft_doc::DocId, LayerId)]) -> Vec<(photocraft_doc::DocId, LayerId)> {
+    pub fn refresh_type_layers(&mut self, layers: &[(photostore_doc::DocId, LayerId)]) -> Vec<(photostore_doc::DocId, LayerId)> {
         let mut busy = Vec::new();
-        let mut docs: Vec<photocraft_doc::DocId> = Vec::new();
+        let mut docs: Vec<photostore_doc::DocId> = Vec::new();
         for (d, _) in layers {
             if !docs.contains(d) {
                 docs.push(*d);
@@ -575,7 +575,7 @@ impl Session {
             let mut doc = (*snapshot).clone();
             let mut changed = false;
             for (_, id) in mine {
-                if let Some(photocraft_doc::Layer { content: photocraft_doc::LayerContent::Text(t), .. }) = doc.layer_mut(*id) {
+                if let Some(photostore_doc::Layer { content: photostore_doc::LayerContent::Text(t), .. }) = doc.layer_mut(*id) {
                     type_cmds::refresh(&snapshot, t);
                     changed = true;
                 }

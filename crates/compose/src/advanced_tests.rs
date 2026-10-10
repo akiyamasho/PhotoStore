@@ -2,9 +2,9 @@
 //! hide effects) on small synthetic documents with hand-computed pixels, at 8, 16 and 32 bits.
 
 use super::*;
-use photocraft_color::{Color, ColorMode, PixelFormat, SampleType};
-use photocraft_doc::{Effect, FxCommon, FxPaint, Knockout, LayerMask, StrokeFx, StrokePosition};
-use photocraft_geom::Size;
+use photostore_color::{Color, ColorMode, PixelFormat, SampleType};
+use photostore_doc::{Effect, FxCommon, FxPaint, Knockout, LayerMask, StrokeFx, StrokePosition};
+use photostore_geom::Size;
 
 const E: f32 = 2.0 / 255.0;
 const DEPTHS: [SampleType; 3] = [SampleType::U8, SampleType::U16, SampleType::F32];
@@ -37,7 +37,7 @@ fn doc(depth: SampleType, background: bool) -> Document {
 
 fn solid(d: &Document, name: &str, r: Rect, c: [f32; 4]) -> Layer {
     let mut l = Layer::raster(name, d.pixel_format());
-    l.surface_mut().unwrap().fill_rect(r, &photocraft_raster::from_rgba(&d.pixel_format(), c));
+    l.surface_mut().unwrap().fill_rect(r, &photostore_raster::from_rgba(&d.pixel_format(), c));
     l
 }
 
@@ -166,8 +166,8 @@ fn knockout_follows_masks_and_transparency_shapes() {
         d.layers.push(green);
         let mut k = knocker(&d, Knockout::Deep);
         // A mask hiding x >= 3: only x < 3 knocks out.
-        let mut m = photocraft_raster::Surface::new(PixelFormat::new(ColorMode::Grayscale, depth, false));
-        m.fill_rect(Rect::new(0, 0, 3, 8), &photocraft_raster::from_rgba(&m.format(), [1.0; 4]));
+        let mut m = photostore_raster::Surface::new(PixelFormat::new(ColorMode::Grayscale, depth, false));
+        m.fill_rect(Rect::new(0, 0, 3, 8), &photostore_raster::from_rgba(&m.format(), [1.0; 4]));
         k.mask = Some(LayerMask { surface: m, enabled: true, linked: true, density: 1.0, feather: 0.0 });
         d.layers.push(k);
         check(&d, 1, 2, WHITE, "inside the mask");
@@ -279,8 +279,8 @@ fn layer_mask_hides_effects() {
         let mut l = solid(&d, "l", full(&d), BLUE);
         l.effects.items = vec![inside_stroke()];
         // The mask shows x < 8.
-        let mut m = photocraft_raster::Surface::new(PixelFormat::new(ColorMode::Grayscale, depth, false));
-        m.fill_rect(Rect::new(0, 0, 8, 8), &photocraft_raster::from_rgba(&m.format(), [1.0; 4]));
+        let mut m = photostore_raster::Surface::new(PixelFormat::new(ColorMode::Grayscale, depth, false));
+        m.fill_rect(Rect::new(0, 0, 8, 8), &photostore_raster::from_rgba(&m.format(), [1.0; 4]));
         l.mask = Some(LayerMask { surface: m, enabled: true, linked: true, density: 1.0, feather: 0.0 });
         d.layers.push(l);
         // Default: the stroke follows the masked shape, so it runs along the mask's edge.
@@ -303,7 +303,7 @@ fn layer_mask_hides_effects() {
 
 #[test]
 fn vector_mask_hides_effects() {
-    use photocraft_doc::{Path, Subpath, VectorMask};
+    use photostore_doc::{Path, Subpath, VectorMask};
     for depth in DEPTHS {
         let mut d = doc(depth, true);
         let mut l = solid(&d, "l", full(&d), BLUE);

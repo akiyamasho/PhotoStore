@@ -9,19 +9,19 @@ use std::time::{Duration, Instant};
 use egui::vec2;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
-use photocraft_engine::jobs::{JobId, Started};
+use photostore_engine::jobs::{JobId, Started};
 use serde_json::{Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 
-fn app_harness() -> Harness<'static, PhotocraftApp> {
+fn app_harness() -> Harness<'static, PhotoStoreApp> {
     let mut h = Harness::builder().with_size(vec2(1280.0, 800.0)).with_max_steps(8).build_eframe(|cc| {
-        PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
-        let mut s = photocraft_engine::Session::new();
+        PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
+        let mut s = photostore_engine::Session::new();
         s.execute("file.new", json!({"width": 320, "height": 240})).unwrap();
         s.execute("layer.new.layer", json!({})).unwrap();
         s.execute("edit.fill", json!({"color": "#3366cc"})).unwrap();
-        let mut app = PhotocraftApp::new(s, crate::Services::default());
+        let mut app = PhotoStoreApp::new(s, crate::Services::default());
         app.background_jobs = true;
         app
     });
@@ -30,7 +30,7 @@ fn app_harness() -> Harness<'static, PhotocraftApp> {
 }
 
 /// A fake document job that runs until `gate` opens (or it is cancelled), reporting 40 %.
-fn slow_job(app: &mut PhotocraftApp, gate: &Arc<AtomicBool>) -> JobId {
+fn slow_job(app: &mut PhotoStoreApp, gate: &Arc<AtomicBool>) -> JobId {
     let gate = gate.clone();
     let r = app
         .session
@@ -60,7 +60,7 @@ fn slow_job(app: &mut PhotocraftApp, gate: &Arc<AtomicBool>) -> JobId {
 }
 
 /// Step frames for `ms` of wall time; returns (frames, slowest frame in ms).
-fn frames_for(h: &mut Harness<'_, PhotocraftApp>, ms: u64) -> (u64, f64) {
+fn frames_for(h: &mut Harness<'_, PhotoStoreApp>, ms: u64) -> (u64, f64) {
     let t = Instant::now();
     let (mut n, mut worst) = (0, 0.0f64);
     while t.elapsed() < Duration::from_millis(ms) {
@@ -196,7 +196,7 @@ fn accepted_control_job_applies_after_its_dispatch_deadline() {
 }
 
 /// The control reply for `job`, once the app's frame loop has applied it.
-fn job_reply(h: &mut Harness<'static, PhotocraftApp>, job: JobId) -> Value {
+fn job_reply(h: &mut Harness<'static, PhotoStoreApp>, job: JobId) -> Value {
     let (tx, rx) = std::sync::mpsc::channel();
     h.state_mut().jobs.waiters.push((job, tx));
     let t = Instant::now();
@@ -215,13 +215,13 @@ fn job_reply(h: &mut Harness<'static, PhotocraftApp>, job: JobId) -> Value {
 fn menu_and_dialog_requests_wait_for_jobs_unless_asked_not_to() {
     let mut h = app_harness();
     let ctx = h.ctx.clone();
-    let control = |h: &mut Harness<'static, PhotocraftApp>, method: &str, params: Value| {
+    let control = |h: &mut Harness<'static, PhotoStoreApp>, method: &str, params: Value| {
         let (req, _rx) = crate::ControlRequest::new(method, params);
         crate::control::handle(h.state_mut(), &ctx, &req)
     };
     // The job a request started: deferred while waiting, `{job, pending}` at once otherwise.
     // Lets it land and checks the filter's result.
-    let land = |h: &mut Harness<'static, PhotocraftApp>, what: &str, outcome: crate::control::Outcome, wait: bool| {
+    let land = |h: &mut Harness<'static, PhotoStoreApp>, what: &str, outcome: crate::control::Outcome, wait: bool| {
         let job = match (outcome, wait) {
             (crate::control::Outcome::AfterJob(job), true) => job,
             (crate::control::Outcome::Done(v), false) => {
@@ -233,7 +233,7 @@ fn menu_and_dialog_requests_wait_for_jobs_unless_asked_not_to() {
         let reply = job_reply(h, job);
         assert!(reply["result"]["filter"].is_object(), "{what}: {reply}");
     };
-    let steps = |h: &Harness<'static, PhotocraftApp>| h.state().session.active().unwrap().history.past_len();
+    let steps = |h: &Harness<'static, PhotoStoreApp>| h.state().session.active().unwrap().history.past_len();
     for wait in [true, false] {
         let before = steps(&h);
         let outcome = control(&mut h, "ui.menu.invoke", json!({"id": "filter.blur.blurMore", "wait": wait}));
@@ -248,18 +248,18 @@ fn menu_and_dialog_requests_wait_for_jobs_unless_asked_not_to() {
 }
 
 fn psd_bytes() -> Vec<u8> {
-    let mut s = photocraft_engine::Session::new();
+    let mut s = photostore_engine::Session::new();
     s.execute("file.new", json!({"width": 64, "height": 48})).unwrap();
     s.execute("layer.new.layer", json!({})).unwrap();
     let doc = (*s.active().unwrap().doc).clone();
-    photocraft_io::export(&doc, "x.psd", &Default::default()).unwrap().bytes
+    photostore_io::export(&doc, "x.psd", &Default::default()).unwrap().bytes
 }
 
 #[test]
 fn files_open_in_the_background_with_a_tab_and_cancel_closes_it() {
     let mut h = app_harness();
     let bytes = psd_bytes();
-    h.state_mut().open_file("/tmp/photocraft-test/bg.psd", &bytes).unwrap();
+    h.state_mut().open_file("/tmp/photostore-test/bg.psd", &bytes).unwrap();
     // The tab is there before the document.
     assert_eq!(h.state().jobs.opens.len(), 1);
     assert_eq!(h.state().session.documents().len(), 1);
@@ -270,11 +270,11 @@ fn files_open_in_the_background_with_a_tab_and_cancel_closes_it() {
     h.run_steps(2);
     let st = h.state().session.active().unwrap();
     assert_eq!(st.doc.size.width, 64);
-    assert_eq!(st.path.as_deref(), Some("/tmp/photocraft-test/bg.psd"));
-    assert_eq!(h.state().ui.recent_files.first().map(String::as_str), Some("/tmp/photocraft-test/bg.psd"));
+    assert_eq!(st.path.as_deref(), Some("/tmp/photostore-test/bg.psd"));
+    assert_eq!(h.state().ui.recent_files.first().map(String::as_str), Some("/tmp/photostore-test/bg.psd"));
 
     // Cancel: the half-open tab closes, no document is added.
-    h.state_mut().open_file("/tmp/photocraft-test/bg2.psd", &bytes).unwrap();
+    h.state_mut().open_file("/tmp/photostore-test/bg2.psd", &bytes).unwrap();
     let job = h.state().jobs.opens[0].job;
     crate::jobs_ui::cancel(h.state_mut(), job);
     h.run_steps(3);
@@ -286,7 +286,7 @@ fn files_open_in_the_background_with_a_tab_and_cancel_closes_it() {
 #[test]
 fn templates_open_untitled_in_the_background() {
     let mut h = app_harness();
-    h.state_mut().open_file("/tmp/photocraft-test/card.psdt", &psd_bytes()).unwrap();
+    h.state_mut().open_file("/tmp/photostore-test/card.psdt", &psd_bytes()).unwrap();
     assert_eq!(h.state().jobs.opens[0].name, "Untitled-1");
     let t = Instant::now();
     while !h.state().jobs.opens.is_empty() && t.elapsed() < Duration::from_secs(30) {
@@ -295,7 +295,7 @@ fn templates_open_untitled_in_the_background() {
     h.run_steps(2);
     let st = h.state().session.active().unwrap();
     assert_eq!((st.doc.name.as_str(), st.path.as_deref()), ("Untitled-1", None));
-    assert_eq!(h.state().ui.recent_files.first().map(String::as_str), Some("/tmp/photocraft-test/card.psdt"));
+    assert_eq!(h.state().ui.recent_files.first().map(String::as_str), Some("/tmp/photostore-test/card.psdt"));
 }
 
 /// Gates for a fake save: it encodes until `encode` opens and writes until `write` opens
@@ -343,11 +343,11 @@ impl Gates {
     }
 }
 
-fn noticed(app: &PhotocraftApp, text: &str) -> bool {
+fn noticed(app: &PhotoStoreApp, text: &str) -> bool {
     app.ui.notices.iter().any(|n| n.title.contains(text) || n.lines.iter().any(|l| l.contains(text)))
 }
 
-fn step_until(h: &mut Harness<'_, PhotocraftApp>, done: impl Fn(&PhotocraftApp) -> bool) {
+fn step_until(h: &mut Harness<'_, PhotoStoreApp>, done: impl Fn(&PhotoStoreApp) -> bool) {
     let t = Instant::now();
     while !done(h.state()) && t.elapsed() < Duration::from_secs(30) {
         h.step();
@@ -360,7 +360,7 @@ fn saves_run_in_the_background_and_are_recorded_when_they_end() {
     let mut h = app_harness();
     let gates = Gates { write: Arc::new(AtomicBool::new(true)), ..Gates::default() };
     h.state_mut().services.save_file = Some(gates.save(None));
-    let r = h.state_mut().save_as(Some("/tmp/photocraft-test/big.psd".into())).unwrap();
+    let r = h.state_mut().save_as(Some("/tmp/photostore-test/big.psd".into())).unwrap();
     assert_eq!(r["pending"], true);
     assert_eq!(r["job"].as_u64(), h.state().jobs.saves.first().map(|s| s.job.0), "control clients get the job to wait on");
     assert!(h.state().saving());
@@ -377,10 +377,10 @@ fn saves_run_in_the_background_and_are_recorded_when_they_end() {
 
     gates.encode.store(true, Ordering::Relaxed);
     step_until(&mut h, |a| !a.saving());
-    assert_eq!(gates.written(), ["/tmp/photocraft-test/big.psd"]);
+    assert_eq!(gates.written(), ["/tmp/photostore-test/big.psd"]);
     let st = h.state().session.active().unwrap();
     assert!(!st.is_dirty());
-    assert_eq!(st.path.as_deref(), Some("/tmp/photocraft-test/big.psd"));
+    assert_eq!(st.path.as_deref(), Some("/tmp/photostore-test/big.psd"));
     assert_eq!(st.doc.name, "big.psd", "the document takes the saved file's name, as a synchronous Save As does");
     assert_eq!(h.state().ui.status, "Saved big.psd: a warning");
     assert!(noticed(h.state(), "a warning"), "the export warnings are shown");
@@ -392,7 +392,7 @@ fn a_failed_save_or_one_cancelled_while_encoding_leaves_the_document_unsaved() {
     let mut h = app_harness();
     let gates = Gates::open();
     h.state_mut().services.save_file = Some(gates.save(Some("disk full")));
-    h.state_mut().save_as(Some("/tmp/photocraft-test/a.psd".into())).unwrap();
+    h.state_mut().save_as(Some("/tmp/photostore-test/a.psd".into())).unwrap();
     step_until(&mut h, |a| !a.saving());
     let st = h.state().session.active().unwrap();
     assert!(st.is_dirty() && st.path.is_none());
@@ -400,7 +400,7 @@ fn a_failed_save_or_one_cancelled_while_encoding_leaves_the_document_unsaved() {
 
     gates.encode.store(false, Ordering::Relaxed);
     h.state_mut().services.save_file = Some(gates.save(None));
-    h.state_mut().save_as(Some("/tmp/photocraft-test/b.psd".into())).unwrap();
+    h.state_mut().save_as(Some("/tmp/photostore-test/b.psd".into())).unwrap();
     h.run_steps(2);
     h.key_press(egui::Key::Escape);
     step_until(&mut h, |a| !a.saving());
@@ -411,7 +411,7 @@ fn a_failed_save_or_one_cancelled_while_encoding_leaves_the_document_unsaved() {
 }
 
 /// Step until the save in `h` has started writing.
-fn until_writing(h: &mut Harness<'_, PhotocraftApp>) {
+fn until_writing(h: &mut Harness<'_, PhotoStoreApp>) {
     let t = Instant::now();
     while h.state().session.jobs().first().is_none_or(|j| j.message != "Writing") && t.elapsed() < Duration::from_secs(30) {
         h.step();
@@ -423,7 +423,7 @@ fn a_save_that_has_started_writing_cannot_be_cancelled() {
     let mut h = app_harness();
     let gates = Gates { encode: Arc::new(AtomicBool::new(true)), ..Gates::default() };
     h.state_mut().services.save_file = Some(gates.save(None));
-    h.state_mut().save_as(Some("/tmp/photocraft-test/w.psd".into())).unwrap();
+    h.state_mut().save_as(Some("/tmp/photostore-test/w.psd".into())).unwrap();
     until_writing(&mut h);
     let job = h.state().jobs.saves[0].job;
     crate::jobs_ui::cancel(h.state_mut(), job);
@@ -434,12 +434,12 @@ fn a_save_that_has_started_writing_cannot_be_cancelled() {
 
     gates.write.store(true, Ordering::Relaxed);
     step_until(&mut h, |a| !a.saving());
-    assert_eq!(gates.written(), ["/tmp/photocraft-test/w.psd"]);
+    assert_eq!(gates.written(), ["/tmp/photostore-test/w.psd"]);
     assert!(!h.state().session.active().unwrap().is_dirty(), "the written save is recorded");
 }
 
 /// One frame with the window's close button pressed; whether the guard cancelled the close.
-fn press_window_close(app: &mut PhotocraftApp) -> bool {
+fn press_window_close(app: &mut PhotoStoreApp) -> bool {
     let mut info = egui::ViewportInfo::default();
     info.events.push(egui::ViewportEvent::Close);
     let mut input = egui::RawInput::default();
@@ -450,7 +450,7 @@ fn press_window_close(app: &mut PhotocraftApp) -> bool {
 }
 
 /// A clean document (so the close prompt has nothing to ask) saved as a copy in the background.
-fn save_a_copy(h: &mut Harness<'static, PhotocraftApp>, gates: &Gates, path: &str) {
+fn save_a_copy(h: &mut Harness<'static, PhotoStoreApp>, gates: &Gates, path: &str) {
     h.state_mut().services.save_file = Some(gates.save(None));
     let st = h.state_mut().session.active_mut().unwrap();
     st.saved_revision = st.revision;
@@ -462,13 +462,13 @@ fn save_a_copy(h: &mut Harness<'static, PhotocraftApp>, gates: &Gates, path: &st
 fn quitting_waits_for_a_background_save_to_finish() {
     let mut h = app_harness();
     let gates = Gates { write: Arc::new(AtomicBool::new(true)), ..Gates::default() };
-    save_a_copy(&mut h, &gates, "/tmp/photocraft-test/copy.psd");
+    save_a_copy(&mut h, &gates, "/tmp/photostore-test/copy.psd");
     assert!(press_window_close(h.state_mut()), "the close waits for the save");
     assert!(h.state().jobs.close_after_saves);
 
     gates.encode.store(true, Ordering::Relaxed);
     step_until(&mut h, |a| !a.saving());
-    assert_eq!(gates.written(), ["/tmp/photocraft-test/copy.psd"]);
+    assert_eq!(gates.written(), ["/tmp/photostore-test/copy.psd"]);
     assert!(!h.state().jobs.close_after_saves, "the close is repeated once the save ends");
 }
 
@@ -479,7 +479,7 @@ fn a_failed_save_does_not_close_the_window_over_its_error() {
     h.state_mut().services.save_file = Some(gates.save(Some("disk full")));
     let st = h.state_mut().session.active_mut().unwrap();
     st.saved_revision = st.revision;
-    h.state_mut().write_document("/tmp/photocraft-test/copy.psd".into(), &crate::ExportSettings::default(), true).unwrap();
+    h.state_mut().write_document("/tmp/photostore-test/copy.psd".into(), &crate::ExportSettings::default(), true).unwrap();
     assert!(press_window_close(h.state_mut()));
     gates.encode.store(true, Ordering::Relaxed);
     step_until(&mut h, |a| !a.saving());
@@ -504,7 +504,7 @@ fn a_cancelled_save_still_counts_until_its_worker_returns() {
     }));
     let st = h.state_mut().session.active_mut().unwrap();
     st.saved_revision = st.revision;
-    h.state_mut().write_document("/tmp/photocraft-test/c.psd".into(), &crate::ExportSettings::default(), true).unwrap();
+    h.state_mut().write_document("/tmp/photostore-test/c.psd".into(), &crate::ExportSettings::default(), true).unwrap();
     while !encode.load(Ordering::Relaxed) {
         std::thread::sleep(Duration::from_millis(1));
     }
@@ -515,7 +515,7 @@ fn a_cancelled_save_still_counts_until_its_worker_returns() {
     assert!(h.state().saving(), "but its worker is still running");
     assert!(press_window_close(h.state_mut()), "quitting waits for the worker");
     assert!(
-        h.state_mut().save_as(Some("/tmp/photocraft-test/c.psd".into())).unwrap_err().contains("still running"),
+        h.state_mut().save_as(Some("/tmp/photostore-test/c.psd".into())).unwrap_err().contains("still running"),
         "a second save to the same file waits for it too"
     );
 

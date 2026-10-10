@@ -2,33 +2,33 @@
 //! (eye toggles; double-click a filter to re-open its dialog with the recorded parameters).
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
-use photocraft_doc::{Layer, LayerContent, SmartObject, SmartSource};
+use photostore_doc::{Layer, LayerContent, SmartObject, SmartSource};
 use serde_json::{Value, json};
 
 use crate::theme::Tokens;
-use crate::{PhotocraftApp, icons};
+use crate::{PhotoStoreApp, icons};
 
-fn run_status(app: &mut PhotocraftApp, id: &str, params: Value) {
+fn run_status(app: &mut PhotoStoreApp, id: &str, params: Value) {
     if let Err(e) = crate::menus::invoke(app, &egui::Context::default(), id, params) {
         app.ui.status = e;
         app.ui.status_error = true;
     }
 }
 
-fn smart_button(app: &mut PhotocraftApp, ui: &mut egui::Ui, layer: u64, label: &str, id: &str) -> bool {
+fn smart_button(app: &mut PhotoStoreApp, ui: &mut egui::Ui, layer: u64, label: &str, id: &str) -> bool {
     let enabled = crate::menus::is_enabled(app, id);
     ui.add_enabled(enabled, egui::Button::new(label)).clicked()
         .then(|| run_status(app, id, json!({"layer": layer}))).is_some()
 }
 
-fn filter_enabled(app: &PhotocraftApp, id: &str, layer: u64) -> bool {
+fn filter_enabled(app: &PhotoStoreApp, id: &str, layer: u64) -> bool {
     let params = json!({"layer": layer});
     app.session.is_enabled_with(id, &params) || crate::menus::is_enabled(app, id)
 }
 
 /// Route Smart Object commands that require a path through the app's asynchronous picker.
 /// Returns `None` for commands that can be sent directly to the command registry.
-pub fn invoke_file_action(app: &mut PhotocraftApp, id: &str, layer: u64) -> Option<Result<Value, String>> {
+pub fn invoke_file_action(app: &mut PhotoStoreApp, id: &str, layer: u64) -> Option<Result<Value, String>> {
     let command = id.to_string();
     match id {
         "layer.smartObjects.replaceContents" | "layer.smartObjects.relinkToFile" => Some(app.pick_file_bytes_filtered(
@@ -44,7 +44,7 @@ pub fn invoke_file_action(app: &mut PhotocraftApp, id: &str, layer: u64) -> Opti
 
 /// Smart Object Properties controls. File based commands use the same asynchronous native picker
 /// as the rest of the app; the command itself still receives the selected path and layer id.
-pub fn properties(app: &mut PhotocraftApp, ui: &mut egui::Ui, layer: &Layer) {
+pub fn properties(app: &mut PhotoStoreApp, ui: &mut egui::Ui, layer: &Layer) {
     let LayerContent::Smart(sm) = &layer.content else { return };
     if !crate::props_layout::section(ui, "smart-object", tl!("Smart Object")) {
         return;
@@ -128,20 +128,20 @@ pub fn thumb_badge(ui: &egui::Ui, l: &Layer, thumb: Rect) {
 }
 
 /// The display name of a smart filter (its command's label without the ellipsis). A Photoshop
-/// filter PhotoCraft doesn't implement shows its own name and is marked as kept as is.
-fn filter_label(f: &photocraft_doc::SmartFilter) -> String {
+/// filter PhotoStore doesn't implement shows its own name and is marked as kept as is.
+fn filter_label(f: &photostore_doc::SmartFilter) -> String {
     let command = f.command.as_str();
-    if command == photocraft_engine::smart_cmds::UNSUPPORTED_FILTER {
+    if command == photostore_engine::smart_cmds::UNSUPPORTED_FILTER {
         let name = f.params.get("name").and_then(Value::as_str).unwrap_or("Smart filter");
         return format!("{} (kept, not editable)", name.trim_end_matches("...").trim_end_matches('…'));
     }
-    photocraft_engine::commands::find(command)
+    photostore_engine::commands::find(command)
         .map_or_else(|| command.rsplit('.').next().unwrap_or(command).to_string(), |c| tl!(c.label).trim_end_matches('…').to_string())
 }
 
 /// Smart Filters header + one row per filter (top filter first, as in Photoshop) under a smart
 /// layer. Edits are queued in `actions` as engine commands.
-pub fn filter_rows(app: &mut PhotocraftApp, ui: &mut egui::Ui, l: &Layer, depth: usize, actions: &mut Vec<(String, Value)>) {
+pub fn filter_rows(app: &mut PhotoStoreApp, ui: &mut egui::Ui, l: &Layer, depth: usize, actions: &mut Vec<(String, Value)>) {
     let LayerContent::Smart(sm) = &l.content else { return };
     if sm.smart_filters.is_empty() {
         return;
@@ -257,7 +257,7 @@ pub fn filter_rows(app: &mut PhotocraftApp, ui: &mut egui::Ui, l: &Layer, depth:
                     actions.push(("layer.smartFilter.blendingOptions".into(), json!({"layer": l.id.0, "index": index, "opacity": opacity / 100.0})));
                 }
                 ui.menu_button(tl!("Blend Mode"), |ui| {
-                    for blend in photocraft_color::BlendMode::layer_modes() {
+                    for blend in photostore_color::BlendMode::layer_modes() {
                         if ui.button(tl!(blend.label())).clicked() {
                             actions.push(("layer.smartFilter.blendingOptions".into(), json!({"layer": l.id.0, "index": index, "blend": blend.label()})));
                             ui.close();
@@ -284,11 +284,11 @@ pub fn filter_rows(app: &mut PhotocraftApp, ui: &mut egui::Ui, l: &Layer, depth:
 
 /// Re-opens a smart filter's dialog with its recorded parameters; OK runs
 /// `layer.smartFilter.setParams` instead of adding another filter (see `dialogs::confirm`).
-pub fn open_editor(app: &mut PhotocraftApp, ctx: &egui::Context, layer: u64, sm: &SmartObject, index: usize) {
+pub fn open_editor(app: &mut PhotoStoreApp, ctx: &egui::Context, layer: u64, sm: &SmartObject, index: usize) {
     let Some(f) = sm.smart_filters.get(index) else { return };
     // Camera Raw has its own full-window dialog rather than a generic parameter form.
-    if f.command == photocraft_engine::lens_cmds::RAW {
-        if let Err(e) = crate::camera_raw_ui::open_smart_filter(app, ctx, photocraft_doc::LayerId(layer), index) {
+    if f.command == photostore_engine::lens_cmds::RAW {
+        if let Err(e) = crate::camera_raw_ui::open_smart_filter(app, ctx, photostore_doc::LayerId(layer), index) {
             app.ui.status = e;
             app.ui.status_error = true;
         }

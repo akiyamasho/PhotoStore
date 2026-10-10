@@ -1,5 +1,5 @@
 use super::*;
-use photocraft_doc::LayerId;
+use photostore_doc::LayerId;
 use serde_json::json;
 
 fn session() -> Session {
@@ -59,7 +59,7 @@ fn scrub_keeps_content_a_raster() {
 fn write_png(path: &str, w: u32, h: u32, color: &str) {
     let mut s = Session::new();
     s.execute("file.new", json!({"width": w, "height": h, "background": color})).unwrap();
-    let bytes = photocraft_io::export(&s.active().unwrap().doc, "png", &photocraft_io::ExportOptions::default()).unwrap().bytes;
+    let bytes = photostore_io::export(&s.active().unwrap().doc, "png", &photostore_io::ExportOptions::default()).unwrap().bytes;
     std::fs::write(path, bytes).unwrap();
 }
 
@@ -169,7 +169,7 @@ fn edits_to_a_frame_survive_scrubbing_and_render() {
     s.execute("file.export.renderVideo", json!({"dir": out, "format": "png"})).unwrap();
     let stem = s.active().unwrap().doc.name.rsplit_once('.').map_or(s.active().unwrap().doc.name.clone(), |(a, _)| a.to_string());
     let f1 = std::fs::read(format!("{out}/{stem}_0001.png")).unwrap();
-    let doc = photocraft_io::import("f1.png", &f1).unwrap().document;
+    let doc = photostore_io::import("f1.png", &f1).unwrap().document;
     let flat = crate::file_cmds::flattened(&doc, doc.pixel_format());
     let q = flat.pixel(2, 2);
     assert!(q[2] > 0.99 && q[0] < 0.01, "rendered frame 1 is blue: {q:?}");

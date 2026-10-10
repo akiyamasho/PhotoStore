@@ -4,15 +4,15 @@
 use egui::{Rect, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
-use photocraft_doc::{Layer, LayerContent};
+use photostore_doc::{Layer, LayerContent};
 use serde_json::json;
 
 use super::*;
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 
 /// A document with one layer of each kind; returns the session and the ids by kind.
-fn kinds() -> (photocraft_engine::Session, Vec<(&'static str, u64)>) {
-    let mut s = photocraft_engine::Session::new();
+fn kinds() -> (photostore_engine::Session, Vec<(&'static str, u64)>) {
+    let mut s = photostore_engine::Session::new();
     s.execute("file.new", json!({"width": 400, "height": 300})).unwrap();
     let id = |v: serde_json::Value| v["layer"].as_u64().unwrap();
     let pixel = id(s.execute("layer.new.layer", json!({"name": "Paint"})).unwrap());
@@ -24,33 +24,33 @@ fn kinds() -> (photocraft_engine::Session, Vec<(&'static str, u64)>) {
     (s, vec![("pixel", pixel), ("shape", shape), ("type", ty)])
 }
 
-fn layer_of(app: &PhotocraftApp, id: u64) -> Layer {
-    app.session.active().unwrap().doc.layer(photocraft_doc::LayerId(id)).unwrap().clone()
+fn layer_of(app: &PhotoStoreApp, id: u64) -> Layer {
+    app.session.active().unwrap().doc.layer(photostore_doc::LayerId(id)).unwrap().clone()
 }
 
 /// Pro theme with only the Properties group expanded (it then fills the column).
-fn harness(session: photocraft_engine::Session, ppp: f32, dock_width: f32) -> Harness<'static, PhotocraftApp> {
+fn harness(session: photostore_engine::Session, ppp: f32, dock_width: f32) -> Harness<'static, PhotoStoreApp> {
     let mut h = Harness::builder().with_size(vec2(1440.0, 1600.0)).with_pixels_per_point(ppp).with_max_steps(64).build_eframe(move |cc| {
-        PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
-        PhotocraftApp::new(session, crate::Services::default())
+        PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
+        PhotoStoreApp::new(session, crate::Services::default())
     });
     set(&mut h, json!({"dockWidth": dock_width, "dock": {"collapsed": ["color", "navigator", "history", "layers"]}}));
     h
 }
 
-fn set(h: &mut Harness<'static, PhotocraftApp>, p: serde_json::Value) {
+fn set(h: &mut Harness<'static, PhotoStoreApp>, p: serde_json::Value) {
     let ctx = h.ctx.clone();
     let (req, _rx) = crate::control::ControlRequest::new("ui.set", p);
     crate::control::handle(h.state_mut(), &ctx, &req);
     h.run_steps(8);
 }
 
-fn select(h: &mut Harness<'static, PhotocraftApp>, id: u64) {
+fn select(h: &mut Harness<'static, PhotoStoreApp>, id: u64) {
     h.state_mut().run("layer.select", json!({"layer": id})).unwrap();
     h.run_steps(8);
 }
 
-fn headers(h: &Harness<'_, PhotocraftApp>) -> Vec<(String, Rect)> {
+fn headers(h: &Harness<'_, PhotoStoreApp>) -> Vec<(String, Rect)> {
     sections_drawn(&h.ctx)
 }
 
@@ -58,7 +58,7 @@ fn headers(h: &Harness<'_, PhotocraftApp>) -> Vec<(String, Rect)> {
 fn quick_actions_fit_the_layer_kind() {
     let ids = |c: &LayerContent| quick_actions(c).iter().map(|(_, id)| *id).collect::<Vec<_>>();
     let (s, layers) = kinds();
-    let app = PhotocraftApp::new(s, crate::Services::default());
+    let app = PhotoStoreApp::new(s, crate::Services::default());
     for (kind, id) in layers {
         let l = layer_of(&app, id);
         let all = ids(&l.content);
@@ -76,7 +76,7 @@ fn quick_actions_fit_the_layer_kind() {
     }
     let ty = app.session.active().unwrap().doc.layers.iter().find(|l| matches!(l.content, LayerContent::Text(_))).unwrap().content.clone();
     assert_eq!(ids(&ty), ["type.convertToShape", "type.convertToParagraphText", "type.convertToPointText", "type.warpText", "type.rasterizeTypeLayer"]);
-    assert!(ids(&LayerContent::Adjustment(photocraft_doc::Adjustment::Invert)).is_empty());
+    assert!(ids(&LayerContent::Adjustment(photostore_doc::Adjustment::Invert)).is_empty());
 }
 
 #[test]
@@ -190,8 +190,8 @@ fn layers_opacity_and_fill_rows_keep_a_gap() {
     for dw in [250.0, 520.0] {
         let (s, layers) = kinds();
         let mut h = Harness::builder().with_size(vec2(1440.0, 1000.0)).with_max_steps(64).build_eframe(move |cc| {
-            PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
-            PhotocraftApp::new(s, crate::Services::default())
+            PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
+            PhotoStoreApp::new(s, crate::Services::default())
         });
         set(&mut h, json!({"dockWidth": dw}));
         select(&mut h, layers[0].1);
@@ -240,8 +240,8 @@ fn layers_opacity_and_fill_share_one_right_column() {
     for theme in ["pro", "studioLight"] {
         let (s, layers) = kinds();
         let mut h = Harness::builder().with_size(vec2(1440.0, 1000.0)).with_max_steps(64).build_eframe(move |cc| {
-            PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
-            PhotocraftApp::new(s, crate::Services::default())
+            PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
+            PhotoStoreApp::new(s, crate::Services::default())
         });
         set(&mut h, json!({"theme": theme}));
         select(&mut h, layers[0].1);

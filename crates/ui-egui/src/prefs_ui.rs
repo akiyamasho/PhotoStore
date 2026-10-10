@@ -3,22 +3,22 @@
 //! [`crate::Services`], applying the interface theme, autosave and crash recovery, and the
 //! history log.
 //!
-//! The values live in the engine ([`photocraft_engine::prefs::Preferences`], so agents read and
+//! The values live in the engine ([`photostore_engine::prefs::Preferences`], so agents read and
 //! change them with `prefs.get` / `prefs.set`); this module only edits a working copy in a dialog
 //! and commits it with those commands on Apply or OK.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use egui::{Color32, RichText, Sense, vec2};
-use photocraft_doc::DocId;
-use photocraft_engine::jobs::{JobEvent, JobId, JobOutcome, Started};
+use photostore_doc::DocId;
+use photostore_engine::jobs::{JobEvent, JobId, JobOutcome, Started};
 #[cfg(test)]
-use photocraft_engine::prefs::Theme;
-use photocraft_engine::prefs::{self, AppearanceMode, DarkTheme, LightTheme, SECTIONS};
-use photocraft_engine::snap::{SnapLine, SnapTargets};
+use photostore_engine::prefs::Theme;
+use photostore_engine::prefs::{self, AppearanceMode, DarkTheme, LightTheme, SECTIONS};
+use photostore_engine::snap::{SnapLine, SnapTargets};
 use serde_json::{Map, Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::state::DialogKind;
 use crate::theme::{ThemeKind, Tokens};
 
@@ -51,7 +51,7 @@ pub struct Runtime {
 }
 
 /// The GPU canvas colours from Preferences › Transparency & Gamut.
-pub fn canvas_style(app: &PhotocraftApp) -> crate::gpu_canvas::CanvasStyle {
+pub fn canvas_style(app: &PhotoStoreApp) -> crate::gpu_canvas::CanvasStyle {
     let t = &app.session.prefs().transparency_and_gamut;
     let [l, d] = t.colors();
     let f = |c: [u8; 3]| c.map(|v| v as f32 / 255.0);
@@ -66,7 +66,7 @@ pub fn canvas_style(app: &PhotocraftApp) -> crate::gpu_canvas::CanvasStyle {
 }
 
 /// Pasteboard colour from Preferences › Interface (`None` = the theme's default canvas).
-pub fn pasteboard_color(app: &PhotocraftApp) -> Option<Color32> {
+pub fn pasteboard_color(app: &PhotoStoreApp) -> Option<Color32> {
     use prefs::CanvasColor;
     let i = &app.session.prefs().interface;
     Some(match i.canvas_color {
@@ -102,7 +102,7 @@ fn selected_theme(interface: &prefs::Interface, system: Option<egui::Theme>) -> 
     }
 }
 
-pub(crate) fn cycle_appearance(app: &mut PhotocraftApp, ctx: &egui::Context) {
+pub(crate) fn cycle_appearance(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     let next = match app.session.prefs().interface.appearance_mode {
         AppearanceMode::Auto => AppearanceMode::Light,
         AppearanceMode::Light => AppearanceMode::Dark,
@@ -118,14 +118,14 @@ pub(crate) fn cycle_appearance(app: &mut PhotocraftApp, ctx: &egui::Context) {
     }
 }
 
-fn system_theme(app: &PhotocraftApp, ctx: &egui::Context) -> Option<egui::Theme> {
+fn system_theme(app: &PhotoStoreApp, ctx: &egui::Context) -> Option<egui::Theme> {
     app.services.system_theme.as_ref().and_then(|read| read(ctx)).or_else(|| ctx.system_theme())
 }
 
 // ------------------------------------------------------------------ lifecycle
 
 /// Load saved preferences once, when the app is created. Recovery starts during frame upkeep.
-pub fn load(app: &mut PhotocraftApp) {
+pub fn load(app: &mut PhotoStoreApp) {
     if app.prefs_rt.loaded {
         return;
     }
@@ -144,7 +144,7 @@ pub fn load(app: &mut PhotocraftApp) {
 
 /// Discover recovery entries after construction, then decode one at a time without blocking
 /// the window. Only the completed job's apply step touches the session.
-fn recovery(app: &mut PhotocraftApp) {
+fn recovery(app: &mut PhotoStoreApp) {
     if !app.prefs_rt.recovery_started {
         app.prefs_rt.recovery_started = true;
         if app.session.prefs().file_handling.recover_on_launch
@@ -156,7 +156,7 @@ fn recovery(app: &mut PhotocraftApp) {
     start_next_recovery(app);
 }
 
-fn start_next_recovery(app: &mut PhotocraftApp) {
+fn start_next_recovery(app: &mut PhotoStoreApp) {
     while app.prefs_rt.recovery_pending.is_none() {
         let Some(r) = app.prefs_rt.recovery_queue.pop_front() else { return };
         let label = format!("Recovering {}", r.name);
@@ -168,7 +168,7 @@ fn start_next_recovery(app: &mut PhotocraftApp) {
             move |ctx| {
                 ctx.check()?;
                 ctx.progress(0.0, "Loading recovery data");
-                let doc = (r.load)().map_err(photocraft_engine::EngineError::Other)?;
+                let doc = (r.load)().map_err(photostore_engine::EngineError::Other)?;
                 ctx.check()?;
                 Ok(doc)
             },
@@ -176,7 +176,7 @@ fn start_next_recovery(app: &mut PhotocraftApp) {
                 let active = s.active().map(|st| st.doc.id);
                 let first = s.documents().is_empty();
                 s.add_document(doc, r.path);
-                let st = s.active_mut().ok_or(photocraft_engine::EngineError::NoDocument)?;
+                let st = s.active_mut().ok_or(photostore_engine::EngineError::NoDocument)?;
                 st.saved_revision = 0;
                 let (id, revision) = (st.doc.id, st.revision);
                 if let Some(index) = active.and_then(|id| s.documents().iter().position(|st| st.doc.id == id)) {
@@ -193,7 +193,7 @@ fn start_next_recovery(app: &mut PhotocraftApp) {
     }
 }
 
-fn finish_recovery(app: &mut PhotocraftApp, key: &str, v: &Value) {
+fn finish_recovery(app: &mut PhotoStoreApp, key: &str, v: &Value) {
     let recovered = v
         .get("documentId")
         .and_then(Value::as_u64)
@@ -218,7 +218,7 @@ fn finish_recovery(app: &mut PhotocraftApp, key: &str, v: &Value) {
 
 /// Recovery uses the existing job polling/progress/cancel path. Its successful result adopts
 /// the original entry on the UI thread, using identity rather than a mutable tab position.
-pub(crate) fn on_recovery_event(app: &mut PhotocraftApp, e: &JobEvent) -> bool {
+pub(crate) fn on_recovery_event(app: &mut PhotoStoreApp, e: &JobEvent) -> bool {
     if !app.prefs_rt.recovery_pending.as_ref().is_some_and(|(job, _)| *job == e.id) {
         return false;
     }
@@ -240,7 +240,7 @@ pub(crate) fn on_recovery_event(app: &mut PhotocraftApp, e: &JobEvent) -> bool {
 
 /// Attach the brush preset store once its background load finishes, and surface write
 /// failures in the status bar.
-fn presets_store(app: &mut PhotocraftApp) {
+fn presets_store(app: &mut PhotoStoreApp) {
     if let Some(rx) = &app.services.preset_store {
         match rx.try_recv() {
             Ok(opened) => {
@@ -277,7 +277,7 @@ fn display_scale(pref: prefs::UiScale, native: Option<f32>, monitor_px: Option<e
     }
 }
 
-fn sync_display_scale(app: &PhotocraftApp, ctx: &egui::Context) {
+fn sync_display_scale(app: &PhotoStoreApp, ctx: &egui::Context) {
     let native = ctx.native_pixels_per_point();
     // ViewportInfo uses egui points, including the current UI zoom. Converting back to
     // physical pixels avoids oscillating between 100% and 200% on successive frames.
@@ -291,7 +291,7 @@ fn sync_display_scale(app: &PhotocraftApp, ctx: &egui::Context) {
 /// Interface › Show Tooltips and Tools › Show Tooltips (either one off hides them): egui never
 /// shows a tooltip whose delay is infinite. Re-checked every frame because a theme change
 /// rebuilds the style; that's one style read, and a write only when it differs.
-fn sync_tooltips(app: &PhotocraftApp, ctx: &egui::Context) {
+fn sync_tooltips(app: &PhotoStoreApp, ctx: &egui::Context) {
     let p = app.session.prefs();
     let delay = if p.interface.show_tooltips && p.tools.show_tooltips { crate::theme::TOOLTIP_DELAY } else { f32::INFINITY };
     if ctx.global_style().interaction.tooltip_delay != delay {
@@ -300,7 +300,7 @@ fn sync_tooltips(app: &PhotocraftApp, ctx: &egui::Context) {
 }
 
 /// Resolve the saved appearance mode without changing it or either theme slot.
-pub(crate) fn sync_appearance(app: &mut PhotocraftApp, ctx: &egui::Context) {
+pub(crate) fn sync_appearance(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     // A restored or embedding-supplied pin must not suppress native appearance events.
     ctx.set_theme(egui::ThemePreference::System);
     // The native service also covers Wayland sessions where winit has no system theme.
@@ -311,7 +311,7 @@ pub(crate) fn sync_appearance(app: &mut PhotocraftApp, ctx: &egui::Context) {
 }
 
 /// Per-frame upkeep: theme sync, persistence, autosave and the history log.
-pub fn tick(app: &mut PhotocraftApp, ctx: &egui::Context) {
+pub fn tick(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     if !app.prefs_rt.loaded {
         load(app);
     }
@@ -359,7 +359,7 @@ struct SaveRetry {
 /// Save changed preferences. A failed write stays pending and is retried with a backoff (a newer
 /// change retries sooner); the status bar reports the first failure and a notice a persistent
 /// one. Returns the seconds until the next retry while one is pending.
-fn persist(app: &mut PhotocraftApp, now: f64) -> Option<f64> {
+fn persist(app: &mut PhotoStoreApp, now: f64) -> Option<f64> {
     let rev = app.session.prefs.rev();
     if rev == app.prefs_rt.saved_rev {
         return None;
@@ -410,7 +410,7 @@ fn persist(app: &mut PhotocraftApp, now: f64) -> Option<f64> {
 
 /// Write `ours` over the stored preferences, keeping what another instance (a second browser
 /// tab, another app window) changed there since this one last loaded or saved them.
-fn write_prefs(app: &mut PhotocraftApp, ours: &Value) -> Result<(), String> {
+fn write_prefs(app: &mut PhotoStoreApp, ours: &Value) -> Result<(), String> {
     let Some(save) = app.services.save_prefs.as_mut() else { return Ok(()) };
     let stored = app.services.load_prefs.as_mut().and_then(|load| load()).and_then(|t| serde_json::from_str::<Value>(&t).ok());
     let text = match (stored, &app.prefs_rt.saved_value) {
@@ -453,7 +453,7 @@ fn merge_changes(base: &Value, ours: &Value, theirs: &mut Value) {
 
 /// Write the preferences now, through the same merge as [`persist`], for recovery choices that
 /// need the result immediately. The pending revision stays unsaved when the write fails.
-pub(crate) fn save_preferences(app: &mut PhotocraftApp) -> Result<(), String> {
+pub(crate) fn save_preferences(app: &mut PhotoStoreApp) -> Result<(), String> {
     let rev = app.session.prefs.rev();
     let ours = app.session.prefs_value();
     write_prefs(app, &ours)?;
@@ -466,7 +466,7 @@ pub(crate) fn save_preferences(app: &mut PhotocraftApp) -> Result<(), String> {
 }
 
 /// Background autosave of documents with unsaved changes every N minutes (File Handling).
-fn autosave(app: &mut PhotocraftApp) {
+fn autosave(app: &mut PhotoStoreApp) {
     let fh = &app.session.prefs().file_handling;
     let (on, minutes) = (fh.autosave, fh.autosave_minutes.max(1));
     if app.services.autosave.is_none() {
@@ -544,12 +544,12 @@ fn autosave(app: &mut PhotocraftApp) {
 }
 
 /// Force the autosave timer to fire on the next tick (tests, `prefs` changes).
-pub fn autosave_now(app: &mut PhotocraftApp) {
+pub fn autosave_now(app: &mut PhotoStoreApp) {
     app.prefs_rt.next_autosave_ms = f64::MIN_POSITIVE;
 }
 
 /// History Log preference: append executed commands to a text file.
-fn history_log(app: &mut PhotocraftApp) {
+fn history_log(app: &mut PhotoStoreApp) {
     let n = app.session.journal.len();
     if n <= app.prefs_rt.log_len {
         app.prefs_rt.log_len = n;
@@ -564,7 +564,7 @@ fn history_log(app: &mut PhotocraftApp) {
     let Some(append) = app.services.append_text.as_mut() else { return };
     let mut text = String::new();
     for (id, params) in &app.session.journal[start..] {
-        let label = photocraft_engine::commands::find(id).map_or(id.as_str(), |c| c.label).trim_end_matches('…');
+        let label = photostore_engine::commands::find(id).map_or(id.as_str(), |c| c.label).trim_end_matches('…');
         match hl.detail {
             prefs::LogDetail::SessionsOnly => {
                 if matches!(id.as_str(), "file.new" | "file.open" | "file.close" | "file.openAs") {
@@ -586,7 +586,7 @@ pub use crate::shortcuts::{default_shortcut, effective_shortcut};
 
 /// Every shortcut-bearing command (engine registry plus shell commands): (id, label, menu path,
 /// default shortcut), menu items first in Photoshop order.
-pub fn shortcut_items(app: &PhotocraftApp) -> Vec<(String, String, Vec<String>, Option<String>)> {
+pub fn shortcut_items(app: &PhotoStoreApp) -> Vec<(String, String, Vec<String>, Option<String>)> {
     let mut out: Vec<(String, String, Vec<String>, Option<String>)> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for it in crate::menus::menu_items(app) {
@@ -599,10 +599,10 @@ pub fn shortcut_items(app: &PhotocraftApp) -> Vec<(String, String, Vec<String>, 
     // Commands without a menu item: the colour and fill keys (D, X, ⌥⌫…) sit under Tools, as
     // Photoshop lists its colour keys in the Tools shortcut set, after the rest; then the held
     // temporary tools (#249).
-    let tools_key = |id: &str| id.starts_with("tools.") || photocraft_engine::fill_key_cmds::IDS.contains(&id);
+    let tools_key = |id: &str| id.starts_with("tools.") || photostore_engine::fill_key_cmds::IDS.contains(&id);
     let mut tools = Vec::new();
     let mut layer = Vec::new();
-    for c in photocraft_engine::command_specs() {
+    for c in photostore_engine::command_specs() {
         if seen.insert(c.id.to_string()) && (c.shortcut.is_some() || c.id.starts_with("timeline.") || c.id.starts_with("layer.smartObjects.")) {
             let item = (c.id.to_string(), c.label.to_string(), c.menu.iter().map(|s| s.to_string()).collect::<Vec<_>>(), c.shortcut.map(Into::into));
             if c.menu.is_empty() && tools_key(c.id) {
@@ -680,7 +680,7 @@ pub fn is_modifier_key(key: egui::Key) -> bool {
 
 /// Shell front ends for Edit-menu commands invoked without parameters (dialogs, pickers).
 /// `None` when `id` isn't handled here.
-pub fn invoke(app: &mut PhotocraftApp, _ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
+pub fn invoke(app: &mut PhotoStoreApp, _ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
     let empty = params.as_object().is_none_or(|o| o.is_empty());
     if !empty {
         return None;
@@ -712,7 +712,7 @@ pub fn invoke(app: &mut PhotocraftApp, _ctx: &egui::Context, id: &str, params: &
         }
         "edit.fade" | "edit.findAndReplaceText" | "edit.defineBrushPreset" | "edit.defineCustomShape" | "edit.autoAlignLayers" | "edit.autoBlendLayers" => {
             if !app.session.is_enabled(id) {
-                return Some(Err(photocraft_engine::commands::find(id)
+                return Some(Err(photostore_engine::commands::find(id)
                     .map_or("not available".into(), |c| format!("{} is not available right now", c.label.trim_end_matches('…')))));
             }
             let d = crate::filter_dialog::open(app, id);
@@ -763,7 +763,7 @@ pub fn invoke(app: &mut PhotocraftApp, _ctx: &egui::Context, id: &str, params: &
     }
 }
 
-fn open_kind(app: &mut PhotocraftApp, kind: &str, label: &str, fields: Value) -> u64 {
+fn open_kind(app: &mut PhotoStoreApp, kind: &str, label: &str, fields: Value) -> u64 {
     let mut f = Map::new();
     f.insert("__prefsui".into(), json!(kind));
     f.insert("__label".into(), json!(label));
@@ -789,12 +789,12 @@ fn preference_values(p: &prefs::Preferences) -> Map<String, Value> {
 }
 
 /// Compare the editable sections, excluding settings managed outside Preferences.
-pub fn preferences_changed(app: &PhotocraftApp, fields: &Map<String, Value>) -> bool {
+pub fn preferences_changed(app: &PhotoStoreApp, fields: &Map<String, Value>) -> bool {
     is_preferences(fields) && fields.get("values").and_then(Value::as_object).is_some_and(|values| *values != preference_values(app.session.prefs()))
 }
 
 /// Commit the working copy and keep the current section open. Failure leaves the draft intact.
-pub fn apply(app: &mut PhotocraftApp, id: u64) -> Result<Value, String> {
+pub fn apply(app: &mut PhotoStoreApp, id: u64) -> Result<Value, String> {
     let d = app.ui.dialogs.iter().find(|d| d.id == id).ok_or_else(|| format!("no dialog {id}"))?;
     if d.kind != DialogKind::Command || !is_preferences(&d.fields) {
         return Err("Apply is only available for Preferences".into());
@@ -819,7 +819,7 @@ pub fn width(fields: &Map<String, Value>, available: f32) -> Option<f32> {
 }
 
 /// Open Edit › Preferences on `section`.
-pub fn open_preferences(app: &mut PhotocraftApp, section: &str) -> u64 {
+pub fn open_preferences(app: &mut PhotoStoreApp, section: &str) -> u64 {
     let section = if SECTIONS.iter().any(|(id, _)| *id == section) { section } else { "general" };
     let working = preference_values(app.session.prefs());
     let order = field_order(app.session.prefs(), &working);
@@ -845,7 +845,7 @@ fn field_order(p: &prefs::Preferences, sections: &Map<String, Value>) -> Value {
 }
 
 /// Open Keyboard Shortcuts and Menus on a tab (0 shortcuts, 1 menus, 2 toolbar).
-pub fn open_shortcuts(app: &mut PhotocraftApp, tab: u64) -> u64 {
+pub fn open_shortcuts(app: &mut PhotoStoreApp, tab: u64) -> u64 {
     let p = app.session.prefs();
     let fields = json!({
         "tab": tab,
@@ -863,7 +863,7 @@ pub fn open_shortcuts(app: &mut PhotocraftApp, tab: u64) -> u64 {
 }
 
 /// Open the Embedded Profile Mismatch prompt for the active document.
-pub fn open_mismatch(app: &mut PhotocraftApp, report: &Value) -> u64 {
+pub fn open_mismatch(app: &mut PhotoStoreApp, report: &Value) -> u64 {
     let msg = if report.get("missing").and_then(Value::as_bool) == Some(true) {
         format!("The document does not have an embedded colour profile. Working space: {}.", report["working"].as_str().unwrap_or("?"))
     } else {
@@ -889,7 +889,7 @@ pub fn open_mismatch(app: &mut PhotocraftApp, report: &Value) -> u64 {
 // ------------------------------------------------------------------ bodies
 
 /// Render one of our dialogs' bodies.
-pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
+pub fn body(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     match f.get("__prefsui").and_then(Value::as_str).unwrap_or("") {
         "prefs" => {
             f.insert("__gpuInfo".into(), json!(app.perf.gpu_info.lines()));
@@ -1373,7 +1373,7 @@ fn section_fields(ui: &mut egui::Ui, section: &str, obj: &mut Map<String, Value>
 
 /// Keyboard Shortcuts and Menus: a searchable list of commands by menu with editable shortcuts
 /// (click a shortcut, press keys; ⌫ removes it), menu visibility and colours, toolbar tools.
-fn shortcuts_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
+fn shortcuts_body(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     let t = Tokens::get(ui.ctx());
     let mut tab = f.get("tab").and_then(Value::as_u64).unwrap_or(0);
     ui.horizontal(|ui| {
@@ -1621,7 +1621,7 @@ fn toolbar_tab(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     f.insert("toolbarHidden".into(), json!(hidden));
 }
 
-fn presets_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
+fn presets_body(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     let t = Tokens::get(ui.ctx());
     let mut kind = f.get("kind").and_then(Value::as_str).unwrap_or("brushes").to_string();
     ui.horizontal(|ui| {
@@ -1712,7 +1712,7 @@ fn mismatch_body(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
 // ------------------------------------------------------------------ confirm
 
 /// OK on one of our dialogs.
-pub fn confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value, String> {
+pub fn confirm(app: &mut PhotoStoreApp, f: &Map<String, Value>) -> Result<Value, String> {
     match f.get("__prefsui").and_then(Value::as_str).unwrap_or("") {
         "prefs" => {
             let values = f.get("values").cloned().unwrap_or(Value::Null);
@@ -1855,7 +1855,7 @@ mod tests {
 
     #[test]
     fn quick_export_controls_match_selected_format() {
-        let mut obj = serde_json::to_value(photocraft_engine::prefs::Export::default()).unwrap().as_object().unwrap().clone();
+        let mut obj = serde_json::to_value(photostore_engine::prefs::Export::default()).unwrap().as_object().unwrap().clone();
         assert!(!export_field_visible(&obj, "jpegQuality"));
         assert!(!export_field_visible(&obj, "webpLossless"));
         assert!(!export_field_visible(&obj, "webpQuality"));
@@ -1928,7 +1928,7 @@ mod tests {
     #[test]
     fn appearance_button_cycles_modes_without_losing_theme_choices() {
         let ctx = egui::Context::default();
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("prefs.set", json!({"values": {"interface.darkTheme": "studio", "interface.lightTheme": "classic"}})).unwrap();
         for (mode, visible) in
             [(AppearanceMode::Auto, ThemeKind::Studio), (AppearanceMode::Light, ThemeKind::Classic), (AppearanceMode::Dark, ThemeKind::Studio)]
@@ -1941,7 +1941,7 @@ mod tests {
         }
     }
 
-    fn appearance_frame(app: &mut PhotocraftApp, ctx: &egui::Context, appearance: Option<egui::Theme>) {
+    fn appearance_frame(app: &mut PhotoStoreApp, ctx: &egui::Context, appearance: Option<egui::Theme>) {
         ctx.run_ui(egui::RawInput { system_theme: appearance, ..Default::default() }, |ui| tick(app, ui.ctx())).textures_delta.clear();
     }
 
@@ -1964,7 +1964,7 @@ mod tests {
         for (dark, light) in [(ThemeKind::ProMedium, ThemeKind::StudioLight), (ThemeKind::SolarizedDark, ThemeKind::Adwaita)] {
             let (mut app, store) = app_with_store();
             let ctx = egui::Context::default();
-            PhotocraftApp::setup_context(&ctx, Default::default());
+            PhotoStoreApp::setup_context(&ctx, Default::default());
             app.run("prefs.set", json!({"values": {"interface.appearanceMode": "auto", "interface.darkTheme": dark.id(), "interface.lightTheme": light.id()}}))
                 .unwrap();
             appearance_frame(&mut app, &ctx, Some(egui::Theme::Light));
@@ -1988,7 +1988,7 @@ mod tests {
             for (appearance, expected) in [(Some(egui::Theme::Light), light), (Some(egui::Theme::Dark), dark), (None, dark)] {
                 let (mut restarted, store) = app_with_saved(Some(saved.clone()));
                 let fresh = egui::Context::default();
-                PhotocraftApp::setup_context(&fresh, Default::default());
+                PhotoStoreApp::setup_context(&fresh, Default::default());
                 appearance_frame(&mut restarted, &fresh, appearance);
                 assert_palette(&fresh, expected);
                 assert_eq!(restarted.ui.theme, expected);
@@ -2008,7 +2008,7 @@ mod tests {
     fn manual_theme_tokens_and_global_styles_stay_fixed_across_os_changes() {
         let (mut app, store) = app_with_store();
         let ctx = egui::Context::default();
-        PhotocraftApp::setup_context(&ctx, Default::default());
+        PhotoStoreApp::setup_context(&ctx, Default::default());
         for kind in ThemeKind::ALL {
             app.run("prefs.set", json!({"path": "interface.theme", "value": kind.id()})).unwrap();
             appearance_frame(&mut app, &ctx, Some(egui::Theme::Dark));
@@ -2037,7 +2037,7 @@ mod tests {
         appearance_frame(&mut app, &ctx, Some(egui::Theme::Light));
         assert_palette(&ctx, ThemeKind::StudioLight);
         assert_eq!(app.session.prefs().interface.appearance_mode, AppearanceMode::Auto);
-        // A restored pin must also clear when the concrete PhotoCraft palette stays the same.
+        // A restored pin must also clear when the concrete PhotoStore palette stays the same.
         ctx.set_theme(egui::ThemePreference::Dark);
         appearance_frame(&mut app, &ctx, Some(egui::Theme::Light));
         assert_eq!(ctx.options(|o| o.theme_preference), egui::ThemePreference::System);
@@ -2051,7 +2051,7 @@ mod tests {
     fn system_theme_menu_choice_stays_checked_as_the_appearance_changes() {
         let (mut app, store) = app_with_store();
         let ctx = egui::Context::default();
-        PhotocraftApp::setup_context(&ctx, Default::default());
+        PhotoStoreApp::setup_context(&ctx, Default::default());
         app.run("prefs.set", json!({"values": {"interface.darkTheme": "solarizedDark", "interface.lightTheme": "adwaita"}})).unwrap();
         appearance_frame(&mut app, &ctx, Some(egui::Theme::Light));
         crate::menus::invoke(&mut app, &ctx, "window.theme.system", json!({})).unwrap();
@@ -2096,7 +2096,7 @@ mod tests {
         let interface = app.session.prefs().interface.clone();
         open_preferences(&mut app, "interface");
         let mut h = Harness::builder().with_size(vec2(1280.0, 800.0)).build_eframe(move |cc| {
-            PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
+            PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
             app
         });
         h.input_mut().system_theme = Some(egui::Theme::Light);
@@ -2119,7 +2119,7 @@ mod tests {
         let saved = store.lock().unwrap().clone().unwrap();
         let (mut restarted, reloaded) = app_with_saved(Some(saved.clone()));
         let fresh = egui::Context::default();
-        PhotocraftApp::setup_context(&fresh, Default::default());
+        PhotoStoreApp::setup_context(&fresh, Default::default());
         appearance_frame(&mut restarted, &fresh, Some(egui::Theme::Dark));
         assert_palette(&fresh, ThemeKind::SolarizedDark);
         assert_eq!(restarted.session.prefs().interface.appearance_mode, AppearanceMode::Auto);
@@ -2133,7 +2133,7 @@ mod tests {
     /// language that claims complete menus (Japanese, Traditional Chinese, ...).
     #[test]
     fn preference_labels_are_translated() {
-        let session = photocraft_engine::Session::new();
+        let session = photostore_engine::Session::new();
         let v: Value = serde_json::from_str(&session.prefs_to_json()).expect("prefs json");
         for lang in crate::i18n::Lang::all().filter(|l| l.complete_menus()) {
             let mut missing = Vec::new();
@@ -2154,17 +2154,17 @@ mod tests {
         }
     }
 
-    fn app_with_store() -> (PhotocraftApp, Arc<Mutex<Option<String>>>) {
+    fn app_with_store() -> (PhotoStoreApp, Arc<Mutex<Option<String>>>) {
         app_with_saved(None)
     }
 
-    fn app_with_saved(text: Option<String>) -> (PhotocraftApp, Arc<Mutex<Option<String>>>) {
+    fn app_with_saved(text: Option<String>) -> (PhotoStoreApp, Arc<Mutex<Option<String>>>) {
         let store: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(text));
         (app_on(&store, Arc::default()), store)
     }
 
     /// An app whose preferences live in `store`; writes fail while `fail` is set.
-    fn app_on(store: &Arc<Mutex<Option<String>>>, fail: Arc<std::sync::atomic::AtomicBool>) -> PhotocraftApp {
+    fn app_on(store: &Arc<Mutex<Option<String>>>, fail: Arc<std::sync::atomic::AtomicBool>) -> PhotoStoreApp {
         let (a, b) = (store.clone(), store.clone());
         let services = crate::Services {
             load_prefs: Some(Box::new(move || a.lock().unwrap().clone())),
@@ -2177,7 +2177,7 @@ mod tests {
             })),
             ..Default::default()
         };
-        PhotocraftApp::new(photocraft_engine::Session::new(), services)
+        PhotoStoreApp::new(photostore_engine::Session::new(), services)
     }
 
     fn stored(store: &Arc<Mutex<Option<String>>>) -> Value {
@@ -2349,7 +2349,7 @@ mod tests {
     fn ui_font_size_commands_follow_themes_and_dpi_and_reset_live() {
         let (mut app, _) = app_with_store();
         let ctx = egui::Context::default();
-        PhotocraftApp::setup_context(&ctx, ThemeKind::Pro);
+        PhotoStoreApp::setup_context(&ctx, ThemeKind::Pro);
         let mut input = egui::RawInput::default();
         input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap().native_pixels_per_point = Some(1.5);
         for (theme, scale, expected) in
@@ -2503,11 +2503,11 @@ mod tests {
 
     #[test]
     fn brush_preset_store_attaches_when_loaded_and_persists() {
-        use photocraft_engine::preset_store::{MemBackend, open};
+        use photostore_engine::preset_store::{MemBackend, open};
         let mem = MemBackend::default();
         let ctx = egui::Context::default();
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services { preset_store: Some(rx), ..Default::default() });
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services { preset_store: Some(rx), ..Default::default() });
         // Still loading: presets made now are kept and written once the store arrives.
         tick(&mut app, &ctx);
         app.run("brush.presets.save", json!({"name": "Early"})).unwrap();
@@ -2516,7 +2516,7 @@ mod tests {
         tick(&mut app, &ctx);
         assert!(app.services.preset_store.is_none() && app.session.preset_store.is_some());
         app.run("brush.presets.save", json!({"name": "Late"})).unwrap();
-        let mut s2 = photocraft_engine::Session::new();
+        let mut s2 = photostore_engine::Session::new();
         assert!(s2.attach_preset_store(open(Box::new(mem))).is_empty());
         for n in ["Early", "Late"] {
             assert!(s2.tools.presets.iter().any(|p| p.name == n), "{n}");
@@ -2558,7 +2558,7 @@ mod tests {
         app.run("prefs.set", json!({"values": {"interface.language": "en", "type.smartQuotes": false}})).unwrap();
         let id = open_preferences(&mut app, "interface");
         let mut h = Harness::builder().with_size(vec2(1280.0, 800.0)).build_eframe(move |cc| {
-            PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
+            PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
             app
         });
         h.run_steps(4);
@@ -2620,7 +2620,7 @@ mod tests {
         app.custom_titlebar = true;
         let id = open_preferences(&mut app, "interface");
         let mut h = Harness::builder().with_size(vec2(1280.0, 800.0)).build_eframe(move |cc| {
-            PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
+            PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
             app
         });
         h.run_steps(4);
@@ -2778,7 +2778,7 @@ mod tests {
         let id = crate::menus::invoke(&mut app, &ctx, "edit.keyboardShortcuts", json!({})).unwrap()["dialog"].as_u64().unwrap();
         app.ui.dialog_mut(id).unwrap().fields.insert("overrides".into(), json!("bogus"));
         let mut h = egui_kittest::Harness::builder().with_size(vec2(1280.0, 800.0)).build_eframe(move |cc| {
-            PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
+            PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
             app
         });
         h.run_steps(4);
@@ -2800,13 +2800,13 @@ mod tests {
         let saved: Saved = Arc::default();
         let s2 = saved.clone();
         let services = crate::Services {
-            autosave: Some(Box::new(move |doc: &Arc<photocraft_doc::Document>, rev: u64, _path: Option<&str>| {
+            autosave: Some(Box::new(move |doc: &Arc<photostore_doc::Document>, rev: u64, _path: Option<&str>| {
                 s2.lock().unwrap().push((doc.id.0, rev));
                 Ok(())
             })),
             ..Default::default()
         };
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), services);
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), services);
         let ctx = egui::Context::default();
         app.run("file.new", json!({"width": 8, "height": 8})).unwrap();
         tick(&mut app, &ctx);
@@ -2847,7 +2847,7 @@ mod tests {
         type Log = Arc<Mutex<Vec<String>>>;
         let log: Log = Arc::default();
         let (l1, l2, l3) = (log.clone(), log.clone(), log.clone());
-        use photocraft_doc::{Color, ColorMode, Document, SampleType, Size};
+        use photostore_doc::{Color, ColorMode, Document, SampleType, Size};
         let doc = || Document::with_background("R", Size::new(4, 4), ColorMode::Rgb, SampleType::U8, Color::WHITE);
         let services = crate::Services {
             autosave: Some(Box::new(move |d: &Arc<Document>, _: u64, _: Option<&str>| {
@@ -2861,7 +2861,7 @@ mod tests {
             adopt_autosave: Some(Box::new(move |id: u64, key: &str| l3.lock().unwrap().push(format!("adopt {id} {key}")))),
             ..Default::default()
         };
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), services);
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), services);
         let ctx = egui::Context::default();
         tick(&mut app, &ctx);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

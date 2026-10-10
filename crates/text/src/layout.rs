@@ -21,8 +21,8 @@ use parley::{
     Alignment, AlignmentOptions, FontData, FontFamily, FontFeatures, FontStyle, FontVariations, FontWeight, IndentOptions, Layout, LayoutContext,
     PositionedLayoutItem, StyleProperty,
 };
-use photocraft_doc::TextLayer;
-use photocraft_doc::text::{Caps, CharStyle, Kerning, Orientation, TextAlign, TextDirection, TextShape};
+use photostore_doc::TextLayer;
+use photostore_doc::text::{Caps, CharStyle, Kerning, Orientation, TextAlign, TextDirection, TextShape};
 use skrifa::raw::types::Tag;
 
 use crate::fonts::FontDb;
@@ -1215,7 +1215,7 @@ fn first_ascent(line: &parley::Line<'_, RunBrush>) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::{SmallCapsMode, feature_list, small_caps_mode};
-    use photocraft_doc::text::{Caps, CharStyle};
+    use photostore_doc::text::{Caps, CharStyle};
 
     #[test]
     fn uses_real_small_caps_only_when_the_selected_face_supports_smcp() {

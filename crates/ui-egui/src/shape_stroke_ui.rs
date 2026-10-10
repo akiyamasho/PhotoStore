@@ -1,6 +1,6 @@
 //! Shape stroke geometry controls shared by the tool defaults and Properties.
 use egui::{Sense, Stroke, vec2};
-use photocraft_doc::{LineCap, LineJoin, ShapeStroke, StrokeAlign};
+use photostore_doc::{LineCap, LineJoin, ShapeStroke, StrokeAlign};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -38,7 +38,7 @@ impl StrokeOptions {
             "miterLimit": self.miter_limit, "dashes": self.dashes, "dashOffset": self.dash_offset, "opacity": self.opacity * 100.0})
     }
 
-    pub fn stroke(&self, width: f32, paint: photocraft_doc::Fill) -> ShapeStroke {
+    pub fn stroke(&self, width: f32, paint: photostore_doc::Fill) -> ShapeStroke {
         ShapeStroke {
             width,
             paint,
@@ -77,13 +77,13 @@ impl StrokeOptions {
     }
 
     fn valid(&self) -> bool {
-        self.stroke(3.0, photocraft_doc::Fill::Solid(photocraft_doc::Color::BLACK)).validate().is_ok()
+        self.stroke(3.0, photostore_doc::Fill::Solid(photostore_doc::Color::BLACK)).validate().is_ok()
     }
 }
 
 #[derive(Clone)]
 struct DragCache {
-    shape: photocraft_doc::ShapeLayer,
+    shape: photostore_doc::ShapeLayer,
     clip: egui::Rect,
     image_rect: egui::Rect,
     texture: egui::TextureHandle,
@@ -91,7 +91,7 @@ struct DragCache {
 
 /// The drag uses the committed vector rasterizer. Cache by geometry/style/visible region, and
 /// cap proxy resolution so oversized windows cannot allocate a document-sized preview.
-pub fn paint_shape_preview(painter: &egui::Painter, shape: &photocraft_doc::ShapeLayer) {
+pub fn paint_shape_preview(painter: &egui::Painter, shape: &photostore_doc::ShapeLayer) {
     let clip = painter.clip_rect();
     if !clip.is_finite() || clip.is_negative() {
         return;
@@ -101,13 +101,13 @@ pub fn paint_shape_preview(painter: &egui::Painter, shape: &photocraft_doc::Shap
     let cache = cached.filter(|c| c.shape == *shape && c.clip == clip).or_else(|| {
         let scale = (2048.0 / clip.width().max(clip.height()).max(1.0)).min(1.0);
         let mut proxy = shape.clone();
-        let tr = photocraft_geom::Affine { m: [scale as f64, 0.0, 0.0, scale as f64, -(clip.left() * scale) as f64, -(clip.top() * scale) as f64] };
+        let tr = photostore_geom::Affine { m: [scale as f64, 0.0, 0.0, scale as f64, -(clip.left() * scale) as f64, -(clip.top() * scale) as f64] };
         proxy.path = proxy.path.transform(&tr);
         if let Some(stroke) = proxy.stroke.as_mut() {
             stroke.width *= scale;
         }
-        let canvas = photocraft_geom::Rect::from_size(photocraft_geom::Size::new((clip.width() * scale).ceil() as u32, (clip.height() * scale).ceil() as u32));
-        let compiled = photocraft_vector::CompiledShape::new(&proxy, photocraft_vector::DEFAULT_TOLERANCE, canvas);
+        let canvas = photostore_geom::Rect::from_size(photostore_geom::Size::new((clip.width() * scale).ceil() as u32, (clip.height() * scale).ceil() as u32));
+        let compiled = photostore_vector::CompiledShape::new(&proxy, photostore_vector::DEFAULT_TOLERANCE, canvas);
         let bounds = compiled.bounds()?.intersect(&canvas);
         if bounds.is_empty() {
             return None;
@@ -139,20 +139,20 @@ pub struct StrokeEditor {
     pub key: String,
     pub draft: StrokeOptions,
     pub original: StrokeOptions,
-    pub target: Option<(photocraft_doc::DocId, photocraft_doc::LayerId)>,
+    pub target: Option<(photostore_doc::DocId, photostore_doc::LayerId)>,
 }
 
 pub(crate) struct ShapeStrokePreview {
-    doc: photocraft_doc::DocId,
+    doc: photostore_doc::DocId,
     revision: u64,
-    target: photocraft_doc::LayerId,
+    target: photostore_doc::LayerId,
     options: StrokeOptions,
-    shown: std::sync::Arc<photocraft_doc::Document>,
+    shown: std::sync::Arc<photostore_doc::Document>,
     key: u64,
 }
 
 /// Cache the selected shape preview by revision and draft. Cancel simply drops the snapshot.
-pub(crate) fn display_doc(app: &mut crate::PhotocraftApp, idx: usize) -> Option<(std::sync::Arc<photocraft_doc::Document>, u64)> {
+pub(crate) fn display_doc(app: &mut crate::PhotoStoreApp, idx: usize) -> Option<(std::sync::Arc<photostore_doc::Document>, u64)> {
     let active = app.session.active_index() == Some(idx);
     if !active {
         return None;
@@ -165,7 +165,7 @@ pub(crate) fn display_doc(app: &mut crate::PhotocraftApp, idx: usize) -> Option<
     let (doc, target) = editor.target?;
     let st = app.session.documents().get(idx)?;
     let current = st.doc.layer(target).and_then(|l| match &l.content {
-        photocraft_doc::LayerContent::Shape(sh) => sh.stroke.as_ref().map(StrokeOptions::from),
+        photostore_doc::LayerContent::Shape(sh) => sh.stroke.as_ref().map(StrokeOptions::from),
         _ => None,
     });
     let locks = st.doc.effective_locks(target);
@@ -177,7 +177,7 @@ pub(crate) fn display_doc(app: &mut crate::PhotocraftApp, idx: usize) -> Option<
     let fresh =
         app.shape_stroke_preview.as_ref().is_some_and(|p| p.doc == st.doc.id && p.revision == st.revision && p.target == target && p.options == editor.draft);
     if !fresh {
-        let shown = photocraft_engine::vector_cmds::preview_shape_stroke(&st.doc, target, &editor.draft.params()).ok()?;
+        let shown = photostore_engine::vector_cmds::preview_shape_stroke(&st.doc, target, &editor.draft.params()).ok()?;
         // Hash all cache inputs so returning to an earlier draft is deterministic, and a
         // reopened editor cannot alias a different document revision's GPU output.
         use std::hash::{Hash, Hasher};
@@ -198,7 +198,7 @@ pub fn button(
     editor: &mut Option<StrokeEditor>,
     closed: bool,
     corners: bool,
-    target: Option<(photocraft_doc::DocId, photocraft_doc::LayerId)>,
+    target: Option<(photostore_doc::DocId, photostore_doc::LayerId)>,
 ) -> Option<StrokeOptions> {
     let response = ui.add_sized(vec2(96.0, 22.0), egui::Button::new(tl!(current.label()))).on_hover_text(tl!("Stroke Options"));
     let c = response.rect.right_center() - vec2(10.0, 0.0);
@@ -353,24 +353,24 @@ fn preview(ui: &mut egui::Ui, options: &StrokeOptions, width: f32, corners: bool
     let cached = ui.data(|d| d.get_temp::<SampleCache>(id));
     let cache = cached.filter(|c| c.options == sample && c.width == w && c.closed == corners && c.color == t.text).unwrap_or_else(|| {
         let path = if corners {
-            photocraft_vector::shapes::rounded_rect(16.0, 16.0, width as f64 - 32.0, 36.0, [0.0; 4])
+            photostore_vector::shapes::rounded_rect(16.0, 16.0, width as f64 - 32.0, 36.0, [0.0; 4])
         } else {
-            let mut sp = photocraft_doc::Subpath::polygon(&[(12.0, 11.0), (width as f64 - 12.0, 11.0)]);
+            let mut sp = photostore_doc::Subpath::polygon(&[(12.0, 11.0), (width as f64 - 12.0, 11.0)]);
             sp.closed = false;
-            photocraft_doc::Path::new(vec![sp])
+            photostore_doc::Path::new(vec![sp])
         };
         let c = t.text;
         let shape =
-            photocraft_doc::ShapeLayer {
+            photostore_doc::ShapeLayer {
                 path,
                 stroke: Some(sample.stroke(
                     3.0,
-                    photocraft_doc::Fill::Solid(photocraft_doc::Color::rgba(c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0, 1.0)),
+                    photostore_doc::Fill::Solid(photostore_doc::Color::rgba(c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0, 1.0)),
                 )),
                 ..Default::default()
             };
-        let r = photocraft_geom::Rect::from_size(photocraft_geom::Size::new(w as u32, height as u32));
-        let pixels = photocraft_vector::CompiledShape::new(&shape, photocraft_vector::DEFAULT_TOLERANCE, r).render_rgba(r);
+        let r = photostore_geom::Rect::from_size(photostore_geom::Size::new(w as u32, height as u32));
+        let pixels = photostore_vector::CompiledShape::new(&shape, photostore_vector::DEFAULT_TOLERANCE, r).render_rgba(r);
         let bytes: Vec<u8> = pixels.iter().flat_map(|p| p.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)).collect();
         let texture =
             ui.ctx().load_texture("stroke-preview", egui::ColorImage::from_rgba_unmultiplied([w, height as usize], &bytes), egui::TextureOptions::LINEAR);
@@ -436,7 +436,7 @@ mod tests {
         style.preset("Dotted");
         style.dashes = vec![0.0, 2.0, 4.0, 1.0];
         style.dash_offset = -0.5;
-        let stroke = style.stroke(5.0, photocraft_doc::Fill::Solid(photocraft_doc::Color::BLACK));
+        let stroke = style.stroke(5.0, photostore_doc::Fill::Solid(photostore_doc::Color::BLACK));
         assert_eq!(StrokeOptions::from(&stroke), style);
         assert_eq!(serde_json::from_value::<StrokeOptions>(serde_json::to_value(&style).unwrap()).unwrap(), style);
     }
@@ -444,10 +444,10 @@ mod tests {
     #[test]
     fn canvas_preview_is_cached_and_matches_commit_at_all_depths() {
         for depth in [8, 16, 32] {
-            let mut app = crate::PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+            let mut app = crate::PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
             app.run("file.new", json!({"width":80,"height":60,"depth":depth})).unwrap();
             let id = app.run("shape.create", json!({"rect":[15,15,45,30],"stroke":{"width":5,"color":"#ff0000"}})).unwrap()["layer"].as_u64().unwrap();
-            let target = photocraft_doc::LayerId(id);
+            let target = photostore_doc::LayerId(id);
             let original = StrokeOptions::default();
             let mut draft = original.clone();
             draft.preset("Dotted");

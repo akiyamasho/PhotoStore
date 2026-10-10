@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use photocraft_doc::{FrameLayerState, LayerTimelineRange, Timeline, TimelineLoop, TimelineMode};
+use photostore_doc::{FrameLayerState, LayerTimelineRange, Timeline, TimelineLoop, TimelineMode};
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
@@ -104,16 +104,16 @@ fn create_frame_animation(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(result)
 }
 
-fn collect_layer_states(layers: &[photocraft_doc::Layer], out: &mut Vec<FrameLayerState>) {
+fn collect_layer_states(layers: &[photostore_doc::Layer], out: &mut Vec<FrameLayerState>) {
     for layer in layers {
         out.push(FrameLayerState {
             layer: layer.id,
             visible: layer.visible,
             opacity: layer.opacity,
-            position: photocraft_doc::comps::layer_position(layer),
+            position: photostore_doc::comps::layer_position(layer),
             blend: Some(layer.blend),
             fill_opacity: Some(layer.fill_opacity),
-            effects: Some(photocraft_doc::FrameEffectsState { enabled: layer.effects.enabled, items: layer.effects.items.clone(), reference: layer.effects.reference }),
+            effects: Some(photostore_doc::FrameEffectsState { enabled: layer.effects.enabled, items: layer.effects.items.clone(), reference: layer.effects.reference }),
         });
         if let Some(children) = layer.children() {
             collect_layer_states(children, out);
@@ -177,7 +177,7 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
                 let total = (total_ms / period_ms - 1e-9).ceil() as usize;
                 if total == 0 || total > MAX_DURATION { return Err(bad("timeline.setMode", format!("video conversion needs {total} CFR frames; maximum is {MAX_DURATION}"))); }
                 let per_frame_estimate = source.iter().map(|states| states.iter().map(|state| {
-                    std::mem::size_of::<photocraft_doc::FrameLayerState>() + state.effects.as_ref().map_or(0, |fx| fx.items.len().saturating_mul(512))
+                    std::mem::size_of::<photostore_doc::FrameLayerState>() + state.effects.as_ref().map_or(0, |fx| fx.items.len().saturating_mul(512))
                 }).sum::<usize>()).max().unwrap_or(0);
                 let estimate = total.saturating_mul(per_frame_estimate);
                 if estimate > 64 * 1024 * 1024 { return Err(bad("timeline.setMode", "video conversion exceeds 64 MiB property-track limit".into())); }
@@ -253,10 +253,10 @@ fn make_frames_from_layers(s: &mut Session) -> Result<Value> {
                 layer: *layer,
                 visible: if Some(*layer) == background { current.get(slot).map_or(true, |v| v.0) } else { *layer == *source },
                 opacity: current.get(slot).map_or(1.0, |v| v.1),
-                position: doc.layer(*layer).and_then(photocraft_doc::comps::layer_position),
+                position: doc.layer(*layer).and_then(photostore_doc::comps::layer_position),
                 blend: doc.layer(*layer).map(|l| l.blend),
                 fill_opacity: doc.layer(*layer).map(|l| l.fill_opacity),
-                effects: doc.layer(*layer).map(|l| photocraft_doc::FrameEffectsState { enabled: l.effects.enabled, items: l.effects.items.clone(), reference: l.effects.reference }),
+                effects: doc.layer(*layer).map(|l| photostore_doc::FrameEffectsState { enabled: l.effects.enabled, items: l.effects.items.clone(), reference: l.effects.reference }),
             }).collect());
         }
         let n = states.len();
@@ -374,7 +374,7 @@ fn set_animation_delay(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn set_layer_range(s: &mut Session, p: &Value) -> Result<Value> {
-    let layer = p.get("layer").and_then(Value::as_u64).map(photocraft_doc::LayerId).ok_or_else(|| bad("timeline.setLayerRange", "need numeric `layer`".into()))?;
+    let layer = p.get("layer").and_then(Value::as_u64).map(photostore_doc::LayerId).ok_or_else(|| bad("timeline.setLayerRange", "need numeric `layer`".into()))?;
     let start = p.get("start").and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad("timeline.setLayerRange", "need numeric `start`".into()))?;
     let end = p.get("end").and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad("timeline.setLayerRange", "need numeric `end`".into()))?;
     with_timeline(s, |slot| if let Some(t) = slot {

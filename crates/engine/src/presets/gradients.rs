@@ -5,7 +5,7 @@
 //! Photoshop's "Foreground to Background") and transparency stops, both at `0..=1`. Midpoints are
 //! always 50 %. Built-in colours are our own.
 
-use photocraft_doc::{Color, Fill, Layer, LayerContent};
+use photostore_doc::{Color, Fill, Layer, LayerContent};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -403,7 +403,7 @@ fn list(s: &mut Session, _: &Value) -> Result<Value> {
     Ok(json!({"groups": groups, "current": s.presets.gradient.to_json()}))
 }
 
-fn active_gradient_fill(s: &Session) -> Option<photocraft_doc::LayerId> {
+fn active_gradient_fill(s: &Session) -> Option<photostore_doc::LayerId> {
     let d = s.active()?;
     let id = d.active_layer?;
     matches!(d.doc.layer(id)?.content, LayerContent::Fill(Fill::Gradient { .. })).then_some(id)

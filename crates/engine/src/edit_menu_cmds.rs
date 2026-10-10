@@ -5,11 +5,11 @@
 //! Check Spelling is not implemented: it needs a word list per language, and no permissively
 //! licensed dictionary small enough to bundle (or a pure-Rust checker with one) was available.
 
-use photocraft_color::{BlendMode, PixelFormat};
-use photocraft_doc::vector::Path;
-use photocraft_doc::{DocId, Document, Layer, LayerContent, LayerId};
-use photocraft_geom::Rect;
-use photocraft_raster::{Surface, from_rgba_into, to_rgba};
+use photostore_color::{BlendMode, PixelFormat};
+use photostore_doc::vector::Path;
+use photostore_doc::{DocId, Document, Layer, LayerContent, LayerId};
+use photostore_geom::Rect;
+use photostore_raster::{Surface, from_rgba_into, to_rgba};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -184,7 +184,7 @@ pub fn fade_surface(before: &Surface, after: &mut Surface, area: Rect, mode: Ble
         } else {
             let rb = to_rgba(&fmt, pb);
             let ra = to_rgba(&fmt, pa);
-            let blended = photocraft_color::blend::composite(mode, rb, ra, 1.0);
+            let blended = photostore_color::blend::composite(mode, rb, ra, 1.0);
             let mut o = [0.0f32; 4];
             lerp_premul(&rb, &blended, &mut o, true);
             let mut enc = [0.0f32; 8];
@@ -259,12 +259,12 @@ fn purge(s: &mut Session, what: &str) -> Result<Value> {
         }
     }
     if what == "all" {
-        let fx = photocraft_compose::purge_effect_cache();
+        let fx = photostore_compose::purge_effect_cache();
         if fx > 0 {
             freed += fx;
             items.push("effect cache");
         }
-        let masks = photocraft_compose::masks::purge_cache();
+        let masks = photostore_compose::masks::purge_cache();
         if masks > 0 {
             freed = freed.saturating_add(masks);
             items.push("mask cache");
@@ -286,7 +286,7 @@ fn can_purge_histories(s: &Session) -> std::result::Result<(), String> {
 }
 fn can_purge_all(s: &Session) -> std::result::Result<(), String> {
     can_purge_histories(s).or_else(|_| can_purge_clipboard(s)).or_else(|_| {
-        if photocraft_compose::effect_cache_bytes() > 0 || photocraft_compose::masks::cache_bytes() > 0 { Ok(()) } else { Err("nothing to purge".into()) }
+        if photostore_compose::effect_cache_bytes() > 0 || photostore_compose::masks::cache_bytes() > 0 { Ok(()) } else { Err("nothing to purge".into()) }
     })
 }
 
@@ -338,7 +338,7 @@ fn delete_and_fill(s: &mut Session, _: &Value) -> Result<Value> {
 }
 
 fn content_aware_fill_as(s: &mut Session, p: &Value, cmd: &'static str, label: &'static str) -> Result<Value> {
-    use photocraft_algo::content_aware::{FillOptions, auto_sampling, color_level, fill_with, rotation_level};
+    use photostore_algo::content_aware::{FillOptions, auto_sampling, color_level, fill_with, rotation_level};
     let id = pixel_layer(s).map_err(EngineError::Other)?;
     let st = s.active().ok_or(EngineError::NoDocument)?;
     let doc = st.doc.clone();
@@ -499,7 +499,7 @@ fn apply_content_aware_fill(
 // ------------------------------------------------------------------ Content-Aware Scale
 
 fn content_aware_scale(s: &mut Session, p: &Value) -> Result<Value> {
-    use photocraft_algo::seam::{carve_with, resize_bilinear, skin_mask};
+    use photostore_algo::seam::{carve_with, resize_bilinear, skin_mask};
     let cmd = "edit.contentAwareScale";
     let id = pixel_layer(s).map_err(EngineError::Other)?;
     let st = s.active().ok_or(EngineError::NoDocument)?;
@@ -882,11 +882,11 @@ fn preset_manager(s: &mut Session, p: &Value) -> Result<Value> {
 pub struct PresetFile {
     pub format: String,
     pub version: u32,
-    pub brushes: Vec<photocraft_paint::BrushPreset>,
+    pub brushes: Vec<photostore_paint::BrushPreset>,
     pub custom_shapes: Vec<CustomShape>,
 }
 
-pub const PRESET_FORMAT: &str = "photocraft-presets";
+pub const PRESET_FORMAT: &str = "photostore-presets";
 
 fn export_import(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "edit.presets.exportImportPresets";
@@ -902,7 +902,7 @@ fn export_import(s: &mut Session, p: &Value) -> Result<Value> {
                 format: PRESET_FORMAT.into(),
                 version: 1,
                 brushes: if want("brushes") {
-                    let mut out: Vec<photocraft_paint::BrushPreset> =
+                    let mut out: Vec<photostore_paint::BrushPreset> =
                         s.tools.presets.iter().filter(|b| !b.builtin || bool_or(p, "includeBuiltins", false)).cloned().collect();
                     // The file embeds every bitmap: load the tips the preset store keeps (#1843).
                     for b in &mut out {

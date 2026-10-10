@@ -2,10 +2,10 @@
 //! engine data's writing direction), point and paragraph text, and the re-rendered pixels after
 //! import are the vertical layout's (taller than wide).
 
-use photocraft_color::{ColorMode, SampleType};
-use photocraft_doc::text::{CharStyle, Orientation, TextRun, TextShape};
-use photocraft_doc::{Document, Layer, LayerContent, Size, TextLayer};
-use photocraft_geom::Affine;
+use photostore_color::{ColorMode, SampleType};
+use photostore_doc::text::{CharStyle, Orientation, TextRun, TextShape};
+use photostore_doc::{Document, Layer, LayerContent, Size, TextLayer};
+use photostore_geom::Affine;
 
 fn doc_with(shape: TextShape) -> Document {
     let mut doc = Document::new("v", Size::new(300, 400), ColorMode::Rgb, SampleType::U8);
@@ -19,7 +19,7 @@ fn doc_with(shape: TextShape) -> Document {
         ..Default::default()
     };
     t.sync_summary();
-    photocraft_text::TextEngine::new().render_layer(&mut t, doc.resolution_dpi, doc.pixel_format());
+    photostore_text::TextEngine::new().render_layer(&mut t, doc.resolution_dpi, doc.pixel_format());
     doc.layers.push(Layer::new("v", LayerContent::Text(t)));
     doc
 }
@@ -37,29 +37,29 @@ fn vertical_orientation_round_trips_through_psd() {
         let doc = doc_with(shape);
         let ink = text(&doc).cache.as_ref().unwrap().content_bounds();
         assert!(ink.height() > ink.width(), "{shape:?}: {ink:?}");
-        let out = photocraft_io::export(&doc, "v.psd", &Default::default()).unwrap();
-        let back = photocraft_io::import("v.psd", &out.bytes).unwrap().document;
+        let out = photostore_io::export(&doc, "v.psd", &Default::default()).unwrap();
+        let back = photostore_io::import("v.psd", &out.bytes).unwrap().document;
         let t = text(&back);
         assert_eq!(t.orientation, Orientation::Vertical, "{shape:?}");
         assert_eq!(t.shape, shape);
         assert_eq!(t.text, text(&doc).text);
         // Re-rendering the imported model gives the same vertical layout.
         let mut again = t.clone();
-        photocraft_text::TextEngine::new().render_layer(&mut again, back.resolution_dpi, back.pixel_format());
+        photostore_text::TextEngine::new().render_layer(&mut again, back.resolution_dpi, back.pixel_format());
         let r = again.cache.as_ref().unwrap().content_bounds();
         assert!(
             (r.x0 - ink.x0).abs() <= 1 && (r.y0 - ink.y0).abs() <= 1 && (r.x1 - ink.x1).abs() <= 1 && (r.y1 - ink.y1).abs() <= 1,
             "{shape:?}: {ink:?} → {r:?}"
         );
         // A second trip keeps it, and horizontal stays horizontal.
-        let out2 = photocraft_io::export(&back, "v.psd", &Default::default()).unwrap();
-        assert_eq!(text(&photocraft_io::import("v.psd", &out2.bytes).unwrap().document).orientation, Orientation::Vertical);
+        let out2 = photostore_io::export(&back, "v.psd", &Default::default()).unwrap();
+        assert_eq!(text(&photostore_io::import("v.psd", &out2.bytes).unwrap().document).orientation, Orientation::Vertical);
     }
     let mut doc = doc_with(TextShape::Point);
     if let LayerContent::Text(t) = &mut doc.layers[0].content {
         t.orientation = Orientation::Horizontal;
         t.psd_raw = None;
     }
-    let out = photocraft_io::export(&doc, "h.psd", &Default::default()).unwrap();
-    assert_eq!(text(&photocraft_io::import("h.psd", &out.bytes).unwrap().document).orientation, Orientation::Horizontal);
+    let out = photostore_io::export(&doc, "h.psd", &Default::default()).unwrap();
+    assert_eq!(text(&photostore_io::import("h.psd", &out.bytes).unwrap().document).orientation, Orientation::Horizontal);
 }

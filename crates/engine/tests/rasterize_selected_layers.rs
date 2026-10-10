@@ -2,8 +2,8 @@
 //! you'd like to rasterize"; the Layers panel's right-click item reads "Rasterize Layers"), not
 //! only on the one that was clicked. An explicit `layer` param still targets exactly that layer.
 
-use photocraft_doc::{LayerContent, LayerId};
-use photocraft_engine::Session;
+use photostore_doc::{LayerContent, LayerId};
+use photostore_engine::Session;
 use serde_json::{Value, json};
 
 fn kind(s: &Session, id: LayerId) -> &'static str {

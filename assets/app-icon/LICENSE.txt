@@ -1,8 +1,8 @@
-PhotoCraft app icon (photocraft.svg, photocraft-small.svg and every file derived from them in
-this directory: photocraft-1024.png, photocraft.icns, photocraft.ico, hicolor/).
+PhotoStore app icon (`photostore.svg`, `photostore-small.svg` and every file derived from them in
+this directory: `photostore-1024.png`, `photostore.icns`, `photostore.ico`, `hicolor/`).
 
-Original artwork made for this project by the project owner: an engraving-style drawing created
-in ArtCraft, then vectorised. No third-party material. Licensed like the rest of PhotoCraft,
+Original generated artwork made for this project from the prompt in `photostore-icon-prompt.txt`.
+No third-party material. Licensed like the rest of PhotoStore,
 under either of
 
   * Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
@@ -10,4 +10,4 @@ under either of
 
 at your option.
 
-Regenerate the derived files with packaging/icons.sh.
+Regenerate derived files with `packaging/icons.sh` when the required installed tools are available.

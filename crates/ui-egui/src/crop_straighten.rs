@@ -16,7 +16,7 @@
 
 use egui::{Modifiers, Pos2};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::canvas::ToolEvent;
 use crate::state::Tool;
 
@@ -35,13 +35,13 @@ pub struct Straighten {
 }
 
 /// ⌘ (Ctrl) is held over the canvas.
-pub fn set_held(app: &mut PhotocraftApp, down: bool) {
+pub fn set_held(app: &mut PhotoStoreApp, down: bool) {
     app.crop.straighten.held = down;
 }
 
 /// A drag with the Crop tool now draws a straighten line (or one is being drawn): the canvas
 /// shows the straighten cursor instead of the frame's.
-pub fn mode(app: &PhotocraftApp) -> bool {
+pub fn mode(app: &PhotoStoreApp) -> bool {
     let s = &app.crop.straighten;
     app.ui.tool == Tool::Crop && app.crop.drag.is_none() && (s.armed || s.held || s.line.is_some())
 }
@@ -55,19 +55,19 @@ impl Straighten {
 }
 
 /// [`Straighten::toggle`] for the app's Crop tool.
-pub fn toggle(app: &mut PhotocraftApp) {
+pub fn toggle(app: &mut PhotoStoreApp) {
     app.crop.straighten.toggle();
 }
 
 /// Drops the armed button and any line (Esc, another tool).
-pub fn reset(app: &mut PhotocraftApp) {
+pub fn reset(app: &mut PhotoStoreApp) {
     app.crop.straighten.armed = false;
     app.crop.straighten.line = None;
 }
 
 /// Pointer input for Straighten, called by the Crop tool first (finite `p`, a document open).
 /// Returns true when the event drew a straighten line.
-pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: Modifiers) -> bool {
+pub fn pointer(app: &mut PhotoStoreApp, ev: ToolEvent, mods: Modifiers) -> bool {
     match ev {
         ToolEvent::Down { x, y, .. } => {
             let s = app.crop.straighten;
@@ -102,7 +102,7 @@ pub fn frame_angle(a: [f64; 2], b: [f64; 2], min_len: f64) -> Option<f64> {
     if !len.is_finite() || len < min_len.max(f64::MIN_POSITIVE) {
         return None;
     }
-    let rot = photocraft_engine::analysis_cmds::straighten_angle(&photocraft_doc::Ruler { start: a, end: b, protractor: None });
+    let rot = photostore_engine::analysis_cmds::straighten_angle(&photostore_doc::Ruler { start: a, end: b, protractor: None });
     // ↵ turns the document back by the frame's angle; turning it by `rot` levels the line.
     rot.is_finite().then(|| crate::crop_ui::normalized_angle(-rot) + 0.0)
 }
@@ -128,7 +128,7 @@ pub fn fitted(w: f64, h: f64, cw: f64, ch: f64, deg: f64) -> Option<[f64; 4]> {
 }
 
 /// The line from `a` to `b` (document px, at `zoom` screen points per px) straightens the frame.
-fn apply(app: &mut PhotocraftApp, a: [f64; 2], b: [f64; 2], zoom: f64) {
+fn apply(app: &mut PhotoStoreApp, a: [f64; 2], b: [f64; 2], zoom: f64) {
     let min_len = if zoom.is_finite() && zoom > 0.0 { MIN_LINE_PX / zoom } else { MIN_LINE_PX };
     let Some(deg) = frame_angle(a, b, min_len) else { return };
     let Some(size) = app.session.active().map(|st| (f64::from(st.doc.size.width), f64::from(st.doc.size.height))) else { return };
@@ -147,7 +147,7 @@ fn apply(app: &mut PhotocraftApp, a: [f64; 2], b: [f64; 2], zoom: f64) {
 
 /// The line being drawn and its angle beside the pointer. `to_screen` maps document px to the
 /// screen.
-pub fn draw(app: &PhotocraftApp, painter: &egui::Painter, to_screen: impl Fn([f64; 2]) -> Pos2, hover: Option<Pos2>) {
+pub fn draw(app: &PhotoStoreApp, painter: &egui::Painter, to_screen: impl Fn([f64; 2]) -> Pos2, hover: Option<Pos2>) {
     let Some([a, b]) = app.crop.straighten.line.filter(|_| app.ui.tool == Tool::Crop) else { return };
     let t = crate::theme::Tokens::get(painter.ctx());
     let seg = [to_screen(a), to_screen(b)];
@@ -172,16 +172,16 @@ mod tests {
     use super::*;
     use crate::canvas::tool_event;
     use crate::crop_ui::{CropDrag, ensure_frame};
-    use photocraft_doc::{Color, ColorMode, Document, SampleType, Size};
+    use photostore_doc::{Color, ColorMode, Document, SampleType, Size};
 
     const NONE: Modifiers = Modifiers::NONE;
     const CMD: Modifiers = Modifiers::COMMAND;
 
-    fn app(depth: SampleType) -> PhotocraftApp {
+    fn app(depth: SampleType) -> PhotoStoreApp {
         let doc = Document::with_background("straighten", Size::new(200, 100), ColorMode::Rgb, depth, Color::WHITE);
-        let mut s = photocraft_engine::Session::new();
+        let mut s = photostore_engine::Session::new();
         s.add_document(doc, None);
-        let mut app = PhotocraftApp::new(s, crate::Services::default());
+        let mut app = PhotoStoreApp::new(s, crate::Services::default());
         app.ui.tool = Tool::Crop;
         app.ui.extras.snap = false;
         app.ui.view.show.smart_guides = false;
@@ -189,7 +189,7 @@ mod tests {
         app
     }
 
-    fn drag(app: &mut PhotocraftApp, pts: &[[f64; 2]], mods: Modifiers) {
+    fn drag(app: &mut PhotoStoreApp, pts: &[[f64; 2]], mods: Modifiers) {
         let (first, last) = (pts[0], pts[pts.len() - 1]);
         tool_event(app, ToolEvent::Down { x: first[0], y: first[1], pressure: 1.0 }, mods);
         for p in &pts[1..] {

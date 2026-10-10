@@ -20,7 +20,7 @@ fn tiff_prompt(command: &str) -> (Prompted, Writes, DocId, DocId) {
         Ok(())
     }));
     let builder = egui_kittest::Harness::builder().with_size(egui::vec2(800.0, 600.0));
-    let builder = if std::env::var_os("PHOTOCRAFT_TIFF_SNAPSHOTS").is_some() { builder.wgpu() } else { builder };
+    let builder = if std::env::var_os("PHOTOSTORE_TIFF_SNAPSHOTS").is_some() { builder.wgpu() } else { builder };
     let mut h = builder.build_ui_state(
         |ui, app| {
             show(app, ui.ctx());
@@ -29,7 +29,7 @@ fn tiff_prompt(command: &str) -> (Prompted, Writes, DocId, DocId) {
         },
         app,
     );
-    PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
+    PhotoStoreApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
     h.ctx.set_os(egui::os::OperatingSystem::Windows);
     assert!(intercept(h.state_mut(), command, &Value::Null));
     h.run_steps(2);
@@ -37,7 +37,7 @@ fn tiff_prompt(command: &str) -> (Prompted, Writes, DocId, DocId) {
 }
 
 fn capture(h: &mut Prompted, name: &str) {
-    if let Some(dir) = std::env::var_os("PHOTOCRAFT_TIFF_SNAPSHOTS") {
+    if let Some(dir) = std::env::var_os("PHOTOSTORE_TIFF_SNAPSHOTS") {
         let dir = std::path::PathBuf::from(dir);
         std::fs::create_dir_all(&dir).unwrap();
         h.render().unwrap().save(dir.join(format!("{name}.png"))).unwrap();

@@ -1,9 +1,9 @@
 //! Preferences › Tools › Pressure Curve: the pen's pressure response, edited as points on a curve
-//! (`tools.pressureCurve`, read by the stylus through `photocraft_engine::prefs::PressureCurve`).
+//! (`tools.pressureCurve`, read by the stylus through `photostore_engine::prefs::PressureCurve`).
 //! Drag a point to move it, click empty space to add one, right-click a point to remove it.
 
 use egui::{Pos2, Sense, Stroke, Vec2, pos2};
-use photocraft_engine::prefs::PressureCurve;
+use photostore_engine::prefs::PressureCurve;
 use serde_json::{Value, json};
 
 use crate::theme::Tokens;

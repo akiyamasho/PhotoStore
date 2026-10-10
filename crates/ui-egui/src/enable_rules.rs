@@ -4,7 +4,7 @@
 //! Applied on top of `menus::is_enabled`, so menus, shortcuts and the Layers context menu grey the
 //! same items Photoshop greys.
 
-use photocraft_doc::{Document, Layer, LayerContent, LayerId};
+use photostore_doc::{Document, Layer, LayerContent, LayerId};
 
 /// Commands Photoshop greys while the Background layer is the active layer.
 fn background_blocks(id: &str, has_selection: bool) -> bool {
@@ -108,7 +108,7 @@ pub fn disabled_for_selection(doc: &Document, selected: &[LayerId], active: Opti
     !any
 }
 
-pub fn disabled(app: &crate::PhotocraftApp, id: &str) -> bool {
+pub fn disabled(app: &crate::PhotoStoreApp, id: &str) -> bool {
     let Some(st) = app.session.active() else { return false };
     let active = st.active_layer.and_then(|a| st.doc.layer(a));
     // Free Transform Path works on the Background too: it moves the path, not the pixels.
@@ -128,13 +128,13 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn session() -> photocraft_engine::Session {
-        let mut s = photocraft_engine::Session::new();
+    fn session() -> photostore_engine::Session {
+        let mut s = photostore_engine::Session::new();
         s.execute("file.new", json!({"width": 20, "height": 20})).unwrap();
         s
     }
 
-    fn off(s: &photocraft_engine::Session, id: &str) -> bool {
+    fn off(s: &photostore_engine::Session, id: &str) -> bool {
         let st = s.active().unwrap();
         disabled_for(&st.doc, st.active_layer.and_then(|a| st.doc.layer(a)), id)
     }
@@ -171,8 +171,8 @@ mod tests {
         let mut s = session();
         s.execute("layer.new.layer", json!({})).unwrap();
         let raster = s.active().unwrap().active_layer.unwrap();
-        let text = photocraft_doc::LayerId(s.execute("type.create", json!({"text": "Hi", "size": 12, "x": 2, "y": 12})).unwrap()["layer"].as_u64().unwrap());
-        let sel = |s: &photocraft_engine::Session, ids: &[photocraft_doc::LayerId], id: &str| {
+        let text = photostore_doc::LayerId(s.execute("type.create", json!({"text": "Hi", "size": 12, "x": 2, "y": 12})).unwrap()["layer"].as_u64().unwrap());
+        let sel = |s: &photostore_engine::Session, ids: &[photostore_doc::LayerId], id: &str| {
             let st = s.active().unwrap();
             disabled_for_selection(&st.doc, ids, ids.last().and_then(|a| st.doc.layer(*a)), id)
         };
@@ -197,8 +197,8 @@ mod tests {
     /// A document with a Background, plain layers, one with a mask, a type layer, a shape, a Smart
     /// Object, an adjustment layer and one with a drop shadow; `select` picks a selection (the last
     /// layer is active) and `copied` has a layer style on the clipboard.
-    fn world(select: &[&str], copied: bool) -> photocraft_engine::Session {
-        use photocraft_doc::LayerId;
+    fn world(select: &[&str], copied: bool) -> photostore_engine::Session {
+        use photostore_doc::LayerId;
         let mut s = session();
         let id = |r: serde_json::Value| LayerId(r["layer"].as_u64().unwrap());
         let mut ids = std::collections::HashMap::new();
@@ -225,7 +225,7 @@ mod tests {
     }
 
     /// What a layer command can change: kind, clipping, mask and style of every layer.
-    fn fingerprint(s: &photocraft_engine::Session) -> Vec<String> {
+    fn fingerprint(s: &photostore_engine::Session) -> Vec<String> {
         s.active()
             .unwrap()
             .doc
@@ -277,7 +277,7 @@ mod tests {
         for sel in selections {
             for copied in [false, true] {
                 for (cmd, must_change) in commands {
-                    let app = crate::PhotocraftApp::new(world(sel, copied), crate::Services::default());
+                    let app = crate::PhotoStoreApp::new(world(sel, copied), crate::Services::default());
                     let enabled = crate::menus::is_enabled(&app, cmd);
                     let mut s = app.session;
                     let before = fingerprint(&s);

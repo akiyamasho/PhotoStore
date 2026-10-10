@@ -1,10 +1,10 @@
 //! Edit › Free Transform / Transform: projective transforms of layers (and the selection).
 
-use photocraft_algo::transform::{Homography, Interp, warp_surface};
-use photocraft_color::PixelFormat;
-use photocraft_doc::{Document, Layer, LayerContent, LayerId, Locks};
-use photocraft_geom::{Affine, Rect};
-use photocraft_raster::Surface;
+use photostore_algo::transform::{Homography, Interp, warp_surface};
+use photostore_color::PixelFormat;
+use photostore_doc::{Document, Layer, LayerContent, LayerId, Locks};
+use photostore_geom::{Affine, Rect};
+use photostore_raster::Surface;
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
@@ -23,10 +23,10 @@ fn bad(msg: impl Into<String>) -> EngineError {
 pub fn transform_bounds(doc: &Document, layer: &Layer) -> Rect {
     let content = match &layer.content {
         LayerContent::Group(g) => g.children.iter().map(|l| transform_bounds(doc, l)).fold(Rect::EMPTY, |a, b| a.union(&b)),
-        _ => layer.surface().map_or(Rect::EMPTY, photocraft_compose::bounds::content_bounds),
+        _ => layer.surface().map_or(Rect::EMPTY, photostore_compose::bounds::content_bounds),
     };
     let content =
-        if content.is_empty() { layer.mask.as_ref().map_or(Rect::EMPTY, |m| photocraft_compose::bounds::content_bounds(&m.surface)) } else { content };
+        if content.is_empty() { layer.mask.as_ref().map_or(Rect::EMPTY, |m| photostore_compose::bounds::content_bounds(&m.surface)) } else { content };
     match &doc.selection {
         Some(sel) if !layer.is_group() => content.intersect(&sel.content_bounds()),
         _ => content,

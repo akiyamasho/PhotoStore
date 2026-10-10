@@ -11,13 +11,13 @@
 use std::hash::{Hash, Hasher};
 
 use egui::{Align2, Color32, FontId, Rect as ERect, Sense, Stroke, TextureHandle, pos2, vec2};
-use photocraft_algo::{FilterParams, GALLERY_CATEGORIES, GalleryFilter};
-use photocraft_doc::LayerId;
-use photocraft_geom::Rect;
-use photocraft_raster::Surface;
+use photostore_algo::{FilterParams, GALLERY_CATEGORIES, GalleryFilter};
+use photostore_doc::LayerId;
+use photostore_geom::Rect;
+use photostore_raster::Surface;
 use serde_json::{Map, Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::filter_dialog::{Kind, parse_spec};
 use crate::theme::Tokens;
 use crate::widgets;
@@ -154,10 +154,10 @@ fn sample(surf: &Surface, r: Rect, k: u32) -> Surface {
 
 /// Runs a stack on a small surface (the preview and thumbnails).
 fn render(src: &Surface, params: &Value) -> Surface {
-    let effects = photocraft_engine::gallery_cmds::effects_from_json(params).unwrap_or_default();
+    let effects = photostore_engine::gallery_cmds::effects_from_json(params).unwrap_or_default();
     let b = src.content_bounds().union(&Rect::new(0, 0, 1, 1));
     let b = Rect::new(0, 0, b.x1, b.y1);
-    photocraft_algo::apply_in(src, &FilterParams::FilterGallery { effects }, b, b, None, b)
+    photostore_algo::apply_in(src, &FilterParams::FilterGallery { effects }, b, b, None, b)
 }
 
 fn image(surf: &Surface, w: usize, h: usize) -> egui::ColorImage {
@@ -170,7 +170,7 @@ fn image(surf: &Surface, w: usize, h: usize) -> egui::ColorImage {
 }
 
 /// Opens the dialog on the active layer, starting from the last gallery stack used.
-pub fn open(app: &mut PhotocraftApp) -> Result<(), String> {
+pub fn open(app: &mut PhotoStoreApp) -> Result<(), String> {
     let (layer, src, _) = crate::distort_ui::active_pixels(app)?;
     let st = app.session.active().ok_or("no document")?;
     let canvas = st.doc.bounds();
@@ -225,7 +225,7 @@ pub fn open(app: &mut PhotocraftApp) -> Result<(), String> {
 }
 
 /// OK: runs `filter.filterGallery` with the stack (one history step).
-pub fn commit(app: &mut PhotocraftApp) -> Result<Value, String> {
+pub fn commit(app: &mut PhotoStoreApp) -> Result<Value, String> {
     let Some(d) = app.distort.gallery.take() else { return Err("the Filter Gallery is not open".into()) };
     if !d.effects.iter().any(|e| e.visible) {
         return Ok(json!({"committed": false}));
@@ -236,7 +236,7 @@ pub fn commit(app: &mut PhotocraftApp) -> Result<Value, String> {
 }
 
 /// Control channel: `filter.filterGallery {"ui": {...}}` while the dialog is open.
-pub fn control(app: &mut PhotocraftApp, ui: &Value) -> Result<Value, String> {
+pub fn control(app: &mut PhotoStoreApp, ui: &Value) -> Result<Value, String> {
     let flag = |k: &str| ui.get(k).and_then(Value::as_bool) == Some(true);
     if flag("commit") {
         let r = commit(app)?;
@@ -346,7 +346,7 @@ fn update_thumbs(d: &mut GalleryDialog, ctx: &egui::Context, budget: usize) {
 }
 
 /// Draws the dialog (a full-window layer over the app).
-pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
+pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     let t = Tokens::get(ctx);
     let screen = ctx.content_rect();
     let mut action: Option<&str> = None;
@@ -511,7 +511,7 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
                             .and_then(Value::as_array)
                             .map(|a| a.iter().filter_map(Value::as_f64).map(|v| v as f32).collect::<Vec<_>>())
                             .filter(|v| v.len() >= 3);
-                        let neon = photocraft_algo::GalleryEffect::new(GalleryFilter::NeonGlow).color;
+                        let neon = photostore_algo::GalleryEffect::new(GalleryFilter::NeonGlow).color;
                         let mut rgb = c.map_or([neon[0], neon[1], neon[2]], |v| [v[0], v[1], v[2]]);
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new(tl!("Glow Color")).color(t.text_dim));
@@ -592,8 +592,8 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
 mod tests {
     use super::*;
 
-    fn app() -> PhotocraftApp {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+    fn app() -> PhotoStoreApp {
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
         app.session.execute("file.new", json!({"width": 90, "height": 60, "depth": 16})).unwrap();
         app.session.execute("layer.new.layer", json!({})).unwrap();
         app.session
@@ -660,7 +660,7 @@ mod tests {
         // Preview equals the engine's algorithm on the sampled pixels.
         let src = sample(&d.src, d.canvas, 1);
         let a = render(&src, &d.params());
-        let mut s2 = photocraft_engine::Session::new();
+        let mut s2 = photostore_engine::Session::new();
         s2.add_document(app.session.active().unwrap().doc.as_ref().clone(), None);
         s2.select_layer(d.layer).unwrap();
         s2.execute("filter.filterGallery", d.params()).unwrap();

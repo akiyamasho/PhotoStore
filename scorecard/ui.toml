@@ -17,7 +17,7 @@ id = "UI-217-2"
 target = "Window size and dock width remembered across restarts"
 status = "done"
 issue = 217
-note = "eframe persistence (ui.ron): persist_window for the window, egui memory for the dock panel width; window_and_panel_geometry_survive_a_restart asserts the round trip (apps/photocraft/src/main.rs; b07a2e5b, #587)"
+note = "eframe persistence (ui.ron): persist_window for the window, egui memory for the dock panel width; window_and_panel_geometry_survive_a_restart asserts the round trip (apps/photostore/src/main.rs; b07a2e5b, #587)"
 
 [[item]]
 id = "UI-217-3"

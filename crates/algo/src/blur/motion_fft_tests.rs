@@ -3,8 +3,8 @@
 //! source premultiplication, then performs convolution and accumulation in f64.
 
 use super::*;
-use photocraft_color::{ColorMode, PixelFormat, SampleType};
-use photocraft_raster::Surface;
+use photostore_color::{ColorMode, PixelFormat, SampleType};
+use photostore_raster::Surface;
 use std::collections::BTreeMap;
 
 fn offsets(angle: f32, distance: f32) -> Vec<(f64, f64)> {

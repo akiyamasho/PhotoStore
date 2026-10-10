@@ -6,15 +6,15 @@ Parser safety is broader than “does not crash.” A parser must also bound mem
 
 ### PSD/PSB
 
-`photocraft-psd` enforces maximum document dimensions and channel counts, bounds decoded channel data, limits ActionDescriptor nesting and pattern edges, and uses checked arithmetic for key decoded-size calculations. Tests cover malformed headers, truncation, property-generated inputs, and dedicated fuzz targets.
+`photostore-psd` enforces maximum document dimensions and channel counts, bounds decoded channel data, limits ActionDescriptor nesting and pattern edges, and uses checked arithmetic for key decoded-size calculations. Tests cover malformed headers, truncation, property-generated inputs, and dedicated fuzz targets.
 
 ### Raster codecs
 
-`photocraft-codecs` has configurable `Limits` for width, height, pixel count, and decoded allocation. The default policy is applied across enabled decoders and tested with oversized PNG, PNM, JPEG, and TIFF headers plus random/mutated inputs.
+`photostore-codecs` has configurable `Limits` for width, height, pixel count, and decoded allocation. The default policy is applied across enabled decoders and tested with oversized PNG, PNM, JPEG, and TIFF headers plus random/mutated inputs.
 
 ### Native format
 
-`photocraft-format` bounds manifest, blob, and total decompressed bytes; validates ZIP structure and decompressed size; verifies CRCs and content hashes; rejects unsupported versions; and property-tests random bundles/manifests.
+`photostore-format` bounds manifest, blob, and total decompressed bytes; validates ZIP structure and decompressed size; verifies CRCs and content hashes; rejects unsupported versions; and property-tests random bundles/manifests.
 
 ## Review checklist
 

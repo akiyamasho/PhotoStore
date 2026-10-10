@@ -6,9 +6,9 @@
 
 use std::{env, fs, io::{self, Read, Write}, path::{Path, PathBuf}, process::{Child, Command, ExitStatus, Stdio}, sync::mpsc, thread, time::{SystemTime, UNIX_EPOCH}};
 
-use photocraft_color::PixelFormat;
-use photocraft_geom::Rect;
-use photocraft_raster::{Rgba8Image, Surface};
+use photostore_color::PixelFormat;
+use photostore_geom::Rect;
+use photostore_raster::{Rgba8Image, Surface};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

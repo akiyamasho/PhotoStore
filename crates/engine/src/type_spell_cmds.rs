@@ -1,7 +1,7 @@
 //! Edit › Check Spelling… and glyph insertion (Window › Glyphs).
 //!
 //! `edit.checkSpelling` checks type layers against the bundled English dictionary
-//! (`photocraft_text::spell`, SCOWL size 50) plus the user dictionary in the preferences
+//! (`photostore_text::spell`, SCOWL size 50) plus the user dictionary in the preferences
 //! (`userDictionary`). Headless, it lists misspellings with suggestions and changes, changes all,
 //! or adds words to the dictionary; the UI's dialog drives the same actions. Offsets are
 //! character indices.
@@ -11,8 +11,8 @@
 
 use std::collections::HashSet;
 
-use photocraft_doc::{Document, LayerContent, LayerId};
-use photocraft_text::spell::Dictionary;
+use photostore_doc::{Document, LayerContent, LayerId};
+use photostore_text::spell::Dictionary;
 use serde_json::{Value, json};
 
 use crate::commands::{CommandSpec, layer_param};
@@ -121,7 +121,7 @@ fn change_all(s: &mut Session, p: &Value) -> Result<Value> {
         .into_iter()
         .filter_map(|id| {
             let t = text(&doc, id)?;
-            let hits: Vec<(usize, usize)> = photocraft_text::spell::words(t).into_iter().filter(|(a, b)| t[*a..*b] == word).collect();
+            let hits: Vec<(usize, usize)> = photostore_text::spell::words(t).into_iter().filter(|(a, b)| t[*a..*b] == word).collect();
             (!hits.is_empty()).then_some((id, hits))
         })
         .collect();
@@ -273,10 +273,10 @@ mod tests {
 
     #[test]
     fn lists_changes_and_learns_words() {
-        let (mut s, id) = session("Teh quick brwon fox, teh end. Photocraft");
+        let (mut s, id) = session("Teh quick brwon fox, teh end. PhotoStore");
         let r = s.execute("edit.checkSpelling", json!({})).unwrap();
         let words: Vec<&str> = r["misspellings"].as_array().unwrap().iter().map(|m| m["word"].as_str().unwrap()).collect();
-        assert_eq!(words, vec!["Teh", "brwon", "teh", "Photocraft"]);
+        assert_eq!(words, vec!["Teh", "brwon", "teh", "PhotoStore"]);
         let first = &r["misspellings"][0];
         assert_eq!((first["start"].as_u64(), first["end"].as_u64()), (Some(0), Some(3)));
         assert_eq!(first["suggestions"][0], "The");
@@ -285,7 +285,7 @@ mod tests {
         assert!(s.execute("edit.checkSpelling", json!({"action": "change", "layer": id, "start": 0, "end": 3, "word": "Teh", "replace": "X"})).is_err());
         let r = s.execute("edit.checkSpelling", json!({"action": "changeAll", "word": "brwon", "replace": "brown"})).unwrap();
         assert_eq!(r["changed"], 1);
-        assert_eq!(text_of(&s, id), "The quick brown fox, teh end. Photocraft");
+        assert_eq!(text_of(&s, id), "The quick brown fox, teh end. PhotoStore");
         // One undo step per change.
         s.execute("edit.undo", json!({})).unwrap();
         assert!(text_of(&s, id).contains("brwon"));
@@ -293,11 +293,11 @@ mod tests {
         // Ignore All and Add to Dictionary.
         let r = s.execute("edit.checkSpelling", json!({"ignore": ["teh"]})).unwrap();
         assert_eq!(r["count"], 1);
-        s.execute("edit.checkSpelling", json!({"action": "addToDictionary", "word": "Photocraft"})).unwrap();
-        assert_eq!(s.prefs().user_dictionary, vec!["Photocraft".to_string()]);
+        s.execute("edit.checkSpelling", json!({"action": "addToDictionary", "word": "PhotoStore"})).unwrap();
+        assert_eq!(s.prefs().user_dictionary, vec!["PhotoStore".to_string()]);
         let r = s.execute("edit.checkSpelling", json!({})).unwrap();
         assert_eq!(r["count"], 1);
-        s.execute("edit.checkSpelling", json!({"action": "removeFromDictionary", "word": "photocraft"})).unwrap();
+        s.execute("edit.checkSpelling", json!({"action": "removeFromDictionary", "word": "photostore"})).unwrap();
         assert!(s.prefs().user_dictionary.is_empty());
         assert!(s.execute("edit.checkSpelling", json!({"action": "bogus"})).is_err());
         let r = s.execute("edit.checkSpelling", json!({"action": "suggest", "word": "recieve"})).unwrap();

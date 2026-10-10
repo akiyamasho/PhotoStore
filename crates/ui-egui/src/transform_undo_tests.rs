@@ -6,14 +6,14 @@ use egui::{Key, Modifiers, PointerButton, Pos2, vec2};
 use egui_kittest::Harness;
 use serde_json::json;
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::canvas::ViewXform;
 use crate::state::Tool;
 
 /// A 400 × 300 document with a 100 × 60 red rectangle on its own layer at (100, 100), the Move
 /// tool active, at 100 %.
-fn harness() -> Harness<'static, PhotocraftApp> {
-    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+fn harness() -> Harness<'static, PhotoStoreApp> {
+    let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
     app.run("file.new", json!({"width": 400, "height": 300})).unwrap();
     app.run("layer.new.layer", json!({})).unwrap();
     app.run("select.rect", json!({"x": 100, "y": 100, "width": 100, "height": 60})).unwrap();
@@ -23,7 +23,7 @@ fn harness() -> Harness<'static, PhotocraftApp> {
     app.ui.extras.rulers = false;
     app.ui.tool = Tool::Move;
     let mut h = Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
-        |ui, app: &mut PhotocraftApp| {
+        |ui, app: &mut PhotoStoreApp| {
             let ctx = ui.ctx().clone();
             if !ctx.fonts(|f| f.families().contains(&egui::FontFamily::Name("medium".into()))) {
                 return;
@@ -33,7 +33,7 @@ fn harness() -> Harness<'static, PhotocraftApp> {
         },
         app,
     );
-    PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
+    PhotoStoreApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
     h.run_steps(4);
     let v = &mut h.state_mut().ui.views[0];
     v.zoom = 1.0;
@@ -43,7 +43,7 @@ fn harness() -> Harness<'static, PhotocraftApp> {
     h
 }
 
-fn screen(h: &Harness<'static, PhotocraftApp>, p: [f64; 2]) -> Pos2 {
+fn screen(h: &Harness<'static, PhotoStoreApp>, p: [f64; 2]) -> Pos2 {
     let app = h.state();
     let v = &app.ui.views[0];
     let xf = ViewXform {
@@ -57,7 +57,7 @@ fn screen(h: &Harness<'static, PhotocraftApp>, p: [f64; 2]) -> Pos2 {
 }
 
 /// Press at document point `from`, drag to `to` in a few steps and release.
-fn drag(h: &mut Harness<'static, PhotocraftApp>, from: [f64; 2], to: [f64; 2]) {
+fn drag(h: &mut Harness<'static, PhotoStoreApp>, from: [f64; 2], to: [f64; 2]) {
     let (a, b) = (screen(h, from), screen(h, to));
     h.event(egui::Event::PointerMoved(a));
     h.run_steps(1);
@@ -71,21 +71,21 @@ fn drag(h: &mut Harness<'static, PhotocraftApp>, from: [f64; 2], to: [f64; 2]) {
     h.run_steps(3);
 }
 
-fn begin(h: &mut Harness<'static, PhotocraftApp>) {
+fn begin(h: &mut Harness<'static, PhotoStoreApp>) {
     let ctx = h.ctx.clone();
     crate::menus::invoke(h.state_mut(), &ctx, "edit.freeTransform", json!({})).unwrap();
     h.run_steps(2);
 }
 
-fn quad(h: &Harness<'static, PhotocraftApp>) -> [[f64; 2]; 4] {
+fn quad(h: &Harness<'static, PhotoStoreApp>) -> [[f64; 2]; 4] {
     h.state().ui.transform.as_ref().expect("transforming").quad
 }
 
-fn history(h: &Harness<'static, PhotocraftApp>) -> usize {
+fn history(h: &Harness<'static, PhotoStoreApp>) -> usize {
     h.state().session.active().unwrap().history.entries().len()
 }
 
-fn key(h: &mut Harness<'static, PhotocraftApp>, m: Modifiers, k: Key) {
+fn key(h: &mut Harness<'static, PhotoStoreApp>, m: Modifiers, k: Key) {
     h.key_press_modifiers(m, k);
     h.run_steps(2);
 }
@@ -138,7 +138,7 @@ fn undo_steps_back_through_the_transform_not_the_document() {
 
 /// `engine.execute` over the control channel (and MCP, which goes through it) as a programmatic
 /// caller: the result's `ok` flag.
-fn execute(h: &mut Harness<'static, PhotocraftApp>, command: &str) -> bool {
+fn execute(h: &mut Harness<'static, PhotoStoreApp>, command: &str) -> bool {
     let ctx = h.ctx.clone();
     let (req, _rx) = crate::control::ControlRequest::new("engine.execute", json!({"command": command}));
     let crate::control::Outcome::Done(reply) = crate::control::handle(h.state_mut(), &ctx, &req) else {
@@ -176,7 +176,7 @@ fn automation_undo_steps_through_the_transform() {
     assert_eq!(history(&h), steps - 1, "the fill is undone");
 }
 
-fn width(h: &Harness<'static, PhotocraftApp>) -> u32 {
+fn width(h: &Harness<'static, PhotoStoreApp>) -> u32 {
     let st = h.state().session.active().unwrap();
     st.doc.layer(st.active_layer.unwrap()).unwrap().surface().unwrap().content_bounds().width()
 }

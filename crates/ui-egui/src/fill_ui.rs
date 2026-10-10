@@ -9,7 +9,7 @@
 use egui::{Align2, Sense, pos2, vec2};
 use serde_json::{Map, Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::theme::Tokens;
 
 pub const COMMAND: &str = "edit.fill";
@@ -42,7 +42,7 @@ fn hex(c: [f32; 4]) -> String {
 }
 
 /// A remembered value, if it is one the dialog can show (a corrupt preference is ignored).
-fn valid(app: &PhotocraftApp, key: &str, v: &Value) -> bool {
+fn valid(app: &PhotoStoreApp, key: &str, v: &Value) -> bool {
     match key {
         "contents" => v.as_str().is_some_and(|c| CONTENTS.iter().any(|(k, _)| *k == c)),
         "mode" | "opacity" | "preserveTransparency" => crate::dialog_blend_ui::valid(key, v),
@@ -54,7 +54,7 @@ fn valid(app: &PhotocraftApp, key: &str, v: &Value) -> bool {
 }
 
 /// The dialog's fields: Photoshop's defaults, overridden by the last choices.
-pub fn fields(app: &PhotocraftApp) -> Map<String, Value> {
+pub fn fields(app: &PhotoStoreApp) -> Map<String, Value> {
     let mut f = Map::new();
     f.insert(MARK.into(), json!(true));
     f.insert("__command".into(), json!(COMMAND));
@@ -79,7 +79,7 @@ pub fn fields(app: &PhotocraftApp) -> Map<String, Value> {
 }
 
 /// Open the Fill dialog; returns its id.
-pub fn open(app: &mut PhotocraftApp) -> u64 {
+pub fn open(app: &mut PhotoStoreApp) -> u64 {
     let f = fields(app);
     app.ui.open_dialog(crate::state::DialogKind::Command, f)
 }
@@ -108,7 +108,7 @@ pub fn params(f: &Map<String, Value>) -> Value {
 }
 
 /// OK: remember the choices, then fill.
-pub fn confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value, String> {
+pub fn confirm(app: &mut PhotoStoreApp, f: &Map<String, Value>) -> Result<Value, String> {
     let remembered: Map<String, Value> = KEYS.iter().filter_map(|k| f.get(*k).map(|v| (k.to_string(), v.clone()))).collect();
     app.session.prefs.edit(|p| p.dialogs.insert(COMMAND.into(), Value::Object(remembered)));
     app.run(COMMAND, params(f))
@@ -130,7 +130,7 @@ fn parse_hex(h: &str) -> [u8; 3] {
 }
 
 /// The dialog body.
-pub fn body(app: &PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
+pub fn body(app: &PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     ui.spacing_mut().item_spacing.y = 6.0;
     let mut contents = get_str(f, "contents", "foreground");
     ui.horizontal(|ui| {

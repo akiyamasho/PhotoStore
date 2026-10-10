@@ -5,19 +5,19 @@
 //! `spacing`, `layer`), respects the active selection as a mask and the layer's transparency lock, and
 //! works at any depth (8/16/32f) and colour model. Like the Brush, each paints the targeted surface:
 //! the layer's pixels, its mask (`"target":"mask"`), an alpha channel or the Quick Mask (`"target"`,
-//! filled in from the Channels panel when absent). The pixel algorithms live in `photocraft-algo`
-//! (`poisson`, `inpaint`, `retouch`) and the dab machinery in `photocraft-paint::retouch`; this module
+//! filled in from the Channels panel when absent). The pixel algorithms live in `photostore-algo`
+//! (`poisson`, `inpaint`, `retouch`) and the dab machinery in `photostore-paint::retouch`; this module
 //! only parses parameters and wires them together.
 
-use photocraft_algo::inpaint::{self, CompleteParams};
-use photocraft_algo::poisson;
-use photocraft_algo::retouch::{ToneRange, dodge_burn, local_blur, local_sharpen, sponge};
-use photocraft_color::{BlendMode, PixelFormat, SampleType};
-use photocraft_doc::{Document, LayerContent, LayerId};
-use photocraft_geom::Rect;
-use photocraft_paint::retouch::{Footprint, Region, Smudge, alpha_index, apply_coverage, apply_dab_stroke, stroke_coverage};
-use photocraft_paint::{BrushSettings, Stroke, StrokePoint};
-use photocraft_raster::{Surface, from_rgba_into, to_rgba};
+use photostore_algo::inpaint::{self, CompleteParams};
+use photostore_algo::poisson;
+use photostore_algo::retouch::{ToneRange, dodge_burn, local_blur, local_sharpen, sponge};
+use photostore_color::{BlendMode, PixelFormat, SampleType};
+use photostore_doc::{Document, LayerContent, LayerId};
+use photostore_geom::Rect;
+use photostore_paint::retouch::{Footprint, Region, Smudge, alpha_index, apply_coverage, apply_dab_stroke, stroke_coverage};
+use photostore_paint::{BrushSettings, Stroke, StrokePoint};
+use photostore_raster::{Surface, from_rgba_into, to_rgba};
 use serde_json::{Value, json};
 
 use crate::commands::{CommandSpec, blend_from_str};
@@ -171,7 +171,7 @@ fn composite_region(pre: &Document, id: Option<LayerId>, which: SampleLayers, re
             }
         }
     }
-    let buf = photocraft_compose::render(&doc, rect);
+    let buf = photostore_compose::render(&doc, rect);
     let n = fmt.channels();
     let mut out = Region::new(rect, n);
     let mut enc = [0.0f32; 8];
@@ -226,7 +226,7 @@ fn clone_sample(
 
 /// Read-only clone overlay. Shares the stroke sampler without anchoring a source or editing history.
 /// Both destination and transformed source allocations are bounded for interactive use.
-pub fn clone_preview(s: &Session, rect: Rect, map: &crate::presets::clone_source::Mapping, sample_layer: &str) -> Result<photocraft_compose::Buffer> {
+pub fn clone_preview(s: &Session, rect: Rect, map: &crate::presets::clone_source::Mapping, sample_layer: &str) -> Result<photostore_compose::Buffer> {
     if ![map.source.0, map.source.1, map.anchor.0, map.anchor.1].into_iter().chain(map.m).all(|v| v.is_finite() && v.abs() < 1_000_000.0) {
         return Err(bad("clone.preview", "invalid preview mapping"));
     }
@@ -248,7 +248,7 @@ pub fn clone_preview(s: &Session, rect: Rect, map: &crate::presets::clone_source
     let which = sample_layers(&json!({"sampleLayer": sample_layer}), "clone.preview")?;
     let region = clone_sample(&d.doc, Some(id), surf, which, rect, map, "clone.preview")?;
     let px = region.data.chunks_exact(surf.format().channels()).map(|p| to_rgba(&surf.format(), p)).collect();
-    Ok(photocraft_compose::Buffer { rect, px })
+    Ok(photostore_compose::Buffer { rect, px })
 }
 
 /// Result JSON shared by Clone Stamp and Healing Brush: the offset used and where the next stroke
@@ -318,7 +318,7 @@ pub struct LiveRetouch {
     /// The active document with the stroke so far.
     pub doc: std::sync::Arc<Document>,
     cmd: String,
-    renderer: photocraft_paint::StrokeRenderer,
+    renderer: photostore_paint::StrokeRenderer,
     pre: std::sync::Arc<Document>,
     pre_surf: Surface,
     id: Option<LayerId>,
@@ -358,7 +358,7 @@ impl LiveRetouch {
         let (surf, lock) = crate::channel_cmds::target_surface(&mut doc, id, p)?;
         let pre_surf = surf.clone();
         // As `stroke_coverage`, which the commit uses.
-        let renderer = photocraft_paint::StrokeRenderer::new(&stroke.brush, None, 1.0);
+        let renderer = photostore_paint::StrokeRenderer::new(&stroke.brush, None, 1.0);
         let opacity = stroke.brush.opacity;
         let paint = match paint {
             LivePaint::History(src) if src.format() != pre_surf.format() => LivePaint::History(src.convert(pre_surf.format())),
@@ -866,7 +866,7 @@ impl DabTool {
                 })
             }
             Self::Smudge { strength, finger, max_size } => {
-                let finger_px = finger.map(|fg| photocraft_raster::from_rgba(&fmt, fg));
+                let finger_px = finger.map(|fg| photostore_raster::from_rgba(&fmt, fg));
                 // Premultiplied mixing: transparent pixels carry no colour, so no dark fringes.
                 let mut sm = Smudge::new(strength, finger_px, max_size).with_alpha(alpha_index(&fmt));
                 Box::new(move |work, fp| sm.dab(work, fp))
@@ -901,7 +901,7 @@ pub struct LiveDab {
     /// The active document with the stroke so far.
     pub doc: std::sync::Arc<Document>,
     cmd: String,
-    renderer: photocraft_paint::StrokeRenderer,
+    renderer: photostore_paint::StrokeRenderer,
     done: usize,
     effect: DabEffect,
     halo: i32,
@@ -930,7 +930,7 @@ impl LiveDab {
         let pre_surf = surf.clone();
         let effect = tool.effect(pre_surf.format(), stroke.brush.spacing);
         // `apply_dab_stroke` generates the same dabs (`dabs`: zoom 1, no smoothing scale).
-        let renderer = photocraft_paint::StrokeRenderer::new(&stroke.brush, None, 1.0).record_dabs();
+        let renderer = photostore_paint::StrokeRenderer::new(&stroke.brush, None, 1.0).record_dabs();
         let mut live = Self {
             doc: std::sync::Arc::new(doc),
             cmd: cmd.into(),
@@ -981,7 +981,7 @@ impl LiveDab {
         self.bounds = self.bounds.union(&dmg);
         let (orig, work) = (Region::read(&self.pre_surf, dmg), Region::read(&self.work, dmg));
         let (surf, _) = crate::channel_cmds::target_surface(std::sync::Arc::make_mut(&mut self.doc), self.id, &self.params)?;
-        photocraft_paint::retouch::mix_back(surf, &orig, &work, dmg, self.opacity, self.sel.as_ref(), self.lock);
+        photostore_paint::retouch::mix_back(surf, &orig, &work, dmg, self.opacity, self.sel.as_ref(), self.lock);
         Ok(dmg)
     }
 }

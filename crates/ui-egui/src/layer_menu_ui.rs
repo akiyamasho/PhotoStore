@@ -2,7 +2,7 @@
 //! unavailable ones are greyed using the same enablement as the main menus. Items marked as menu
 //! invocations (`Value::Null` params) go through `menus::invoke`, so dialogs open like in the menu bar.
 
-use photocraft_doc::{LabelColor, Layer, LayerContent};
+use photostore_doc::{LabelColor, Layer, LayerContent};
 use serde_json::{Value, json};
 
 /// One entry: label, command id. `None` = separator.
@@ -82,7 +82,7 @@ pub fn entries(l: &Layer, multi: bool, has_selection: bool) -> Vec<Entry> {
                 v.push(Some(("Replace Contents…", "layer.smartObjects.replaceContents")));
                 v.push(Some(("Export Contents…", "layer.smartObjects.exportContents")));
                 if let LayerContent::Smart(sm) = &l.content {
-                    if matches!(&sm.source, photocraft_doc::SmartSource::Linked { .. }) {
+                    if matches!(&sm.source, photostore_doc::SmartSource::Linked { .. }) {
                         v.push(Some(("Relink to File…", "layer.smartObjects.relinkToFile")));
                         v.push(Some(("Update Modified Content", "layer.smartObjects.updateModifiedContent")));
                         v.push(Some(("Convert to Embedded", "layer.smartObjects.convertToEmbedded")));
@@ -131,7 +131,7 @@ pub fn entries(l: &Layer, multi: bool, has_selection: bool) -> Vec<Entry> {
 
 /// Render the menu. Pushes `(command, params)` actions; `Value::Null` params mean "invoke like the
 /// menu item" (opens the command's dialog when it has one).
-pub fn show(app: &crate::PhotocraftApp, ui: &mut egui::Ui, l: &Layer, on_set: bool, actions: &mut Vec<(String, Value)>) -> bool {
+pub fn show(app: &crate::PhotoStoreApp, ui: &mut egui::Ui, l: &Layer, on_set: bool, actions: &mut Vec<(String, Value)>) -> bool {
     crate::widgets::menu_scroll(ui, |ui| {
         ui.set_min_width(220.0);
         let mut rename = false;
@@ -147,7 +147,7 @@ pub fn show(app: &crate::PhotocraftApp, ui: &mut egui::Ui, l: &Layer, on_set: bo
                 }
                 Some((label, id)) => {
                     // Skip commands this build doesn't have rather than showing dead items.
-                    if photocraft_engine::commands::find(id).is_none() && !crate::menu_catalog::CATALOG.iter().any(|m| m.3 == id) {
+                    if photostore_engine::commands::find(id).is_none() && !crate::menu_catalog::CATALOG.iter().any(|m| m.3 == id) {
                         continue;
                     }
                     last_sep = false;
@@ -179,7 +179,7 @@ fn color_name(color: LabelColor) -> &'static str {
     crate::i18n::tr_ctx(crate::i18n::current(), "layerLabel", color.label())
 }
 
-fn common_color(app: &crate::PhotocraftApp, l: &Layer, on_set: bool) -> Option<LabelColor> {
+fn common_color(app: &crate::PhotoStoreApp, l: &Layer, on_set: bool) -> Option<LabelColor> {
     if !on_set {
         return Some(l.label);
     }
@@ -190,7 +190,7 @@ fn common_color(app: &crate::PhotocraftApp, l: &Layer, on_set: bool) -> Option<L
     labels.all(|c| c == first).then_some(first)
 }
 
-fn color_menu(app: &crate::PhotocraftApp, ui: &mut egui::Ui, l: &Layer, on_set: bool, actions: &mut Vec<(String, Value)>) {
+fn color_menu(app: &crate::PhotoStoreApp, ui: &mut egui::Ui, l: &Layer, on_set: bool, actions: &mut Vec<(String, Value)>) {
     let current = common_color(app, l, on_set);
     ui.menu_button(tl!("Color"), |ui| {
         crate::widgets::menu_scroll(ui, |ui| {
@@ -250,12 +250,12 @@ mod tests {
 
     #[test]
     fn mask_toggle_label_follows_history_and_selected_layer() {
-        let mut s = photocraft_engine::Session::new();
+        let mut s = photostore_engine::Session::new();
         s.execute("file.new", json!({"width": 10, "height": 10})).unwrap();
         s.execute("layer.new.layer", json!({})).unwrap();
-        let mut app = crate::PhotocraftApp::new(s, Default::default());
+        let mut app = crate::PhotoStoreApp::new(s, Default::default());
         let toggle = "layer.layerMask.enabled";
-        let check = |app: &crate::PhotocraftApp, label: Option<&str>| {
+        let check = |app: &crate::PhotoStoreApp, label: Option<&str>| {
             let st = app.session.active().unwrap();
             let l = st.doc.layer(st.active_layer.unwrap()).unwrap();
             let entry = entries(l, false, st.doc.selection.is_some()).into_iter().flatten().find(|e| e.1 == toggle);
@@ -266,7 +266,7 @@ mod tests {
             assert_eq!(item.enabled, label.is_some());
             assert_eq!(item.label, label.unwrap_or("Enable Layer Mask"));
             for lang in [crate::i18n::Lang::EN, crate::i18n::Lang::from_pref("fr")] {
-                let layout = crate::native_menu::photocraft_layout(&crate::menus::menu_items(app), lang, lang.code());
+                let layout = crate::native_menu::photostore_layout(&crate::menus::menu_items(app), lang, lang.code());
                 let native = layout.bar.find(toggle).unwrap();
                 assert_eq!(native.label, crate::i18n::tr(lang, &item.label));
                 assert_eq!(native.enabled, item.enabled);
@@ -292,7 +292,7 @@ mod tests {
         check(&app, Some("Enable Layer Mask"));
         app.session.active_mut().unwrap().active_layer = None;
         assert!(!crate::menus::is_enabled(&app, toggle));
-        let empty = crate::PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        let empty = crate::PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
         assert!(!crate::menus::is_enabled(&empty, toggle));
     }
 
@@ -303,7 +303,7 @@ mod tests {
         for language in ["en", "fr"] {
             let lang = crate::i18n::Lang::from_pref(language);
             let _language = crate::i18n::language_scope(lang);
-            let mut s = photocraft_engine::Session::new();
+            let mut s = photostore_engine::Session::new();
             s.execute("file.new", json!({"width": 10, "height": 10})).unwrap();
             s.execute("layer.new.layer", json!({})).unwrap();
             s.execute("layer.layerMask.revealAll", json!({})).unwrap();
@@ -312,7 +312,7 @@ mod tests {
             let other = s.active().unwrap().active_layer.unwrap();
             s.execute("layer.layerMask.revealAll", json!({})).unwrap();
             s.execute("layer.layerMask.enabled", json!({})).unwrap();
-            let app = crate::PhotocraftApp::new(s, Default::default());
+            let app = crate::PhotoStoreApp::new(s, Default::default());
             // `other` stays the active layer with its mask disabled; the menu is opened over `clicked`,
             // whose mask is enabled, and selects it first (a single-layer menu).
             let mut h = Harness::builder().with_size(egui::vec2(400.0, 900.0)).build_ui_state(
@@ -345,7 +345,7 @@ mod tests {
     /// offers Add Layer Mask only, whatever the clicked layer has, and does not hit the active layer.
     #[test]
     fn multi_selection_menu_has_no_per_layer_mask_items() {
-        let mut s = photocraft_engine::Session::new();
+        let mut s = photostore_engine::Session::new();
         s.execute("file.new", json!({"width": 10, "height": 10})).unwrap();
         s.execute("layer.new.layer", json!({})).unwrap();
         s.execute("layer.layerMask.revealAll", json!({})).unwrap();
@@ -360,11 +360,11 @@ mod tests {
 
     #[test]
     fn smart_object_context_menu_edits_the_clicked_layer() {
-        use crate::PhotocraftApp;
+        use crate::PhotoStoreApp;
         use egui::{Event, Modifiers, PointerButton, Pos2, pos2, vec2};
         use egui_kittest::{Harness, kittest::Queryable};
 
-        fn click(h: &mut Harness<'_, PhotocraftApp>, at: Pos2, button: PointerButton) {
+        fn click(h: &mut Harness<'_, PhotoStoreApp>, at: Pos2, button: PointerButton) {
             h.hover_at(at);
             h.step();
             for pressed in [true, false] {
@@ -375,7 +375,7 @@ mod tests {
         }
 
         for ppp in [1.0, 2.0] {
-            let mut s = photocraft_engine::Session::new();
+            let mut s = photostore_engine::Session::new();
             s.execute("file.new", json!({"width": 640, "height": 480})).unwrap();
             s.execute("layer.new.layer", json!({"name": "Smart source"})).unwrap();
             s.execute("paint.stroke", json!({"points": [[100, 100]], "size": 20})).unwrap();
@@ -383,8 +383,8 @@ mod tests {
             s.execute("layer.new.layer", json!({"name": "Other active layer"})).unwrap();
             let mut h = Harness::builder().with_size(vec2(1440.0, 900.0)).with_pixels_per_point(ppp).with_step_dt(1.0 / 60.0).with_max_steps(64).build_eframe(
                 move |cc| {
-                    PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
-                    PhotocraftApp::new(s, crate::Services::default())
+                    PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
+                    PhotoStoreApp::new(s, crate::Services::default())
                 },
             );
             let ctx = h.ctx.clone();
@@ -401,22 +401,22 @@ mod tests {
             assert!(h.state().session.is_enabled("layer.smartObjects.saveContents"));
             assert!(h.state().session.active().unwrap().doc.walk().iter().any(|(_, _, l)| l.name == "Smart source"));
             h.state_mut().session.set_active(0);
-            assert_eq!(h.state().session.active().unwrap().active_layer, Some(photocraft_doc::LayerId(smart)));
+            assert_eq!(h.state().session.active().unwrap().active_layer, Some(photostore_doc::LayerId(smart)));
         }
     }
 
     #[test]
     fn a_long_layer_menu_stays_inside_a_short_window_and_scrolls() {
-        let mut s = photocraft_engine::Session::new();
+        let mut s = photostore_engine::Session::new();
         s.execute("file.new", json!({"width": 32, "height": 24})).unwrap();
         s.execute("layer.new.layer", json!({"name": "Paint"})).unwrap();
-        let app = crate::PhotocraftApp::new(s, crate::Services::default());
+        let app = crate::PhotoStoreApp::new(s, crate::Services::default());
         let layer = {
             let st = app.session.active().unwrap();
             st.doc.layer(st.active_layer.unwrap()).unwrap().clone()
         };
         let ctx = egui::Context::default();
-        crate::PhotocraftApp::setup_context(&ctx, crate::theme::ThemeKind::ALL[0]);
+        crate::PhotoStoreApp::setup_context(&ctx, crate::theme::ThemeKind::ALL[0]);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 300.0));
         let id = egui::Id::new("layer-menu-probe");
         let mut content = 0.0;
@@ -444,10 +444,10 @@ mod tests {
 
     #[test]
     fn edit_contents_is_available_only_for_smart_objects() {
-        let mut s = photocraft_engine::Session::new();
+        let mut s = photostore_engine::Session::new();
         s.execute("file.new", json!({"width": 32, "height": 24})).unwrap();
         s.execute("layer.new.layer", json!({"name": "Source"})).unwrap();
-        let layer = |s: &photocraft_engine::Session| {
+        let layer = |s: &photostore_engine::Session| {
             let st = s.active().unwrap();
             st.doc.layer(st.active_layer.unwrap()).unwrap().clone()
         };
@@ -476,7 +476,7 @@ mod tests {
     /// selection, whatever kind the clicked layer is, and no single-layer Smart Object items.
     #[test]
     fn multi_selection_menu_rasterizes_the_selection() {
-        let mut s = photocraft_engine::Session::new();
+        let mut s = photostore_engine::Session::new();
         s.execute("file.new", json!({"width": 32, "height": 24})).unwrap();
         s.execute("layer.new.layer", json!({"name": "Source"})).unwrap();
         s.execute("paint.stroke", json!({"points": [[12, 12]], "size": 8})).unwrap();
@@ -494,7 +494,7 @@ mod tests {
         assert_eq!(label, "Rasterize Layers");
     }
 
-    fn click(h: &mut egui_kittest::Harness<'_, crate::PhotocraftApp>, at: egui::Pos2, button: egui::PointerButton) {
+    fn click(h: &mut egui_kittest::Harness<'_, crate::PhotoStoreApp>, at: egui::Pos2, button: egui::PointerButton) {
         h.hover_at(at);
         h.step();
         for pressed in [true, false] {
@@ -507,11 +507,11 @@ mod tests {
     /// A type layer, an ellipse and a rectangle; the type layer and the ellipse are selected (the
     /// ellipse active), the rectangle stays out. The Layers menu is opened by right-clicking the
     /// type row, which is selected but not the active layer. Returns `[type, ellipse, rectangle]`.
-    fn open_multi_selection_menu() -> (egui_kittest::Harness<'static, crate::PhotocraftApp>, [u64; 3]) {
-        use crate::PhotocraftApp;
+    fn open_multi_selection_menu() -> (egui_kittest::Harness<'static, crate::PhotoStoreApp>, [u64; 3]) {
+        use crate::PhotoStoreApp;
         use egui::{PointerButton, pos2, vec2};
 
-        let mut s = photocraft_engine::Session::new();
+        let mut s = photostore_engine::Session::new();
         s.execute("file.new", json!({"width": 640, "height": 480})).unwrap();
         let text = s.execute("type.create", json!({"text": "Hi", "size": 24, "x": 20, "y": 60})).unwrap()["layer"].as_u64().unwrap();
         let shape = s.execute("shape.create", json!({"kind": "ellipse", "rect": [100, 100, 200, 160]})).unwrap()["layer"].as_u64().unwrap();
@@ -524,8 +524,8 @@ mod tests {
             .with_step_dt(1.0 / 60.0)
             .with_max_steps(64)
             .build_eframe(move |cc| {
-                PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
-                PhotocraftApp::new(s, crate::Services::default())
+                PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
+                PhotoStoreApp::new(s, crate::Services::default())
             });
         let ctx = h.ctx.clone();
         let (req, _rx) = crate::control::ControlRequest::new("ui.set", json!({"dock": {"collapsed": ["color", "properties", "history", "navigator"]}}));
@@ -545,7 +545,7 @@ mod tests {
         let at = h.get_by_label("Rasterize Layers").rect().center();
         click(&mut h, at, egui::PointerButton::Primary);
         let doc = &h.state().session.active().unwrap().doc;
-        let raster = |id: u64| matches!(doc.layer(photocraft_doc::LayerId(id)).unwrap().content, photocraft_doc::LayerContent::Raster(_));
+        let raster = |id: u64| matches!(doc.layer(photostore_doc::LayerId(id)).unwrap().content, photostore_doc::LayerContent::Raster(_));
         assert!(raster(text) && raster(shape), "both selected layers are rasterized");
         assert!(!raster(other), "an unselected layer is left alone");
         assert_eq!(h.state().session.active().unwrap().selected_layers().len(), 2, "the selection survives");
@@ -604,7 +604,7 @@ mod tests {
         ] {
             assert!(!single_layer_only(id), "{id}");
         }
-        let mut s = photocraft_engine::Session::new();
+        let mut s = photostore_engine::Session::new();
         s.execute("file.new", json!({"width": 10, "height": 10})).unwrap();
         s.execute("layer.new.layer", json!({})).unwrap();
         s.execute("layer.layerMask.revealAll", json!({})).unwrap();
@@ -616,7 +616,7 @@ mod tests {
 
     #[test]
     fn entries_follow_layer_state() {
-        let mut s = photocraft_engine::Session::new();
+        let mut s = photostore_engine::Session::new();
         s.execute("file.new", json!({"width": 10, "height": 10})).unwrap();
         s.execute("layer.new.layer", json!({})).unwrap();
         let st = s.active().unwrap();
@@ -637,7 +637,7 @@ mod tests {
         assert_eq!(add_mask_command(false, true), "layer.layerMask.hideAll");
         assert_eq!(add_mask_command(true, true), "layer.layerMask.hideSelection");
         // With a selection the new mask is the selection: inside revealed, outside hidden.
-        let mut s = photocraft_engine::Session::new();
+        let mut s = photostore_engine::Session::new();
         s.execute("file.new", json!({"width": 10, "height": 10})).unwrap();
         s.execute("layer.new.layer", json!({})).unwrap();
         s.execute("select.rect", json!({"x": 0, "y": 0, "width": 4, "height": 10})).unwrap();
@@ -653,10 +653,10 @@ mod tests {
     #[test]
     fn mask_button_never_replaces_a_mask() {
         for alt in [false, true] {
-            let mut s = photocraft_engine::Session::new();
+            let mut s = photostore_engine::Session::new();
             s.execute("file.new", json!({"width": 10, "height": 10})).unwrap();
             s.execute("layer.new.layer", json!({})).unwrap();
-            let layer = |s: &photocraft_engine::Session| {
+            let layer = |s: &photostore_engine::Session| {
                 let st = s.active().unwrap();
                 st.doc.layer(st.active_layer.unwrap()).unwrap().clone()
             };
@@ -665,9 +665,9 @@ mod tests {
             s.execute(first, json!({})).unwrap();
             // Paint a stroke into the mask.
             s.edit("paint mask", |doc, active| {
-                let id = (*active).ok_or(photocraft_engine::EngineError::NoDocument)?;
-                let m = doc.layer_mut(id).and_then(|l| l.mask.as_mut()).ok_or(photocraft_engine::EngineError::NoDocument)?;
-                m.surface.fill_rect(photocraft_geom::Rect::new(2, 2, 5, 5), &[0.5]);
+                let id = (*active).ok_or(photostore_engine::EngineError::NoDocument)?;
+                let m = doc.layer_mut(id).and_then(|l| l.mask.as_mut()).ok_or(photostore_engine::EngineError::NoDocument)?;
+                m.surface.fill_rect(photostore_geom::Rect::new(2, 2, 5, 5), &[0.5]);
                 Ok(())
             })
             .unwrap();
@@ -688,7 +688,7 @@ mod tests {
         // No layer: nothing to do.
         assert_eq!(mask_button_command(None, false, false), None);
         // A shape layer's path is already its vector mask: after the layer mask, nothing more.
-        let mut s = photocraft_engine::Session::new();
+        let mut s = photostore_engine::Session::new();
         s.execute("file.new", json!({"width": 10, "height": 10})).unwrap();
         s.execute("shape.create", json!({"kind": "rect", "rect": [0, 0, 5, 5]})).unwrap();
         s.execute("layer.layerMask.revealAll", json!({})).unwrap();
@@ -699,11 +699,11 @@ mod tests {
 
     #[test]
     fn every_entry_is_a_known_command() {
-        let mut s = photocraft_engine::Session::new();
+        let mut s = photostore_engine::Session::new();
         s.execute("file.new", json!({"width": 10, "height": 10})).unwrap();
         let l = s.active().unwrap().doc.layers[0].clone();
         for (_, id) in entries(&l, false, true).into_iter().chain(entries(&l, false, false)).chain(entries(&l, true, false)).flatten() {
-            assert!(crate::menu_catalog::CATALOG.iter().any(|m| m.3 == id) || photocraft_engine::commands::find(id).is_some(), "{id}");
+            assert!(crate::menu_catalog::CATALOG.iter().any(|m| m.3 == id) || photostore_engine::commands::find(id).is_some(), "{id}");
         }
     }
 }

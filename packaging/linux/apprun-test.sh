@@ -73,7 +73,7 @@ grep -Fxq "Exec=\"$(readlink -f "$APPIMAGE")\" %F" "$DESKTOP" || fail "Exec not 
 
 # 6. Opt-out installs nothing.
 rm -rf "$XDG_DATA_HOME"
-PHOTOCRAFT_NO_DESKTOP_INTEGRATION=1 "$APPDIR/AppRun" >/dev/null || fail "opt-out launch exited non-zero"
+PHOTOSTORE_NO_DESKTOP_INTEGRATION=1 "$APPDIR/AppRun" >/dev/null || fail "opt-out launch exited non-zero"
 [ ! -e "$XDG_DATA_HOME" ] || fail "opt-out still integrated"
 
 # 7. An unwritable data dir never blocks the launch.

@@ -4,15 +4,15 @@
 //! Two places hold patterns, as in Photoshop:
 //! - the **library** ([`PatternLibrary`], on the [`Session`]): built-in procedural patterns plus
 //!   defined and imported ones. Library edits are app state, not document history.
-//! - the **document** ([`photocraft_doc::Document::patterns`]): the patterns its layers use
+//! - the **document** ([`photostore_doc::Document::patterns`]): the patterns its layers use
 //!   (saved in PSD `Patt` blocks and `.pcraft`). Commands that apply a pattern copy it into the
 //!   document in the same history step, so a document always renders on its own.
 //!
 //! Patterns are referenced by `"pattern": id | name` (document first, then library).
 
-use photocraft_color::{ColorMode, PixelFormat, SampleType};
-use photocraft_doc::{Color, Document, Fill, Layer, LayerContent, Pattern, Rect};
-use photocraft_raster::Surface;
+use photostore_color::{ColorMode, PixelFormat, SampleType};
+use photostore_doc::{Color, Document, Fill, Layer, LayerContent, Pattern, Rect};
+use photostore_raster::Surface;
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
@@ -118,11 +118,11 @@ pub fn resolve(s: &Session, key: &str) -> Option<Pattern> {
         return crate::presets::patterns::current(s).or(s.patterns.items.first()).cloned();
     }
     if let Some(d) = s.active()
-        && let Some(p) = photocraft_doc::pattern::find(&d.doc.patterns, key, key)
+        && let Some(p) = photostore_doc::pattern::find(&d.doc.patterns, key, key)
     {
         return Some(p.clone());
     }
-    photocraft_doc::pattern::find(&s.patterns.items, key, key).cloned()
+    photostore_doc::pattern::find(&s.patterns.items, key, key).cloned()
 }
 
 pub(crate) fn resolve_param(s: &Session, cmd: &str, p: &Value) -> Result<Pattern> {
@@ -140,8 +140,8 @@ pub fn ensure_in_doc(doc: &mut Document, pat: &Pattern) {
 /// Resolves the pattern of a Pattern Overlay / pattern stroke built from params (its `name`
 /// holds the requested key) into a real pattern: returns the effect with name and id filled in,
 /// plus the pattern to copy into the document.
-pub fn resolve_effect(s: &Session, fx: photocraft_doc::Effect) -> Result<(photocraft_doc::Effect, Option<Pattern>)> {
-    use photocraft_doc::Effect;
+pub fn resolve_effect(s: &Session, fx: photostore_doc::Effect) -> Result<(photostore_doc::Effect, Option<Pattern>)> {
+    use photostore_doc::Effect;
     match fx {
         Effect::PatternOverlay { common, name, id, scale, angle, link, phase } => {
             let key = if id.is_empty() { name } else { id };
@@ -170,13 +170,13 @@ fn list(s: &mut Session, _: &Value) -> Result<Value> {
 
 /// The visible composite over `r` as a surface in the document's pixel format (with alpha).
 fn composite_surface(doc: &Document, r: Rect) -> Surface {
-    let buf = photocraft_compose::render(doc, r);
+    let buf = photostore_compose::render(doc, r);
     let df = doc.pixel_format();
     let fmt = PixelFormat::new(df.mode, df.sample, true);
     let n = fmt.channels();
     let mut px = vec![0.0f32; buf.px.len() * n];
     for (o, p) in px.chunks_exact_mut(n).zip(&buf.px) {
-        photocraft_raster::from_rgba_into(&fmt, *p, o);
+        photostore_raster::from_rgba_into(&fmt, *p, o);
     }
     let mut s = Surface::new(fmt);
     s.write_region(Rect::new(0, 0, r.width() as i32, r.height() as i32), &px);
@@ -238,7 +238,7 @@ fn define(s: &mut Session, p: &Value) -> Result<Value> {
 fn library_index(s: &Session, cmd: &str, p: &Value) -> Result<usize> {
     let key = p.get("pattern").and_then(Value::as_str).ok_or_else(|| bad(cmd, "missing `pattern` (id or name)"))?;
     let found =
-        photocraft_doc::pattern::find(&s.patterns.items, key, key).map(|f| f.id.clone()).ok_or_else(|| bad(cmd, format!("no library pattern \"{key}\"")))?;
+        photostore_doc::pattern::find(&s.patterns.items, key, key).map(|f| f.id.clone()).ok_or_else(|| bad(cmd, format!("no library pattern \"{key}\"")))?;
     Ok(s.patterns.items.iter().position(|q| q.id == found).unwrap_or(0))
 }
 
@@ -270,7 +270,7 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "pattern.import";
     let path = p.get("path").and_then(Value::as_str).ok_or_else(|| bad(cmd, "missing `path` (.pat file)"))?;
     let bytes = std::fs::read(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-    let pats = photocraft_io::pattern_map::read_pat(&bytes).map_err(EngineError::Other)?;
+    let pats = photostore_io::pattern_map::read_pat(&bytes).map_err(EngineError::Other)?;
     let mut ids = Vec::new();
     for pat in pats {
         ids.push(pat.id.clone());
@@ -291,7 +291,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => s.patterns.items.clone(),
     };
-    let bytes = photocraft_io::pattern_map::write_pat(&pats).map_err(EngineError::Other)?;
+    let bytes = photostore_io::pattern_map::write_pat(&pats).map_err(EngineError::Other)?;
     crate::file_cmds::write_file(path, &bytes)?;
     Ok(json!({"path": path, "count": pats.len(), "bytes": bytes.len()}))
 }
@@ -332,9 +332,9 @@ fn brush_texture(s: &mut Session, p: &Value) -> Result<Value> {
             l * q[3] + (1.0 - q[3])
         })
         .collect();
-    let tile = photocraft_paint::GrayTile::from_f32(pat.width, pat.height, &lum);
+    let tile = photostore_paint::GrayTile::from_f32(pat.width, pat.height, &lum);
     let t = &mut s.tools.brush.texture;
-    t.pattern = photocraft_paint::Pattern::Tile(tile);
+    t.pattern = photostore_paint::Pattern::Tile(tile);
     t.enabled = p.get("enabled").and_then(Value::as_bool).unwrap_or(true);
     if let Some(sc) = p.get("scale").and_then(Value::as_f64) {
         t.scale = (sc as f32 / 100.0).clamp(0.01, 10.0);
@@ -439,7 +439,7 @@ pub fn specs() -> Vec<CommandSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use photocraft_doc::LayerId;
+    use photostore_doc::LayerId;
 
     fn session(depth: u64) -> Session {
         let mut s = Session::new();
@@ -448,7 +448,7 @@ mod tests {
     }
 
     fn pixel(s: &Session, x: i32, y: i32) -> [f32; 4] {
-        let b = photocraft_compose::render(&s.active().unwrap().doc, Rect::new(x, y, x + 1, y + 1));
+        let b = photostore_compose::render(&s.active().unwrap().doc, Rect::new(x, y, x + 1, y + 1));
         b.px[0]
     }
 
@@ -554,6 +554,6 @@ mod tests {
         assert_eq!(st.doc.layer(st.active_layer.unwrap()).unwrap().effects.items.len(), 2);
         s.execute("brush.texturePattern", json!({"pattern": "Dots", "scale": 50})).unwrap();
         assert!(s.tools.brush.texture.enabled);
-        assert!(matches!(s.tools.brush.texture.pattern, photocraft_paint::Pattern::Tile(_)));
+        assert!(matches!(s.tools.brush.texture.pattern, photostore_paint::Pattern::Tile(_)));
     }
 }

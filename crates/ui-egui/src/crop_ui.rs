@@ -32,7 +32,7 @@
 
 use egui::{CursorIcon, Modifiers};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::canvas::ToolEvent;
 use crate::state::Tool;
 
@@ -55,7 +55,7 @@ pub struct CropState {
     /// The frame is being edited (pressed since it was made): the canvas shows what lies past it.
     pub editing: bool,
     /// The document the pending frame (or gesture) belongs to ([`cancel_stale`], #1918).
-    doc: Option<photocraft_doc::DocId>,
+    doc: Option<photostore_doc::DocId>,
     /// The options-bar Straighten button and ⌘-drag (`crop_straighten`).
     pub straighten: crate::crop_straighten::Straighten,
 }
@@ -191,7 +191,7 @@ fn size_ok(r: [f64; 4]) -> bool {
 }
 
 /// The options-bar ratio preset as width / height.
-fn preset_ratio(app: &PhotocraftApp) -> Option<f64> {
+fn preset_ratio(app: &PhotoStoreApp) -> Option<f64> {
     let size = app.session.active().map_or((1.0, 1.0), |s| (s.doc.size.width as f64, s.doc.size.height as f64));
     crate::chrome_ui::crop_ratio(&app.ui.tool_options.crop_ratio, size.0, size.1).map(|(w, h)| w / h).filter(|k| k.is_finite() && *k > 0.0)
 }
@@ -245,13 +245,13 @@ pub fn resized(r: [f64; 4], hx: i8, hy: i8, d: [f64; 2], ratio: Option<f64>, alt
 }
 
 /// Space is held (set by the canvas each frame, or by `ui.pointer`'s `space` flag).
-pub fn set_space(app: &mut PhotocraftApp, down: bool) {
+pub fn set_space(app: &mut PhotoStoreApp, down: bool) {
     app.crop.space = down;
 }
 
 /// As in Photoshop, the Crop tool always shows a frame: on picking the tool, and after a crop is
 /// cancelled or committed, it frames the selection's bounds, or the whole canvas.
-pub fn ensure_frame(app: &mut PhotocraftApp) {
+pub fn ensure_frame(app: &mut PhotoStoreApp) {
     if app.ui.tool != Tool::Crop {
         app.crop.editing = false;
         crate::crop_straighten::reset(app);
@@ -292,13 +292,13 @@ pub fn ensure_frame(app: &mut PhotocraftApp) {
 }
 
 /// A crop gesture is in progress: Space repositions the frame rather than panning.
-pub fn active(app: &PhotocraftApp) -> bool {
+pub fn active(app: &PhotoStoreApp) -> bool {
     app.ui.tool == Tool::Crop && app.crop.drag.is_some()
 }
 
 /// Cancel the pending crop: the frame, any gesture on it and the default-frame state. With the
 /// Crop tool still picked, [`ensure_frame`] then makes the active document a new default frame.
-pub fn cancel(app: &mut PhotocraftApp) {
+pub fn cancel(app: &mut PhotoStoreApp) {
     app.ui.crop_rect = None;
     app.ui.crop_angle = 0.0;
     app.crop.drag = None;
@@ -309,13 +309,13 @@ pub fn cancel(app: &mut PhotocraftApp) {
 }
 
 /// The pending frame belongs to the active document.
-fn claim(app: &mut PhotocraftApp) {
+fn claim(app: &mut PhotoStoreApp) {
     app.crop.doc = app.session.active().map(|st| st.doc.id);
 }
 
 /// A crop is pending: the Crop tool's frame on the active document has been set (drawn, moved,
 /// resized or turned), not just the untouched default frame the tool shows.
-pub fn pending(app: &PhotocraftApp) -> bool {
+pub fn pending(app: &PhotoStoreApp) -> bool {
     app.ui.tool == Tool::Crop
         && app.ui.crop_rect.is_some()
         && !app.crop.default_frame
@@ -327,7 +327,7 @@ pub fn pending(app: &PhotocraftApp) -> bool {
 /// Save a Copy; Undo, Redo, Toggle Last State, Search; Image › Crop (which commits the frame); the
 /// View menu but Proof Setup, Pixel Aspect Ratio (Correction), 32-bit Preview Options, Flip
 /// Horizontal and Screen Mode; the Window menu but Workspace and Adjustments; Help but System Info.
-pub fn blocks(app: &PhotocraftApp, id: &str) -> bool {
+pub fn blocks(app: &PhotoStoreApp, id: &str) -> bool {
     pending(app) && !available_while_pending(id)
 }
 
@@ -362,7 +362,7 @@ fn available_while_pending(id: &str) -> bool {
 /// shows on or crops another document. (As in Photoshop: switching to another document discards
 /// the pending crop, and that document gets the tool's own frame.) Run on every frame and command
 /// (`sync_views`) and before a commit.
-pub fn cancel_stale(app: &mut PhotocraftApp) {
+pub fn cancel_stale(app: &mut PhotoStoreApp) {
     let active = app.session.active().map(|st| st.doc.id);
     let pending = app.ui.crop_rect.is_some() || app.crop.drag.is_some();
     // A frame made before any document was claimed (control channel, tests) is the active one's.
@@ -374,13 +374,13 @@ pub fn cancel_stale(app: &mut PhotocraftApp) {
 
 /// The frame is being edited, so the canvas shows the pixels past its edges (Photoshop's crop
 /// preview): from the first press with the tool until the crop is committed or cancelled.
-pub fn shows_beyond_canvas(app: &PhotocraftApp) -> bool {
+pub fn shows_beyond_canvas(app: &PhotoStoreApp) -> bool {
     app.ui.tool == Tool::Crop && app.ui.crop_rect.is_some() && (app.crop.editing || app.crop.drag.is_some())
 }
 
 /// The button went down on the canvas with the Crop tool: the frame is being edited from now on.
 /// Returns true when that is new.
-pub fn press(app: &mut PhotocraftApp) -> bool {
+pub fn press(app: &mut PhotoStoreApp) -> bool {
     let new = app.ui.tool == Tool::Crop && app.ui.crop_rect.is_some() && !app.crop.editing;
     if new {
         app.crop.editing = true;
@@ -388,32 +388,32 @@ pub fn press(app: &mut PhotocraftApp) -> bool {
     new
 }
 
-fn tolerance(app: &PhotocraftApp) -> f64 {
+fn tolerance(app: &PhotoStoreApp) -> f64 {
     HANDLE_PX / (app.point_zoom() as f64).max(0.01)
 }
 
 /// The pending frame's angle (degrees), 0 when it isn't a finite number.
-pub fn angle(app: &PhotocraftApp) -> f64 {
+pub fn angle(app: &PhotoStoreApp) -> f64 {
     normalized_angle(app.ui.crop_angle)
 }
 
 /// A press at document point `p` would turn the frame (Crop tool, outside the frame and its
 /// handles) rather than draw, move or resize one.
-pub fn turns_at(app: &PhotocraftApp, p: [f64; 2]) -> bool {
+pub fn turns_at(app: &PhotoStoreApp, p: [f64; 2]) -> bool {
     app.ui.tool == Tool::Crop
         && app.ui.crop_rect.filter(|r| r.iter().all(|v| v.is_finite())).is_some_and(|r| hit_turned(r, angle(app), p, tolerance(app)) == Hit::Outside)
 }
 
 /// A double-click at document point `p` commits the crop (Photoshop: double-click inside the box,
 /// like ↵): Crop tool, a pending frame, and `p` inside it (not on a handle, not outside).
-pub fn commits_at(app: &PhotocraftApp, p: [f64; 2]) -> bool {
+pub fn commits_at(app: &PhotoStoreApp, p: [f64; 2]) -> bool {
     app.ui.tool == Tool::Crop
         && app.crop.drag.is_none()
         && app.ui.crop_rect.filter(|r| r.iter().all(|v| v.is_finite())).is_some_and(|r| hit_turned(r, angle(app), p, tolerance(app)) == Hit::Inside)
 }
 
 /// The frame is being turned: its angle, for the readout beside the pointer.
-pub fn turning(app: &PhotocraftApp) -> Option<f64> {
+pub fn turning(app: &PhotoStoreApp) -> Option<f64> {
     matches!(app.crop.drag, Some(CropDrag::Rotate { .. })).then(|| angle(app))
 }
 
@@ -426,7 +426,7 @@ pub fn frame_size(r: [f64; 4]) -> Option<[f64; 2]> {
 
 /// The frame is being drawn or resized: its W × H, for the readout beside the pointer (as the
 /// marquee's, in px).
-pub fn sizing(app: &PhotocraftApp) -> Option<[f64; 2]> {
+pub fn sizing(app: &PhotoStoreApp) -> Option<[f64; 2]> {
     match app.crop.drag {
         // Until the pointer moves, the frame shown is still the previous one.
         Some(CropDrag::Draw { anchor, cur, .. }) if anchor != cur => {}
@@ -437,12 +437,12 @@ pub fn sizing(app: &PhotocraftApp) -> Option<[f64; 2]> {
 }
 
 /// The Crop tool owns the arrow keys and X: a pending frame and no gesture in progress.
-pub fn takes_keys(app: &PhotocraftApp) -> bool {
+pub fn takes_keys(app: &PhotoStoreApp) -> bool {
     app.ui.tool == Tool::Crop && app.crop.drag.is_none() && app.ui.transform.is_none() && app.ui.crop_rect.is_some_and(|r| r.iter().all(|v| v.is_finite()))
 }
 
 /// The frame now set by the keys: a real frame (no longer the default), being edited.
-fn keyed(app: &mut PhotocraftApp, r: [f64; 4]) {
+fn keyed(app: &mut PhotoStoreApp, r: [f64; 4]) {
     if r.iter().all(|v| v.is_finite()) {
         app.ui.crop_rect = Some(r);
         app.crop.default_frame = false;
@@ -452,7 +452,7 @@ fn keyed(app: &mut PhotocraftApp, r: [f64; 4]) {
 
 /// Moves the pending frame by (`dx`, `dy`) document px (a turned frame moves on the page, keeping
 /// its angle). Returns false when the Crop tool doesn't take the keys ([`takes_keys`]).
-pub fn nudge(app: &mut PhotocraftApp, dx: f64, dy: f64) -> bool {
+pub fn nudge(app: &mut PhotoStoreApp, dx: f64, dy: f64) -> bool {
     let Some(r) = app.ui.crop_rect.filter(|_| takes_keys(app)) else { return false };
     if dx.is_finite() && dy.is_finite() {
         keyed(app, [r[0] + dx, r[1] + dy, r[2] + dx, r[3] + dy]);
@@ -477,7 +477,7 @@ pub fn swapped_ratio(key: &str, doc_w: f64, doc_h: f64) -> Option<String> {
 /// X: swaps the pending frame between portrait and landscape about its centre, keeping its angle,
 /// and swaps the options-bar ratio with it, as in Photoshop. Returns false when the Crop tool
 /// doesn't take the keys ([`takes_keys`]), so X swaps the colours as usual.
-pub fn swap_orientation(app: &mut PhotocraftApp) -> bool {
+pub fn swap_orientation(app: &mut PhotoStoreApp) -> bool {
     let Some(r) = app.ui.crop_rect.filter(|_| takes_keys(app)) else { return false };
     let size = app.session.active().map_or((0.0, 0.0), |s| (f64::from(s.doc.size.width), f64::from(s.doc.size.height)));
     if let Some(k) = swapped_ratio(&app.ui.tool_options.crop_ratio, size.0, size.1) {
@@ -489,7 +489,7 @@ pub fn swap_orientation(app: &mut PhotocraftApp) -> bool {
 
 /// Crop tool keys with a pending frame: arrows nudge it 1 px (⇧ 10 px) instead of the selection
 /// or layer, and X swaps its orientation instead of the colours. Returns true when a key was used.
-pub fn keys(app: &mut PhotocraftApp, ctx: &egui::Context) -> bool {
+pub fn keys(app: &mut PhotoStoreApp, ctx: &egui::Context) -> bool {
     if !takes_keys(app) {
         return false;
     }
@@ -508,7 +508,7 @@ pub fn keys(app: &mut PhotocraftApp, ctx: &egui::Context) -> bool {
 }
 
 /// Pointer input for the Crop tool. Returns true when the event was its.
-pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: Modifiers) -> bool {
+pub fn pointer(app: &mut PhotoStoreApp, ev: ToolEvent, mods: Modifiers) -> bool {
     if app.ui.tool != Tool::Crop {
         app.crop.drag = None;
         return false;
@@ -565,7 +565,7 @@ pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: Modifiers) -> bool 
 }
 
 /// The frame follows the pointer at `p`.
-fn update(app: &mut PhotocraftApp, p: [f64; 2], mods: Modifiers) {
+fn update(app: &mut PhotoStoreApp, p: [f64; 2], mods: Modifiers) {
     let ratio = preset_ratio(app);
     let space = app.crop.space;
     let deg = angle(app);
@@ -608,7 +608,7 @@ fn update(app: &mut PhotocraftApp, p: [f64; 2], mods: Modifiers) {
 }
 
 /// Cursor over the canvas at document point `p`: resize arrows on the edges, move inside.
-pub fn cursor(app: &PhotocraftApp, p: [f64; 2]) -> Option<CursorIcon> {
+pub fn cursor(app: &PhotoStoreApp, p: [f64; 2]) -> Option<CursorIcon> {
     if app.ui.tool != Tool::Crop {
         return None;
     }
@@ -634,7 +634,7 @@ pub fn cursor(app: &PhotocraftApp, p: [f64; 2]) -> Option<CursorIcon> {
 /// Where the turn cursor's arc bends at document point `p` (pointer outside the frame, or turning
 /// it): towards the frame corner of `p`'s quadrant, along the diagonal of the frame's own axes.
 /// As in Photoshop that gives four cursors, one per corner; they turn with the frame.
-pub fn turn_cursor_dir(app: &PhotocraftApp, p: [f64; 2]) -> Option<[f64; 2]> {
+pub fn turn_cursor_dir(app: &PhotoStoreApp, p: [f64; 2]) -> Option<[f64; 2]> {
     if app.ui.tool != Tool::Crop || crate::crop_straighten::mode(app) {
         return None;
     }
@@ -703,24 +703,24 @@ fn resize_icon(hx: i8, hy: i8, deg: f64) -> CursorIcon {
 mod tests {
     use super::*;
     use crate::canvas::tool_event;
-    use photocraft_doc::{Color, ColorMode, Document, SampleType, Size};
+    use photostore_doc::{Color, ColorMode, Document, SampleType, Size};
     use serde_json::json;
 
     const NONE: Modifiers = Modifiers::NONE;
     const SHIFT: Modifiers = Modifiers::SHIFT;
 
-    fn app(depth: SampleType) -> PhotocraftApp {
+    fn app(depth: SampleType) -> PhotoStoreApp {
         let doc = Document::with_background("crop", Size::new(200, 100), ColorMode::Rgb, depth, Color::WHITE);
-        let mut s = photocraft_engine::Session::new();
+        let mut s = photostore_engine::Session::new();
         s.add_document(doc, None);
-        let mut app = PhotocraftApp::new(s, crate::Services::default());
+        let mut app = PhotoStoreApp::new(s, crate::Services::default());
         app.ui.tool = Tool::Crop;
         app.ui.extras.snap = false;
         app.ui.view.show.smart_guides = false;
         app
     }
 
-    fn drag(app: &mut PhotocraftApp, pts: &[[f64; 2]], mods: Modifiers) {
+    fn drag(app: &mut PhotoStoreApp, pts: &[[f64; 2]], mods: Modifiers) {
         let (first, last) = (pts[0], pts[pts.len() - 1]);
         tool_event(app, ToolEvent::Down { x: first[0], y: first[1], pressure: 1.0 }, mods);
         for p in &pts[1..] {
@@ -1030,7 +1030,7 @@ mod tests {
         let view = crate::state::View { zoom: 2.0, center: [100.0, 50.0], fit_pending: false, fill_pending: false, doc_size: [200, 100], rotation: 0.0 };
         a.ui.views = vec![view.clone()];
         let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(600.0, 400.0)).build_ui_state(
-            |ui, app: &mut PhotocraftApp| {
+            |ui, app: &mut PhotoStoreApp| {
                 let v = app.ui.views[0].clone();
                 crate::canvas::canvas_view(app, ui, 0, ui.max_rect(), v, true);
             },
@@ -1088,7 +1088,7 @@ mod tests {
 
     #[test]
     fn a_pending_crop_stays_with_its_document() {
-        let size = |app: &PhotocraftApp| app.session.active().map(|st| st.doc.size);
+        let size = |app: &PhotoStoreApp| app.session.active().map(|st| st.doc.size);
         // File › New.
         let mut app = app(SampleType::U8);
         drag(&mut app, &[[10.0, 10.0], [50.0, 40.0]], NONE);
@@ -1309,7 +1309,7 @@ mod tests {
         drag(&mut app, &[[10.0, 10.0], [30.0, 30.0]], SHIFT);
         crate::canvas::commit_crop(&mut app);
         // No document: events are swallowed quietly.
-        let mut empty = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut empty = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         empty.ui.tool = Tool::Crop;
         drag(&mut empty, &[[1.0, 1.0], [9.0, 9.0]], NONE);
         assert!(empty.ui.crop_rect.is_none());
@@ -1375,7 +1375,7 @@ mod tests {
     }
 
     /// One key press through the app's keyboard handling (`shortcuts::handle`).
-    fn key(app: &mut PhotocraftApp, key: egui::Key, modifiers: Modifiers) {
+    fn key(app: &mut PhotoStoreApp, key: egui::Key, modifiers: Modifiers) {
         let ctx = egui::Context::default();
         let raw = egui::RawInput {
             events: vec![egui::Event::ModifiersChanged(modifiers), egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }],
@@ -1385,7 +1385,7 @@ mod tests {
         out.textures_delta.clear();
     }
 
-    fn layer_offset(app: &PhotocraftApp) -> (i32, i32) {
+    fn layer_offset(app: &PhotoStoreApp) -> (i32, i32) {
         let st = app.session.active().unwrap();
         let l = st.doc.layer(st.active_layer.unwrap()).unwrap();
         l.surface().map_or((0, 0), |s| (s.content_bounds().x0, s.content_bounds().y0))
@@ -1454,7 +1454,7 @@ mod tests {
         assert!(!nudge(&mut app, 1.0, 0.0));
     }
 
-    fn app_selection_bounds(app: &PhotocraftApp) -> Option<(i32, i32, i32, i32)> {
+    fn app_selection_bounds(app: &PhotoStoreApp) -> Option<(i32, i32, i32, i32)> {
         let b = app.session.active()?.doc.selection.as_ref()?.content_bounds();
         Some((b.x0, b.y0, b.x1, b.y1))
     }
@@ -1466,7 +1466,7 @@ mod tests {
         use egui::Key;
         let mut app = app(SampleType::U16);
         app.run("tools.setColors", json!({"foreground": "#ff0000", "background": "#0000ff"})).unwrap();
-        let fg = |app: &PhotocraftApp| app.session.tools.foreground;
+        let fg = |app: &PhotoStoreApp| app.session.tools.foreground;
         let red = fg(&app);
         app.ui.crop_rect = Some([20.0, 20.0, 100.0, 60.0]);
         app.ui.crop_angle = 25.0;
@@ -1511,7 +1511,7 @@ mod tests {
     #[test]
     fn readout_shows_the_frame_size_while_drawing_or_resizing() {
         let mut app = app(SampleType::U8);
-        let ev = |app: &mut PhotocraftApp, e: ToolEvent| tool_event(app, e, NONE);
+        let ev = |app: &mut PhotoStoreApp, e: ToolEvent| tool_event(app, e, NONE);
         ev(&mut app, ToolEvent::Down { x: 10.0, y: 10.0, pressure: 1.0 });
         assert_eq!(sizing(&app), None, "nothing drawn yet");
         ev(&mut app, ToolEvent::Move { x: 70.4, y: 50.6, pressure: 1.0 });

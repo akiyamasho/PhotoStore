@@ -9,7 +9,7 @@
 //!   patch (a 4×4 control grid); split warps add patch rows/columns by exact de Casteljau
 //!   subdivision, so splitting never changes the shape.
 //!
-//! Pure geometry: resampling lives in `photocraft-algo::warp`.
+//! Pure geometry: resampling lives in `photostore-algo::warp`.
 
 use serde::{Deserialize, Serialize};
 

@@ -1,11 +1,11 @@
 use super::*;
-use photocraft_doc::{Adjustment, Color, Fill, LayerMask};
+use photostore_doc::{Adjustment, Color, Fill, LayerMask};
 
 const CANVAS: Size = Size { width: 70, height: 50 };
 
 fn px(fmt: PixelFormat, rgba: [f32; 4]) -> Vec<u8> {
     let mut out = vec![0; fmt.bytes_per_pixel()];
-    photocraft_raster::encode_pixel(&fmt, &rgba, &mut out);
+    photostore_raster::encode_pixel(&fmt, &rgba, &mut out);
     out
 }
 
@@ -84,7 +84,7 @@ fn layers_groups_and_properties_round_trip_at_8_and_16_bit() {
         assert_eq!(back.size, d.size);
         assert_eq!(back.depth, depth);
         assert_same(&d.layers, &back.layers);
-        assert_eq!(photocraft_compose::flatten(&d).px, photocraft_compose::flatten(&back).px);
+        assert_eq!(photostore_compose::flatten(&d).px, photostore_compose::flatten(&back).px);
     }
 }
 
@@ -97,7 +97,7 @@ fn float_documents_save_as_16_bit() {
     let (back, warnings, _) = round_trip(&d);
     assert!(warnings.iter().any(|w| w.contains("16-bit")), "{warnings:?}");
     assert_eq!(back.depth, SampleType::U16);
-    let (a, b) = (photocraft_compose::flatten(&d), photocraft_compose::flatten(&back));
+    let (a, b) = (photostore_compose::flatten(&d), photostore_compose::flatten(&back));
     let err = a.px.iter().zip(&b.px).flat_map(|(p, q)| (0..4).map(move |c| (p[c] - q[c]).abs())).fold(0.0f32, f32::max);
     assert!(err < 1.0 / 65535.0 + 1e-6, "{err}");
 }
@@ -135,7 +135,7 @@ fn masks_are_applied_to_pixels_and_reported() {
     assert!(warnings.iter().any(|w| w.contains("layer masks were applied")), "{warnings:?}");
     let s = back.layers.first().and_then(Layer::surface).unwrap();
     assert_eq!(s.content_bounds(), Rect::from_xywh(0, 0, 10, 20));
-    assert_eq!(photocraft_compose::flatten(&d).px, photocraft_compose::flatten(&back).px);
+    assert_eq!(photostore_compose::flatten(&d).px, photostore_compose::flatten(&back).px);
 }
 
 #[test]

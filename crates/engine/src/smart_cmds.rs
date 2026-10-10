@@ -16,18 +16,18 @@
 //! Converting a layer embeds it as an in-memory `.pcraft` bundle of a nested document (exactly
 //! lossless, layered, any depth/model). PSD placed layers keep their source in the preserved
 //! global `lnk2` block (found by uuid), and keep Photoshop's rendering until something changes,
-//! so an unedited PSD still round-trips byte for byte. PSD export (`photocraft_io::smart_map`)
+//! so an unedited PSD still round-trips byte for byte. PSD export (`photostore_io::smart_map`)
 //! writes every smart object back as one: its source embedded in `lnk2` (a `.pcraft` source as a
 //! PSB), its smart filters in `filterFX` and its filter mask in `FEid`.
 
 use std::sync::{Arc, Mutex};
 
-use photocraft_algo::resample::translate_surface;
-use photocraft_algo::transform::Homography;
-use photocraft_color::{BlendMode, PixelFormat};
-use photocraft_doc::{DocId, Document, Layer, LayerContent, LayerId, LayerMask, Metadata, SmartContentsId, SmartObject, SmartSource};
-use photocraft_geom::{Affine, Rect, Size};
-use photocraft_raster::Surface;
+use photostore_algo::resample::translate_surface;
+use photostore_algo::transform::Homography;
+use photostore_color::{BlendMode, PixelFormat};
+use photostore_doc::{DocId, Document, Layer, LayerContent, LayerId, LayerMask, Metadata, SmartContentsId, SmartObject, SmartSource};
+use photostore_geom::{Affine, Rect, Size};
+use photostore_raster::Surface;
 use serde_json::{Value, json};
 
 use crate::commands::{CommandSpec, blend_from_str, layer_param};
@@ -45,8 +45,8 @@ pub struct SmartLink {
 /// PSD placed-layer keys that describe the smart object's source; stale once we change it.
 const PLACED_KEYS: [&[u8; 4]; 3] = [b"SoLd", b"PlLd", b"SoLE"];
 
-/// Command id of a Photoshop smart filter PhotoCraft does not implement (kept verbatim from PSD).
-pub use photocraft_io::smart_map::UNSUPPORTED_FILTER;
+/// Command id of a Photoshop smart filter PhotoStore does not implement (kept verbatim from PSD).
+pub use photostore_io::smart_map::UNSUPPORTED_FILTER;
 
 fn other(msg: impl Into<String>) -> EngineError {
     EngineError::Other(msg.into())
@@ -60,7 +60,7 @@ fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
 
 /// Encodes a document as embedded smart-object contents: an in-memory `.pcraft` bundle.
 pub fn encode_source(doc: &Document) -> Result<Vec<u8>> {
-    photocraft_format::save_to_bytes(doc, &Default::default()).map_err(|e| other(format!("can't encode smart object contents: {e}")))
+    photostore_format::save_to_bytes(doc, &Default::default()).map_err(|e| other(format!("can't encode smart object contents: {e}")))
 }
 
 /// Decodes smart-object contents (a `.pcraft` bundle, PSD/PSB, or any flat image format).
@@ -73,7 +73,7 @@ fn base_name(path: &str) -> String {
 }
 
 fn read_file(path: &str) -> Option<Vec<u8>> {
-    if path.is_empty() { None } else { photocraft_format::read_file(std::path::Path::new(path)).ok() }
+    if path.is_empty() { None } else { photostore_format::read_file(std::path::Path::new(path)).ok() }
 }
 
 /// The source file of a smart object: embedded bytes, the PSD's embedded linked-layer data (PSD
@@ -89,7 +89,7 @@ pub fn source_bytes(meta: &Metadata, src: &SmartSource) -> Option<(String, Arc<V
 fn embedded_source_bytes(meta: &Metadata, src: &SmartSource) -> Option<(String, Arc<Vec<u8>>)> {
     match src {
         SmartSource::Embedded { file_name, bytes } => Some((file_name.clone(), bytes.clone())),
-        SmartSource::Linked { path } => photocraft_io::linked::find_linked_file(meta, path).map(|f| (f.file_name, Arc::new(f.bytes))),
+        SmartSource::Linked { path } => photostore_io::linked::find_linked_file(meta, path).map(|f| (f.file_name, Arc::new(f.bytes))),
     }
 }
 
@@ -217,11 +217,11 @@ pub fn source_decode_count(bytes: &[u8], fmt: PixelFormat) -> u32 {
     SOURCE_CACHE.lock().ok().and_then(|c| c.iter().find(|e| e.key == key).map(|e| e.decodes)).unwrap_or(0)
 }
 
-fn buffer_to_surface(buf: &photocraft_compose::Buffer, fmt: PixelFormat) -> Surface {
+fn buffer_to_surface(buf: &photostore_compose::Buffer, fmt: PixelFormat) -> Surface {
     let n = fmt.channels();
     let mut data = vec![0.0f32; buf.px.len() * n];
     for (p, out) in buf.px.iter().zip(data.chunks_exact_mut(n)) {
-        photocraft_raster::from_rgba_into(&fmt, *p, out);
+        photostore_raster::from_rgba_into(&fmt, *p, out);
     }
     let mut s = Surface::new(fmt);
     if !buf.rect.is_empty() {
@@ -241,7 +241,7 @@ pub fn svg_source_image(bytes: &[u8], fmt: PixelFormat, scale: f64) -> Result<So
     if let Some(img) = cache_get(&key) {
         return Ok(img);
     }
-    let buf = photocraft_io::svg::rasterize(bytes, scale as f32).map_err(|e| other(format!("can't render the SVG smart object: {e}")))?;
+    let buf = photostore_io::svg::rasterize(bytes, scale as f32).map_err(|e| other(format!("can't render the SVG smart object: {e}")))?;
     let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds: buf.rect };
     cache_put(key, img.clone());
     Ok(img)
@@ -280,8 +280,8 @@ fn timeline_frame_at_time(doc: &Document, time: f64) -> usize {
     if !explicit {
         let frame = (seconds * t.fps.max(1e-3) as f64 + 1e-9).floor() as usize;
         return match t.loop_mode {
-            photocraft_doc::TimelineLoop::Loop => frame % duration,
-            photocraft_doc::TimelineLoop::PingPong if duration > 1 => {
+            photostore_doc::TimelineLoop::Loop => frame % duration,
+            photostore_doc::TimelineLoop::PingPong if duration > 1 => {
                 let span = duration.saturating_mul(2).saturating_sub(2).max(1);
                 let p = frame % span;
                 if p < duration { p } else { span - p }
@@ -294,7 +294,7 @@ fn timeline_frame_at_time(doc: &Document, time: f64) -> usize {
     let total_ms = (0..duration).fold(0.0f64, |sum, i| (sum + delay(i)).min(f64::MAX / 2.0));
     let mut at = seconds * 1000.0;
     match t.loop_mode {
-        photocraft_doc::TimelineLoop::Loop => at %= total_ms.max(1.0),
+        photostore_doc::TimelineLoop::Loop => at %= total_ms.max(1.0),
         _ => at = at.min((total_ms - f64::EPSILON).max(0.0)),
     }
     let mut frame = 0usize;
@@ -303,7 +303,7 @@ fn timeline_frame_at_time(doc: &Document, time: f64) -> usize {
         acc = (acc + delay(i)).min(f64::MAX / 2.0);
         if at < acc + 1e-9 { frame = i; break; }
     }
-    if t.loop_mode == photocraft_doc::TimelineLoop::PingPong && duration > 1 {
+    if t.loop_mode == photostore_doc::TimelineLoop::PingPong && duration > 1 {
         let span = (total_ms * 2.0 - delay(duration - 1) - delay(0)).max(1.0);
         let mut p = (seconds * 1000.0) % span;
         if p >= total_ms { p = (span - p - f64::EPSILON).max(0.0); }
@@ -342,7 +342,7 @@ fn source_image_at_time_inner(file_name: &str, bytes: &[u8], fmt: PixelFormat, t
         let key = cache_key(bytes, fmt);
         if let Some(img) = cache_get(&key) { return Ok(img); }
         let doc = decode_cached(file_name, bytes)?;
-        let buf = photocraft_compose::flatten(&doc);
+        let buf = photostore_compose::flatten(&doc);
         let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds: doc.bounds() };
         cache_put(key, img.clone());
         return Ok(img);
@@ -353,7 +353,7 @@ fn source_image_at_time_inner(file_name: &str, bytes: &[u8], fmt: PixelFormat, t
     if cached_doc.timeline.is_none() {
         let key = cache_key(bytes, fmt);
         if let Some(img) = cache_get(&key) { return Ok(img); }
-        let buf = photocraft_compose::flatten(&cached_doc);
+        let buf = photostore_compose::flatten(&cached_doc);
         let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds: cached_doc.bounds() };
         cache_put(key, img.clone());
         return Ok(img);
@@ -369,7 +369,7 @@ fn source_image_at_time_inner(file_name: &str, bytes: &[u8], fmt: PixelFormat, t
     crate::video_cmds::sync_plain(&mut doc);
     let local_time = document_time(&doc).unwrap_or(time);
     refresh_document_animated(&mut doc, local_time, depth.saturating_add(1));
-    let buf = photocraft_compose::flatten(&doc);
+    let buf = photostore_compose::flatten(&doc);
     let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds: doc.bounds() };
     cache_put(key, img.clone());
     Ok(img)
@@ -377,8 +377,8 @@ fn source_image_at_time_inner(file_name: &str, bytes: &[u8], fmt: PixelFormat, t
 
 /// Layer › Smart Objects › Stack Mode: the source's layers (or, when it holds a single group, the
 /// group's layers) combined per pixel with `mode`. Cached like [`source_image`], keyed by mode.
-pub fn stack_image(file_name: &str, bytes: &[u8], fmt: PixelFormat, mode: photocraft_doc::StackMode) -> Result<SourceImage> {
-    use photocraft_algo::stack::Stat;
+pub fn stack_image(file_name: &str, bytes: &[u8], fmt: PixelFormat, mode: photostore_doc::StackMode) -> Result<SourceImage> {
+    use photostore_algo::stack::Stat;
     let mut key = cache_key(bytes, fmt);
     key.0 = *blake3::hash(&[&key.0[..], b"stack:", mode.id().as_bytes()].concat()).as_bytes();
     if let Some(img) = cache_get(&key) {
@@ -397,26 +397,26 @@ pub fn stack_image(file_name: &str, bytes: &[u8], fmt: PixelFormat, mode: photoc
             let mut one = l.clone();
             one.blend = BlendMode::Normal;
             one.clipped = false;
-            photocraft_compose::render_layer(&one, bounds).px
+            photostore_compose::render_layer(&one, bounds).px
         })
         .collect();
     if frames.is_empty() {
         return Err(EngineError::Other("the smart object's contents have no visible layers".into()));
     }
     let stat = match mode {
-        photocraft_doc::StackMode::Entropy => Stat::Entropy,
-        photocraft_doc::StackMode::Kurtosis => Stat::Kurtosis,
-        photocraft_doc::StackMode::Maximum => Stat::Maximum,
-        photocraft_doc::StackMode::Mean => Stat::Mean,
-        photocraft_doc::StackMode::Median => Stat::Median,
-        photocraft_doc::StackMode::Minimum => Stat::Minimum,
-        photocraft_doc::StackMode::Range => Stat::Range,
-        photocraft_doc::StackMode::Skewness => Stat::Skewness,
-        photocraft_doc::StackMode::StandardDeviation => Stat::StandardDeviation,
-        photocraft_doc::StackMode::Summation => Stat::Summation,
-        photocraft_doc::StackMode::Variance => Stat::Variance,
+        photostore_doc::StackMode::Entropy => Stat::Entropy,
+        photostore_doc::StackMode::Kurtosis => Stat::Kurtosis,
+        photostore_doc::StackMode::Maximum => Stat::Maximum,
+        photostore_doc::StackMode::Mean => Stat::Mean,
+        photostore_doc::StackMode::Median => Stat::Median,
+        photostore_doc::StackMode::Minimum => Stat::Minimum,
+        photostore_doc::StackMode::Range => Stat::Range,
+        photostore_doc::StackMode::Skewness => Stat::Skewness,
+        photostore_doc::StackMode::StandardDeviation => Stat::StandardDeviation,
+        photostore_doc::StackMode::Summation => Stat::Summation,
+        photostore_doc::StackMode::Variance => Stat::Variance,
     };
-    let buf = photocraft_compose::Buffer { rect: bounds, px: photocraft_algo::stack::combine(&frames, stat) };
+    let buf = photostore_compose::Buffer { rect: bounds, px: photostore_algo::stack::combine(&frames, stat) };
     let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds };
     cache_put(key, img.clone());
     Ok(img)
@@ -436,8 +436,8 @@ fn blend_surfaces(base: &Surface, top: &Surface, mode: BlendMode, opacity: f32) 
     let (b, t) = (base.read_region(area), top.read_region(area));
     let mut o = vec![0.0f32; b.len()];
     for ((bp, tp), op) in b.chunks_exact(n).zip(t.chunks_exact(n)).zip(o.chunks_exact_mut(n)) {
-        let rgba = photocraft_color::blend::composite(mode, photocraft_raster::to_rgba(&fmt, bp), photocraft_raster::to_rgba(&fmt, tp), opacity);
-        photocraft_raster::from_rgba_into(&fmt, rgba, op);
+        let rgba = photostore_color::blend::composite(mode, photostore_raster::to_rgba(&fmt, bp), photostore_raster::to_rgba(&fmt, tp), opacity);
+        photostore_raster::from_rgba_into(&fmt, rgba, op);
     }
     out.write_region(area, &o);
     out.prune();
@@ -511,19 +511,19 @@ fn render_at_time(doc: &Document, sm: &SmartObject, time: Option<f64>, depth: us
     let Some((name, bytes)) = source_bytes(&doc.metadata, &sm.source) else { return Ok(None) };
     // A vector source is rendered at the placement's scale, and the placement is divided by
     // that scale so the rendered pixels land where the source units would.
-    if sm.stack_mode.is_none() && sm.warp.is_none() && photocraft_io::svg::is_svg(&bytes) {
+    if sm.stack_mode.is_none() && sm.warp.is_none() && photostore_io::svg::is_svg(&bytes) {
         let k = vector_scale(sm);
         let img = svg_source_image(&bytes, doc.pixel_format(), k)?;
         let placed = match &sm.perspective {
             Some(p) => {
                 let [h0, h1, h2, h3, h4, h5, h6, h7, h8] = *p;
                 let h = Homography([h0 / k, h1 / k, h2, h3 / k, h4 / k, h5, h6 / k, h7 / k, h8]);
-                photocraft_algo::warp::place_source_projective(&img.surface, img.bounds, &h, None)
+                photostore_algo::warp::place_source_projective(&img.surface, img.bounds, &h, None)
             }
             None => {
                 let [a, b, c, d, e, f] = sm.transform.m;
                 let t = Affine { m: [a / k, b / k, c / k, d / k, e, f] };
-                photocraft_algo::warp::place_source(&img.surface, img.bounds, &t, None)
+                photostore_algo::warp::place_source(&img.surface, img.bounds, &t, None)
             }
         };
         return Ok(Some(apply_smart_filters(&placed, sm, doc.bounds())));
@@ -534,8 +534,8 @@ fn render_at_time(doc: &Document, sm: &SmartObject, time: Option<f64>, depth: us
     };
     // Through the warp (source space) and the transform in one pass; whole-pixel moves are exact.
     let placed = match &sm.perspective {
-        Some(p) => photocraft_algo::warp::place_source_projective(&img.surface, img.bounds, &Homography(*p), sm.warp.as_ref()),
-        None => photocraft_algo::warp::place_source(&img.surface, img.bounds, &sm.transform, sm.warp.as_ref()),
+        Some(p) => photostore_algo::warp::place_source_projective(&img.surface, img.bounds, &Homography(*p), sm.warp.as_ref()),
+        None => photostore_algo::warp::place_source(&img.surface, img.bounds, &sm.transform, sm.warp.as_ref()),
     };
     Ok(Some(apply_smart_filters(&placed, sm, doc.bounds())))
 }
@@ -628,7 +628,7 @@ fn mask_from_selection(sel: &Surface) -> LayerMask {
 /// Appends a smart filter (from a `filter.*` command) and re-renders. A selection becomes the
 /// filter mask, as in Photoshop. Without a renderable source the filter is applied to the cached
 /// pixels (and still recorded).
-pub(crate) fn add_smart_filter(doc: &mut Document, id: LayerId, sf: photocraft_doc::SmartFilter, selection: Option<&Surface>) -> Result<()> {
+pub(crate) fn add_smart_filter(doc: &mut Document, id: LayerId, sf: photostore_doc::SmartFilter, selection: Option<&Surface>) -> Result<()> {
     let canvas = doc.bounds();
     let renderable = source_bytes(&doc.metadata, &smart(doc, id)?.source).is_some();
     let sm = smart_mut(doc, id)?;
@@ -845,7 +845,7 @@ fn layer_to_smart_with_options(doc: &Document, l: &Layer, single_existing_root: 
 
     let has_fx = any_layer(l, &|x| x.effects.enabled && !x.effects.items.is_empty());
     let region = subtree_bounds(l, canvas).union(&canvas).inflate(if has_fx { 256 } else { 0 });
-    let buf = photocraft_compose::render(&sub, region);
+    let buf = photostore_compose::render(&sub, region);
     let w = region.width() as usize;
     let mut b = Rect::EMPTY;
     for (i, p) in buf.px.iter().enumerate() {
@@ -863,7 +863,7 @@ fn layer_to_smart_with_options(doc: &Document, l: &Layer, single_existing_root: 
     }
     let fmt = doc.pixel_format();
     let mut cache = buffer_to_surface(&buf, fmt);
-    cache = photocraft_algo::resample::crop_surface(&cache, b);
+    cache = photostore_algo::resample::crop_surface(&cache, b);
     cache.prune();
 
     shift_layer(&mut sub.layers[0], -b.x0, -b.y0);
@@ -935,12 +935,12 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
                 t.frame_states.iter_mut().for_each(|states| {
                     let had_selected = states.iter().any(|state| ids.contains(&state.layer));
                     states.retain(|state| !ids.contains(&state.layer));
-                    if had_selected { states.push(photocraft_doc::FrameLayerState::legacy(new_id, true, 1.0)); }
+                    if had_selected { states.push(photostore_doc::FrameLayerState::legacy(new_id, true, 1.0)); }
                 });
                 t.property_frames.iter_mut().for_each(|states| {
                     let had_selected = states.iter().any(|state| ids.contains(&state.layer));
                     states.retain(|state| !ids.contains(&state.layer));
-                    if had_selected { states.push(photocraft_doc::FrameLayerState::legacy(new_id, true, 1.0)); }
+                    if had_selected { states.push(photostore_doc::FrameLayerState::legacy(new_id, true, 1.0)); }
                 });
                 t.layer_ranges.retain(|range| !ids.contains(&range.layer));
             }
@@ -1020,7 +1020,7 @@ fn set_shared_source(s: &mut Session, id: LayerId, label: &str, keep_psd: bool, 
 
 fn replace_contents(s: &mut Session, p: &Value) -> Result<Value> {
     let path = path_param("layer.smartObjects.replaceContents", p)?.to_string();
-    let bytes = photocraft_format::read_file(std::path::Path::new(&path)).map_err(|e| other(format!("can't read {path}: {e}")))?;
+    let bytes = photostore_format::read_file(std::path::Path::new(&path)).map_err(|e| other(format!("can't read {path}: {e}")))?;
     let name = base_name(&path);
     decode_source(&name, &bytes)?; // fail before touching the document
     set_source(s, p, "Replace Contents", false, |_, _| Ok(SmartSource::Embedded { file_name: name, bytes: Arc::new(bytes) }))
@@ -1173,8 +1173,8 @@ fn set_filter_params(s: &mut Session, p: &Value) -> Result<Value> {
     edit_filters(s, p, "Edit Smart Filter", |sm| {
         let i = filter_index(CMD, p, sm)?;
         let f = &mut sm.smart_filters[i];
-        if f.command == photocraft_io::smart_map::UNSUPPORTED_FILTER {
-            return Err(bad(CMD, "this smart filter isn't implemented in PhotoCraft: it is kept as is (it can be hidden, moved or deleted)"));
+        if f.command == photostore_io::smart_map::UNSUPPORTED_FILTER {
+            return Err(bad(CMD, "this smart filter isn't implemented in PhotoStore: it is kept as is (it can be hidden, moved or deleted)"));
         }
         match (&mut f.params, new) {
             (Value::Object(old), Value::Object(n)) => old.extend(n),

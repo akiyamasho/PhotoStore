@@ -6,7 +6,7 @@
 //! Alt pressed later changes drawing mode.
 
 use crate::{
-    PhotocraftApp,
+    PhotoStoreApp,
     canvas::{Drag, ToolEvent, ViewXform},
     state::Tool,
 };
@@ -17,16 +17,16 @@ pub struct Lasso {
     pub cursor: [f64; 2],
     down: bool,
     polygonal: bool,
-    document: Option<photocraft_doc::DocId>,
+    document: Option<photostore_doc::DocId>,
 }
 
-pub fn active(app: &PhotocraftApp) -> bool {
+pub fn active(app: &PhotoStoreApp) -> bool {
     app.drag.as_ref().is_some_and(|d| d.tool == Tool::Lasso && d.lasso.is_some())
 }
 
 /// Between polygonal clicks, Backspace/right-click retracts the last fixed vertex.
 /// Do not affect a freehand stroke whose primary button is still held.
-pub fn waiting_for_vertex(app: &PhotocraftApp) -> bool {
+pub fn waiting_for_vertex(app: &PhotoStoreApp) -> bool {
     app.ui.tool == Tool::Lasso
         && app
             .drag
@@ -34,7 +34,7 @@ pub fn waiting_for_vertex(app: &PhotocraftApp) -> bool {
             .is_some_and(|d| d.tool == Tool::Lasso && d.lasso.as_ref().is_some_and(|l| !l.down && l.document == app.session.active().map(|st| st.doc.id)))
 }
 
-pub fn undo_last_vertex(app: &mut PhotocraftApp) -> bool {
+pub fn undo_last_vertex(app: &mut PhotoStoreApp) -> bool {
     cancel_stale(app);
     if !waiting_for_vertex(app) {
         return false;
@@ -49,11 +49,11 @@ pub fn undo_last_vertex(app: &mut PhotocraftApp) -> bool {
 
 /// A lasso drag that moves the selection (started inside it, `canvas::selection_drag_kind`):
 /// the canvas's own selection-move path handles it, this module only feeds it the events.
-fn moving_selection(app: &PhotocraftApp) -> bool {
+fn moving_selection(app: &PhotoStoreApp) -> bool {
     app.drag.as_ref().is_some_and(|d| d.tool == Tool::Lasso && d.sel_move.is_some())
 }
 
-pub fn cancel_stale(app: &mut PhotocraftApp) {
+pub fn cancel_stale(app: &mut PhotoStoreApp) {
     if app
         .drag
         .as_ref()
@@ -70,7 +70,7 @@ fn append(d: &mut Drag, p: [f64; 2]) {
     }
 }
 
-fn modifiers(app: &mut PhotocraftApp, mods: Modifiers) {
+fn modifiers(app: &mut PhotoStoreApp, mods: Modifiers) {
     let Some(d) = app.drag.as_mut().filter(|d| d.tool == Tool::Lasso) else { return };
     d.track(mods);
     // Alt held before the initial press still means subtract, until released and pressed again.
@@ -89,7 +89,7 @@ fn modifiers(app: &mut PhotocraftApp, mods: Modifiers) {
     }
 }
 
-pub fn commit(app: &mut PhotocraftApp) {
+pub fn commit(app: &mut PhotoStoreApp) {
     cancel_stale(app);
     if active(app)
         && let Some(d) = app.drag.take()
@@ -98,7 +98,7 @@ pub fn commit(app: &mut PhotocraftApp) {
     }
 }
 
-pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: Modifiers) -> bool {
+pub fn pointer(app: &mut PhotoStoreApp, ev: ToolEvent, mods: Modifiers) -> bool {
     cancel_stale(app);
     if app.ui.tool != Tool::Lasso || moving_selection(app) {
         return false;
@@ -177,7 +177,7 @@ pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: Modifiers) -> bool 
 
 /// Read actual presses/releases, including clicks below egui's drag threshold. Hover moves
 /// update only the rubber band; they must never become freehand vertices between Alt clicks.
-pub fn canvas_input(app: &mut PhotocraftApp, ctx: &egui::Context, xf: &ViewXform, response: &egui::Response) {
+pub fn canvas_input(app: &mut PhotoStoreApp, ctx: &egui::Context, xf: &ViewXform, response: &egui::Response) {
     let events = ctx.input(|i| i.events.clone());
     let mut mods = app.drag.as_ref().map_or(ctx.input(|i| i.modifiers), |d| d.live);
     for ev in events {

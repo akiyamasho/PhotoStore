@@ -9,11 +9,11 @@ See [Shape stroke options](shape-strokes.md) for limits, preview and persistence
 The desktop app listens on `127.0.0.1:<port>` (loopback only). Start it with a token file so the credential is not exposed in the process command line:
 
 ```sh
-photocraft --control 7878 --control-token-file /private/path/photocraft-control.token \
+photostore --control 7878 --control-token-file /private/path/photostore-control.token \
   --automation-read-root /work/project --automation-write-root /work/project
 ```
 
-If the file does not exist, PhotoCraft creates it with a fresh 256-bit token. On Unix the new file is mode `0600`; on Windows, protect it with an appropriate user-only ACL. An existing file is reused. If neither a token nor token file is configured, PhotoCraft generates a token for that launch and writes it to standard error. `PHOTOCRAFT_CONTROL_TOKEN` and `PHOTOCRAFT_CONTROL_TOKEN_FILE` are the environment-variable equivalents.
+If the file does not exist, PhotoStore creates it with a fresh 256-bit token. On Unix the new file is mode `0600`; on Windows, protect it with an appropriate user-only ACL. An existing file is reused. If neither a token nor token file is configured, PhotoStore generates a token for that launch and writes it to standard error. `PHOTOSTORE_CONTROL_TOKEN` and `PHOTOSTORE_CONTROL_TOKEN_FILE` are the environment-variable equivalents.
 
 The first request on every TCP connection must authenticate. No other method is dispatched before this succeeds:
 
@@ -36,7 +36,7 @@ Each reply is one JSON line with the same `id`:
 
 The desktop server waits up to 60 seconds for a reply. A request still queued at that deadline is rejected before dispatch; a timeout does not cancel work that has already started.
 
-The transport is `apps/photocraft/src/control_server.rs`, and the handlers are in `crates/ui-egui/src/control.rs`. The MCP server (`photocraft-cli mcp --bridge 127.0.0.1:<port>`, crate `photocraft-automation`) wraps this same protocol. See [MCP bridge](#mcp-bridge) below.
+The transport is `apps/photostore/src/control_server.rs`, and the handlers are in `crates/ui-egui/src/control.rs`. The MCP server (`photostore-cli mcp --bridge 127.0.0.1:<port>`, crate `photostore-automation`) wraps this same protocol. See [MCP bridge](#mcp-bridge) below.
 
 ## Methods
 
@@ -157,7 +157,7 @@ editing session; non-type layers return an error without changing the tool or do
 
 ### Background jobs (#210)
 
-Long commands (every `filter.*`, `edit.contentAwareFill`, `edit.contentAwareScale`, `file.automate.photomerge`, `brush.presets.importAbr`), file opens and interactive saves (File › Save, Save As and the TIFF Options continuation, #2017) run as background jobs in the desktop app: the window keeps drawing, the status bar shows progress with a Cancel button, and jobs that lock the active document show a modal progress dialog (Esc cancels). `engine.execute`, `ui.menu.invoke` and `ui.dialog.confirm` still wait for the result by default; pass `"wait": false` to get `{job, pending: true}` at once, then poll `jobs.list` (`state`: running, done, failed, cancelled; `progress` 0–1; the result or error) and stop it with `jobs.cancel {job}`. A cancelled or failed job leaves the document unchanged. While a job runs, commands that would edit its document fail with "… is still running on this document". `ui.inspect` reports `jobs` (running jobs, opening files, saving files). `app.save` still writes before it replies. Set `PHOTOCRAFT_INLINE_JOBS=1` to run everything inline.
+Long commands (every `filter.*`, `edit.contentAwareFill`, `edit.contentAwareScale`, `file.automate.photomerge`, `brush.presets.importAbr`), file opens and interactive saves (File › Save, Save As and the TIFF Options continuation, #2017) run as background jobs in the desktop app: the window keeps drawing, the status bar shows progress with a Cancel button, and jobs that lock the active document show a modal progress dialog (Esc cancels). `engine.execute`, `ui.menu.invoke` and `ui.dialog.confirm` still wait for the result by default; pass `"wait": false` to get `{job, pending: true}` at once, then poll `jobs.list` (`state`: running, done, failed, cancelled; `progress` 0–1; the result or error) and stop it with `jobs.cancel {job}`. A cancelled or failed job leaves the document unchanged. While a job runs, commands that would edit its document fail with "… is still running on this document". `ui.inspect` reports `jobs` (running jobs, opening files, saving files). `app.save` still writes before it replies. Set `PHOTOSTORE_INLINE_JOBS=1` to run everything inline.
 
 ## Preferences
 
@@ -188,11 +188,11 @@ shortcuts, hidden and coloured menu items, autosave interval and crash recovery,
 log text file. GPU on/off and the GPU tile size apply at the next launch.
 
 The desktop app stores them in `preferences.json` in the platform config directory (macOS
-`~/Library/Application Support/Photocraft`, Windows `%APPDATA%\Photocraft`, Linux
-`$XDG_CONFIG_HOME/photocraft`; override with `PHOTOCRAFT_CONFIG_DIR`); autosaves go to its
+`~/Library/Application Support/PhotoStore`, Windows `%APPDATA%\PhotoStore`, Linux
+`$XDG_CONFIG_HOME/photostore`; override with `PHOTOSTORE_CONFIG_DIR`); autosaves go to its
 `Recovery` folder, and the window size and position, the dock width and floating-panel geometry
-to `ui.ron` beside it (a file holding values that would crash startup is discarded). In portable mode (a `portable.txt` or `PhotoCraft.portable` file beside the
-executable, as in the Windows portable zip) that directory is `PhotoCraftData` next to the
+to `ui.ron` beside it (a file holding values that would crash startup is discarded). In portable mode (a `portable.txt` or `PhotoStore.portable` file beside the
+executable, as in the Windows portable zip) that directory is `PhotoStoreData` next to the
 executable instead. The web build keeps them in `localStorage`. A save writes only the values
 this instance changed since it last loaded or saved them over what storage holds now, so a second
 browser tab (or app window) never reverts the other's changes; for a value changed in both, the
@@ -202,7 +202,7 @@ persistent one.
 
 User and imported (`.abr`) brush presets live in the config directory's `Presets` folder: one
 `.pcbrushes` JSON file per preset group, content-addressed tip bitmaps under `tips/`, and an
-`index.json` with the group order and deleted built-ins (see `photocraft_engine::preset_store`).
+`index.json` with the group order and deleted built-ins (see `photostore_engine::preset_store`).
 The store loads in the background at launch and syncs after every brush preset change; built-ins
 are never written. The Actions list is `actions.json` in that same folder and survives a restart.
 Headless CLI/MCP sessions and the web build keep brush presets and the action list for the session
@@ -230,16 +230,16 @@ magenta alignment lines. `ui.pointer` drives the same code, so agents get identi
 
 ## MCP bridge
 
-`photocraft-automation` provides an MCP server built on the official Rust SDK (`rmcp`). It runs in one of two modes:
+`photostore-automation` provides an MCP server built on the official Rust SDK (`rmcp`). It runs in one of two modes:
 
-- **Headless** (`photocraft-cli mcp`): an in-process `photocraft_engine::Session`. There is no window.
-- **Bridge** (`photocraft-cli mcp --bridge 127.0.0.1:7878 --control-token-file <path>`): every tool is forwarded to a running `photocraft --control 7878 --control-token-file <path>` over this protocol, so agents see and drive the live app.
+- **Headless** (`photostore-cli mcp`): an in-process `photostore_engine::Session`. There is no window.
+- **Bridge** (`photostore-cli mcp --bridge 127.0.0.1:7878 --control-token-file <path>`): every tool is forwarded to a running `photostore --control 7878 --control-token-file <path>` over this protocol, so agents see and drive the live app.
 
-The bridge keeps one authenticated TCP connection open. A transport failure while sending a request or waiting for its reply, including a reply timeout, drops the connection and reports that the operation may have completed; inspect the document before retrying an edit. It never automatically resends the failed request. The next separate call reconnects and authenticates, and reply lines whose `id` does not match the request are skipped. It only accepts loopback addresses, because the app only listens on loopback. Supply its bearer token with `--control-token-file`, `--control-token`, `PHOTOCRAFT_CONTROL_TOKEN_FILE`, or `PHOTOCRAFT_CONTROL_TOKEN`:
+The bridge keeps one authenticated TCP connection open. A transport failure while sending a request or waiting for its reply, including a reply timeout, drops the connection and reports that the operation may have completed; inspect the document before retrying an edit. It never automatically resends the failed request. The next separate call reconnects and authenticates, and reply lines whose `id` does not match the request are skipped. It only accepts loopback addresses, because the app only listens on loopback. Supply its bearer token with `--control-token-file`, `--control-token`, `PHOTOSTORE_CONTROL_TOKEN_FILE`, or `PHOTOSTORE_CONTROL_TOKEN`:
 
 ```sh
-photocraft-cli mcp --bridge 127.0.0.1:7878 \
-  --control-token-file /private/path/photocraft-control.token
+photostore-cli mcp --bridge 127.0.0.1:7878 \
+  --control-token-file /private/path/photostore-control.token
 ```
 
 How each MCP tool maps onto control methods in bridge mode:
@@ -274,8 +274,8 @@ it to an untrusted host.
 
 Filesystem access fails closed unless launch-time read and/or write roots are granted with
 `--automation-read-root` and `--automation-write-root`. The environment-variable equivalents
-(`PHOTOCRAFT_AUTOMATION_READ_ROOT` / `PHOTOCRAFT_AUTOMATION_WRITE_ROOT`) are supported by
-the desktop `photocraft` process, but not by headless `photocraft-cli mcp` or `serve`;
+(`PHOTOSTORE_AUTOMATION_READ_ROOT` / `PHOTOSTORE_AUTOMATION_WRITE_ROOT`) are supported by
+the desktop `photostore` process, but not by headless `photostore-cli mcp` or `serve`;
 for those CLI modes, supply the flags explicitly. In MCP bridge mode, configure roots on the
 desktop process rather than on the bridging CLI. Request paths must be
 non-empty, forward-slash relative paths beneath the applicable root, or absolute paths that lie
@@ -289,7 +289,7 @@ capability interface. Interactive desktop file pickers retain normal user-select
 
 ## Headless server
 
-`photocraft-cli serve` keeps one headless engine session (no window, no GPU) and answers the same
+`photostore-cli serve` keeps one headless engine session (no window, no GPU) and answers the same
 JSON-lines envelope on stdio, or on `127.0.0.1:<port>` with `--port <port>` (loopback only; each
 authenticated connection shares the session). TCP uses the same first-frame `auth` exchange and
 token options as desktop control. Stdio does not require this TCP handshake because access is
@@ -317,7 +317,7 @@ printf '%s\n' \
   '{"id":1,"method":"doc.open","params":{"path":"in.jpg"}}' \
   '{"id":2,"method":"batch","params":{"steps":[{"command":"image.adjustments.invert"},{"command":"filter.blur.gaussianBlur","params":{"radius":3}}]}}' \
   '{"id":3,"method":"doc.save","params":{"path":"out.png"}}' | \
-  photocraft-cli serve --automation-read-root /work/project --automation-write-root /work/project
+  photostore-cli serve --automation-read-root /work/project --automation-write-root /work/project
 ```
 
 The MCP server has the same batching as the `command_batch` tool (`{steps:[{id, params, wait?}], stop_on_error}`),
@@ -336,7 +336,7 @@ The desktop and headless TCP listeners currently enforce:
 
 An oversized line, excess connection, unauthenticated request, or unauthorized filesystem path is
 rejected before command dispatch or file effects. The headless JSON-lines stdio server also
-enforces the request and reply byte ceilings; MCP over stdio (`photocraft-cli mcp`) does not
+enforces the request and reply byte ceilings; MCP over stdio (`photostore-cli mcp`) does not
 cap request bytes, because the MCP SDK reads its own request lines (only MCP tool results are
 checked). A TCP connection is closed after an oversized
 line; on stdio an oversized or non-UTF-8 line gets one error reply (`id: null`), the rest of that
@@ -385,7 +385,7 @@ On the desktop the dialog is a window of its own (title bar, moved and resized l
 immediate viewport, so while Camera Raw has its own window the PNG shows the dimmed main window,
 not the dialog. Read the dialog's state through `ui.inspect` (`cameraRaw`: params, histogram,
 zoom, control rectangles) and drive it with the `ui` params below. To *see* it, render offscreen
-(`cargo run -p photocraft-ui-egui --example snapshot -- --script '[["ui.menu.invoke", {"id": "filter.cameraRaw"}]]'`
+(`cargo run -p photostore-ui-egui --example snapshot -- --script '[["ui.menu.invoke", {"id": "filter.cameraRaw"}]]'`
 or an `egui_kittest` harness): those embed
 viewports, so the dialog is drawn over the main window and appears in the image.
 

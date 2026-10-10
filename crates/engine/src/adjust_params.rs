@@ -9,9 +9,9 @@
 //! Units: Levels and Curves in 0–255 levels; percentages for the rest (as in Photoshop's dialogs);
 //! colours as `"#rrggbb"` or `[r, g, b]` in 0–1.
 
-use photocraft_color::ColorMode;
-use photocraft_doc::Adjustment;
-use photocraft_doc::adjust::{CurvePoint, HueRange, LevelsChannel, ToneSpace};
+use photostore_color::ColorMode;
+use photostore_doc::Adjustment;
+use photostore_doc::adjust::{CurvePoint, HueRange, LevelsChannel, ToneSpace};
 use serde_json::{Map, Value, json};
 
 use crate::{EngineError, Result};
@@ -606,10 +606,10 @@ fn rgb_luma(rgb: [f32; 3]) -> f32 {
 /// A non-monotone or flat curve may not have an exact inverse; the first nearest LUT entry gives
 /// a deterministic best fit.
 fn inverse_master_target(master: &[CurvePoint], target: f32) -> f32 {
-    if photocraft_doc::adjust::is_identity_curve(master) {
+    if photostore_doc::adjust::is_identity_curve(master) {
         return target;
     }
-    let lut = photocraft_compose::adjust::curve_lut(master);
+    let lut = photostore_compose::adjust::curve_lut(master);
     let Some(denominator) = lut.len().checked_sub(1).filter(|last| *last > 0) else { return target };
     let mut best_input = target;
     let mut best_error = f32::INFINITY;
@@ -697,8 +697,8 @@ pub fn curves_eyedropper_from_params(s: &crate::Session, p: &Value) -> Result<Op
         if x < 0.0 || y < 0.0 || x >= w || y >= h {
             return Err(bad(CMD, "`eyedropper.at` is outside the image"));
         }
-        let rect = photocraft_geom::Rect::from_xywh(x.floor() as i32, y.floor() as i32, 1, 1);
-        let [r, g, b, a] = photocraft_compose::render(&d.doc, rect).px.first().copied().unwrap_or_default();
+        let rect = photostore_geom::Rect::from_xywh(x.floor() as i32, y.floor() as i32, 1, 1);
+        let [r, g, b, a] = photostore_compose::render(&d.doc, rect).px.first().copied().unwrap_or_default();
         if a <= 0.0 {
             return Err(bad(CMD, "the sampled pixel is transparent"));
         }
@@ -763,7 +763,7 @@ fn curves(r: &Reader<'_>, base: Option<&Adjustment>, mode: ColorMode) -> Result<
         }
     }
     let [c0, c1, c2, black] = chans;
-    let black = if space == ToneSpace::Cmyk && !photocraft_doc::adjust::is_identity_curve(&black) { black } else { Vec::new() };
+    let black = if space == ToneSpace::Cmyk && !photostore_doc::adjust::is_identity_curve(&black) { black } else { Vec::new() };
     Ok(Adjustment::Curves { master, per_channel: [c0, c1, c2], space, black })
 }
 
@@ -935,7 +935,7 @@ mod tests {
     }
 
     fn tone_output(adjustment: &Adjustment, sample: [f32; 3]) -> [f32; 3] {
-        let luts = photocraft_compose::adjust::tone_luts(adjustment);
+        let luts = photostore_compose::adjust::tone_luts(adjustment);
         std::array::from_fn(|channel| {
             let row = &luts[channel];
             let position = sample[channel].clamp(0.0, 1.0) * (row.len().saturating_sub(1)) as f32;
@@ -1263,7 +1263,7 @@ mod tests {
         s.execute("layer.newAdjustmentLayer.curves", json!({})).unwrap();
         let id = s.active().unwrap().active_layer.unwrap();
         let l = s.active().unwrap().doc.layer(id).unwrap().clone();
-        assert!(matches!(l.content, photocraft_doc::LayerContent::Adjustment(Adjustment::Curves { space: ToneSpace::Cmyk, .. })));
+        assert!(matches!(l.content, photostore_doc::LayerContent::Adjustment(Adjustment::Curves { space: ToneSpace::Cmyk, .. })));
     }
 
     #[test]
@@ -1273,7 +1273,7 @@ mod tests {
         s.execute("layer.setAdjustment", json!({"highlights": [0, 0, -20]})).unwrap();
         let id = s.active().unwrap().active_layer.unwrap();
         let adj = |s: &crate::Session| match &s.active().unwrap().doc.layer(id).unwrap().content {
-            photocraft_doc::LayerContent::Adjustment(a) => a.clone(),
+            photostore_doc::LayerContent::Adjustment(a) => a.clone(),
             _ => panic!(),
         };
         assert!(matches!(adj(&s), Adjustment::ColorBalance { midtones: [30.0, 0.0, 0.0], highlights: [0.0, 0.0, -20.0], .. }));

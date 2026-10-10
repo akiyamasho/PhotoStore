@@ -1,5 +1,5 @@
 use super::*;
-use photocraft_color::SampleType;
+use photostore_color::SampleType;
 
 fn session_depth(depth: u32) -> Session {
     let mut s = Session::new();

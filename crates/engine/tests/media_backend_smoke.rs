@@ -2,10 +2,10 @@
 
 use std::{env, fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 
-use photocraft_color::PixelFormat;
-use photocraft_geom::Rect;
-use photocraft_engine::media_backend::{self, Rational, Result, VideoFormat, VideoWriterConfig};
-use photocraft_raster::Rgba8Image;
+use photostore_color::PixelFormat;
+use photostore_geom::Rect;
+use photostore_engine::media_backend::{self, Rational, Result, VideoFormat, VideoWriterConfig};
+use photostore_raster::Rgba8Image;
 
 fn fixture_path(name: &str) -> PathBuf {
     env::temp_dir().join(format!("photostore-media-{name}-{}-{}.mp4", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos()))

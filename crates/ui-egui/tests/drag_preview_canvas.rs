@@ -13,14 +13,14 @@
 //! while the pointer is held still. Skips when no GPU adapter exists (like `live_stroke_canvas.rs`).
 
 use egui::{Modifiers, PointerButton, Pos2};
-use photocraft_ui_egui::PhotocraftApp;
-use photocraft_ui_egui::canvas::ViewXform;
-use photocraft_ui_egui::control::{ControlRequest, handle};
+use photostore_ui_egui::PhotoStoreApp;
+use photostore_ui_egui::canvas::ViewXform;
+use photostore_ui_egui::control::{ControlRequest, handle};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-type Harness = egui_kittest::Harness<'static, PhotocraftApp>;
+type Harness = egui_kittest::Harness<'static, PhotoStoreApp>;
 
 /// A rendered frame: RGBA8, physical pixels.
 struct Image {
@@ -44,8 +44,8 @@ impl Image {
 fn harness(ppp: f32) -> Option<Harness> {
     let built = std::panic::catch_unwind(|| {
         egui_kittest::Harness::builder().with_size(egui::vec2(900.0, 640.0)).with_pixels_per_point(ppp).with_max_steps(64).wgpu().build_eframe(|cc| {
-            PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
-            let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+            PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
+            let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
             if let Some(rs) = cc.wgpu_render_state.as_ref() {
                 app.set_wgpu(rs.clone());
             }

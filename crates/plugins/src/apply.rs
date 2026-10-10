@@ -1,8 +1,8 @@
 //! Running a filter plug-in over a surface, band by band.
 
-use photocraft_color::{ColorMode, PixelFormat, SampleType};
-use photocraft_geom::{Rect, TILE_SIZE, TileCoord};
-use photocraft_raster::Surface;
+use photostore_color::{ColorMode, PixelFormat, SampleType};
+use photostore_geom::{Rect, TILE_SIZE, TileCoord};
+use photostore_raster::Surface;
 use serde_json::{Value, json};
 
 use crate::manifest::Area;

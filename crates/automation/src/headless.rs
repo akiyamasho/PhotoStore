@@ -1,12 +1,12 @@
-//! Headless backend: a `photocraft_engine::Session` plus file I/O. Synchronous
+//! Headless backend: a `photostore_engine::Session` plus file I/O. Synchronous
 //! and UI-free; the MCP server and the CLI both drive it.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use photocraft_engine::{Session, command_specs, file_cmds};
-use photocraft_format::PcraftWriter;
-use photocraft_io::ExportOptions;
+use photostore_engine::{Session, command_specs, file_cmds};
+use photostore_format::PcraftWriter;
+use photostore_io::ExportOptions;
 use serde_json::{Value, json};
 
 use crate::workspace::{authorize_engine_command, authorize_engine_step};
@@ -151,7 +151,7 @@ impl Headless {
         // alone (#1547).
         let ext =
             format.map(|f| f.trim_start_matches('.').to_ascii_lowercase()).or_else(|| target.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()));
-        let layered = matches!(ext.as_deref(), Some("psd" | "psb" | "ora")) || ext.as_deref() == Some(photocraft_format::EXTENSION);
+        let layered = matches!(ext.as_deref(), Some("psd" | "psb" | "ora")) || ext.as_deref() == Some(photostore_format::EXTENSION);
         if layered {
             // Saving by index must not retarget the next automation command.
             let previously_active = self.session.active_index();
@@ -171,14 +171,14 @@ impl Headless {
         let requested = path.to_str().ok_or_else(|| AutomationError::BadRequest("automation paths must be valid UTF-8".into()))?;
         match &self.filesystem {
             Filesystem::Denied => Err(AutomationError::BadRequest("automation filesystem access is not granted: write authority is absent".into())),
-            Filesystem::TrustedLocal => photocraft_format::atomic_write(path, bytes).map_err(|error| AutomationError::Io(error.to_string())),
+            Filesystem::TrustedLocal => photostore_format::atomic_write(path, bytes).map_err(|error| AutomationError::Io(error.to_string())),
             Filesystem::Workspace(workspace) => workspace.write(requested, bytes),
         }
     }
 
     pub fn inspect(&self, index: Option<usize>) -> Result<Value, AutomationError> {
         let i = self.doc_index(index)?;
-        Ok(photocraft_engine::inspect::document(&self.session.documents()[i]))
+        Ok(photostore_engine::inspect::document(&self.session.documents()[i]))
     }
 
     pub fn render_png(&self, index: Option<usize>, max_side: u32) -> Result<Vec<u8>, AutomationError> {
@@ -195,7 +195,7 @@ impl Headless {
     }
 
     pub fn session_list(&self) -> Value {
-        photocraft_engine::inspect::session(&self.session)
+        photostore_engine::inspect::session(&self.session)
     }
 
     pub fn select(&mut self, index: usize) -> Result<Value, AutomationError> {
@@ -249,8 +249,8 @@ impl Headless {
             return Ok(self.session.execute(id, params)?);
         }
         Ok(match self.session.start(id, params)? {
-            photocraft_engine::jobs::Started::Done(v) => v,
-            photocraft_engine::jobs::Started::Job(job) => json!({"job": job.0, "pending": true}),
+            photostore_engine::jobs::Started::Done(v) => v,
+            photostore_engine::jobs::Started::Job(job) => json!({"job": job.0, "pending": true}),
         })
     }
 }
@@ -265,10 +265,10 @@ impl Headless {
         };
         let dir = params.get("dir").and_then(Value::as_str).ok_or_else(|| AutomationError::BadRequest("renderVideo needs `dir`".into()))?;
         let mut outputs = workspace.export_sequence(dir)?;
-        let result = photocraft_engine::render_video_with(
+        let result = photostore_engine::render_video_with(
             &self.session,
             &params,
-            |name, bytes| outputs.write(name, bytes).map_err(|e| photocraft_engine::EngineError::Other(e.to_string())),
+            |name, bytes| outputs.write(name, bytes).map_err(|e| photostore_engine::EngineError::Other(e.to_string())),
             progress,
         );
         match result {

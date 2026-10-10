@@ -10,12 +10,12 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "corpus")]
-use photocraft_doc::Layer;
-use photocraft_doc::LayerContent;
+use photostore_doc::Layer;
+use photostore_doc::LayerContent;
 #[cfg(feature = "corpus")]
-use photocraft_geom::Rect;
+use photostore_geom::Rect;
 #[cfg(feature = "corpus")]
-use photocraft_raster::Surface;
+use photostore_raster::Surface;
 
 #[cfg(feature = "corpus")]
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -56,7 +56,7 @@ fn corpus_text_layers() {
     let mut files = Vec::new();
     collect(&root, &mut files);
     files.sort();
-    let mut engine = photocraft_text::TextEngine::with_system_fonts();
+    let mut engine = photostore_text::TextEngine::with_system_fonts();
     let (mut n, mut good_geometry) = (0, 0);
     for f in files {
         let bytes = std::fs::read(&f).unwrap();
@@ -64,13 +64,13 @@ fn corpus_text_layers() {
             continue;
         }
         let name = f.file_name().unwrap().to_string_lossy().to_string();
-        let Ok(imp) = photocraft_io::import(&name, &bytes) else {
+        let Ok(imp) = photostore_io::import(&name, &bytes) else {
             continue;
         };
         let doc = imp.document;
         // The document's Txt2 (kept verbatim on export) carries what EngineData can't, e.g.
         // optical kerning; re-reads apply it like an import does.
-        let txt2 = doc.metadata.psd_global_blocks.iter().find(|b| &b.1 == b"Txt2").and_then(|b| photocraft_text::psd::parse_txt2(&b.2));
+        let txt2 = doc.metadata.psd_global_blocks.iter().find(|b| &b.1 == b"Txt2").and_then(|b| photostore_text::psd::parse_txt2(&b.2));
         let mut all = Vec::new();
         walk(&doc.layers, &mut all);
         for l in all {
@@ -84,10 +84,10 @@ fn corpus_text_layers() {
             let st = &t.runs[0].style;
             assert!(st.size_pt > 0.0 && st.postscript_name.is_some(), "{name}/{}: {st:?}", l.name);
             // Round trip of the model through our own TySh writer.
-            let rebuilt = photocraft_text::psd::build_tysh(t, doc.resolution_dpi, None);
-            let mut back = photocraft_text::psd::text_layer_from_tysh(&rebuilt, doc.resolution_dpi).unwrap();
+            let rebuilt = photostore_text::psd::build_tysh(t, doc.resolution_dpi, None);
+            let mut back = photostore_text::psd::text_layer_from_tysh(&rebuilt, doc.resolution_dpi).unwrap();
             if let Some(txt2) = &txt2 {
-                photocraft_text::psd::apply_txt2(&mut back, &rebuilt, txt2);
+                photostore_text::psd::apply_txt2(&mut back, &rebuilt, txt2);
             }
             assert_eq!(back.text, t.text);
             assert_eq!(back.char_runs(), t.char_runs(), "{name}/{}", l.name);
@@ -134,8 +134,8 @@ fn corpus_text_layers() {
 fn corpus_tysh_lossless() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/psd/ag-psd/read-write/text/src.psd");
     let bytes = std::fs::read(&root).unwrap_or_else(|e| panic!("{}: {e}: run `cargo xtask corpus --all`", root.display()));
-    let doc = photocraft_io::import("src.psd", &bytes).unwrap().document;
-    let out = photocraft_io::export(&doc, "out.psd", &Default::default()).unwrap().bytes;
+    let doc = photostore_io::import("src.psd", &bytes).unwrap().document;
+    let out = photostore_io::export(&doc, "out.psd", &Default::default()).unwrap().bytes;
     let find = |b: &[u8]| {
         let i = b.windows(8).position(|w| w == b"8BIMTySh").unwrap();
         let len = u32::from_be_bytes(b[i + 8..i + 12].try_into().unwrap()) as usize;
@@ -144,13 +144,13 @@ fn corpus_tysh_lossless() {
     assert_eq!(find(&bytes), find(&out));
 }
 
-/// A text layer created in Photocraft (no PSD data) exports as an editable type layer and
+/// A text layer created in PhotoStore (no PSD data) exports as an editable type layer and
 /// imports back with the same model.
 #[test]
 fn created_text_layer_roundtrips_through_psd() {
-    use photocraft_color::{Color, ColorMode, SampleType};
-    use photocraft_doc::text::{CharStyle, ParagraphRun, ParagraphStyle, TextAlign, TextRun, TextShape};
-    use photocraft_doc::{Document, Size, TextLayer};
+    use photostore_color::{Color, ColorMode, SampleType};
+    use photostore_doc::text::{CharStyle, ParagraphRun, ParagraphStyle, TextAlign, TextRun, TextShape};
+    use photostore_doc::{Document, Size, TextLayer};
     let mut doc = Document::new("t", Size::new(120, 80), ColorMode::Rgb, SampleType::U8);
     doc.resolution_dpi = 144.0;
     let a = CharStyle { font_family: "Inter".into(), size_pt: 10.0, color: Color::rgb(0.2, 0.4, 0.6), ..Default::default() };
@@ -163,17 +163,17 @@ fn created_text_layer_roundtrips_through_psd() {
             ParagraphRun { len: 5, style: ParagraphStyle { align: TextAlign::JustifyAll, ..Default::default() } },
         ],
         shape: TextShape::Box { x: 0.0, y: 0.0, width: 100.0, height: 60.0 },
-        transform: photocraft_geom::Affine::translate(8.0, 6.0),
+        transform: photostore_geom::Affine::translate(8.0, 6.0),
         ..Default::default()
     };
     t.sync_summary();
-    photocraft_text::TextEngine::new().render_layer(&mut t, doc.resolution_dpi, doc.pixel_format());
-    doc.layers.push(photocraft_doc::Layer::new("t", LayerContent::Text(t.clone())));
-    let out = photocraft_io::export(&doc, "t.psd", &Default::default()).unwrap();
+    photostore_text::TextEngine::new().render_layer(&mut t, doc.resolution_dpi, doc.pixel_format());
+    doc.layers.push(photostore_doc::Layer::new("t", LayerContent::Text(t.clone())));
+    let out = photostore_io::export(&doc, "t.psd", &Default::default()).unwrap();
     assert!(!out.warnings.iter().any(|w| w.contains("text layer")), "{:?}", out.warnings);
-    let back = photocraft_io::import("t.psd", &out.bytes).unwrap().document;
+    let back = photostore_io::import("t.psd", &out.bytes).unwrap().document;
     let LayerContent::Text(bt) = &back.layers[0].content else { panic!("not text") };
-    let strip = |v: Vec<photocraft_doc::text::TextRun>| {
+    let strip = |v: Vec<photostore_doc::text::TextRun>| {
         v.into_iter()
             .map(|mut r| {
                 r.style.postscript_name = None;

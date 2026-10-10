@@ -1,14 +1,14 @@
 //! Mosaic, Emboss, Find Edges, Solarize/Invert (per pixel), Desaturate.
 
-use photocraft_color::PixelFormat;
-use photocraft_geom::Rect;
-use photocraft_raster::{from_rgba, to_rgba};
+use photostore_color::PixelFormat;
+use photostore_geom::Rect;
+use photostore_raster::{from_rgba, to_rgba};
 
 use crate::Ctx;
 use crate::image::Image;
 
 fn fmt(ctx: &Ctx) -> PixelFormat {
-    PixelFormat::new(ctx.mode, photocraft_color::SampleType::F32, ctx.alpha)
+    PixelFormat::new(ctx.mode, photostore_color::SampleType::F32, ctx.alpha)
 }
 
 fn luma(ctx: &Ctx, px: &[f32]) -> f32 {

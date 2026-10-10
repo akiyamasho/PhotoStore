@@ -9,18 +9,18 @@
 //! * Pen + ⌥: click an anchor to make it a corner, drag from it to pull out smooth handles, drag a
 //!   handle to move it alone.
 //!
-//! A drag previews with `photocraft_vector::edit` and commits once on release through the engine
+//! A drag previews with `photostore_vector::edit` and commits once on release through the engine
 //! (`path.moveAnchors`, `path.moveHandle`, `path.bendSegment`, `path.convertPoint`): one history
 //! step per drag, and the same commands drive it over MCP and the control channel.
 
 use egui::{Color32, Modifiers, Pos2};
-use photocraft_doc::vector::Path;
-use photocraft_geom::Point;
-use photocraft_vector::edit::{self, Handle, Hit};
+use photostore_doc::vector::Path;
+use photostore_geom::Point;
+use photostore_vector::edit::{self, Handle, Hit};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::canvas::ToolEvent;
 use crate::state::Tool;
 
@@ -110,19 +110,19 @@ fn direct(tool: Tool, mods: Modifiers) -> bool {
 }
 
 /// Does the canvas draw Direct Selection's overlay instead of the plain path outlines?
-pub fn shows(app: &PhotocraftApp, mods: Modifiers) -> bool {
+pub fn shows(app: &PhotoStoreApp, mods: Modifiers) -> bool {
     direct(app.ui.tool, mods) || app.ui.direct_selection.drag.is_some()
 }
 
 /// The paths Direct Selection edits, front first: the targeted vector mask or the active shape
 /// layer's path, then the work path.
-fn candidates(app: &PhotocraftApp) -> Vec<(PathRef, Path)> {
+fn candidates(app: &PhotoStoreApp) -> Vec<(PathRef, Path)> {
     let layer = crate::vector_ui::targeted_vector_mask(app).or_else(|| crate::vector_ui::active_shape_path(app));
     let work = app.session.active().and_then(|st| st.doc.work_path.clone());
     layer.map(|(id, p)| (PathRef::Layer(id), p)).into_iter().chain(work.map(|p| (PathRef::Work, p))).collect()
 }
 
-fn retracted(k: &photocraft_doc::Knot, h: Handle) -> bool {
+fn retracted(k: &photostore_doc::Knot, h: Handle) -> bool {
     let c = if h == Handle::In { k.in_ctrl } else { k.out_ctrl };
     (c.x - k.anchor.x).abs() < 1e-9 && (c.y - k.anchor.y).abs() < 1e-9
 }
@@ -146,7 +146,7 @@ fn shown_handles(ds: &DirectSelection, path: &Path) -> Vec<([usize; 2], Handle)>
 
 /// Canvas pointer events for Direct Selection and the Pen's ⌘ / ⌥ modes; false when the event is
 /// not theirs.
-pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: Modifiers) -> bool {
+pub fn pointer(app: &mut PhotoStoreApp, ev: ToolEvent, mods: Modifiers) -> bool {
     let tool = app.ui.tool;
     match ev {
         ToolEvent::Down { x, y, .. } => {
@@ -190,7 +190,7 @@ pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: Modifiers) -> bool 
 
 /// A press: pick what's under the pointer and start a drag. False lets the Pen handle a ⌥-press
 /// that hit nothing.
-fn press(app: &mut PhotocraftApp, p: [f64; 2], mods: Modifiers, convert: bool) -> bool {
+fn press(app: &mut PhotoStoreApp, p: [f64; 2], mods: Modifiers, convert: bool) -> bool {
     let tol = 6.0 / f64::from(app.point_zoom().max(0.01));
     let ds = &app.ui.direct_selection;
     let found = candidates(app).into_iter().find_map(|(r, path)| {
@@ -250,7 +250,7 @@ fn press(app: &mut PhotocraftApp, p: [f64; 2], mods: Modifiers, convert: bool) -
 
 /// End of an edit drag: commit it as one command. A click (no movement) commits nothing, except
 /// Pen + ⌥ on an anchor, which makes it a corner.
-fn release(app: &mut PhotocraftApp, target: PathRef, edit: &Edit, start: [f64; 2], end: [f64; 2]) {
+fn release(app: &mut PhotoStoreApp, target: PathRef, edit: &Edit, start: [f64; 2], end: [f64; 2]) {
     let moved = (end[0] - start[0]).hypot(end[1] - start[1]) * f64::from(app.point_zoom()) >= 1.0;
     let (id, mut params) = match edit {
         Edit::Convert([s, k]) if !moved => ("path.convertPoint", json!({"subpath": s, "knot": k})),
@@ -268,7 +268,7 @@ fn release(app: &mut PhotocraftApp, target: PathRef, edit: &Edit, start: [f64; 2
 
 /// End of a marquee: select the anchors inside it on the frontmost path that has any (⇧ adds).
 /// A click on empty canvas deselects.
-fn marquee(app: &mut PhotocraftApp, start: [f64; 2], end: [f64; 2], add: bool) {
+fn marquee(app: &mut PhotoStoreApp, start: [f64; 2], end: [f64; 2], add: bool) {
     let rect = [start[0], start[1], end[0], end[1]];
     let hits = candidates(app).into_iter().map(|(r, path)| (r, edit::anchors_in(&path, rect))).find(|(_, a)| !a.is_empty());
     let ds = &mut app.ui.direct_selection;
@@ -293,7 +293,7 @@ fn marquee(app: &mut PhotocraftApp, start: [f64; 2], end: [f64; 2], add: bool) {
 /// Paths with their anchors (selected ones filled), the shown handles, the drag's preview in
 /// place of its path, and the marquee. `paths` false (View › Show › Target Path off) leaves only
 /// the marquee.
-pub fn draw_overlay(app: &PhotocraftApp, painter: &egui::Painter, to_scr: &dyn Fn([f64; 2]) -> Pos2, accent: Color32, paths: bool) {
+pub fn draw_overlay(app: &PhotoStoreApp, painter: &egui::Painter, to_scr: &dyn Fn([f64; 2]) -> Pos2, accent: Color32, paths: bool) {
     let ds = &app.ui.direct_selection;
     for (r, path) in if paths { candidates(app) } else { Vec::new() } {
         let path = match &ds.drag {

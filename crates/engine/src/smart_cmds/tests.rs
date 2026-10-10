@@ -1,5 +1,5 @@
 use super::*;
-use photocraft_doc::{FrameLayerState, Timeline, VideoData};
+use photostore_doc::{FrameLayerState, Timeline, VideoData};
 
 mod selection;
 
@@ -28,8 +28,8 @@ fn set_current(s: &mut Session, current: usize) {
     st.doc = std::sync::Arc::new(doc);
 }
 
-fn solid_pixels(fmt: &photocraft_color::PixelFormat, rgba: [f32; 4], count: usize) -> Vec<f32> {
-    (0..count).flat_map(|_| photocraft_raster::from_rgba(fmt, rgba)).collect()
+fn solid_pixels(fmt: &photostore_color::PixelFormat, rgba: [f32; 4], count: usize) -> Vec<f32> {
+    (0..count).flat_map(|_| photostore_raster::from_rgba(fmt, rgba)).collect()
 }
 
 fn set_video(s: &mut Session, id: LayerId, video: VideoData) {
@@ -58,7 +58,7 @@ fn paint(s: &mut Session) {
             for x in r.x0..r.x1 {
                 let v = ((x * 7 + y * 13) % 23) as f32 / 22.0;
                 let a = if (x + y) % 5 == 0 { 0.5 } else { 1.0 };
-                data.extend(photocraft_raster::from_rgba(&fmt, [v, 1.0 - v, ((x * y) % 7) as f32 / 6.0, a]));
+                data.extend(photostore_raster::from_rgba(&fmt, [v, 1.0 - v, ((x * y) % 7) as f32 / 6.0, a]));
             }
         }
         surf.write_region(r, &data);
@@ -68,7 +68,7 @@ fn paint(s: &mut Session) {
 }
 
 fn flat(s: &Session) -> Vec<[f32; 4]> {
-    photocraft_compose::flatten(&s.active().unwrap().doc).px
+    photostore_compose::flatten(&s.active().unwrap().doc).px
 }
 
 fn max_diff(a: &[[f32; 4]], b: &[[f32; 4]]) -> f32 {
@@ -111,7 +111,7 @@ fn animated_source_timing_handles_fractional_fps_clock() {
 fn animated_source_ping_pong_does_not_dwell_on_duplicate_endpoints() {
     let mut s = session(8);
     let mut t = Timeline::new(3, 10.0);
-    t.loop_mode = photocraft_doc::TimelineLoop::PingPong;
+    t.loop_mode = photostore_doc::TimelineLoop::PingPong;
     t.frame_delays_ms = vec![100, 100, 100];
     set_timeline(&mut s, t);
     let d = &s.active().unwrap().doc;
@@ -202,7 +202,7 @@ fn video_keyframe_opacity_is_owned_by_child_after_conversion() {
     frame.write_region(Rect::new(4, 4, 20, 20), &solid_pixels(&fmt, [1.0, 0.0, 0.0, 1.0], 256));
     let id = s.active().unwrap().active_layer.unwrap();
     let mut video = VideoData::new(vec![frame.clone(), frame], 24.0);
-    video.keyframes = vec![photocraft_doc::VideoKeyframe { frame: 0, x: 0.0, y: 0.0, opacity: 0.5 }, photocraft_doc::VideoKeyframe { frame: 1, x: 0.0, y: 0.0, opacity: 0.8 }];
+    video.keyframes = vec![photostore_doc::VideoKeyframe { frame: 0, x: 0.0, y: 0.0, opacity: 0.5 }, photostore_doc::VideoKeyframe { frame: 1, x: 0.0, y: 0.0, opacity: 0.8 }];
     set_video(&mut s, id, video);
     set_timeline(&mut s, Timeline::new(2, 24.0));
     sync_doc(&mut s);
@@ -225,7 +225,7 @@ fn conversion_keeps_fill_and_color_overlay_owned_by_child_once() {
         l.opacity = 0.5;
         l.fill_opacity = 0.5;
         l.blend = BlendMode::Multiply;
-        l.effects.items.push(photocraft_doc::Effect::ColorOverlay { common: photocraft_doc::FxCommon::new(BlendMode::Normal, 1.0), color: photocraft_color::Color::rgb(1.0, 0.0, 0.0) });
+        l.effects.items.push(photostore_doc::Effect::ColorOverlay { common: photostore_doc::FxCommon::new(BlendMode::Normal, 1.0), color: photostore_color::Color::rgb(1.0, 0.0, 0.0) });
         Ok(())
     }).unwrap();
     let effects = s.active().unwrap().doc.layer(id).unwrap().effects.clone();
@@ -234,7 +234,7 @@ fn conversion_keeps_fill_and_color_overlay_owned_by_child_once() {
     state.position = Some((4, 4));
     state.blend = Some(BlendMode::Multiply);
     state.fill_opacity = Some(0.5);
-    state.effects = Some(photocraft_doc::FrameEffectsState { enabled: effects.enabled, items: effects.items.clone(), reference: effects.reference });
+    state.effects = Some(photostore_doc::FrameEffectsState { enabled: effects.enabled, items: effects.items.clone(), reference: effects.reference });
     timeline.property_frames = vec![vec![state], vec![FrameLayerState::legacy(id, true, 0.5)]];
     set_timeline(&mut s, timeline);
     sync_doc(&mut s);
@@ -604,8 +604,8 @@ fn pcraft_round_trip_keeps_live_smart_objects() {
         s.execute("filter.noise.addNoise", json!({"amount": 20, "seed": 3})).unwrap();
         s.execute("layer.smartFilter.blendingOptions", json!({"opacity": 0.5, "blend": "screen"})).unwrap();
         let doc = s.active().unwrap().doc.clone();
-        let bytes = photocraft_format::save_to_bytes(&doc, &Default::default()).unwrap();
-        let back = photocraft_format::load_from_bytes(&bytes).unwrap();
+        let bytes = photostore_format::save_to_bytes(&doc, &Default::default()).unwrap();
+        let back = photostore_format::load_from_bytes(&bytes).unwrap();
         let id = s.active().unwrap().active_layer.unwrap();
         let (a, b) = (smart(&doc, id).unwrap(), smart(&back, id).unwrap());
         assert_eq!(a, b, "depth {depth}");
@@ -627,13 +627,13 @@ fn psd_placed_layer_renders_from_lnk2_data() {
     let mut inner = Document::with_background(
         "in",
         Size::new(10, 8),
-        photocraft_color::ColorMode::Rgb,
-        photocraft_color::SampleType::U8,
-        photocraft_color::Color::rgba(0.0, 1.0, 0.0, 1.0),
+        photostore_color::ColorMode::Rgb,
+        photostore_color::SampleType::U8,
+        photostore_color::Color::rgba(0.0, 1.0, 0.0, 1.0),
     );
     inner.layers[0].surface_mut().unwrap().fill_rect(Rect::new(0, 0, 5, 8), &[1.0, 0.0, 0.0, 1.0]);
-    let png = photocraft_io::export(&inner, "png", &Default::default()).unwrap().bytes;
-    let lnk2 = photocraft_io::linked::encode_linked_file(&photocraft_io::linked::LinkedFile { uuid: "uuid-1".into(), file_name: "in.png".into(), bytes: png });
+    let png = photostore_io::export(&inner, "png", &Default::default()).unwrap().bytes;
+    let lnk2 = photostore_io::linked::encode_linked_file(&photostore_io::linked::LinkedFile { uuid: "uuid-1".into(), file_name: "in.png".into(), bytes: png });
     let mut s = session(8);
     s.edit("place", |doc, active| {
         doc.metadata.psd_global_blocks.push((*b"8BIM", *b"lnk2", Arc::new(lnk2)));
@@ -670,17 +670,17 @@ fn export_replace_and_linked_contents() {
     convert(&mut s);
     let out = dir.join("contents.pcraft");
     s.execute("layer.smartObjects.exportContents", json!({"path": out.to_str().unwrap()})).unwrap();
-    assert!(photocraft_format::is_pcraft(&std::fs::read(&out).unwrap()));
+    assert!(photostore_format::is_pcraft(&std::fs::read(&out).unwrap()));
     // Replace with a flat PNG.
     let png_doc = Document::with_background(
         "p",
         Size::new(4, 4),
-        photocraft_color::ColorMode::Rgb,
-        photocraft_color::SampleType::U8,
-        photocraft_color::Color::rgba(1.0, 1.0, 0.0, 1.0),
+        photostore_color::ColorMode::Rgb,
+        photostore_color::SampleType::U8,
+        photostore_color::Color::rgba(1.0, 1.0, 0.0, 1.0),
     );
     let png = dir.join("yellow.png");
-    std::fs::write(&png, photocraft_io::export(&png_doc, "png", &Default::default()).unwrap().bytes).unwrap();
+    std::fs::write(&png, photostore_io::export(&png_doc, "png", &Default::default()).unwrap().bytes).unwrap();
     s.execute("layer.smartObjects.replaceContents", json!({"path": png.to_str().unwrap()})).unwrap();
     let sm = active_smart(&s);
     assert_eq!(sm.cache.as_ref().unwrap().content_bounds(), Rect::new(-6, 5, -2, 9), "transform kept");
@@ -692,7 +692,7 @@ fn export_replace_and_linked_contents() {
     let mut red = png_doc.clone();
     let rb = red.bounds();
     red.layers[0].surface_mut().unwrap().fill_rect(rb, &[1.0, 0.0, 0.0, 1.0]);
-    std::fs::write(&linked, photocraft_io::export(&red, "png", &Default::default()).unwrap().bytes).unwrap();
+    std::fs::write(&linked, photostore_io::export(&red, "png", &Default::default()).unwrap().bytes).unwrap();
     s.execute("layer.smartObjects.updateAllModifiedContent", json!({})).unwrap();
     assert_eq!(active_smart(&s).cache.unwrap().rgba(-5, 6), [1.0, 0.0, 0.0, 1.0]);
     s.execute("layer.smartObjects.convertToEmbedded", json!({})).unwrap();
@@ -743,7 +743,7 @@ fn smart_filter_blur_repeats_the_canvas_edge_like_a_layer_filter() {
                 for y in r.y0..r.y1 {
                     for x in r.x0..r.x1 {
                         let v = if (x / 8 + y / 8) % 2 == 0 { 0.2 } else { 0.9 };
-                        data.extend(photocraft_raster::from_rgba(&fmt, [v, 0.5, 1.0 - v, 1.0]));
+                        data.extend(photostore_raster::from_rgba(&fmt, [v, 0.5, 1.0 - v, 1.0]));
                     }
                 }
                 surf.write_region(r, &data);
@@ -808,7 +808,7 @@ fn warp_on_a_distorted_smart_object_follows_the_corners() {
     let inv = h.inverse().unwrap();
     let src: Vec<(f64, f64)> = quad.iter().map(|p| inv.apply(p[0], p[1])).collect();
     let b = src.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| [b[0].min(p.0), b[1].min(p.1), b[2].max(p.0), b[3].max(p.1)]);
-    sm.warp = Some(photocraft_geom::warp::Warp::custom(photocraft_geom::warp::BezierMesh::identity(b, 1, 1), b));
+    sm.warp = Some(photostore_geom::warp::Warp::custom(photostore_geom::warp::BezierMesh::identity(b, 1, 1), b));
     let layer = Layer::new("w", LayerContent::Smart(sm));
     let doc_warp = crate::warp_cmds::smart_warp_doc_space(&layer).unwrap();
     let pts = doc_warp.mesh.unwrap().points;
@@ -981,8 +981,8 @@ fn automation_smart_contents_accepts_memory_sources_and_explicit_targets() {
         if psd_uuid {
             s.edit("PSD source", |doc, _| {
                 let SmartSource::Embedded { file_name, bytes } = smart(doc, LayerId(id))?.source.clone() else { panic!() };
-                let linked = photocraft_io::linked::LinkedFile { uuid: "embedded-id".into(), file_name, bytes: bytes.to_vec() };
-                doc.metadata.psd_global_blocks.push((*b"8BIM", *b"lnk2", Arc::new(photocraft_io::linked::encode_linked_file(&linked))));
+                let linked = photostore_io::linked::LinkedFile { uuid: "embedded-id".into(), file_name, bytes: bytes.to_vec() };
+                doc.metadata.psd_global_blocks.push((*b"8BIM", *b"lnk2", Arc::new(photostore_io::linked::encode_linked_file(&linked))));
                 smart_mut(doc, LayerId(id))?.source = SmartSource::Linked { path: linked.uuid };
                 Ok(())
             })
@@ -1005,9 +1005,9 @@ fn contents_file() -> std::path::PathBuf {
     let doc = Document::with_background(
         "source",
         Size::new(4, 4),
-        photocraft_doc::ColorMode::Rgb,
-        photocraft_doc::SampleType::U8,
-        photocraft_color::Color::rgb(1.0, 0.0, 0.0),
+        photostore_doc::ColorMode::Rgb,
+        photostore_doc::SampleType::U8,
+        photostore_color::Color::rgb(1.0, 0.0, 0.0),
     );
     let path = std::env::temp_dir().join(format!("pcraft-contents-{}-{}.pcraft", std::process::id(), doc.id.0));
     std::fs::write(&path, encode_source(&doc).unwrap()).unwrap();
@@ -1074,11 +1074,11 @@ fn automation_smart_contents_refuses_disk_sources_before_changes() {
 fn automation_smart_contents_checks_nested_reads_at_nontrivial_placements() {
     let path = contents_file();
     for (scale, psd_uuid, allowed) in [(1.0, false, true), (1.5, false, false), (1.5, true, true)] {
-        let mut inner = Document::new("inner", Size::new(4, 4), photocraft_doc::ColorMode::Rgb, photocraft_doc::SampleType::U8);
+        let mut inner = Document::new("inner", Size::new(4, 4), photostore_doc::ColorMode::Rgb, photostore_doc::SampleType::U8);
         let source_path = if psd_uuid {
             let linked =
-                photocraft_io::linked::LinkedFile { uuid: "nested-id".into(), file_name: "source.pcraft".into(), bytes: std::fs::read(&path).unwrap() };
-            inner.metadata.psd_global_blocks.push((*b"8BIM", *b"lnk2", Arc::new(photocraft_io::linked::encode_linked_file(&linked))));
+                photostore_io::linked::LinkedFile { uuid: "nested-id".into(), file_name: "source.pcraft".into(), bytes: std::fs::read(&path).unwrap() };
+            inner.metadata.psd_global_blocks.push((*b"8BIM", *b"lnk2", Arc::new(photostore_io::linked::encode_linked_file(&linked))));
             linked.uuid
         } else {
             path.to_string_lossy().into_owned()
@@ -1151,12 +1151,12 @@ fn inspect_reports_the_smart_source() {
     let inner = Document::with_background(
         "in",
         Size::new(4, 4),
-        photocraft_color::ColorMode::Rgb,
-        photocraft_color::SampleType::U8,
-        photocraft_color::Color::rgba(0.0, 1.0, 0.0, 1.0),
+        photostore_color::ColorMode::Rgb,
+        photostore_color::SampleType::U8,
+        photostore_color::Color::rgba(0.0, 1.0, 0.0, 1.0),
     );
-    let png = photocraft_io::export(&inner, "png", &Default::default()).unwrap().bytes;
-    let lnk2 = photocraft_io::linked::encode_linked_file(&photocraft_io::linked::LinkedFile { uuid: "uuid-1".into(), file_name: "in.png".into(), bytes: png });
+    let png = photostore_io::export(&inner, "png", &Default::default()).unwrap().bytes;
+    let lnk2 = photostore_io::linked::encode_linked_file(&photostore_io::linked::LinkedFile { uuid: "uuid-1".into(), file_name: "in.png".into(), bytes: png });
     let mut s = session(8);
     s.edit("place", |doc, active| {
         doc.metadata.psd_global_blocks.push((*b"8BIM", *b"lnk2", Arc::new(lnk2)));

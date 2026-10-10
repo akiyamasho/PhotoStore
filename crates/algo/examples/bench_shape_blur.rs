@@ -2,10 +2,10 @@
 //! Arguments: width height repetitions radius (or all) depth (8/16/32) shape (or all).
 use std::{hint::black_box, time::Instant};
 
-use photocraft_algo::{BlurShape, FilterParams, apply_in};
-use photocraft_color::{ColorMode, PixelFormat, SampleType};
-use photocraft_geom::Rect;
-use photocraft_raster::Surface;
+use photostore_algo::{BlurShape, FilterParams, apply_in};
+use photostore_color::{ColorMode, PixelFormat, SampleType};
+use photostore_geom::Rect;
+use photostore_raster::Surface;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();

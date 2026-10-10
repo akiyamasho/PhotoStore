@@ -5,12 +5,12 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use egui::{Color32, Rect, Stroke, StrokeKind, pos2, vec2};
-use photocraft_color::Color;
-use photocraft_doc::{DocId, Document, Fill, LayerContent, LayerId};
-use photocraft_engine::solid_fill_cmds as cmds;
+use photostore_color::Color;
+use photostore_doc::{DocId, Document, Fill, LayerContent, LayerId};
+use photostore_engine::solid_fill_cmds as cmds;
 use serde_json::{Map, Value, json};
 
-use crate::{PhotocraftApp, color_picker_ui, theme::Tokens};
+use crate::{PhotoStoreApp, color_picker_ui, theme::Tokens};
 
 pub(crate) struct Preview {
     document: DocId,
@@ -22,7 +22,7 @@ pub(crate) struct Preview {
     key: u64,
 }
 
-pub(crate) fn open(app: &mut PhotocraftApp) -> Option<u64> {
+pub(crate) fn open(app: &mut PhotoStoreApp) -> Option<u64> {
     let st = app.session.active()?;
     let layer = st.active_layer?;
     let LayerContent::Fill(Fill::Solid(color)) = st.doc.layer(layer)?.content else { return None };
@@ -34,7 +34,7 @@ pub(crate) fn owns(f: &Map<String, Value>) -> bool {
     f.get("__command").and_then(Value::as_str) == Some(cmds::SET)
 }
 
-pub(crate) fn thumbnail_color(app: &PhotocraftApp, document: DocId, layer: LayerId, original: Color) -> Color {
+pub(crate) fn thumbnail_color(app: &PhotoStoreApp, document: DocId, layer: LayerId, original: Color) -> Color {
     app.ui
         .dialogs
         .iter()
@@ -52,7 +52,7 @@ pub(crate) fn thumbnail_color(app: &PhotocraftApp, document: DocId, layer: Layer
 
 /// No-op OK preserves imported high-precision / non-RGB colour values rather than quantising
 /// them to the picker's display hex. A stale document must never receive the edit.
-pub(crate) fn confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value, String> {
+pub(crate) fn confirm(app: &mut PhotoStoreApp, f: &Map<String, Value>) -> Result<Value, String> {
     let mut params = f.get("__params").cloned().ok_or("missing Solid Color target")?;
     let st = app.session.active().ok_or("no document open")?;
     if params.get("document").and_then(Value::as_u64) != Some(st.doc.id.0) {
@@ -71,7 +71,7 @@ pub(crate) fn confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result
     app.run(cmds::SET, params)
 }
 
-pub(crate) fn display_doc(app: &mut PhotocraftApp, idx: usize) -> Option<(Arc<Document>, u64)> {
+pub(crate) fn display_doc(app: &mut PhotoStoreApp, idx: usize) -> Option<(Arc<Document>, u64)> {
     let dialog = app.ui.dialogs.iter().rev().find(|d| owns(&d.fields));
     let Some(d) = dialog else {
         app.solid_fill_preview = None;
@@ -105,7 +105,7 @@ pub(crate) fn display_doc(app: &mut PhotocraftApp, idx: usize) -> Option<(Arc<Do
         component.to_bits().hash(&mut hash);
     }
     let key = (1 << 36) | (hash.finish() & ((1 << 36) - 1));
-    let shown = Arc::new(photocraft_engine::mode_cmds::display_document(&doc).unwrap_or(doc));
+    let shown = Arc::new(photostore_engine::mode_cmds::display_document(&doc).unwrap_or(doc));
     app.solid_fill_preview = Some(Preview { document: st.doc.id, revision: st.revision, dialog: d.id, layer, color, shown: shown.clone(), key });
     Some((shown, key))
 }

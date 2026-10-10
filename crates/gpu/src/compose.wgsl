@@ -1,8 +1,8 @@
-// Photocraft GPU compositor kernels.
+// PhotoStore GPU compositor kernels.
 //
 // Every pass renders one chunk of the canvas into a straight-alpha RGBA32F accumulator, reading
 // its inputs with `textureLoad` at the same pixel. Effect-map kernels (`fs_m*`) render
-// single-channel maps over a layer's effect region instead (`chunk` = the region). The functions mirror `photocraft-compose`
+// single-channel maps over a layer's effect region instead (`chunk` = the region). The functions mirror `photostore-compose`
 // (the CPU reference) operation for operation; keep them in sync.
 
 struct Chunk {
@@ -107,7 +107,7 @@ fn lut(row: i32, v: f32) -> f32 {
 
 fn gray(c: vec3<f32>) -> f32 { return 0.299 * c.r + 0.587 * c.g + 0.114 * c.b; }
 
-// ---- blend modes (photocraft_color::blend + compose::psblend) ------------------------------
+// ---- blend modes (photostore_color::blend + compose::psblend) ------------------------------
 
 const M_NORMAL: i32 = 1;
 const M_DISSOLVE: i32 = 2;
@@ -295,7 +295,7 @@ fn composite_g(mode: i32, b: vec4<f32>, s: vec4<f32>, opacity: f32, gamma_on: bo
     return vec4(text_dec(pw / ao, g), ao);
 }
 
-// photocraft_color::convert::{srgb_to_lab, lab_to_srgb} (D50, Bradford to sRGB).
+// photostore_color::convert::{srgb_to_lab, lab_to_srgb} (D50, Bradford to sRGB).
 const D50: vec3<f32> = vec3(0.96422, 1.0, 0.82521);
 fn lab_f(t: f32) -> f32 {
     if (t > 0.008856452) { return pow(t, 1.0 / 3.0); }   // (6/29)^3
@@ -690,7 +690,7 @@ fn gradient_t(d: vec2<i32>) -> f32 {
     return t;
 }
 
-// photocraft_color::dither_noise: the gradient dither's position hash, in [0, 1).
+// photostore_color::dither_noise: the gradient dither's position hash, in [0, 1).
 fn dither_noise(d: vec2<i32>) -> f32 {
     var h = (bitcast<u32>(d.x) * 0x9E3779B1u) ^ (bitcast<u32>(d.y) * 0x85EBCA77u);
     h = h ^ (h >> 15u);

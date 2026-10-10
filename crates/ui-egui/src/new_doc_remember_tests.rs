@@ -3,15 +3,15 @@
 
 use serde_json::{Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::state::DialogKind;
 
-fn app() -> PhotocraftApp {
-    PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default())
+fn app() -> PhotoStoreApp {
+    PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default())
 }
 
 /// Open New Document, set `fields`, press Create.
-fn create(app: &mut PhotocraftApp, fields: Value) {
+fn create(app: &mut PhotoStoreApp, fields: Value) {
     let f = app.new_document_fields();
     let id = app.ui.open_dialog(DialogKind::NewDocument, f);
     let d = app.ui.dialog_mut(id).unwrap();

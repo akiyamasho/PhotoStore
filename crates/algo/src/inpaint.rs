@@ -243,7 +243,7 @@ struct Solver<'a> {
     targets: Vec<bool>,
     adapt: Adapt,
     /// Cancellation: checked per row band; a cancelled solve's output is discarded.
-    ctl: photocraft_raster::Interrupt<'a>,
+    ctl: photostore_raster::Interrupt<'a>,
 }
 
 /// Gain and bias of one channel for target moments `(Σt, Σt²)` and source moments `(Σs, Σs²)`
@@ -442,7 +442,7 @@ impl Solver<'_> {
     }
 
     /// Recompute every target's match cost (hole pixels change between iterations).
-    fn costs(&self, nnf: &[(i32, i32)], cost: &mut [f32]) -> Result<(), photocraft_raster::Cancelled> {
+    fn costs(&self, nnf: &[(i32, i32)], cost: &mut [f32]) -> Result<(), photostore_raster::Cancelled> {
         let w = self.w;
         let row = |(y, co): (usize, &mut [f32])| {
             if self.ctl.cancelled() {
@@ -637,7 +637,7 @@ fn onion_peel(w: usize, h: usize, ch: usize, r: i32, img: &mut [f32], px: &[Px],
 /// [`membrane_fill`]).
 pub fn complete(w: usize, h: usize, ch: usize, img: &[f32], hole: &[bool], p: &CompleteParams) -> Option<Vec<f32>> {
     // Never cancelled, so never `Err`.
-    complete_with(w, h, ch, img, hole, p, &photocraft_raster::Interrupt::NONE).unwrap_or(None)
+    complete_with(w, h, ch, img, hole, p, &photostore_raster::Interrupt::NONE).unwrap_or(None)
 }
 
 /// [`complete`] that can be cancelled (checked per EM iteration, PatchMatch pass and row band)
@@ -649,8 +649,8 @@ pub fn complete_with(
     img: &[f32],
     hole: &[bool],
     p: &CompleteParams,
-    ctl: &photocraft_raster::Interrupt,
-) -> Result<Option<Vec<f32>>, photocraft_raster::Cancelled> {
+    ctl: &photostore_raster::Interrupt,
+) -> Result<Option<Vec<f32>>, photostore_raster::Cancelled> {
     assert_eq!(hole.len(), w * h);
     let px: Vec<Px> = hole.iter().map(|h| if *h { Px::Hole } else { Px::Source }).collect();
     complete_masked(w, h, ch, img, &px, p, ctl)
@@ -665,8 +665,8 @@ pub fn complete_masked(
     img: &[f32],
     px: &[Px],
     p: &CompleteParams,
-    ctl: &photocraft_raster::Interrupt,
-) -> Result<Option<Vec<f32>>, photocraft_raster::Cancelled> {
+    ctl: &photostore_raster::Interrupt,
+) -> Result<Option<Vec<f32>>, photostore_raster::Cancelled> {
     assert_eq!(img.len(), w * h * ch);
     assert_eq!(px.len(), w * h);
     let hole: Vec<bool> = px.iter().map(|k| *k == Px::Hole).collect();

@@ -15,7 +15,7 @@
 //! * **Color** 0 pastes the content as it is; higher values bring its level towards the new
 //!   surroundings by up to about `0.04 · color` (Patch Tool, content 42 and 102 levels brighter:
 //!   3 shifts it 32 and 31 levels, 10 shifts it 35 and 95), a limited gain and bias
-//!   ([`photocraft_algo::content_aware::color_amount`]).
+//!   ([`photostore_algo::content_aware::color_amount`]).
 //!
 //! The selection moves with the content, as in Photoshop. A soft selection counts wherever it is
 //! above zero (as the Patch Tool's); the band does the blending. The fills are PatchMatch
@@ -23,7 +23,7 @@
 //! (#210): with progress, cancellable, and the document unchanged until it applies. The Patch
 //! Tool's Content-Aware mode lands its content the same way ([`land`]).
 
-use photocraft_algo::content_aware::{FillOptions, color_amount, color_level, fill_with, level_transform};
+use photostore_algo::content_aware::{FillOptions, color_amount, color_level, fill_with, level_transform};
 
 use super::patch::{coverage, offset, selection_area, target_layer};
 use super::*;

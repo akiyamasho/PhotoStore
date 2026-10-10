@@ -2,10 +2,10 @@
 //! box wrapping, carets and hit tests. Tests needing a CJK font use an installed system font
 //! and skip (with a note) when none is found.
 
-use photocraft_color::PixelFormat;
-use photocraft_doc::TextLayer;
-use photocraft_doc::text::{CharStyle, Orientation, TextRun, TextShape};
-use photocraft_geom::Affine;
+use photostore_color::PixelFormat;
+use photostore_doc::TextLayer;
+use photostore_doc::text::{CharStyle, Orientation, TextRun, TextShape};
+use photostore_geom::Affine;
 
 use crate::TextEngine;
 use crate::layout::{GlyphOrient, VClass, vertical_class};
@@ -281,7 +281,7 @@ fn hostile_vertical_input_does_not_panic() {
 /// CJK font, upright characters too, and the punctuation squeeze still applies.
 #[test]
 fn manual_kerning_runs_along_the_column() {
-    use photocraft_doc::text::Kerning;
+    use photostore_doc::text::Kerning;
     let kerned = |t: &TextLayer, kern: f32| {
         let mut k = t.clone();
         let first = k.text.chars().next().map_or(0, char::len_utf8);

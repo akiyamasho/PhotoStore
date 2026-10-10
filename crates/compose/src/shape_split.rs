@@ -6,10 +6,10 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
 
-use photocraft_color::{PixelFormat, SampleType};
-use photocraft_doc::vector::ShapeLayer;
-use photocraft_geom::Rect;
-use photocraft_raster::Surface;
+use photostore_color::{PixelFormat, SampleType};
+use photostore_doc::vector::ShapeLayer;
+use photostore_geom::Rect;
+use photostore_raster::Surface;
 
 /// (fill, stroke), last use, and the shape's pixels the stroke was fitted to (kept alive so
 /// their tile addresses, part of the key, can't be reused).
@@ -51,7 +51,7 @@ pub fn split(sh: &ShapeLayer, canvas: Rect, depth: SampleType) -> Option<(Surfac
     let fmt = PixelFormat::RGBA8.with_sample(depth);
     let fill_only = ShapeLayer { stroke: None, cache: None, ..sh.clone() };
     let stroke_only = ShapeLayer { fill: None, cache: None, ..sh.clone() };
-    let mut parts = (photocraft_vector::render_shape(&fill_only, fmt, canvas), photocraft_vector::render_shape(&stroke_only, fmt, canvas));
+    let mut parts = (photostore_vector::render_shape(&fill_only, fmt, canvas), photostore_vector::render_shape(&stroke_only, fmt, canvas));
     if let Some(cache) = &sh.cache {
         fit_stroke(&parts.0, &mut parts.1, cache, canvas);
     }

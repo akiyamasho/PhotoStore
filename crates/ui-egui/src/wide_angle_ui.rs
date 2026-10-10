@@ -9,15 +9,15 @@
 //! "add":{"a":[x,y],"b":[x,y],"orientation":"…"}, "remove":i, "commit":true | "cancel":true}}}`.
 
 use egui::{Align2, Color32, FontId, Pos2, Rect as ERect, Sense, Stroke, TextureHandle, pos2, vec2};
-use photocraft_algo::transform::Interp;
-use photocraft_algo::wideangle::{self, Camera, Constraint, Orientation, WideAngle, WideModel};
-use photocraft_color::PixelFormat;
-use photocraft_doc::LayerId;
-use photocraft_geom::Rect;
-use photocraft_raster::Surface;
+use photostore_algo::transform::Interp;
+use photostore_algo::wideangle::{self, Camera, Constraint, Orientation, WideAngle, WideModel};
+use photostore_color::PixelFormat;
+use photostore_doc::LayerId;
+use photostore_geom::Rect;
+use photostore_raster::Surface;
 use serde_json::{Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::theme::Tokens;
 use crate::widgets;
 
@@ -72,7 +72,7 @@ impl WideAngleDialog {
         let p = self.proxy_params();
         let mesh = wideangle::solve(&p, pf);
         self.residual = mesh.residual / self.scale;
-        let out = photocraft_algo::warp::warp_triangles(&self.proxy, pf, &mesh.verts, &mesh.triangles(), Interp::Bilinear);
+        let out = photostore_algo::warp::warp_triangles(&self.proxy, pf, &mesh.verts, &mesh.triangles(), Interp::Bilinear);
         let img = tex_image(&out, self.pw, self.ph);
         match &mut self.out_tex {
             Some(t) => t.set(img, egui::TextureOptions::LINEAR),
@@ -92,8 +92,8 @@ impl WideAngleDialog {
     }
 }
 
-pub fn open(app: &mut PhotocraftApp, ctx: &egui::Context) -> Result<(), String> {
-    photocraft_engine::commands::find("filter.adaptiveWideAngle").map(|c| (c.enabled)(&app.session)).unwrap_or(Err("unknown command".into()))?;
+pub fn open(app: &mut PhotoStoreApp, ctx: &egui::Context) -> Result<(), String> {
+    photostore_engine::commands::find("filter.adaptiveWideAngle").map(|c| (c.enabled)(&app.session)).unwrap_or(Err("unknown command".into()))?;
     let (layer, surf, _) = crate::distort_ui::active_pixels(app)?;
     let st = app.session.active().ok_or("no document")?;
     let frame = st.doc.bounds();
@@ -101,11 +101,11 @@ pub fn open(app: &mut PhotocraftApp, ctx: &egui::Context) -> Result<(), String> 
     let (w, h) = (frame.width() as usize, frame.height() as usize);
     let k = w.max(h).div_ceil(PROXY_SIDE).max(1);
     let (pw, ph) = (w.div_ceil(k), h.div_ceil(k));
-    let proxy = photocraft_algo::resample::resize_surface(
+    let proxy = photostore_algo::resample::resize_surface(
         &surf.convert(PixelFormat::RGBA8),
         1.0 / k as f64,
         1.0 / k as f64,
-        photocraft_algo::resample::Resample::Bilinear,
+        photostore_algo::resample::Resample::Bilinear,
     );
     // Normalise the proxy to start at the origin.
     let mut px = Surface::new(PixelFormat::RGBA8);
@@ -117,8 +117,8 @@ pub fn open(app: &mut PhotocraftApp, ctx: &egui::Context) -> Result<(), String> 
     );
     px.write_region(Rect::new(0, 0, pw as i32, ph as i32), &proxy.read_region(src_r));
     // EXIF focal length / crop factor, as the engine would resolve them.
-    let info = st.doc.metadata.exif.as_ref().map(|e| photocraft_algo::exif::read(e));
-    let params = photocraft_engine::lens_cmds::wide_params("filter.adaptiveWideAngle", &json!({}), info.as_ref()).unwrap_or_default();
+    let info = st.doc.metadata.exif.as_ref().map(|e| photostore_algo::exif::read(e));
+    let params = photostore_engine::lens_cmds::wide_params("filter.adaptiveWideAngle", &json!({}), info.as_ref()).unwrap_or_default();
     let mut d = WideAngleDialog {
         layer,
         layer_name: name,
@@ -149,7 +149,7 @@ fn parse_orientation(s: &str) -> Orientation {
     }
 }
 
-pub fn menu(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
+pub fn menu(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if id != "filter.adaptiveWideAngle" {
         return None;
     }
@@ -201,12 +201,12 @@ pub fn menu(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: &Val
     Some(Ok(app.wide_angle.as_ref().map(|d| d.describe()).unwrap_or(Value::Null)))
 }
 
-fn commit(app: &mut PhotocraftApp) -> Result<Value, String> {
+fn commit(app: &mut PhotoStoreApp) -> Result<Value, String> {
     let d = app.wide_angle.take().ok_or(tl!("Adaptive Wide Angle isn't open"))?;
     app.run("filter.adaptiveWideAngle", d.command_params())
 }
 
-pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
+pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     if app.wide_angle.is_none() {
         return;
     }
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn dialog_adds_constraints_and_commits() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
         let ctx = egui::Context::default();
         app.run("file.new", json!({"width": 160, "height": 100})).unwrap();
         app.run("layer.new.layer", json!({})).unwrap();

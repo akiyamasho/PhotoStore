@@ -161,9 +161,9 @@ fn empty_font_list_ignores_navigation() {
 
 #[test]
 fn font_cycle_in_options_bar_edits_the_layer_and_can_be_undone() {
-    use crate::{PhotocraftApp, Services};
+    use crate::{PhotoStoreApp, Services};
     use serde_json::json;
-    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Services::default());
+    let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Services::default());
     app.run("file.new", json!({"width": 200, "height": 100})).unwrap();
     app.run("type.create", json!({"text": "Sample", "font": "Inter", "size": 18})).unwrap();
     let mut h = Harness::builder().with_size(vec2(900.0, 700.0)).build_ui_state(
@@ -174,17 +174,17 @@ fn font_cycle_in_options_bar_edits_the_layer_and_can_be_undone() {
         },
         app,
     );
-    crate::PhotocraftApp::setup_context(&h.ctx, Default::default());
+    crate::PhotoStoreApp::setup_context(&h.ctx, Default::default());
     h.run_steps(4);
     h.query_all_by_role(Role::ComboBox).next().unwrap().click();
     h.run();
     h.get_by_role(Role::TextInput).type_text("JetBrains");
     h.key_press(Key::ArrowDown);
     h.run();
-    let font = |app: &PhotocraftApp| {
+    let font = |app: &PhotoStoreApp| {
         let doc = &app.session.active().unwrap().doc;
         match &doc.layer(app.session.active().unwrap().active_layer.unwrap()).unwrap().content {
-            photocraft_doc::LayerContent::Text(t) => t.font_family.clone(),
+            photostore_doc::LayerContent::Text(t) => t.font_family.clone(),
             _ => panic!("type layer"),
         }
     };

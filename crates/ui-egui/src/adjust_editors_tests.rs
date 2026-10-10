@@ -6,10 +6,10 @@
 use egui::{Pos2, Rect, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
-use photocraft_doc::{Adjustment, LayerContent, LayerId};
+use photostore_doc::{Adjustment, LayerContent, LayerId};
 use serde_json::json;
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 
 const ALL_KINDS: [&str; 16] = [
     "brightnessContrast",
@@ -30,23 +30,23 @@ const ALL_KINDS: [&str; 16] = [
     "colorLookup",
 ];
 
-fn app_harness(kind: &str, mode: &str, depth: u32) -> Harness<'static, PhotocraftApp> {
+fn app_harness(kind: &str, mode: &str, depth: u32) -> Harness<'static, PhotoStoreApp> {
     app_harness_stepped(kind, mode, depth, 0.25)
 }
 
 /// [`app_harness`] advancing `step_dt` seconds per frame (double-clicks need real frame times).
-fn app_harness_stepped(kind: &str, mode: &str, depth: u32, step_dt: f32) -> Harness<'static, PhotocraftApp> {
+fn app_harness_stepped(kind: &str, mode: &str, depth: u32, step_dt: f32) -> Harness<'static, PhotoStoreApp> {
     let (kind, mode) = (kind.to_string(), mode.to_string());
     let mut h = Harness::builder().with_size(vec2(1440.0, 900.0)).with_max_steps(64).with_step_dt(step_dt).build_eframe(move |cc| {
-        PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
-        let mut s = photocraft_engine::Session::new();
+        PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
+        let mut s = photostore_engine::Session::new();
         s.execute("file.new", json!({"width": 96, "height": 64, "mode": mode, "depth": depth})).unwrap();
         // Two tones so histograms (and Levels' Auto) have something to work with.
         s.execute("select.rect", json!({"x": 0, "y": 0, "width": 48, "height": 64})).unwrap();
         s.execute("edit.fill", json!({"color": "#6a3020"})).unwrap();
         s.execute("select.deselect", json!({})).unwrap();
         s.execute(&format!("layer.newAdjustmentLayer.{kind}"), json!({})).unwrap();
-        let mut app = PhotocraftApp::new(s, crate::Services::default());
+        let mut app = PhotoStoreApp::new(s, crate::Services::default());
         // The default Properties group gives way to Layers (#147) and scrolls taller editors;
         // these tests drive every control without scrolling, so they size it like a user would.
         app.ui.dock.heights.insert(crate::dock::Group::Properties, 560.0);
@@ -56,7 +56,7 @@ fn app_harness_stepped(kind: &str, mode: &str, depth: u32, step_dt: f32) -> Harn
     h
 }
 
-fn layer(h: &Harness<'_, PhotocraftApp>) -> (LayerId, Adjustment) {
+fn layer(h: &Harness<'_, PhotoStoreApp>) -> (LayerId, Adjustment) {
     let st = h.state().session.active().unwrap();
     let id = st.active_layer.unwrap();
     match &st.doc.layer(id).unwrap().content {
@@ -65,7 +65,7 @@ fn layer(h: &Harness<'_, PhotocraftApp>) -> (LayerId, Adjustment) {
     }
 }
 
-fn drag(h: &mut Harness<'_, PhotocraftApp>, from: Pos2, to: Pos2) {
+fn drag(h: &mut Harness<'_, PhotoStoreApp>, from: Pos2, to: Pos2) {
     h.hover_at(from);
     h.run_steps(1);
     h.drag_at(from);
@@ -78,7 +78,7 @@ fn drag(h: &mut Harness<'_, PhotocraftApp>, from: Pos2, to: Pos2) {
     h.run_steps(3);
 }
 
-fn click(h: &mut Harness<'_, PhotocraftApp>, at: Pos2) {
+fn click(h: &mut Harness<'_, PhotoStoreApp>, at: Pos2) {
     h.hover_at(at);
     h.run_steps(1);
     h.drag_at(at);
@@ -87,12 +87,12 @@ fn click(h: &mut Harness<'_, PhotocraftApp>, at: Pos2) {
     h.run_steps(3);
 }
 
-fn label_rect(h: &Harness<'_, PhotocraftApp>, text: &str) -> Option<Rect> {
+fn label_rect(h: &Harness<'_, PhotoStoreApp>, text: &str) -> Option<Rect> {
     // The last match: the Properties header repeats the kind's name above its controls.
     h.query_all_by_label(text).last().map(|n| n.rect())
 }
 
-fn curves_graph(h: &Harness<'_, PhotocraftApp>, id: LayerId) -> Rect {
+fn curves_graph(h: &Harness<'_, PhotoStoreApp>, id: LayerId) -> Rect {
     h.ctx.data(|d| d.get_temp::<Rect>(egui::Id::new(("adjust-layer", id.0)).with("curves-graph"))).expect("curves graph drawn")
 }
 
@@ -242,7 +242,7 @@ fn curves_fast_release_commits_one_edit_and_undo_restores_the_curve() {
 }
 
 /// Real pointer input: `n` clicks at `at` with `mods` held (2 = a double-click).
-fn clicks_with(h: &mut Harness<'_, PhotocraftApp>, at: Pos2, n: usize, mods: egui::Modifiers) {
+fn clicks_with(h: &mut Harness<'_, PhotoStoreApp>, at: Pos2, n: usize, mods: egui::Modifiers) {
     // Well past the double-click time since the last gesture.
     h.run_steps(40);
     h.event(egui::Event::ModifiersChanged(mods));
@@ -258,7 +258,7 @@ fn clicks_with(h: &mut Harness<'_, PhotocraftApp>, at: Pos2, n: usize, mods: egu
     h.run_steps(3);
 }
 
-fn wheel_at(h: &mut Harness<'_, PhotocraftApp>, at: Pos2, notches: f32, mods: egui::Modifiers) {
+fn wheel_at(h: &mut Harness<'_, PhotoStoreApp>, at: Pos2, notches: f32, mods: egui::Modifiers) {
     h.event(egui::Event::ModifiersChanged(mods));
     h.hover_at(at);
     h.run_steps(1);
@@ -268,7 +268,7 @@ fn wheel_at(h: &mut Harness<'_, PhotocraftApp>, at: Pos2, notches: f32, mods: eg
     h.run_steps(3);
 }
 
-fn key_with(h: &mut Harness<'_, PhotocraftApp>, key: egui::Key, mods: egui::Modifiers) {
+fn key_with(h: &mut Harness<'_, PhotoStoreApp>, key: egui::Key, mods: egui::Modifiers) {
     h.event(egui::Event::ModifiersChanged(mods));
     for pressed in [true, false] {
         h.event(egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: mods });
@@ -297,7 +297,7 @@ fn color_balance_sliders_reset_and_step_like_photoshop() {
     h.run_steps(4);
     let label = label_rect(&h, "Cyan  ·  Red").expect("Cyan · Red row");
     let on_track = Pos2::new(label.left() + 60.0, label.bottom() + 14.0);
-    let cb = |h: &Harness<'_, PhotocraftApp>| color_balance_of(&layer(h).1);
+    let cb = |h: &Harness<'_, PhotoStoreApp>| color_balance_of(&layer(h).1);
 
     // A click jumps to the pointer, with or without modifiers.
     clicks_with(&mut h, on_track, 1, egui::Modifiers::NONE);
@@ -366,8 +366,8 @@ fn color_balance_properties_history_and_reset_like_photoshop() {
     h.run_steps(4);
     h.state_mut().session.select_layer(id).unwrap();
     h.run_steps(4);
-    let cb = |h: &Harness<'_, PhotocraftApp>| color_balance_of(&layer(h).1);
-    let steps = |h: &Harness<'_, PhotocraftApp>| h.state().session.active().unwrap().history.past_len();
+    let cb = |h: &Harness<'_, PhotoStoreApp>| color_balance_of(&layer(h).1);
+    let steps = |h: &Harness<'_, PhotoStoreApp>| h.state().session.active().unwrap().history.past_len();
     let label = label_rect(&h, "Cyan  ·  Red").expect("Cyan · Red row");
     let on_track = Pos2::new(label.left() + 60.0, label.bottom() + 14.0);
     let before = steps(&h);
@@ -410,14 +410,14 @@ fn map_stops(a: &Adjustment) -> Vec<(f32, [u8; 3])> {
 /// one history step.
 #[test]
 fn gradient_map_picker_offers_the_gradient_library() {
-    use photocraft_engine::presets::{Group, gradients};
+    use photostore_engine::presets::{Group, gradients};
     let mut h = app_harness("gradientMap", "rgb", 8);
     // A short library so every row fits the popup: Basics, Blues and a user-saved group.
     let mut lib: Vec<_> = gradients::builtin().into_iter().take(2).collect();
     lib.push(Group::new("Mine", vec![gradients::GradientPreset::new("My Teal", &["#008080", "#ffee00"])]));
     h.state_mut().session.presets.gradients = lib;
     h.run_steps(2);
-    let steps = |h: &Harness<'_, PhotocraftApp>| h.state().session.active().unwrap().history.past_len();
+    let steps = |h: &Harness<'_, PhotoStoreApp>| h.state().session.active().unwrap().history.past_len();
     for (name, want) in
         [("Blue 03", vec![(0.0, [0x00, 0xb4, 0xd8]), (1.0, [0x03, 0x04, 0x5e])]), ("My Teal", vec![(0.0, [0x00, 0x80, 0x80]), (1.0, [0xff, 0xee, 0x00])])]
     {

@@ -26,10 +26,9 @@
   <launchable type="desktop-id">ai.photostore.app.desktop</launchable>
   <icon type="stock">ai.photostore.app</icon>
   <!-- Only url types known to appstream 0.15 (Ubuntu 22.04, where CI validates): no vcs-browser. -->
-  <url type="homepage">https://getartcraft.com/apps/photostore</url>
+  <url type="homepage">https://github.com/akiyamasho/PhotoStore/releases</url>
   <url type="bugtracker">https://github.com/akiyamasho/PhotoStore/issues</url>
   <url type="help">https://github.com/akiyamasho/PhotoStore</url>
-  <url type="contact">https://discord.gg/artcraft</url>
   <categories>
     <category>Graphics</category>
     <category>RasterGraphics</category>

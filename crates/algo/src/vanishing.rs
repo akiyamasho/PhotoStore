@@ -13,8 +13,8 @@
 //! the pixels at the same metric offset from the source point, so texture shrinks with distance
 //! as it does in the photo.
 
-use photocraft_geom::Rect;
-use photocraft_raster::Surface;
+use photostore_geom::Rect;
+use photostore_raster::Surface;
 use serde::{Deserialize, Serialize};
 
 use crate::transform::{Homography, Interp, warp_surface};
@@ -333,7 +333,7 @@ fn sample(s: &Surface, x: f64, y: f64, n: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use photocraft_color::PixelFormat;
+    use photostore_color::PixelFormat;
 
     /// A ground plane seen by a camera with f = 500 px: projects 3-D points.
     fn project(f: f64, c: [f64; 2], p: V3) -> [f64; 2] {

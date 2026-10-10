@@ -1,6 +1,6 @@
 # SVG
 
-An SVG opens as a document of shape layers, and places (File › Place Embedded / Place Linked) as a vector smart object. Both go through `photocraft-io`'s `svg` module; there is no SVG export.
+An SVG opens as a document of shape layers, and places (File › Place Embedded / Place Linked) as a vector smart object. Both go through `photostore-io`'s `svg` module; there is no SVG export.
 
 ## Opening
 

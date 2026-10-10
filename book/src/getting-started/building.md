@@ -1,11 +1,11 @@
 # Building
 
-PhotoCraft uses the Rust workspace at the repository root. Install the stable Rust toolchain, clone the repository, and run commands from that root.
+PhotoStore uses the Rust workspace at the repository root. Install the stable Rust toolchain, clone the repository, and run commands from that root.
 
 ```sh
 cargo build --workspace
-cargo run --release -p photocraft -- image.psd
-cargo run -p photocraft-cli -- --help
+cargo run --release -p photostore -- image.psd
+cargo run -p photostore-cli -- --help
 ```
 
 The standard repository gates are:
@@ -18,7 +18,7 @@ cargo xtask layers
 cargo xtask wasm
 ```
 
-`cargo xtask wasm` requires the `wasm32-unknown-unknown` target. UI work should also be checked using the offscreen snapshot example described in the [development guide](https://github.com/storytold/photocraft/blob/main/docs/development.md).
+`cargo xtask wasm` requires the `wasm32-unknown-unknown` target. UI work should also be checked using the offscreen snapshot example described in the [development guide](https://github.com/akiyamasho/PhotoStore/blob/main/docs/development.md).
 
 ## Build the documentation
 

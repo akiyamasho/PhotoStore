@@ -8,13 +8,13 @@ use egui::{Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use photocraft_engine::actions_cmds::{self, Action};
+use photostore_engine::actions_cmds::{self, Action};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::theme::Tokens;
 
 /// Which row is selected and which rows are expanded. The action list itself is
-/// [`photocraft_engine::Session::actions`].
+/// [`photostore_engine::Session::actions`].
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ActionsUi {
@@ -26,7 +26,7 @@ pub struct ActionsUi {
 }
 
 fn label_of(id: &str) -> String {
-    photocraft_engine::commands::find(id)
+    photostore_engine::commands::find(id)
         .map(|c| c.label)
         .or_else(|| crate::menus::UI_COMMANDS.iter().find(|c| c.0 == id).map(|c| c.1))
         .map(|label| label.trim_end_matches('…').to_string())
@@ -34,7 +34,7 @@ fn label_of(id: &str) -> String {
 }
 
 /// The selected action, or the first one when nothing is selected.
-pub fn selected_action(app: &PhotocraftApp) -> Option<&Action> {
+pub fn selected_action(app: &PhotoStoreApp) -> Option<&Action> {
     let list = &app.session.actions.list;
     let idx = app.ui.actions.selected.filter(|i| *i < list.len());
     idx.and_then(|i| list.get(i)).or_else(|| list.first())
@@ -42,7 +42,7 @@ pub fn selected_action(app: &PhotocraftApp) -> Option<&Action> {
 
 /// Index of the playback target. Photoshop's Play button uses the first action when
 /// the panel has actions but none of its rows is selected.
-fn playback_selection(app: &PhotocraftApp) -> Option<usize> {
+fn playback_selection(app: &PhotoStoreApp) -> Option<usize> {
     let n = app.session.actions.list.len();
     if n == 0 { None } else { Some(app.ui.actions.selected.filter(|i| *i < n).unwrap_or(0)) }
 }
@@ -60,7 +60,7 @@ pub(crate) fn shortcut_id(name: &str) -> String {
     format!("{SHORTCUT_PREFIX}{name}")
 }
 
-pub(crate) fn assign_shortcut(app: &mut PhotocraftApp, name: &str, shortcut: &str) -> Result<Value, String> {
+pub(crate) fn assign_shortcut(app: &mut PhotoStoreApp, name: &str, shortcut: &str) -> Result<Value, String> {
     let id = shortcut_id(name);
     let mut set = serde_json::Map::new();
     // A function key belongs to only one action. Ordinary menu bindings remain
@@ -76,7 +76,7 @@ pub(crate) fn assign_shortcut(app: &mut PhotocraftApp, name: &str, shortcut: &st
 
 /// Replay edits synchronously, with view steps handled by the shell in the same order.
 /// Engine steps keep the headless action semantics (no dialogs or background jobs).
-pub(crate) fn play(app: &mut PhotocraftApp, params: &Value) -> Result<Value, String> {
+pub(crate) fn play(app: &mut PhotoStoreApp, params: &Value) -> Result<Value, String> {
     let (action, from) = actions_cmds::playback_plan(&app.session, params).map_err(|e| e.to_string())?;
     let recording = actions_cmds::begin_playback(&mut app.session, &action).map_err(|e| e.to_string())?;
     let mut ran = 0u64;
@@ -118,7 +118,7 @@ pub(crate) fn play(app: &mut PhotocraftApp, params: &Value) -> Result<Value, Str
 
 /// Execute the actual menu command, not a synthetic keystroke. Fit is deferred
 /// until canvas layout, so it uses the dimensions after all preceding action steps.
-pub(crate) fn run_view(app: &mut PhotocraftApp, id: &str, params: Value) -> Result<Value, String> {
+pub(crate) fn run_view(app: &mut PhotoStoreApp, id: &str, params: Value) -> Result<Value, String> {
     app.sync_views();
     let i = app.session.active_index().ok_or("no document")?;
     let v = app.ui.views.get_mut(i).ok_or("no document view")?;
@@ -143,7 +143,7 @@ pub(crate) fn run_view(app: &mut PhotocraftApp, id: &str, params: Value) -> Resu
     Ok(Value::Null)
 }
 
-fn begin_recording(app: &mut PhotocraftApp, append: bool) {
+fn begin_recording(app: &mut PhotoStoreApp, append: bool) {
     if app.session.actions.recording.is_some() {
         return;
     }
@@ -158,7 +158,7 @@ fn begin_recording(app: &mut PhotocraftApp, append: bool) {
     app.ui.actions.expanded[i] = true;
 }
 
-pub(crate) fn report_play(app: &mut PhotocraftApp, v: &Value) {
+pub(crate) fn report_play(app: &mut PhotoStoreApp, v: &Value) {
     let Some(failed) = v.get("failed").filter(|f| f.is_object()) else {
         let ran = v.get("ran").and_then(Value::as_u64).unwrap_or(0);
         app.ui.status = format!("Played {ran} steps");
@@ -172,7 +172,7 @@ pub(crate) fn report_play(app: &mut PhotocraftApp, v: &Value) {
     app.ui.status_error = true;
 }
 
-fn visible_steps(app: &PhotocraftApp, action: usize) -> Vec<(String, Value)> {
+fn visible_steps(app: &PhotoStoreApp, action: usize) -> Vec<(String, Value)> {
     app.session.actions.list.get(action).into_iter().flat_map(|a| a.steps.iter()).chain(actions_cmds::pending_steps(&app.session, action)).cloned().collect()
 }
 
@@ -208,7 +208,7 @@ fn drag_row(ui: &egui::Ui, response: &egui::Response, row: DragRow, t: &Tokens) 
     response.dnd_release_payload::<DragRow>().map(|source| (*source, to))
 }
 
-fn move_row(app: &mut PhotocraftApp, source: DragRow, to: usize) {
+fn move_row(app: &mut PhotoStoreApp, source: DragRow, to: usize) {
     let mut params = json!({"action": source.action, "to": to});
     if let Some(step) = source.step {
         params["step"] = json!(step);
@@ -230,7 +230,7 @@ fn move_row(app: &mut PhotocraftApp, source: DragRow, to: usize) {
     }
 }
 
-fn delete_selection(app: &mut PhotocraftApp) {
+fn delete_selection(app: &mut PhotoStoreApp) {
     let Some(action) = app.ui.actions.selected else { return };
     let step = app.ui.actions.selected_step;
     let mut params = json!({"action": action});
@@ -249,7 +249,7 @@ fn delete_selection(app: &mut PhotocraftApp) {
     }
 }
 
-pub fn panel(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+pub fn panel(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let recording = app.session.actions.recording;
     let rows: Vec<_> = app.session.actions.list.iter().enumerate().map(|(i, a)| (a.name.clone(), visible_steps(app, i))).collect();
@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn play_button_targets_first_action_if_nothing_is_selected() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 32, "height": 32})).unwrap();
         assert_eq!(playback_selection(&app), None);
         app.session.actions.list.push(Action { name: "Make Layer".into(), steps: vec![("layer.new.layer".into(), json!({}))] });
@@ -463,7 +463,7 @@ mod tests {
     #[test]
     fn playback_errors_are_visible_in_status_bar() {
         use egui_kittest::{Harness, kittest::Queryable};
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 32, "height": 32})).unwrap();
         app.session.actions.list.push(Action { name: "Bad action".into(), steps: vec![("not.a.command".into(), json!({}))] });
         let mut h = Harness::builder().with_size(vec2(400.0, 320.0)).build_ui_state(|ui, app| panel(app, ui), app);
@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn recording_reveals_new_action_and_latest_step_in_a_long_panel() {
         use egui_kittest::{Harness, kittest::Queryable};
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width":4,"height":4})).unwrap();
         for i in 0..30 {
             app.session.actions.list.push(Action { name: format!("Existing {i}"), steps: vec![] });
@@ -500,7 +500,7 @@ mod tests {
     #[test]
     fn drag_steps_and_action_headers_reorders_and_keeps_selection() {
         use egui_kittest::{Harness, kittest::Queryable};
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.session.actions.list.push(Action {
             name: "First".into(),
             steps: vec![("view.zoomOut".into(), json!({})), ("view.fitOnScreen".into(), json!({})), ("view.actualPixels".into(), json!({}))],
@@ -509,7 +509,7 @@ mod tests {
         app.ui.actions.expanded = vec![true, false];
         let mut h = Harness::builder().with_size(vec2(320.0, 400.0)).build_ui_state(|ui, app| panel(app, ui), app);
         h.run_steps(4);
-        fn drag(h: &mut Harness<'_, PhotocraftApp>, from: egui::Pos2, to: egui::Pos2) {
+        fn drag(h: &mut Harness<'_, PhotoStoreApp>, from: egui::Pos2, to: egui::Pos2) {
             h.event(egui::Event::PointerMoved(from));
             h.run_steps(1);
             h.event(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
@@ -539,7 +539,7 @@ mod tests {
 
     #[test]
     fn nested_shell_actions_include_view_steps_and_propagate_failures() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width":40,"height":40})).unwrap();
         app.session
             .actions
@@ -555,7 +555,7 @@ mod tests {
         assert!(r.get("failed").is_none(), "{r}");
         assert!(app.ui.views[0].fit_pending);
         app.session.authorize =
-            Some(|id, _| if id == "view.fitOnScreen" { Err(photocraft_engine::EngineError::Other("denied nested view".into())) } else { Ok(()) });
+            Some(|id, _| if id == "view.fitOnScreen" { Err(photostore_engine::EngineError::Other("denied nested view".into())) } else { Ok(()) });
         let r = app.run("actions.play", json!({"action":"Parent"})).unwrap();
         assert!(r["failed"]["error"].as_str().unwrap().contains("denied nested view"));
         assert!(app.session.actions.playback_stack.is_empty());
@@ -565,7 +565,7 @@ mod tests {
     #[test]
     fn panel_shows_pending_steps_and_trash_deletes_only_the_clicked_step() {
         use egui_kittest::{Harness, kittest::Queryable};
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 40, "height": 40})).unwrap();
         begin_recording(&mut app, false);
         app.run("view.fitOnScreen", json!({})).unwrap();
@@ -600,7 +600,7 @@ mod tests {
 
     #[test]
     fn view_menu_commands_record_append_and_replay_after_resize() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         let ctx = egui::Context::default();
         app.run("file.new", json!({"width": 160, "height": 100})).unwrap();
         begin_recording(&mut app, false);
@@ -631,7 +631,7 @@ mod tests {
 
     #[test]
     fn view_action_failure_resume_and_authorization() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.session
             .actions
             .list
@@ -644,7 +644,7 @@ mod tests {
         app.session.authorize =
             Some(
                 |id, _| {
-                    if id == "view.fitOnScreen" { Err(photocraft_engine::EngineError::BadParams { cmd: id.into(), msg: "denied view".into() }) } else { Ok(()) }
+                    if id == "view.fitOnScreen" { Err(photostore_engine::EngineError::BadParams { cmd: id.into(), msg: "denied view".into() }) } else { Ok(()) }
                 },
             );
         let result = app.run("actions.play", json!({"action": 0})).unwrap();
@@ -660,7 +660,7 @@ mod tests {
 
     #[test]
     fn record_and_replay_on_another_document() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 40, "height": 40})).unwrap();
         app.sync_views();
         app.run("actions.record", json!({})).unwrap();

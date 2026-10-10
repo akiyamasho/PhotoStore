@@ -1,4 +1,4 @@
-use photocraft_engine::Session;
+use photostore_engine::Session;
 use serde_json::json;
 
 fn session() -> Session {

@@ -9,11 +9,11 @@
 //! Photoshop has no menu items for these (they are the ⌥ variants of the merge commands), so they
 //! are commands with default shortcuts: rebindable in Edit › Keyboard Shortcuts (Layer), recorded
 //! in actions and drivable by agents. The composite is rendered in bands
-//! ([`photocraft_compose::flatten_to_surface`]), so no full-size float copy of a large document is
+//! ([`photostore_compose::flatten_to_surface`]), so no full-size float copy of a large document is
 //! held, and tiles left fully transparent are pruned.
 
-use photocraft_color::PixelFormat;
-use photocraft_doc::{Document, Layer, LayerContent, LayerId};
+use photostore_color::PixelFormat;
+use photostore_doc::{Document, Layer, LayerContent, LayerId};
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
@@ -45,7 +45,7 @@ fn with_alpha(doc: &Document) -> PixelFormat {
 fn stamp_layer(doc: &Document, name: String) -> Result<Layer> {
     let fmt = with_alpha(doc);
     let mut layer = Layer::raster(name, fmt);
-    *crate::pixels_mut(&mut layer)? = photocraft_compose::flatten_to_surface(doc, fmt, None);
+    *crate::pixels_mut(&mut layer)? = photostore_compose::flatten_to_surface(doc, fmt, None);
     Ok(layer)
 }
 
@@ -108,7 +108,7 @@ fn stamp_down(s: &mut Session, p: &Value) -> Result<Value> {
         tmp.layers = vec![base, upper];
         let fmt = doc.pixel_format();
         let fmt = if lower.locks.transparency { fmt } else { PixelFormat::new(fmt.mode, fmt.sample, true) };
-        let surf = photocraft_compose::flatten_to_surface(&tmp, fmt, None);
+        let surf = photostore_compose::flatten_to_surface(&tmp, fmt, None);
         let mut merged = Layer::new(lower.name.clone(), LayerContent::Raster(surf));
         merged.id = lower.id;
         merged.blend = lower.blend;
@@ -338,7 +338,7 @@ mod tests {
     }
 
     /// Release timing and peak memory of a 24 MP Stamp Visible:
-    /// `cargo test --release -p photocraft-engine --lib stamp_visible_24mp -- --ignored --nocapture`
+    /// `cargo test --release -p photostore-engine --lib stamp_visible_24mp -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn stamp_visible_24mp() {

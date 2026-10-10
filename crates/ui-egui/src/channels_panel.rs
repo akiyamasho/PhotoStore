@@ -4,12 +4,12 @@
 //! the engine's `DocState::channel_view`, so agents see the same state through `inspect`.
 
 use egui::{Align2, Color32, Rect, RichText, Sense, Stroke, StrokeKind, pos2, vec2};
-use photocraft_doc::ColorIndicates;
-use photocraft_engine::channel_cmds::{self, ChannelTarget};
+use photostore_doc::ColorIndicates;
+use photostore_engine::channel_cmds::{self, ChannelTarget};
 use serde_json::{Value, json};
 
 use crate::theme::{self, Tokens};
-use crate::{PhotocraftApp, icons, widgets};
+use crate::{PhotoStoreApp, icons, widgets};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Row {
@@ -44,7 +44,7 @@ pub fn load_operation(m: egui::Modifiers) -> &'static str {
     }
 }
 
-pub fn show(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+pub fn show(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else {
         ui.add_space(6.0);
@@ -54,8 +54,8 @@ pub fn show(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     let doc = st.doc.clone();
     let view = st.channel_view.clone();
     // ⌥-click mask view (#196): gray shows the mask alone (colour eyes off), overlay over the composite.
-    let mask_view = photocraft_engine::mask_view_cmds::current(st).map(|v| v.mode);
-    let gray_view = mask_view == Some(photocraft_engine::mask_view_cmds::MaskViewMode::Gray);
+    let mask_view = photostore_engine::mask_view_cmds::current(st).map(|v| v.mode);
+    let gray_view = mask_view == Some(photostore_engine::mask_view_cmds::MaskViewMode::Gray);
     let active_layer = st.active_layer;
     let mode = doc.pixel_format().mode;
     let colors = mode.color_channels();
@@ -67,7 +67,7 @@ pub fn show(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     let mask_tex = masked.as_ref().and_then(|l| Some(app.mask_thumb(&ctx, &doc, l.id, l.mask.as_ref()?)));
     let mask_targeted = masked.is_some() && app.ui.mask_target && view.target == ChannelTarget::Composite && !quick;
     // Multichannel images are their ink channels only (no composite or colour rows).
-    let multichannel = doc.mode == photocraft_doc::ColorMode::Multichannel;
+    let multichannel = doc.mode == photostore_doc::ColorMode::Multichannel;
     let mut rows = if multichannel { Vec::new() } else { vec![Row::Composite] };
     if colors > 1 && !multichannel {
         rows.extend((0..colors).map(Row::Color));
@@ -140,7 +140,7 @@ pub fn show(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             eye_resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Visibility {name}")));
             let layer_id = masked.as_ref().map(|l| l.id.0);
             if eye_resp.clicked() {
-                let view_cmd = photocraft_engine::mask_view_cmds::ID.to_string();
+                let view_cmd = photostore_engine::mask_view_cmds::ID.to_string();
                 match row {
                     // The mask's eye: the overlay on, or the mask view off.
                     Row::LayerMask => actions.push((view_cmd, json!({ "layer": layer_id, "mode": if visible { "off" } else { "overlay" } }))),
@@ -382,7 +382,7 @@ mod tests {
 
     #[test]
     fn rename_field_interrupts_the_ime_only_when_it_takes_focus() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 32, "height": 32})).unwrap();
         app.run("channel.new", json!({})).unwrap();
         let ctx = egui::Context::default();
@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn channel_thumbs_honours_show_channels_in_color() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 16, "height": 16})).unwrap();
         let ctx = egui::Context::default();
         let thumbs_gray = app.channel_thumbs(&ctx);

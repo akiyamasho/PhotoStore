@@ -2,8 +2,8 @@
 //! take them (one history step), not only on the active one. An explicit `layer`, or a single
 //! selected layer, behaves exactly as before.
 
-use photocraft_doc::LayerId;
-use photocraft_engine::Session;
+use photostore_doc::LayerId;
+use photostore_engine::Session;
 use serde_json::{Value, json};
 
 fn id_of(r: Value) -> LayerId {

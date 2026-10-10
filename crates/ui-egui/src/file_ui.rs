@@ -7,10 +7,10 @@
 
 use std::sync::Arc;
 
-use photocraft_engine::web_cmds::{self, Optimized, WebSettings};
+use photostore_engine::web_cmds::{self, Optimized, WebSettings};
 use serde_json::{Map, Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::state::DialogKind;
 use crate::theme::Tokens;
 
@@ -18,16 +18,16 @@ fn no_params(p: &Value) -> bool {
     p.as_object().is_none_or(|o| o.is_empty())
 }
 
-fn default_dir(app: &PhotocraftApp) -> String {
+fn default_dir(app: &PhotoStoreApp) -> String {
     app.session.active().and_then(|d| d.path.as_deref()).and_then(|p| p.rfind(['/', '\\']).map(|i| p[..i].to_string())).unwrap_or_else(|| ".".into())
 }
 
-fn doc_stem(app: &PhotocraftApp) -> String {
+fn doc_stem(app: &PhotoStoreApp) -> String {
     app.session.active().map(|d| d.doc.name.rsplit_once('.').map_or(d.doc.name.clone(), |(a, _)| a.to_string())).unwrap_or_else(|| tl!("Untitled").into())
 }
 
 /// A generic form dialog for `command` (rendered by `view_cmds::form_body`).
-fn form(app: &mut PhotocraftApp, command: &str, label: &str, fields: Value, choices: Value) -> Value {
+fn form(app: &mut PhotoStoreApp, command: &str, label: &str, fields: Value, choices: Value) -> Value {
     let mut f = Map::new();
     f.insert("__command".into(), json!(command));
     f.insert("__label".into(), json!(label));
@@ -40,7 +40,7 @@ fn form(app: &mut PhotocraftApp, command: &str, label: &str, fields: Value, choi
 }
 
 /// Menu items fronted here (dialogs before the engine command). `None` when not ours.
-pub fn invoke(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
+pub fn invoke(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if !no_params(params) {
         return None;
     }
@@ -64,7 +64,7 @@ pub fn invoke(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: &V
             app,
             id,
             tl!("Contact Sheet II"),
-            json!({"input": dir, "units": "inches", "width": 8.0, "height": 10.0, "resolution": 300.0, "mode": "rgb", "depth": 8, "columns": 5, "rows": 6, "placeAcrossFirst": true, "autoSpacing": true, "rotateForBestFit": false, "caption": true, "font": photocraft_text::fonts::DEFAULT_FAMILY, "fontSize": 12.0, "flatten": false}),
+            json!({"input": dir, "units": "inches", "width": 8.0, "height": 10.0, "resolution": 300.0, "mode": "rgb", "depth": 8, "columns": 5, "rows": 6, "placeAcrossFirst": true, "autoSpacing": true, "rotateForBestFit": false, "caption": true, "font": photostore_text::fonts::DEFAULT_FAMILY, "fontSize": 12.0, "flatten": false}),
             json!({"units": ["inches", "cm", "pixels"], "mode": ["rgb", "gray", "cmyk", "lab"]}),
         ),
         "file.automate.createDroplet" => {
@@ -82,7 +82,7 @@ pub fn invoke(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: &V
             )
         }
         "file.scripts.statistics" => {
-            let modes: Vec<&str> = photocraft_doc::StackMode::ALL.iter().map(|m| m.id()).collect();
+            let modes: Vec<&str> = photostore_doc::StackMode::ALL.iter().map(|m| m.id()).collect();
             form(app, id, "Image Statistics", json!({"mode": "median", "input": dir, "align": false}), json!({"mode": modes}))
         }
         "file.scripts.browse" => {
@@ -96,7 +96,7 @@ pub fn invoke(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: &V
         }
         "file.scripts.scriptEventsManager" => {
             let enabled = app.session.prefs().script_events.enabled;
-            let events: Vec<&str> = photocraft_engine::automate_cmds::EVENTS.iter().map(|e| e.0).collect();
+            let events: Vec<&str> = photostore_engine::automate_cmds::EVENTS.iter().map(|e| e.0).collect();
             form(app, id, "Script Events Manager", json!({"enabled": enabled, "event": "openDocument", "script": "", "name": ""}), json!({"event": events}))
         }
         "file.package" => form(app, id, "Package", json!({"dir": dir}), json!({})),
@@ -115,7 +115,7 @@ pub fn invoke(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: &V
 }
 
 /// Checked state of toggle items owned here.
-pub fn checked(app: &PhotocraftApp, id: &str) -> Option<bool> {
+pub fn checked(app: &PhotoStoreApp, id: &str) -> Option<bool> {
     match id {
         "view.lockSlices" => Some(app.session.file_menu.slices_locked),
         "file.generate.imageAssets" => Some(app.session.active().is_some_and(|d| app.session.file_menu.image_assets.contains(&d.doc.id))),
@@ -148,7 +148,7 @@ pub fn ok_label(f: &Map<String, Value>) -> Option<&'static str> {
     }
 }
 
-pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
+pub fn body(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     if f.contains_key("__web") {
         web_body(app, ui, f);
     } else {
@@ -156,7 +156,7 @@ pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Valu
     }
 }
 
-pub fn confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value, String> {
+pub fn confirm(app: &mut PhotoStoreApp, f: &Map<String, Value>) -> Result<Value, String> {
     if f.contains_key("__web") { web_confirm(app, f) } else { print_confirm(app, f) }
 }
 
@@ -179,7 +179,7 @@ fn b(f: &Map<String, Value>, k: &str, d: bool) -> bool {
 const WEB_FORMATS: [(&str, &str); 5] = [("gif", "GIF"), ("png8", "PNG-8"), ("png24", "PNG-24"), ("jpeg", "JPEG"), ("wbmp", "WBMP")];
 const WEB_COMMAND: &str = "file.export.saveForWebLegacy";
 
-pub fn open_web(app: &mut PhotocraftApp) -> u64 {
+pub fn open_web(app: &mut PhotoStoreApp) -> u64 {
     let mut f = Map::new();
     f.insert("__web".into(), json!(true));
     f.insert("__command".into(), json!(WEB_COMMAND));
@@ -241,7 +241,7 @@ type WebProxy = (Arc<Vec<[f32; 4]>>, u32, u32, f64);
 type WebCache = (String, Arc<egui::TextureHandle>, Option<(usize, Option<usize>, &'static str)>);
 
 /// Renders one preview pane: the original (`None`) or an optimised variant.
-fn web_pane(app: &PhotocraftApp, ui: &mut egui::Ui, size: egui::Vec2, p: Option<&Value>, full_px: f64) {
+fn web_pane(app: &PhotoStoreApp, ui: &mut egui::Ui, size: egui::Vec2, p: Option<&Value>, full_px: f64) {
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
     let doc = st.doc.clone();
@@ -263,7 +263,7 @@ fn web_pane(app: &PhotocraftApp, ui: &mut egui::Ui, size: egui::Vec2, p: Option<
             else {
                 return;
             };
-            let buf = photocraft_compose::flatten(&wd);
+            let buf = photostore_compose::flatten(&wd);
             let v = (Arc::new(buf.px), wd.size.width, wd.size.height, (fw * fh) / (f64::from(wd.size.width) * f64::from(wd.size.height)).max(1.0));
             ui.data_mut(|d| d.insert_temp(wkey, v.clone()));
             v
@@ -278,7 +278,7 @@ fn web_pane(app: &PhotocraftApp, ui: &mut egui::Ui, size: egui::Vec2, p: Option<
             let (rgba, info) = match p {
                 None => (px.iter().flat_map(|q| q.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)).collect::<Vec<u8>>(), None),
                 Some(p) => match WebSettings::from_params(p, "preview")
-                    .and_then(|st| web_cmds::optimize(&px, w as usize, photocraft_geom::Rect::new(0, 0, w as i32, h as i32), &st, None, None, 72.0, true))
+                    .and_then(|st| web_cmds::optimize(&px, w as usize, photostore_geom::Rect::new(0, 0, w as i32, h as i32), &st, None, None, 72.0, true))
                 {
                     Ok(Optimized { preview, bytes, colors, ext, .. }) => (preview, Some(((bytes.len() as f64 * ratio) as usize, colors, ext))),
                     Err(_) => (vec![0; (w * h * 4) as usize], None),
@@ -340,7 +340,7 @@ fn number(ui: &mut egui::Ui, f: &mut Map<String, Value>, key: &str, label: &str,
     });
 }
 
-fn web_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
+fn web_body(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     let t = Tokens::get(ui.ctx());
     let Some(doc) = app.session.active().map(|d| d.doc.clone()) else { return };
     ui.horizontal(|ui| {
@@ -483,7 +483,7 @@ fn web_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Valu
                     .color(t.text_dim)
                     .size(11.5),
             );
-            let nslices = photocraft_doc::slices::resolve(&doc).len();
+            let nslices = photostore_doc::slices::resolve(&doc).len();
             if !doc.slices.is_empty() {
                 ui.add_space(6.0);
                 ui.label(egui::RichText::new(format!("{nslices} slices")).color(t.text_dim));
@@ -494,7 +494,7 @@ fn web_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Valu
     });
 }
 
-fn web_confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value, String> {
+fn web_confirm(app: &mut PhotoStoreApp, f: &Map<String, Value>) -> Result<Value, String> {
     let mut p = params(f);
     // Check while the control/input policy is still installed, before an asynchronous picker
     // can outlive the request. A browser download uses the interactive platform writer.
@@ -513,7 +513,7 @@ fn web_confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value,
     let has_slices = !doc.slices.is_empty();
     let html = b(f, "html", true);
     let st = WebSettings::from_params(&p, "file.export.saveForWebLegacy").map_err(|e| e.to_string())?;
-    let base = photocraft_doc::slices::base_name(&doc);
+    let base = photostore_doc::slices::base_name(&doc);
     let suggested = if has_slices && html { format!("{base}.html") } else { format!("{base}.{}", st.format.ext()) };
     app.pick_save(&suggested, move |app, path| {
         app.refocus(doc.id)?;
@@ -529,7 +529,7 @@ fn web_confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value,
 }
 
 /// Runs Save for Web with `p`, which says where to write.
-fn save_for_web(app: &mut PhotocraftApp, p: Value) -> Result<Value, String> {
+fn save_for_web(app: &mut PhotoStoreApp, p: Value) -> Result<Value, String> {
     #[cfg(target_arch = "wasm32")]
     let result = download_for_web(app, p);
     #[cfg(not(target_arch = "wasm32"))]
@@ -545,21 +545,21 @@ fn save_for_web(app: &mut PhotocraftApp, p: Value) -> Result<Value, String> {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
-fn download_for_web(app: &mut PhotocraftApp, mut p: Value) -> Result<Value, String> {
+fn download_for_web(app: &mut PhotoStoreApp, mut p: Value) -> Result<Value, String> {
     // Browser downloads have no directory hierarchy. Keep the HTML's image and spacer URLs
     // beside the downloaded page, matching the names handed to the platform service.
     p["imagesFolder"] = json!("");
     let write = app.services.write.as_mut().ok_or("no download service")?;
-    web_cmds::save_for_web_with_writer(&mut app.session, &p, &mut |path, bytes| write(path, bytes).map_err(photocraft_engine::EngineError::Other))
+    web_cmds::save_for_web_with_writer(&mut app.session, &p, &mut |path, bytes| write(path, bytes).map_err(photostore_engine::EngineError::Other))
         .map_err(|e| e.to_string())
 }
 
 // ---------- Print ----------
 
-pub fn open_print(app: &mut PhotocraftApp) -> u64 {
+pub fn open_print(app: &mut PhotoStoreApp) -> u64 {
     let mut f = Map::new();
     f.insert("__print".into(), json!(true));
-    f.insert("__label".into(), json!("PhotoCraft Print Settings"));
+    f.insert("__label".into(), json!("PhotoStore Print Settings"));
     if let Some(Value::Object(m)) = app.session.file_menu.last_print.clone() {
         f.extend(m);
     }
@@ -589,7 +589,7 @@ pub fn open_print(app: &mut PhotocraftApp) -> u64 {
     app.ui.open_dialog(DialogKind::Command, f)
 }
 
-fn print_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
+fn print_body(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     let t = Tokens::get(ui.ctx());
     let Some(doc) = app.session.active().map(|d| d.doc.clone()) else { return };
     let p = params(f);
@@ -598,7 +598,7 @@ fn print_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Va
         ui.vertical(|ui| {
             let (area, _) = ui.allocate_exact_size(egui::vec2(330.0, 400.0), egui::Sense::hover());
             ui.painter().rect_filled(area, 0.0, t.canvas);
-            match photocraft_engine::print_cmds::layout(&doc, &p, "file.print") {
+            match photostore_engine::print_cmds::layout(&doc, &p, "file.print") {
                 Ok(l) => {
                     let (pw, ph) = l.paper;
                     let k = ((area.width() - 20.0) / pw as f32).min((area.height() - 20.0) / ph as f32);
@@ -613,7 +613,7 @@ fn print_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Va
                     let key = egui::Id::new(("print-thumb", doc.id.0, app.session.active().map_or(0, |d| d.revision)));
                     let tex: Option<Arc<egui::TextureHandle>> = ui.data(|d| d.get_temp(key));
                     let tex = tex.unwrap_or_else(|| {
-                        let th = photocraft_compose::thumbnail(&doc, 400);
+                        let th = photostore_compose::thumbnail(&doc, 400);
                         let ci = egui::ColorImage::from_rgba_unmultiplied([th.width as usize, th.height as usize], &th.pixels);
                         let tx = Arc::new(ui.ctx().load_texture("print-thumb", ci, egui::TextureOptions::LINEAR));
                         ui.data_mut(|d| d.insert_temp(key, tx.clone()));
@@ -670,7 +670,7 @@ fn print_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Va
             });
             number(ui, f, "copies", tl!("Copies"), 1.0..=999.0, "", 1.0);
             ui.horizontal(|ui| {
-                let papers: Vec<(&str, &str)> = photocraft_engine::print_cmds::PAPERS.iter().map(|p| (p.0, p.0)).collect();
+                let papers: Vec<(&str, &str)> = photostore_engine::print_cmds::PAPERS.iter().map(|p| (p.0, p.0)).collect();
                 dropdown_str(ui, "print-paper", f, "paper", &papers, 110.0);
                 dropdown_str(ui, "print-orient", f, "orientation", &[("portrait", tl!("Portrait")), ("landscape", tl!("Landscape"))], 110.0);
             });
@@ -682,12 +682,12 @@ fn print_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Va
                 "colorHandling",
                 &[
                     ("printerManages", tl!("Printer Manages Colors")),
-                    ("photocraftManages", tl!("PhotoCraft Manages Colors")),
+                    ("photostoreManages", tl!("PhotoStore Manages Colors")),
                     ("noColorManagement", tl!("No Color Management")),
                 ],
                 240.0,
             );
-            if s(f, "colorHandling", "") == "photocraftManages" {
+            if s(f, "colorHandling", "") == "photostoreManages" {
                 dropdown_str(
                     ui,
                     "print-profile",
@@ -750,7 +750,7 @@ fn print_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Va
     });
 }
 
-fn print_confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value, String> {
+fn print_confirm(app: &mut PhotoStoreApp, f: &Map<String, Value>) -> Result<Value, String> {
     let r = app.run("file.print", params(f))?;
     app.ui.status = if r["sent"] == json!(true) {
         format!("Sent to the printer ({})", r["spooler"].as_str().unwrap_or(""))
@@ -764,8 +764,8 @@ fn print_confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Valu
 mod tests {
     use super::*;
 
-    fn app() -> (PhotocraftApp, egui::Context) {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    fn app() -> (PhotoStoreApp, egui::Context) {
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 120, "height": 80, "name": "web"})).unwrap();
         (app, egui::Context::default())
     }
@@ -839,8 +839,8 @@ mod tests {
 
     #[test]
     fn save_for_web_authorizes_before_opening_a_picker() {
-        fn deny(_: &str, _: &Value) -> photocraft_engine::Result<()> {
-            Err(photocraft_engine::EngineError::Other("export denied".into()))
+        fn deny(_: &str, _: &Value) -> photostore_engine::Result<()> {
+            Err(photostore_engine::EngineError::Other("export denied".into()))
         }
         for explicit_path in [false, true] {
             for synthetic_input in [false, true] {

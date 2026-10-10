@@ -5,11 +5,11 @@
 //! These tests render the real app offscreen and read pixels back. They skip when no GPU adapter
 //! is available. The CPU canvas (no wgpu handed to the app) has its own pixel grid tests at the end.
 
-use photocraft_ui_egui::PhotocraftApp;
-use photocraft_ui_egui::control::{ControlRequest, handle};
+use photostore_ui_egui::PhotoStoreApp;
+use photostore_ui_egui::control::{ControlRequest, handle};
 use serde_json::{Value, json};
 
-type Harness = egui_kittest::Harness<'static, PhotocraftApp>;
+type Harness = egui_kittest::Harness<'static, PhotoStoreApp>;
 
 const LIGHT: u8 = 255;
 const DARK: u8 = 204;
@@ -22,8 +22,8 @@ fn harness() -> Option<Harness> {
 fn harness_with(gpu: bool) -> Option<Harness> {
     let built = std::panic::catch_unwind(|| {
         egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 800.0)).with_pixels_per_point(1.0).with_max_steps(64).wgpu().build_eframe(|cc| {
-            PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
-            let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+            PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
+            let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
             if let Some(rs) = cc.wgpu_render_state.as_ref().filter(|_| gpu) {
                 app.set_wgpu(rs.clone());
             }

@@ -53,7 +53,7 @@ jobs:
           src = yaml.safe_load(open("packaging/linux/flatpak/ai.photostore.app.yml"))
           bundle = yaml.safe_load(open("packaging/linux/flatpak/ai.photostore.app.bundle.yml"))
           for m in (src, bundle):
-              assert m["id"] == "ai.photostore.app" and m["command"] == "photocraft", m["id"]
+              assert m["id"] == "ai.photostore.app" and m["command"] == "photostore", m["id"]
           for key in ("runtime", "runtime-version", "sdk", "finish-args"):
               assert src[key] == bundle[key], f"Flatpak manifests disagree on {key}: {src[key]} vs {bundle[key]}"
           print("Flatpak manifests ok")

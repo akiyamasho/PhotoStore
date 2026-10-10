@@ -5,10 +5,10 @@
 //! with `"erase": true`, so one undo step, with the pen pressure and tilt of a normal stroke.
 
 use egui::{PointerButton, Response};
-use photocraft_engine::BrushSettings;
-use photocraft_engine::prefs::RightClickPaint;
+use photostore_engine::BrushSettings;
+use photostore_engine::prefs::RightClickPaint;
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::state::Tool;
 
 /// The brush is a tool option, kept per tool like Photoshop's options bar: switching from the
@@ -20,7 +20,7 @@ use crate::state::Tool;
 /// The foreground and background colours, the erase flag and the stroke seed belong to the
 /// session rather than to the tool, so a swap never carries them between tools: picking a colour
 /// or painting with the Eraser works with any tool's brush.
-pub fn sync_tool_brush(app: &mut PhotocraftApp) {
+pub fn sync_tool_brush(app: &mut PhotoStoreApp) {
     let tool = app.ui.tool;
     if !has_brush_picker(tool) || app.ui.brush_tool == tool {
         return;
@@ -41,7 +41,7 @@ pub fn sync_tool_brush(app: &mut PhotocraftApp) {
 }
 
 /// The brush `tool` had when it was last active.
-fn save_brush(app: &mut PhotocraftApp, tool: Tool, brush: BrushSettings) {
+fn save_brush(app: &mut PhotoStoreApp, tool: Tool, brush: BrushSettings) {
     match app.ui.tool_brushes.iter_mut().find(|(t, _)| *t == tool) {
         Some(e) => e.1 = brush,
         None => app.ui.tool_brushes.push((tool, brush)),
@@ -55,8 +55,8 @@ fn session_fields(current: &BrushSettings, brush: &BrushSettings) -> BrushSettin
 }
 
 /// Photoshop's 10 % stroke smoothing, what a tool's brush starts at.
-fn first_smoothing() -> photocraft_engine::paint::brush::Smoothing {
-    photocraft_engine::paint::brush::Smoothing { amount: 0.1, ..Default::default() }
+fn first_smoothing() -> photostore_engine::paint::brush::Smoothing {
+    photostore_engine::paint::brush::Smoothing { amount: 0.1, ..Default::default() }
 }
 
 /// Which tool events this frame's canvas response produces.
@@ -74,14 +74,14 @@ pub fn has_brush_picker(tool: Tool) -> bool {
 }
 
 /// Does a right-button drag with `tool` erase (rather than open the picker)?
-pub fn right_erases(app: &PhotocraftApp, tool: Tool) -> bool {
+pub fn right_erases(app: &PhotoStoreApp, tool: Tool) -> bool {
     matches!(tool, Tool::Brush | Tool::Eraser) && app.session.prefs().tools.right_click_with_painting_tools == RightClickPaint::Erase
 }
 
 /// Route the canvas response's buttons: the left one drives the tool; the right one resizes the
 /// brush with Alt held (#297), erases (Erase preference) or opens the Brush Preset picker. Arms
 /// `secondary_erase` or `brush_resize_armed` for this frame's `Down`.
-pub fn canvas_buttons(app: &mut PhotocraftApp, response: &Response, tool: Tool) -> Buttons {
+pub fn canvas_buttons(app: &mut PhotoStoreApp, response: &Response, tool: Tool) -> Buttons {
     let (mods, right_down) = response.ctx.input(|i| (i.modifiers, i.pointer.secondary_down()));
     // Alt+right-drag resizes the brush (brush_resize.rs); its events reach `tool_event` like a
     // left drag's, and nothing paints. A resize whose release was missed ends here.
@@ -121,7 +121,7 @@ pub fn canvas_buttons(app: &mut PhotocraftApp, response: &Response, tool: Tool) 
 /// Alt+right-drag brush resize, `brush_resize_armed` for its `Down`; or an erasing right stroke,
 /// `secondary_erase` armed for its `Down`). Otherwise a right-click with a painting tool opens
 /// the Brush Preset picker at screen point `at`, and nothing paints.
-pub fn pointer_secondary(app: &mut PhotocraftApp, down: bool, mods: egui::Modifiers, at: [f32; 2]) -> bool {
+pub fn pointer_secondary(app: &mut PhotoStoreApp, down: bool, mods: egui::Modifiers, at: [f32; 2]) -> bool {
     let tool = app.ui.tool;
     if crate::brush_resize::applies(tool) && (crate::brush_resize::is_right_gesture(mods) || app.brush_resize.is_some_and(|r| r.secondary)) {
         app.brush_resize_armed = down && app.drag.is_none();
@@ -140,7 +140,7 @@ pub fn pointer_secondary(app: &mut PhotocraftApp, down: bool, mods: egui::Modifi
 /// The Brush Preset picker a right-click or the options-bar brush chip opened, at the pointer. It
 /// edits the session brush like the Brushes panel; a press outside, Escape, Enter or a
 /// double-click on a preset closes it.
-pub fn show_picker(app: &mut PhotocraftApp, ctx: &egui::Context) {
+pub fn show_picker(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     let Some([x, y]) = app.ui.brush_picker else { return };
     if !has_brush_picker(app.ui.tool) {
         app.ui.brush_picker = None;
@@ -201,8 +201,8 @@ mod tests {
     use super::*;
     use crate::canvas::{ToolEvent, tool_event};
 
-    fn harness(prefs: Option<&str>) -> Harness<'static, PhotocraftApp> {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    fn harness(prefs: Option<&str>) -> Harness<'static, PhotoStoreApp> {
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 400, "height": 300})).unwrap();
         app.run("layer.new.layer", json!({})).unwrap();
         app.run("tools.setColors", json!({"foreground": "#0000ff"})).unwrap();
@@ -213,7 +213,7 @@ mod tests {
         app.ui.tool = Tool::Brush;
         app.sync_views();
         let mut h = Harness::builder().with_size(vec2(1200.0, 800.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-            |ui, app: &mut PhotocraftApp| {
+            |ui, app: &mut PhotoStoreApp| {
                 let ctx = ui.ctx().clone();
                 if !ctx.fonts(|f| f.families().contains(&egui::FontFamily::Name("medium".into()))) {
                     return;
@@ -222,18 +222,18 @@ mod tests {
             },
             app,
         );
-        PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
+        PhotoStoreApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
         h.run_steps(4);
         h
     }
 
-    fn press(h: &mut Harness<'static, PhotocraftApp>, pos: Pos2, button: PointerButton, pressed: bool) {
+    fn press(h: &mut Harness<'static, PhotoStoreApp>, pos: Pos2, button: PointerButton, pressed: bool) {
         h.event(egui::Event::PointerButton { pos, button, pressed, modifiers: Modifiers::NONE });
         h.run_steps(2);
     }
 
     /// Drag across the canvas centre with `button`; returns the document points it covered.
-    fn drag(h: &mut Harness<'static, PhotocraftApp>, button: PointerButton) -> (Pos2, Pos2) {
+    fn drag(h: &mut Harness<'static, PhotoStoreApp>, button: PointerButton) -> (Pos2, Pos2) {
         let c = h.state().last_canvas_rect.center();
         let (a, b) = (c - vec2(80.0, 0.0), c + vec2(80.0, 0.0));
         h.event(egui::Event::PointerMoved(a));
@@ -247,7 +247,7 @@ mod tests {
         (a, b)
     }
 
-    fn alpha_at(h: &Harness<'static, PhotocraftApp>, screen: Pos2) -> f32 {
+    fn alpha_at(h: &Harness<'static, PhotoStoreApp>, screen: Pos2) -> f32 {
         let app = h.state();
         let v = app.ui.views[0].clone();
         let r = app.last_canvas_rect;
@@ -257,7 +257,7 @@ mod tests {
         st.doc.layer(st.active_layer.unwrap()).unwrap().surface().unwrap().rgba(x, y)[3]
     }
 
-    fn strokes(h: &Harness<'static, PhotocraftApp>) -> Vec<serde_json::Value> {
+    fn strokes(h: &Harness<'static, PhotoStoreApp>) -> Vec<serde_json::Value> {
         h.state().session.journal.iter().filter(|(id, _)| id == "paint.stroke").map(|(_, p)| p.clone()).collect()
     }
 
@@ -368,7 +368,7 @@ mod tests {
         press(&mut h, c, PointerButton::Secondary, false);
         h.run_steps(2);
         let names: Vec<String> = h.state().session.tools.presets.iter().skip(1).take(2).map(|p| p.name.clone()).collect();
-        let picks = |h: &Harness<'static, PhotocraftApp>, name: &str| {
+        let picks = |h: &Harness<'static, PhotoStoreApp>, name: &str| {
             h.state().session.journal.iter().filter(|(id, p)| id == "tools.setBrush" && *p == json!({ "preset": name })).count()
         };
         h.get_by_label(&names[0]).click();
@@ -409,7 +409,7 @@ mod tests {
         h.state_mut().ui.brush_picker = Some([c.x, c.y]);
         h.run_steps(2);
         assert!(h.query_by_label("Hardness").is_some());
-        let sampled = h.state().session.tools.presets.iter().find(|p| p.brush.tip != photocraft_engine::paint::TipShape::Round).map(|p| p.name.clone());
+        let sampled = h.state().session.tools.presets.iter().find(|p| p.brush.tip != photostore_engine::paint::TipShape::Round).map(|p| p.name.clone());
         h.state_mut().run("tools.setBrush", json!({ "preset": sampled.expect("a sampled preset") })).unwrap();
         h.run_steps(2);
         assert!(h.query_by_label("Hardness").is_none());
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn right_stroke_erases_with_pen_pressure_through_the_control_channel_path() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 120, "height": 80})).unwrap();
         app.run("prefs.set", json!({"path": "tools.rightClickWithPaintingTools", "value": "erase"})).unwrap();
         app.ui.tool = Tool::Brush;
@@ -510,9 +510,9 @@ mod tests {
 
     #[test]
     fn the_brush_is_a_per_tool_option_that_presets_keep() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 64, "height": 64})).unwrap();
-        let amount = |app: &PhotocraftApp| app.session.tools.brush.smoothing.amount;
+        let amount = |app: &PhotoStoreApp| app.session.tools.brush.smoothing.amount;
         app.ui.tool = Tool::Brush;
         sync_tool_brush(&mut app);
         assert_eq!(amount(&app), 0.1, "Photoshop's default");
@@ -548,9 +548,9 @@ mod tests {
     /// dynamics of one tool never leak into another's, and each tool gets its own back.
     #[test]
     fn each_tool_keeps_its_own_brush() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 64, "height": 64})).unwrap();
-        let brush = |app: &PhotocraftApp| app.session.tools.brush.clone();
+        let brush = |app: &PhotoStoreApp| app.session.tools.brush.clone();
         let size = |b: &BrushSettings| b.size;
         let hardness = |b: &BrushSettings| b.hardness;
         let opacity = |b: &BrushSettings| b.opacity;
@@ -584,10 +584,10 @@ mod tests {
         app.run("tools.setBrush", json!({"brush": {"mode": "Screen", "opacity": 0.3}})).unwrap();
         app.ui.tool = Tool::Brush;
         sync_tool_brush(&mut app);
-        assert_eq!((mode(&brush(&app)), opacity(&brush(&app))), (photocraft_color::BlendMode::Multiply, 0.7), "the Brush's own mode and opacity");
+        assert_eq!((mode(&brush(&app)), opacity(&brush(&app))), (photostore_color::BlendMode::Multiply, 0.7), "the Brush's own mode and opacity");
         app.ui.tool = Tool::CloneStamp;
         sync_tool_brush(&mut app);
-        assert_eq!((mode(&brush(&app)), opacity(&brush(&app))), (photocraft_color::BlendMode::Screen, 0.3), "the Clone Stamp keeps its own");
+        assert_eq!((mode(&brush(&app)), opacity(&brush(&app))), (photostore_color::BlendMode::Screen, 0.3), "the Clone Stamp keeps its own");
 
         // The colours, the erase flag and the seed belong to the session, so a swap keeps what is
         // live now instead of restoring another tool's copy (a picked colour reaches every tool).
@@ -611,7 +611,7 @@ mod tests {
     #[test]
     fn eraser_tool_on_the_background_paints_the_background_colour() {
         // #76: the Eraser on the Background (locked transparency) paints the background colour.
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 120, "height": 80})).unwrap();
         app.run("tools.setColors", json!({"background": "#ff0000"})).unwrap();
         app.run("tools.setBrush", json!({"brush": {"size": 12, "hardness": 1.0}})).unwrap();
@@ -628,7 +628,7 @@ mod tests {
     }
 
     /// Assert the one committed stroke contains a point at each queued screen position.
-    fn assert_committed_points(h: &Harness<'static, PhotocraftApp>, queued: &[Pos2]) {
+    fn assert_committed_points(h: &Harness<'static, PhotoStoreApp>, queued: &[Pos2]) {
         let s = strokes(h);
         assert_eq!(s.len(), 1);
         let points = s[0]["points"].as_array().unwrap();

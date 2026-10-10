@@ -9,24 +9,24 @@
 
 use std::sync::Arc;
 
-use photocraft_doc::{DocId, Document, LayerId};
-use photocraft_geom::Rect;
+use photostore_doc::{DocId, Document, LayerId};
+use photostore_geom::Rect;
 use serde_json::json;
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::state::Tool;
 
 /// Does the Move tool drag (and do the arrow keys nudge) the selected pixels of the active layer
 /// rather than the whole layer? With a selection, as in Photoshop; a layer whose pixels can't
 /// float (type, shape, Smart Object, group, position-locked), a hidden layer or several selected
 /// layers still move whole, as without one.
-pub(crate) fn moves_selected_pixels(app: &PhotocraftApp) -> bool {
+pub(crate) fn moves_selected_pixels(app: &PhotoStoreApp) -> bool {
     // The Move tool, or ⌘ held with a painting tool (`hold_keys::cmd_moves`).
     moves_selected_pixels_with(app, app.active_tool())
 }
 
 /// [`moves_selected_pixels`] with `tool` in effect (the canvas cursor asks before the press).
-pub(crate) fn moves_selected_pixels_with(app: &PhotocraftApp, tool: Tool) -> bool {
+pub(crate) fn moves_selected_pixels_with(app: &PhotoStoreApp, tool: Tool) -> bool {
     let Some(st) = app.session.active() else { return false };
     tool == Tool::Move
         && app.ui.transform.is_none()
@@ -39,8 +39,8 @@ pub(crate) fn moves_selected_pixels_with(app: &PhotocraftApp, tool: Tool) -> boo
 /// Floats the selected pixels and moves them by (dx, dy) (`select.float`): cuts them the first
 /// time, or with `copy` (⌥) floats a duplicate and leaves them; `copy` on a piece already floating
 /// drops it where it is and floats a copy of it. False when it failed (reported in the status bar).
-pub(crate) fn float_selected(app: &mut PhotocraftApp, copy: bool, dx: f64, dy: f64) -> bool {
-    let floating = app.session.active().is_some_and(|st| photocraft_engine::float_cmds::floating(st).is_some());
+pub(crate) fn float_selected(app: &mut PhotoStoreApp, copy: bool, dx: f64, dy: f64) -> bool {
+    let floating = app.session.active().is_some_and(|st| photostore_engine::float_cmds::floating(st).is_some());
     let dropped = if copy && floating { app.run("select.drop", json!({})) } else { Ok(json!(null)) };
     match dropped.and_then(|_| app.run("select.float", json!({"dx": dx, "dy": dy, "copy": copy}))) {
         Ok(_) => true,
@@ -58,7 +58,7 @@ const BASE: u64 = 1 << 39;
 pub(crate) struct MovePreview {
     doc: DocId,
     revision: u64,
-    /// Layers that move ([`photocraft_engine::layer_multi_cmds::move_targets`]).
+    /// Layers that move ([`photostore_engine::layer_multi_cmds::move_targets`]).
     ids: Vec<LayerId>,
     /// What moving them can change at offset (0, 0), not clipped to the canvas: a layer larger
     /// than the canvas brings its pixels from beyond the edge into view (`None` = anything).
@@ -90,7 +90,7 @@ impl MovePreview {
 }
 
 /// The whole-pixel offset of the current Move drag on document `idx`, if one is under way.
-fn drag_offset(app: &PhotocraftApp) -> Option<(i32, i32)> {
+fn drag_offset(app: &PhotoStoreApp) -> Option<(i32, i32)> {
     let d = app.drag.as_ref().filter(|d| d.tool == Tool::Move)?;
     let end = d.points.last().map_or(d.start, |p| [p[0], p[1]]);
     let dx = (end[0] - d.start[0]).round().clamp(-1e7, 1e7) as i32;
@@ -101,10 +101,10 @@ fn drag_offset(app: &PhotocraftApp) -> Option<(i32, i32)> {
 /// The document to show while a Move drag is under way on document `idx`: the moving layers at
 /// the pointer. `None` without a drag (or when the layers can't move: locked, say; the drag then
 /// shows its arrow and the release reports why).
-pub(crate) fn display_doc(app: &mut PhotocraftApp, idx: usize) -> Option<(Arc<Document>, u64)> {
+pub(crate) fn display_doc(app: &mut PhotoStoreApp, idx: usize) -> Option<(Arc<Document>, u64)> {
     if app.session.active_index() == Some(idx)
         && let Some(st) = app.session.documents().get(idx)
-        && photocraft_engine::float_cmds::floating(st).is_some()
+        && photostore_engine::float_cmds::floating(st).is_some()
     {
         return floating_doc(app, idx);
     }
@@ -120,12 +120,12 @@ pub(crate) fn display_doc(app: &mut PhotocraftApp, idx: usize) -> Option<(Arc<Do
     let (doc_id, revision, doc) = (st.doc.id, st.revision, st.doc.clone());
     let fresh = app.move_preview.as_ref().is_some_and(|p| p.doc == doc_id && p.revision == revision);
     if !fresh {
-        let ids = photocraft_engine::layer_multi_cmds::move_targets(&doc, &st.selected_layers());
+        let ids = photostore_engine::layer_multi_cmds::move_targets(&doc, &st.selected_layers());
         if ids.is_empty() {
             return None;
         }
         let all = Rect::new(i32::MIN / 2, i32::MIN / 2, i32::MAX / 2, i32::MAX / 2);
-        let bounds = ids.iter().try_fold(Rect::EMPTY, |acc, id| Some(acc.union(&photocraft_compose::change_bounds(doc.layer(*id)?, all)?)));
+        let bounds = ids.iter().try_fold(Rect::EMPTY, |acc, id| Some(acc.union(&photostore_compose::change_bounds(doc.layer(*id)?, all)?)));
         let canvas = doc.bounds();
         app.move_preview = Some(MovePreview { doc: doc_id, revision, ids, bounds, canvas, offsets: Vec::new(), shown: None, floating: false });
     }
@@ -135,10 +135,10 @@ pub(crate) fn display_doc(app: &mut PhotocraftApp, idx: usize) -> Option<(Arc<Do
     }
     if p.offsets.last() != Some(&offset) {
         let t0 = crate::gpu_canvas::now_ms();
-        match photocraft_engine::layer_multi_cmds::moved(&doc, &p.ids, offset.0, offset.1) {
+        match photostore_engine::layer_multi_cmds::moved(&doc, &p.ids, offset.0, offset.1) {
             Ok(d) => {
                 // Duotone documents display through their inks.
-                let d = photocraft_engine::mode_cmds::display_document(&d).unwrap_or(d);
+                let d = photostore_engine::mode_cmds::display_document(&d).unwrap_or(d);
                 p.shown = Some(Arc::new(d));
                 p.offsets.push(offset);
             }
@@ -154,8 +154,8 @@ pub(crate) fn display_doc(app: &mut PhotocraftApp, idx: usize) -> Option<(Arc<Do
 }
 
 /// A floating selection's offset plus a drag of it in progress (`canvas::selection_drag_delta`).
-pub(crate) fn floating_offset(app: &PhotocraftApp) -> Option<(i32, i32)> {
-    let f = photocraft_engine::float_cmds::floating(app.session.active()?)?;
+pub(crate) fn floating_offset(app: &PhotoStoreApp) -> Option<(i32, i32)> {
+    let f = photostore_engine::float_cmds::floating(app.session.active()?)?;
     let d = crate::canvas::selection_drag_delta(app).unwrap_or((0, 0));
     Some((f.offset.0 + d.0, f.offset.1 + d.1))
 }
@@ -163,10 +163,10 @@ pub(crate) fn floating_offset(app: &PhotocraftApp) -> Option<(i32, i32)> {
 /// The document shown while a selection floats: the cut piece at its offset, over the cut-out
 /// layer. Only the piece's area changes between offsets, so each move costs the piece, not the
 /// layer.
-fn floating_doc(app: &mut PhotocraftApp, idx: usize) -> Option<(Arc<Document>, u64)> {
+fn floating_doc(app: &mut PhotoStoreApp, idx: usize) -> Option<(Arc<Document>, u64)> {
     let offset = floating_offset(app)?;
     let st = app.session.documents().get(idx)?;
-    let f = photocraft_engine::float_cmds::floating(st)?;
+    let f = photostore_engine::float_cmds::floating(st)?;
     let (doc_id, revision) = (st.doc.id, st.revision);
     let fresh = app.move_preview.as_ref().is_some_and(|p| p.doc == doc_id && p.revision == revision && p.floating);
     if !fresh {
@@ -178,8 +178,8 @@ fn floating_doc(app: &mut PhotocraftApp, idx: usize) -> Option<(Arc<Document>, u
     let shown = app.move_preview.as_ref()?.offsets.last() != Some(&offset);
     if shown {
         let t0 = crate::gpu_canvas::now_ms();
-        let d = photocraft_engine::float_cmds::displayed(st, crate::canvas::selection_drag_delta(app).unwrap_or((0, 0)))?;
-        let d = photocraft_engine::mode_cmds::display_document(&d).unwrap_or(d);
+        let d = photostore_engine::float_cmds::displayed(st, crate::canvas::selection_drag_delta(app).unwrap_or((0, 0)))?;
+        let d = photostore_engine::mode_cmds::display_document(&d).unwrap_or(d);
         let p = app.move_preview.as_mut()?;
         p.shown = Some(Arc::new(d));
         p.offsets.push(offset);
@@ -192,7 +192,7 @@ fn floating_doc(app: &mut PhotocraftApp, idx: usize) -> Option<(Arc<Document>, u
 /// What changed between preview (or document) key `seen` and `now` of the current Move drag on
 /// document `doc` at `revision`: where the moving layers were in both. `None` when either key
 /// isn't one of this drag's (the canvas then recomposites everything).
-pub(crate) fn damage(app: &PhotocraftApp, doc: DocId, revision: u64, seen: u64, now: u64) -> Option<Rect> {
+pub(crate) fn damage(app: &PhotoStoreApp, doc: DocId, revision: u64, seen: u64, now: u64) -> Option<Rect> {
     let p = app.move_preview.as_ref().filter(|p| p.doc == doc && p.revision == revision)?;
     if seen == now || (seen < BASE && seen != 0) || (now < BASE && now != 0) {
         return None;
@@ -208,7 +208,7 @@ pub(crate) fn damage(app: &PhotocraftApp, doc: DocId, revision: u64, seen: u64, 
 }
 
 /// Whether the canvas shows a Move drag's layers at the pointer.
-pub(crate) fn showing(app: &PhotocraftApp) -> bool {
+pub(crate) fn showing(app: &PhotoStoreApp) -> bool {
     app.move_preview.as_ref().is_some_and(|p| p.shown.is_some())
 }
 
@@ -219,7 +219,7 @@ pub(crate) fn is_preview_key(key: u64) -> bool {
 
 /// Release: one `layer.translate` by the drag's offset. The canvas already shows the result, so
 /// its caches are told it showed the document: the command's damage rect refreshes that area.
-pub(crate) fn finish(app: &mut PhotocraftApp, dx: f64, dy: f64) {
+pub(crate) fn finish(app: &mut PhotoStoreApp, dx: f64, dy: f64) {
     // Only when the canvas shows this very offset (else it recomposites everything once).
     let at = (dx.clamp(-1e7, 1e7) as i32, dy.clamp(-1e7, 1e7) as i32);
     let shown = app.move_preview.take().filter(|p| p.shown.is_some() && p.offsets.last() == Some(&at));
@@ -235,16 +235,16 @@ pub(crate) fn finish(app: &mut PhotocraftApp, dx: f64, dy: f64) {
 
 #[cfg(test)]
 mod tests {
-    use photocraft_geom::Rect;
+    use photostore_geom::Rect;
     use serde_json::json;
 
-    use crate::PhotocraftApp;
+    use crate::PhotoStoreApp;
     use crate::canvas::ToolEvent;
     use crate::state::Tool;
 
     #[test]
     fn dragging_a_layer_larger_than_the_canvas_redraws_what_comes_in_from_beyond_the_edge() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.session.execute("file.new", json!({"width": 64, "height": 64})).unwrap();
         app.sync_views();
         app.session.execute("layer.new.layer", json!({})).unwrap();
@@ -272,7 +272,7 @@ mod tests {
 
     /// Mid-drag on a painted layer: is the layer shown at the pointer?
     fn live(outline: bool) -> bool {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.session.execute("file.new", json!({"width": 64, "height": 64})).unwrap();
         app.sync_views();
         app.session.execute("layer.new.layer", json!({})).unwrap();
@@ -297,8 +297,8 @@ mod tests {
 
     /// A `depth`-bit transparent document whose layer holds a red square (8..24)² and a blue one
     /// (40..56)×(8..24), the red one selected; the Move tool with Auto-Select on.
-    fn selected_pixels(depth: u32) -> (PhotocraftApp, photocraft_doc::LayerId) {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    fn selected_pixels(depth: u32) -> (PhotoStoreApp, photostore_doc::LayerId) {
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.session.execute("file.new", json!({"width": 64, "height": 64, "background": "transparent", "depth": depth})).unwrap();
         app.sync_views();
         for (x, color) in [(40, "#0000ff"), (8, "#ff0000")] {
@@ -313,22 +313,22 @@ mod tests {
         (app, id)
     }
 
-    fn alpha(app: &PhotocraftApp, id: photocraft_doc::LayerId, x: i32, y: i32) -> f32 {
+    fn alpha(app: &PhotoStoreApp, id: photostore_doc::LayerId, x: i32, y: i32) -> f32 {
         app.session.active().unwrap().doc.layer(id).unwrap().surface().unwrap().rgba(x, y)[3]
     }
 
-    fn offset(app: &PhotocraftApp) -> Option<(i32, i32)> {
-        photocraft_engine::float_cmds::floating(app.session.active().unwrap()).map(|f| f.offset)
+    fn offset(app: &PhotoStoreApp) -> Option<(i32, i32)> {
+        photostore_engine::float_cmds::floating(app.session.active().unwrap()).map(|f| f.offset)
     }
 
-    fn drag(app: &mut PhotocraftApp, from: [f64; 2], to: [f64; 2], m: egui::Modifiers) {
+    fn drag(app: &mut PhotoStoreApp, from: [f64; 2], to: [f64; 2], m: egui::Modifiers) {
         crate::canvas::tool_event(app, ToolEvent::Down { x: from[0], y: from[1], pressure: 1.0 }, m);
         crate::canvas::tool_event(app, ToolEvent::Move { x: to[0], y: to[1], pressure: 1.0 }, m);
         crate::canvas::tool_event(app, ToolEvent::Up { x: to[0], y: to[1] }, m);
     }
 
     /// ↩ through the app's key handling.
-    fn enter(app: &mut PhotocraftApp) {
+    fn enter(app: &mut PhotoStoreApp) {
         let ctx = egui::Context::default();
         let key = egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
         let input = egui::RawInput { events: vec![key], ..Default::default() };

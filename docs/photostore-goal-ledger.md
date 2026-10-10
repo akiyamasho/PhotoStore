@@ -10,13 +10,15 @@ Updated 2026-10-11. This is an operational ledger for the independent PhotoStore
 - Milestone references: `photostore-foundation-2026-10-10` at `d83f8323`; `photostore-animation-smart-objects-2026-10-10` at `06e736db`; `photostore-animation-media-2026-10-11` at `4019c6ce28966236e070a3d894a56c2968643820`.
 - Icon direction: PhotoStore icon with the requested twist; keep the asset provenance row with the icon work.
 - README/AGENTS direction: keep badges, install, run, and contributor guidance lean and operational.
+- Branding pass: current product identity and documentation are being cleaned up for the personal PhotoStore fork; the planned release tag is `photostore-branding-2026-10-11`.
+- Audio work in progress is saved locally on `codex/timeline-backfill-wip` at `923ec540620331aa888987b94003505c01e6aac4`; restore it after the branding release and do not describe audio as implemented or included in this release.
 - Photoshop-facing scope: timeline/frame animation and Smart Objects are first product priorities, while the inherited feature surface remains evidence to audit rather than a completeness claim.
 
 ## Evidence rules
 
 - `docs/parity.md` currently reports 627/627 menu items live. This measures command dispatch only; it does not establish Photoshop behavior, interaction quality, file fidelity, or user readiness.
 - `docs/roadmap.md` records a historical caution that menu and feature-surface counts overstate behavior parity, and identifies AI, missing tools, professional workflow depth, and the plug-in ecosystem as major gaps. Do not carry its historical aggregate estimate forward as a current PhotoStore measurement.
-- `docs/scorecard.md` is inherited historical evidence and a useful signal for areas to revalidate; its PhotoCraft labels and measurements are not independent PhotoStore evidence. Revalidate each claim before treating it as current PhotoStore status.
+- `docs/scorecard.md` is inherited historical evidence and a useful signal for areas to revalidate; its PhotoStore labels and measurements are not independent PhotoStore evidence. Revalidate each claim before treating it as current PhotoStore status.
 - `docs/animated-smart-objects.md` records implemented child-timeline persistence, playback synchronization, bounded caches, nested refresh limits, and transform reset; its stated gaps remain open.
 - A milestone is `implemented` only when the behavior and persistence path are present in the source of truth. `unverified` means code exists but acceptance evidence is missing. `pending` means the capability or integration is still absent.
 
@@ -30,6 +32,7 @@ Updated 2026-10-11. This is an operational ledger for the independent PhotoStore
 - These are compiler/function and targeted integration results. They do not establish visual UI QA, Photoshop behavior parity, or full PSD/external-format compatibility.
 - Release record: annotated tag `photostore-animation-media-2026-10-11` was pushed at `4019c6ce28966236e070a3d894a56c2968643820`.
 - Published prerelease: [PhotoStore 0.6.0 prerelease](https://github.com/akiyamasho/PhotoStore/releases/tag/photostore-animation-media-2026-10-11) includes the Apple Silicon DMG, CLI ZIP, and `SHA256SUMS`; artifacts are ad hoc signed and not notarized.
+- The existing `0.6.0` release record and tag `4019c6ce` remain historical. The current `0.6.1` branding release is planned under `photostore-branding-2026-10-11`, followed by reinstall before restoring the local audio WIP.
 - Local install record: `/Applications/PhotoStore.app` version 0.6.0, bundle `ai.photostore.app`, installed with the matching source SHA; strict signature validation passed and the executable remained running after the required startup confirmation.
 - This release record does not claim full visual or Photoshop acceptance; the remaining Photoshop scope and active goal are unfinished.
 

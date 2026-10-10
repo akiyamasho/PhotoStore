@@ -456,7 +456,7 @@ impl DngSpec {
             opcode_list2: None,
             jxl_segments: Vec::new(),
             profile_gain_table_map: None,
-            make: "Photocraft".into(),
+            make: "PhotoStore".into(),
             model: "Synthetic".into(),
         }
     }

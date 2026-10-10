@@ -19,8 +19,8 @@
 //! copied untouched. [`ProxyImage::render`] is the cheap preview path: bilinear field and
 //! bilinear source on a downsampled RGBA copy, re-rendered only where a dab changed things.
 
-use photocraft_geom::Rect;
-use photocraft_raster::Surface;
+use photostore_geom::Rect;
+use photostore_raster::Surface;
 use serde::{Deserialize, Serialize};
 
 /// The Liquify tools (Photoshop's left tool strip, minus Hand/Zoom/Face).
@@ -776,7 +776,7 @@ impl ProxyImage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use photocraft_color::{ColorMode, PixelFormat, SampleType};
+    use photostore_color::{ColorMode, PixelFormat, SampleType};
 
     /// The segment walk before #937: every step, whether or not its dab can reach the field.
     fn full_walk(f: &mut LiquifyField, s: &LiquifyStroke, a: [f64; 3], b: [f64; 3]) -> Rect {

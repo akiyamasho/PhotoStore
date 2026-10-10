@@ -6,9 +6,9 @@
 
 use std::sync::Arc;
 
-use photocraft_algo::resample::{Resample, resize_surface, translate_surface};
-use photocraft_doc::variables::Value as VarValue;
-use photocraft_doc::{DataSet, DataValue, Document, LayerContent, LayerId, PixelAlign, PixelMethod, VarKind, VariableDef, Variables};
+use photostore_algo::resample::{Resample, resize_surface, translate_surface};
+use photostore_doc::variables::Value as VarValue;
+use photostore_doc::{DataSet, DataValue, Document, LayerContent, LayerId, PixelAlign, PixelMethod, VarKind, VariableDef, Variables};
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
@@ -225,7 +225,7 @@ fn replace_pixels(doc: &mut Document, layer: LayerId, path: &str, method: PixelM
     let dx = (target.x0 as f64 + (tw - sw) * fx).round() as i32;
     let dy = (target.y0 as f64 + (th - sh) * fy).round() as i32;
     let placed = translate_surface(&scaled, dx, dy);
-    let placed = if clip { photocraft_algo::resample::crop_surface(&placed, target) } else { placed };
+    let placed = if clip { photostore_algo::resample::crop_surface(&placed, target) } else { placed };
     if let Some(l) = doc.layer_mut(layer)
         && let LayerContent::Raster(sfc) = &mut l.content
     {
@@ -382,8 +382,8 @@ fn export_as_files(s: &mut Session, p: &Value) -> Result<Value> {
         let safe: String = set.name.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
         let stem = template.replace("{name}", &safe).replace("{index}", &format!("{:03}", n + 1)).replace("{document}", &doc_stem);
         let path = format!("{dir}/{stem}.{format}");
-        let opts = photocraft_io::ExportOptions::default();
-        let bytes = photocraft_io::export(&doc, format, &opts).map(|r| r.bytes).map_err(|e| EngineError::Other(format!("export `{}`: {e}", set.name)))?;
+        let opts = photostore_io::ExportOptions::default();
+        let bytes = photostore_io::export(&doc, format, &opts).map(|r| r.bytes).map_err(|e| EngineError::Other(format!("export `{}`: {e}", set.name)))?;
         crate::file_cmds::write_file(&path, &bytes)?;
         files.push(path);
     }

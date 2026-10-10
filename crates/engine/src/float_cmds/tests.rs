@@ -1,4 +1,4 @@
-use photocraft_geom::Rect;
+use photostore_geom::Rect;
 use serde_json::json;
 
 use super::*;
@@ -115,7 +115,7 @@ fn a_copy_leaves_the_original_at_every_depth_in_one_undo_step() {
     }
 }
 
-/// `cargo test --release -p photocraft-engine float_drag_bench -- --ignored --nocapture`
+/// `cargo test --release -p photostore-engine float_drag_bench -- --ignored --nocapture`
 #[test]
 #[ignore]
 fn float_drag_bench() {

@@ -3,22 +3,22 @@
 //!
 //! All three take their whole edit as data, so each is one replayable command and one history
 //! step: Liquify the brush strokes (replayed onto a fresh displacement field,
-//! `photocraft_algo::liquify`), Puppet Warp the pins (`photocraft_algo::puppet`, ARAP on a mesh
-//! of the opaque region), Perspective Warp the planes (`photocraft_algo::perspective`). On a
+//! `photostore_algo::liquify`), Puppet Warp the pins (`photostore_algo::puppet`, ARAP on a mesh
+//! of the opaque region), Perspective Warp the planes (`photostore_algo::perspective`). On a
 //! smart object each becomes a smart filter (as in Photoshop): the params are stored with the
 //! smart object and re-applied to a fresh render of the source, so editing never accumulates
 //! resampling. The params are the data in every case (strokes, pins and planes are small
 //! compared with a field or a mesh, and replay is deterministic), so nothing needs a blob.
 
-use photocraft_algo::liquify::{LiquifyField, LiquifyStroke, apply_liquify, auto_cell};
-use photocraft_algo::perspective::{PerspectiveMap, Plane, Straighten, straighten};
-use photocraft_algo::puppet::{PuppetDensity, PuppetMode, PuppetPin, PuppetWarp, puppet_warp};
-use photocraft_algo::transform::Interp;
-use photocraft_algo::warp::{warp_mesh_gray, warp_mesh_surface};
-use photocraft_color::PixelFormat;
-use photocraft_doc::{Document, Layer, LayerContent, LayerId, Locks, SmartFilter};
-use photocraft_geom::Rect;
-use photocraft_raster::Surface;
+use photostore_algo::liquify::{LiquifyField, LiquifyStroke, apply_liquify, auto_cell};
+use photostore_algo::perspective::{PerspectiveMap, Plane, Straighten, straighten};
+use photostore_algo::puppet::{PuppetDensity, PuppetMode, PuppetPin, PuppetWarp, puppet_warp};
+use photostore_algo::transform::Interp;
+use photostore_algo::warp::{warp_mesh_gray, warp_mesh_surface};
+use photostore_color::PixelFormat;
+use photostore_doc::{Document, Layer, LayerContent, LayerId, Locks, SmartFilter};
+use photostore_geom::Rect;
+use photostore_raster::Surface;
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
@@ -152,7 +152,7 @@ pub fn liquify_surface(surf: &Surface, strokes: &[LiquifyStroke], cell: f64, can
 }
 
 /// Puppet-warps a surface's content; `None` when the result would span more than
-/// [`photocraft_algo::puppet::MAX_WARP_PIXELS`].
+/// [`photostore_algo::puppet::MAX_WARP_PIXELS`].
 pub fn puppet_surface(surf: &Surface, w: &PuppetWarp, interp: Interp) -> Option<Surface> {
     let b = surf.content_bounds();
     if w.is_identity() || b.is_empty() {
@@ -248,7 +248,7 @@ fn run_on_layer(s: &mut Session, cmd: &str, label: &str, p: &Value, moves: bool,
         let group = crate::transform_cmds::group_locks(doc, id);
         let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
         if let LayerContent::Smart(_) = l.content {
-            let sf = SmartFilter { command: cmd.to_string(), params: params.clone(), blend: photocraft_color::BlendMode::Normal, opacity: 1.0, visible: true };
+            let sf = SmartFilter { command: cmd.to_string(), params: params.clone(), blend: photostore_color::BlendMode::Normal, opacity: 1.0, visible: true };
             return crate::smart_cmds::add_smart_filter(doc, id, sf, selection.as_ref());
         }
         if moves {

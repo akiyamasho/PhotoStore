@@ -106,7 +106,7 @@ fn alpha_sum(sh: &ShapeLayer) -> f64 {
     let c = sh.cache.as_ref().unwrap();
     let r = c.content_bounds();
     let fmt = c.format();
-    c.read_region(r).chunks_exact(fmt.channels()).map(|p| f64::from(photocraft_raster::to_rgba(&fmt, p)[3])).sum()
+    c.read_region(r).chunks_exact(fmt.channels()).map(|p| f64::from(photostore_raster::to_rgba(&fmt, p)[3])).sum()
 }
 
 fn selection_mask(s: &Session) -> Vec<f32> {
@@ -164,7 +164,7 @@ fn shape_create_fill_stroke_and_composite() {
     assert_eq!(r["fill"], "#ff0000");
     assert_eq!(r["stroke"]["align"], "outside");
     assert_eq!(r["bounds"], json!([16, 16, 68, 68]));
-    let f = photocraft_compose::flatten(doc(&s));
+    let f = photostore_compose::flatten(doc(&s));
     let px = |x: i32, y: i32| f.get(x, y);
     assert!(px(50, 50)[0] > 0.99 && px(50, 50)[2] < 0.01);
     assert!(px(18, 50)[2] > 0.99 && px(18, 50)[0] < 0.01);
@@ -239,12 +239,12 @@ fn shape_rasterize_keeps_pixels() {
     let mut s = session(64, 64, 16);
     let id = s.execute("shape.create", json!({"kind": "ellipse", "rect": [4, 4, 40, 30]})).unwrap()["layer"].as_u64().unwrap();
     let before = shape(&s, id).cache.unwrap();
-    let flat = photocraft_compose::flatten(doc(&s));
+    let flat = photostore_compose::flatten(doc(&s));
     s.execute("layer.rasterize.shape", json!({"layer": id})).unwrap();
     let l = doc(&s).layer(LayerId(id)).unwrap();
     assert!(matches!(l.content, LayerContent::Raster(_)));
     assert_eq!(l.surface().unwrap(), &before);
-    assert_eq!(photocraft_compose::flatten(doc(&s)).px, flat.px);
+    assert_eq!(photostore_compose::flatten(doc(&s)).px, flat.px);
     assert!(s.execute("shape.rasterize", json!({"layer": id})).is_err());
 }
 
@@ -489,7 +489,7 @@ fn rasterizing_a_vector_mask_keeps_what_the_masks_show() {
             s.execute("path.set", json!({"path": {"subpaths": [{"knots": [[16, 16], [48, 16], [48, 48], [16, 48]]}]}})).unwrap();
             s.execute("layer.vectorMask.currentPath", json!({})).unwrap();
             s.execute("layer.vectorMask.edit", json!({"feather": vf, "enabled": enabled})).unwrap();
-            let before = photocraft_compose::flatten(doc(&s));
+            let before = photostore_compose::flatten(doc(&s));
             let steps = s.active().unwrap().history.past_len();
             s.execute("layer.rasterize.vectorMask", json!({})).unwrap();
             let l = doc(&s).layer(id).unwrap();
@@ -497,11 +497,11 @@ fn rasterizing_a_vector_mask_keeps_what_the_masks_show() {
             // An integer mask stores the soft values rounded to its depth (a mask made from a
             // selection is 8-bit at every document depth).
             let tol = match l.mask.as_ref().unwrap().surface.format().sample {
-                photocraft_color::SampleType::U8 => 1.5 / 255.0,
+                photostore_color::SampleType::U8 => 1.5 / 255.0,
                 _ => 1e-3,
             };
             assert_eq!(s.active().unwrap().history.past_len(), steps + 1, "{what}: one history step");
-            let after = photocraft_compose::flatten(doc(&s));
+            let after = photostore_compose::flatten(doc(&s));
             let worst = before.px.iter().zip(&after.px).flat_map(|(a, b)| (0..4).map(move |c| (a[c] - b[c]).abs())).fold(0.0f32, f32::max);
             assert!(worst <= tol, "{what}: the composite changed by {worst}");
             s.undo();
@@ -520,32 +520,32 @@ fn vector_mask_commands_and_compositing() {
     s.execute("path.fill", json!({"name": "all", "color": "#000000"})).unwrap();
     // Reveal All: nothing hidden.
     s.execute("layer.vectorMask.revealAll", json!({})).unwrap();
-    let f = photocraft_compose::flatten(doc(&s));
+    let f = photostore_compose::flatten(doc(&s));
     assert!(f.get(80, 80)[0] < 0.01);
     // Current path → only the left half shows the black layer.
     s.execute("path.set", json!({"path": {"subpaths": [{"knots": [[0, 0], [50, 0], [50, 100], [0, 100]]}]}})).unwrap();
     s.execute("layer.vectorMask.currentPath", json!({})).unwrap();
-    let f = photocraft_compose::flatten(doc(&s));
+    let f = photostore_compose::flatten(doc(&s));
     assert!(f.get(20, 50)[0] < 0.01 && f.get(80, 50)[0] > 0.99);
     // Disable → all black again; toggling re-enables.
     s.execute("layer.vectorMask.enabled", json!({})).unwrap();
-    assert!(photocraft_compose::flatten(doc(&s)).get(80, 50)[0] < 0.01);
+    assert!(photostore_compose::flatten(doc(&s)).get(80, 50)[0] < 0.01);
     s.execute("layer.vectorMask.enabled", json!({})).unwrap();
     // Density 50%: the hidden half shows half grey.
     let r = s.execute("layer.vectorMask.edit", json!({"density": 50})).unwrap();
     assert_eq!(r["density"], 50.0);
-    assert!((photocraft_compose::flatten(doc(&s)).get(80, 50)[0] - 0.5).abs() < 0.01);
+    assert!((photostore_compose::flatten(doc(&s)).get(80, 50)[0] - 0.5).abs() < 0.01);
     s.execute("layer.vectorMask.edit", json!({"density": 100})).unwrap();
     // Hide All.
     s.execute("layer.vectorMask.hideAll", json!({})).unwrap();
-    assert!(photocraft_compose::flatten(doc(&s)).get(20, 50)[0] > 0.99);
+    assert!(photostore_compose::flatten(doc(&s)).get(20, 50)[0] > 0.99);
     // Rasterize into the pixel mask: same composite, no vector mask left.
     s.execute("layer.vectorMask.currentPath", json!({})).unwrap();
-    let before = photocraft_compose::flatten(doc(&s));
+    let before = photostore_compose::flatten(doc(&s));
     s.execute("layer.rasterize.vectorMask", json!({})).unwrap();
     let l = doc(&s).layer(LayerId(id)).unwrap();
     assert!(l.vector_mask.is_none() && l.mask.is_some());
-    assert_eq!(photocraft_compose::flatten(doc(&s)).px, before.px);
+    assert_eq!(photostore_compose::flatten(doc(&s)).px, before.px);
     // Delete / undo.
     s.undo();
     s.execute("layer.vectorMask.delete", json!({})).unwrap();

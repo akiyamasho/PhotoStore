@@ -4,16 +4,16 @@
 
 use std::sync::Arc;
 
-use photocraft_doc::Document;
+use photostore_doc::Document;
 use serde_json::{Map, Value, json};
 
 use crate::state::DialogKind;
 use crate::theme::Tokens;
-use crate::{ExportSettings, PhotocraftApp};
+use crate::{ExportSettings, PhotoStoreApp};
 
 const FORMATS: [(&str, &str); 5] = [("png", "PNG"), ("jpg", "JPG"), ("webp", "WebP"), ("tif", "TIFF"), ("tga", "TGA")];
 
-pub fn open(app: &mut PhotocraftApp) -> Result<u64, String> {
+pub fn open(app: &mut PhotoStoreApp) -> Result<u64, String> {
     let st = app.session.active().ok_or("no document")?;
     let mut f = Map::new();
     f.insert("__export".into(), json!(true));
@@ -30,9 +30,9 @@ pub fn open(app: &mut PhotocraftApp) -> Result<u64, String> {
 }
 
 /// Layer › Export As…: the same dialog for just the active layer (trimmed to its pixels).
-pub fn open_layer(app: &mut PhotocraftApp, layer: photocraft_doc::LayerId) -> Result<u64, String> {
+pub fn open_layer(app: &mut PhotoStoreApp, layer: photostore_doc::LayerId) -> Result<u64, String> {
     let st = app.session.active().ok_or("no document")?;
-    let ldoc = photocraft_engine::layer_menu_cmds::layer_document(&st.doc, layer).map_err(|e| e.to_string())?;
+    let ldoc = photostore_engine::layer_menu_cmds::layer_document(&st.doc, layer).map_err(|e| e.to_string())?;
     let id = open(app)?;
     if let Some(d) = app.ui.dialogs.iter_mut().find(|d| d.id == id) {
         d.fields.insert("__layer".into(), json!(layer.0));
@@ -44,7 +44,7 @@ pub fn open_layer(app: &mut PhotocraftApp, layer: photocraft_doc::LayerId) -> Re
 }
 
 /// Layer › Quick Export as PNG.
-pub fn quick_export_layer_png(app: &mut PhotocraftApp, layer: photocraft_doc::LayerId) -> Result<Value, String> {
+pub fn quick_export_layer_png(app: &mut PhotoStoreApp, layer: photostore_doc::LayerId) -> Result<Value, String> {
     let mut f = Map::new();
     f.insert("format".into(), json!("png"));
     f.insert("transparency".into(), json!(true));
@@ -54,10 +54,10 @@ pub fn quick_export_layer_png(app: &mut PhotocraftApp, layer: photocraft_doc::La
 }
 
 /// The document a dialog exports: the whole image, or one layer (`__layer`).
-fn source_document(app: &PhotocraftApp, f: &Map<String, Value>) -> Result<Arc<Document>, String> {
+fn source_document(app: &PhotoStoreApp, f: &Map<String, Value>) -> Result<Arc<Document>, String> {
     let st = app.session.active().ok_or("no document")?;
     match f.get("__layer").and_then(Value::as_u64) {
-        Some(id) => photocraft_engine::layer_menu_cmds::layer_document(&st.doc, photocraft_doc::LayerId(id)).map(Arc::new).map_err(|e| e.to_string()),
+        Some(id) => photostore_engine::layer_menu_cmds::layer_document(&st.doc, photostore_doc::LayerId(id)).map(Arc::new).map_err(|e| e.to_string()),
         None => Ok(st.doc.clone()),
     }
 }
@@ -72,7 +72,7 @@ fn n(f: &Map<String, Value>, k: &str, d: f64) -> f64 {
 /// The document as exported: scaled (engine Image Size, bicubic) and flattened over white when
 /// transparency is off or the format has no alpha.
 fn export_document(doc: &Document, f: &Map<String, Value>, max_side: Option<u32>) -> Result<Document, String> {
-    let mut s = photocraft_engine::Session::new();
+    let mut s = photostore_engine::Session::new();
     s.add_document(doc.clone(), None);
     let mut scale = n(f, "scale", 100.0) / 100.0;
     if let Some(m) = max_side {
@@ -103,7 +103,7 @@ fn scaled_size(w: f64, h: f64, scale: f64) -> (f64, f64) {
 
 /// Export As already supports lossy WebP; reuse the Quick Export defaults when
 /// choosing that format so both flows expose the same quality and lossless options.
-fn set_format_defaults(f: &mut Map<String, Value>, fmt: &str, prefs: &photocraft_engine::prefs::Export) {
+fn set_format_defaults(f: &mut Map<String, Value>, fmt: &str, prefs: &photostore_engine::prefs::Export) {
     f.insert("format".into(), json!(fmt));
     match fmt {
         "jpg" => {
@@ -139,7 +139,7 @@ fn settings(f: &Map<String, Value>) -> ExportSettings {
 }
 
 /// Estimated size (bytes) from a ≤512 px proxy encode, scaled by pixel count.
-fn estimate(app: &PhotocraftApp, doc: &Document, f: &Map<String, Value>) -> Option<u64> {
+fn estimate(app: &PhotoStoreApp, doc: &Document, f: &Map<String, Value>) -> Option<u64> {
     let export = app.services.export.as_ref()?;
     let proxy = export_document(doc, f, Some(512)).ok()?;
     let (bytes, _) = export(&proxy, &format!("estimate.{}", s_fmt(f)), &settings(f)).ok()?;
@@ -149,7 +149,7 @@ fn estimate(app: &PhotocraftApp, doc: &Document, f: &Map<String, Value>) -> Opti
     Some((bytes.len() as f64 * full / small) as u64)
 }
 
-pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
+pub fn body(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     let t = Tokens::get(ui.ctx());
     let Some(doc) = app.session.active().map(|s| s.doc.clone()) else { return };
     ui.horizontal_top(|ui| {
@@ -221,7 +221,7 @@ pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Valu
                 None => {
                     let src = source_document(app, f).unwrap_or_else(|_| doc.clone());
                     let size = estimate(app, &src, f);
-                    let img = photocraft_compose::thumbnail(&export_document(&src, f, Some(360)).unwrap_or_else(|_| (*src).clone()), 360);
+                    let img = photostore_compose::thumbnail(&export_document(&src, f, Some(360)).unwrap_or_else(|_| (*src).clone()), 360);
                     let color = egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.pixels);
                     let tex = Arc::new(ui.ctx().load_texture("export-preview", color, egui::TextureOptions::LINEAR));
                     ui.data_mut(|d| d.insert_temp(key, (sig, size, tex.clone())));
@@ -243,7 +243,7 @@ pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Valu
 }
 
 /// Export with the dialog's settings: choose a path, render, encode, write.
-pub fn confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value, String> {
+pub fn confirm(app: &mut PhotoStoreApp, f: &Map<String, Value>) -> Result<Value, String> {
     let doc = source_document(app, f)?;
     let stem = doc.name.rsplit_once('.').map_or(doc.name.as_str(), |(a, _)| a).to_string();
     let ext = s_fmt(f);
@@ -265,7 +265,7 @@ pub fn confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value,
 /// File › Export › Quick Export as PNG: the format, quality, metadata, colour space and location
 /// from File › Export › Export Preferences (engine `file.export.quickExport`). On the web (no
 /// file system) it falls back to a PNG download through the export service.
-pub fn quick_export_png(app: &mut PhotocraftApp) -> Result<Value, String> {
+pub fn quick_export_png(app: &mut PhotoStoreApp) -> Result<Value, String> {
     if !cfg!(target_arch = "wasm32") {
         let prefs = app.session.prefs().export.clone();
         let fmt = serde_json::to_value(prefs.quick_export_format).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "png".into());
@@ -290,7 +290,7 @@ pub fn quick_export_png(app: &mut PhotocraftApp) -> Result<Value, String> {
 }
 
 /// Runs Quick Export with `p` (an explicit `path`, or none for the document's folder).
-fn quick_export(app: &mut PhotocraftApp, p: Value) -> Result<Value, String> {
+fn quick_export(app: &mut PhotoStoreApp, p: Value) -> Result<Value, String> {
     let r = app.run("file.export.quickExport", p)?;
     app.ui.status = format!("Exported {}", r["path"].as_str().unwrap_or_default());
     Ok(r)
@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn export_document_scales_height_when_rounded_width_is_unchanged() {
-        use photocraft_doc::{Color, ColorMode, SampleType, Size};
+        use photostore_doc::{Color, ColorMode, SampleType, Size};
 
         for depth in [SampleType::U8, SampleType::U16, SampleType::F32] {
             for (width, height, scale, expected) in [
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn export_document_proxy_limits_both_dimensions_before_rounding() {
-        use photocraft_doc::{Color, ColorMode, SampleType, Size};
+        use photostore_doc::{Color, ColorMode, SampleType, Size};
 
         for (width, height, scale, max_side, expected) in
             [(1, 1000, 100, 360, (1, 360)), (1, 1000, 50, 360, (1, 360)), (1, 1000, 25, 360, (1, 250)), (13, 20, 50, 8, (5, 8)), (20, 13, 50, 8, (8, 5))]
@@ -349,10 +349,10 @@ mod tests {
     fn export_document_scales_and_flattens() {
         let doc = Document::with_background(
             "x",
-            photocraft_doc::Size::new(200, 100),
-            photocraft_doc::ColorMode::Rgb,
-            photocraft_doc::SampleType::U8,
-            photocraft_doc::Color::WHITE,
+            photostore_doc::Size::new(200, 100),
+            photostore_doc::ColorMode::Rgb,
+            photostore_doc::SampleType::U8,
+            photostore_doc::Color::WHITE,
         );
         let mut f = Map::new();
         f.insert("format".into(), json!("jpg"));
@@ -376,10 +376,10 @@ mod tests {
         for (src_h, want_h) in [(100u32, 50u32), (200, 100)] {
             let doc = Document::with_background(
                 "x",
-                photocraft_doc::Size::new(1, src_h),
-                photocraft_doc::ColorMode::Rgb,
-                photocraft_doc::SampleType::U8,
-                photocraft_doc::Color::WHITE,
+                photostore_doc::Size::new(1, src_h),
+                photostore_doc::ColorMode::Rgb,
+                photostore_doc::SampleType::U8,
+                photostore_doc::Color::WHITE,
             );
             let out = export_document(&doc, &f, None).unwrap();
             assert_eq!((out.size.width, out.size.height), (1, want_h), "1 × {src_h} at 50%");
@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn switching_export_formats_uses_independent_quality_preferences() {
-        let prefs = photocraft_engine::prefs::Export { jpeg_quality: 43, webp_quality: 72, webp_lossless: false, ..Default::default() };
+        let prefs = photostore_engine::prefs::Export { jpeg_quality: 43, webp_quality: 72, webp_lossless: false, ..Default::default() };
         let mut fields = Map::new();
         set_format_defaults(&mut fields, "webp", &prefs);
         assert_eq!(fields["quality"], 72);
@@ -409,7 +409,7 @@ mod tests {
         assert_eq!(settings(&fields).jpeg_quality, Some(43));
         assert_eq!(settings(&fields).webp_quality, None);
 
-        set_format_defaults(&mut fields, "webp", &photocraft_engine::prefs::Export::default());
+        set_format_defaults(&mut fields, "webp", &photostore_engine::prefs::Export::default());
         assert!(settings(&fields).webp_lossless, "default WebP Quick Export mode is lossless");
         assert_eq!(settings(&fields).webp_quality, None);
     }

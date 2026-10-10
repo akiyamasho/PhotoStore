@@ -1,5 +1,5 @@
 //! Layered TIFF: Photoshop layer data carried in the TIFF tags 37724 (`ImageSourceData`) and
-//! 34377 (image resources), see [`photocraft_psd::tiff`].
+//! 34377 (image resources), see [`photostore_psd::tiff`].
 //!
 //! Import rebuilds a PSD model from the TIFF's pixels plus those two tags and hands it to the
 //! PSD importer, so everything the PSD path understands (groups, masks, effects, type, shapes,
@@ -10,12 +10,12 @@
 
 use std::sync::Arc;
 
-use photocraft_codecs::{self as codecs, ChannelLayout, Format, Image, SampleType as CSample};
-use photocraft_color::ColorMode;
-use photocraft_doc::Document;
-use photocraft_psd::resources::ids;
-use photocraft_psd::tiff::{ByteOrder, ImageSourceData, resources_from_bytes, resources_to_bytes};
-use photocraft_psd::{ColorMode as PsdMode, Compression, Header, ImageData, ImageResource, ResolutionInfo};
+use photostore_codecs::{self as codecs, ChannelLayout, Format, Image, SampleType as CSample};
+use photostore_color::ColorMode;
+use photostore_doc::Document;
+use photostore_psd::resources::ids;
+use photostore_psd::tiff::{ByteOrder, ImageSourceData, resources_from_bytes, resources_to_bytes};
+use photostore_psd::{ColorMode as PsdMode, Compression, Header, ImageData, ImageResource, ResolutionInfo};
 
 use crate::flat::{csample, encode_image, image_to_document, layout_for, single_layer, try_buffer};
 use crate::psd_export::{PsdExportOptions, document_to_psd_with};
@@ -32,7 +32,7 @@ pub fn would_write_layers(doc: &Document) -> bool {
 
 /// Documents a layered TIFF can hold: the TIFF composite must be in the document's model so
 /// that the layer channels inside the tag match it (Lab TIFFs are not decoded or encoded by
-/// `photocraft-codecs`), and there must be layers to keep (a Multichannel document has none:
+/// `photostore-codecs`), and there must be layers to keep (a Multichannel document has none:
 /// its channels are the image).
 fn layered_mode(doc: &Document) -> bool {
     matches!(doc.pixel_format().mode, ColorMode::Grayscale | ColorMode::Rgb | ColorMode::Cmyk) && doc.mode != ColorMode::Multichannel && !doc.layers.is_empty()
@@ -233,12 +233,12 @@ pub(crate) fn export_layered(doc: &Document, opts: &ExportOptions) -> Result<Exp
 }
 
 /// Removes the blocks a document kept verbatim from a little-endian TIFF because their layout
-/// is unknown ([`photocraft_psd::TaggedBlock::is_foreign_order`]) before `file` is written as a
+/// is unknown ([`photostore_psd::TaggedBlock::is_foreign_order`]) before `file` is written as a
 /// PSD: their bytes are in the wrong order for a PSD and cannot be converted. Returns a warning
-/// per block dropped. A save back to TIFF keeps them (see [`photocraft_psd::tiff`]).
-pub fn strip_foreign_order_blocks(file: &mut photocraft_psd::PsdFile) -> Vec<String> {
+/// per block dropped. A save back to TIFF keeps them (see [`photostore_psd::tiff`]).
+pub fn strip_foreign_order_blocks(file: &mut photostore_psd::PsdFile) -> Vec<String> {
     let mut warnings = Vec::new();
-    let mut strip = |blocks: &mut Vec<photocraft_psd::TaggedBlock>, owner: &str| {
+    let mut strip = |blocks: &mut Vec<photostore_psd::TaggedBlock>, owner: &str| {
         blocks.retain(|b| {
             let keep = !b.is_foreign_order();
             if !keep {

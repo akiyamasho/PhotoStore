@@ -7,13 +7,13 @@
 //! inks (`Document::duotone`), which display and flat export render through. Like Photoshop the
 //! conversions flatten (Indexed, Bitmap) and require a grayscale source (Bitmap, Duotone).
 
-use photocraft_algo::quantize::{self, BitmapMethod, Dither, Forced, HalftoneShape, PaletteKind};
-use photocraft_algo::transform::{Homography, Interp};
-use photocraft_color::{ColorMode, PixelFormat, SampleType};
-use photocraft_doc::adjust::CurvePoint;
-use photocraft_doc::{ColorTable, Document, Duotone, DuotoneInk, Layer, LayerContent, LayerId, Size};
-use photocraft_geom::Affine;
-use photocraft_raster::Surface;
+use photostore_algo::quantize::{self, BitmapMethod, Dither, Forced, HalftoneShape, PaletteKind};
+use photostore_algo::transform::{Homography, Interp};
+use photostore_color::{ColorMode, PixelFormat, SampleType};
+use photostore_doc::adjust::CurvePoint;
+use photostore_doc::{ColorTable, Document, Duotone, DuotoneInk, Layer, LayerContent, LayerId, Size};
+use photostore_geom::Affine;
+use photostore_raster::Surface;
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
@@ -87,9 +87,9 @@ pub(crate) fn rotate_arbitrary(s: &mut Session, p: &Value) -> Result<Value> {
             if background && let Some(surf) = l.surface_mut() {
                 // The Background stays a Background: rotated pixels over the background colour.
                 let src = surf.content_bounds();
-                let rotated = photocraft_algo::transform::warp_surface(surf, src, &h, interp);
+                let rotated = photostore_algo::transform::warp_surface(surf, src, &h, interp);
                 let mut base = Surface::new(fmt);
-                let fill = photocraft_raster::from_rgba(&fmt, bg);
+                let fill = photostore_raster::from_rgba(&fmt, bg);
                 base.write_region(canvas, &fill.repeat(canvas.width() as usize * canvas.height() as usize));
                 crate::transform_cmds::composite_over(&mut base, &rotated);
                 base.prune();
@@ -102,7 +102,7 @@ pub(crate) fn rotate_arbitrary(s: &mut Session, p: &Value) -> Result<Value> {
                 let locks = l.locks;
                 l.locks.position = false;
                 l.locks.all = false;
-                crate::transform_cmds::transform_layer(None, photocraft_doc::Locks::default(), l, &h, Some(a), interp)?;
+                crate::transform_cmds::transform_layer(None, photostore_doc::Locks::default(), l, &h, Some(a), interp)?;
                 l.locks = locks;
             }
             // What Free Transform leaves alone: unlinked vector masks, gradient angles, artboards…
@@ -127,7 +127,7 @@ pub(crate) fn rotate_arbitrary(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// The flattened image as straight RGBA (over white when `opaque`).
 fn composite(doc: &Document, opaque: bool) -> Vec<[f32; 4]> {
-    let buf = photocraft_compose::flatten(doc);
+    let buf = photostore_compose::flatten(doc);
     if opaque { buf.over_background([1.0, 1.0, 1.0]).px } else { buf.px }
 }
 
@@ -140,7 +140,7 @@ fn single_layer(doc: &mut Document, active: &mut Option<LayerId>, mode: ColorMod
     let mut pixel = vec![0.0; fmt.channels()];
     let mut data = Vec::new();
     for q in px {
-        photocraft_raster::from_rgba_into(&fmt, *q, &mut pixel);
+        photostore_raster::from_rgba_into(&fmt, *q, &mut pixel);
         data.extend_from_slice(&pixel);
     }
     let mut l = Layer::raster(name, fmt);
@@ -315,7 +315,7 @@ fn color_table(s: &mut Session, p: &Value) -> Result<Value> {
             let n = fmt.channels();
             let mut data = surf.read_region(r);
             for q in data.chunks_exact_mut(n) {
-                let c = photocraft_raster::to_rgba(&fmt, q);
+                let c = photostore_raster::to_rgba(&fmt, q);
                 if c[3] <= 0.0 {
                     continue;
                 }
@@ -323,7 +323,7 @@ fn color_table(s: &mut Session, p: &Value) -> Result<Value> {
                 let alpha = if table.transparent == Some(i as u8) { 0.0 } else { c[3] };
                 let nc = if i < table.colors.len() { table.rgb(i) } else { table.rgb(table.nearest([c[0], c[1], c[2]])) };
                 let mut enc = [0.0f32; 8];
-                let m = photocraft_raster::from_rgba_into(&fmt, [nc[0], nc[1], nc[2], alpha], &mut enc);
+                let m = photostore_raster::from_rgba_into(&fmt, [nc[0], nc[1], nc[2], alpha], &mut enc);
                 q.copy_from_slice(&enc[..m]);
             }
             surf.write_region(r, &data);
@@ -355,7 +355,7 @@ fn bitmap(s: &mut Session, p: &Value) -> Result<Value> {
     };
     s.edit("Bitmap", |doc, active| {
         let px = composite(doc, true);
-        let mut gray: Vec<f32> = px.iter().map(|q| photocraft_color::convert::rgb_to_gray([q[0], q[1], q[2]])).collect();
+        let mut gray: Vec<f32> = px.iter().map(|q| photostore_color::convert::rgb_to_gray([q[0], q[1], q[2]])).collect();
         quantize::to_bitmap(&mut gray, doc.size.width as usize, method);
         let out: Vec<[f32; 4]> = gray.iter().map(|g| [*g, *g, *g, 1.0]).collect();
         single_layer(doc, active, ColorMode::Bitmap, &out, "Background", true);

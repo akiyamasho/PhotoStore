@@ -1,7 +1,7 @@
 //! Filters refuse a pixel-locked (or fully locked) layer and leave it unchanged, as painting
 //! does (#1102).
 
-use photocraft_engine::Session;
+use photostore_engine::Session;
 use serde_json::json;
 
 fn layered() -> Session {

@@ -154,7 +154,7 @@ fn all_pdn_blend_modes_and_layer_properties_import_and_save_natively() {
             assert!(saved.warnings.is_empty());
             let back = crate::import("sample.pcraft", &saved.bytes).unwrap().document;
             assert_eq!(doc.layers, back.layers);
-            assert_eq!(photocraft_compose::flatten(&doc).px, photocraft_compose::flatten(&back).px);
+            assert_eq!(photostore_compose::flatten(&doc).px, photostore_compose::flatten(&back).px);
         }
     }
 }
@@ -222,9 +222,9 @@ proptest::proptest! {
 #[test]
 fn psd_export_reports_paint_net_blend_loss() {
     let mut doc = crate::import("sample.pdn", &fixture(&[5], false, false)).unwrap().document;
-    doc.layers[0].effects.items.push(photocraft_doc::effects::Effect::ColorOverlay {
-        common: photocraft_doc::effects::FxCommon::new(BlendMode::Glow, 1.0),
-        color: photocraft_color::Color::BLACK,
+    doc.layers[0].effects.items.push(photostore_doc::effects::Effect::ColorOverlay {
+        common: photostore_doc::effects::FxCommon::new(BlendMode::Glow, 1.0),
+        color: photostore_color::Color::BLACK,
     });
     let result = crate::export(&doc, "sample.psd", &Default::default()).unwrap();
     assert!(result.warnings.iter().any(|s| s.contains("Reflect") && s.contains("no PSD equivalent")));

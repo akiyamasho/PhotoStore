@@ -18,7 +18,7 @@
 
 use serde_json::json;
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::canvas::ToolEvent;
 use crate::state::Tool;
 
@@ -75,17 +75,17 @@ pub struct MoveDrag {
     dup_from: Option<usize>,
 }
 
-fn past_len(app: &PhotocraftApp) -> Option<usize> {
+fn past_len(app: &PhotoStoreApp) -> Option<usize> {
     app.session.active().map(|st| st.history.past_len())
 }
 
-fn moving(app: &PhotocraftApp) -> bool {
+fn moving(app: &PhotoStoreApp) -> bool {
     app.drag.as_ref().is_some_and(|d| d.tool == Tool::Move)
 }
 
 /// Duplicates the selected layers (the copies become the selection), remembering the history
 /// length before so [`fold_history`] can merge the copy and the move into one step.
-fn duplicate(app: &mut PhotocraftApp) -> Option<usize> {
+fn duplicate(app: &mut PhotoStoreApp) -> Option<usize> {
     let before = past_len(app)?;
     // In place: the copy follows the pointer from the original, artboards too (#1531).
     match app.run("layer.duplicate", json!({"inPlace": true})) {
@@ -98,7 +98,7 @@ fn duplicate(app: &mut PhotocraftApp) -> Option<usize> {
 }
 
 /// Merges every history step after `from` into one "Duplicate + Move" step.
-fn fold_history(app: &mut PhotocraftApp, from: usize) {
+fn fold_history(app: &mut PhotoStoreApp, from: usize) {
     let Some(st) = app.session.active_mut() else { return };
     while st.history.past_len() > from + 1 {
         if !st.history.purge_last() {
@@ -112,7 +112,7 @@ fn fold_history(app: &mut PhotocraftApp, from: usize) {
 
 /// Rewrites a Move-tool pointer event for the held modifiers: ⇧ locks it to an axis, and the
 /// first real movement of an ⌥-drag duplicates the layers being moved. Other tools pass through.
-pub fn filter_event(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifiers) -> ToolEvent {
+pub fn filter_event(app: &mut PhotoStoreApp, ev: ToolEvent, mods: egui::Modifiers) -> ToolEvent {
     if app.active_tool() != Tool::Move || app.ui.transform.is_some() {
         app.move_mods = MoveDrag::default();
         return ev;
@@ -133,7 +133,7 @@ pub fn filter_event(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifier
     }
 }
 
-fn drag_to(app: &mut PhotocraftApp, p: [f64; 2], mods: egui::Modifiers) -> [f64; 2] {
+fn drag_to(app: &mut PhotoStoreApp, p: [f64; 2], mods: egui::Modifiers) -> [f64; 2] {
     let Some(start) = app.move_mods.start.filter(|_| moving(app)) else { return p };
     // Selected pixels (`move_ui`): ⌥ copied them at the press.
     let pixels = app.drag.as_ref().is_some_and(|d| d.sel_move.is_some());
@@ -152,7 +152,7 @@ fn drag_to(app: &mut PhotocraftApp, p: [f64; 2], mods: egui::Modifiers) -> [f64;
 }
 
 /// Call after the Move tool finished its drag: an ⌥-drag's copy and move become one step.
-pub fn finish(app: &mut PhotocraftApp) {
+pub fn finish(app: &mut PhotoStoreApp) {
     let st = std::mem::take(&mut app.move_mods);
     if let Some(from) = st.dup_from {
         fold_history(app, from);
@@ -161,7 +161,7 @@ pub fn finish(app: &mut PhotocraftApp) {
 
 /// Call when a Move drag ends without moving (its layers were dragged to another document): an
 /// ⌥-drag's copy is taken back.
-pub fn abandon(app: &mut PhotocraftApp) {
+pub fn abandon(app: &mut PhotoStoreApp) {
     if std::mem::take(&mut app.move_mods).dup_from.is_some() {
         app.session.undo();
     }
@@ -169,7 +169,7 @@ pub fn abandon(app: &mut PhotocraftApp) {
 
 /// Arrow keys with the Move tool (or while Free Transform is active): nudge 1 px, ⇧ 10 px;
 /// ⌥ duplicates the layers first. Returns true when a key was used.
-pub fn arrow_keys(app: &mut PhotocraftApp, ctx: &egui::Context) -> bool {
+pub fn arrow_keys(app: &mut PhotoStoreApp, ctx: &egui::Context) -> bool {
     if app.ui.tool != Tool::Move && app.ui.transform.is_none() {
         return selection_arrow_keys(app, ctx);
     }
@@ -190,7 +190,7 @@ pub fn arrow_keys(app: &mut PhotocraftApp, ctx: &egui::Context) -> bool {
 
 /// Moves the selected layers (or the Free Transform box, or the selected pixels) by `(dx, dy)`
 /// pixels.
-pub fn nudge(app: &mut PhotocraftApp, dx: f64, dy: f64, duplicate_first: bool) {
+pub fn nudge(app: &mut PhotoStoreApp, dx: f64, dy: f64, duplicate_first: bool) {
     if let Some(t) = app.ui.transform.as_mut() {
         if t.warp.is_none() {
             t.quad = t.quad.map(|q| [q[0] + dx, q[1] + dy]);
@@ -218,11 +218,11 @@ pub fn nudge(app: &mut PhotocraftApp, dx: f64, dy: f64, duplicate_first: bool) {
 /// (⇧ 10 px) through `select.transformSelection`, one history step per press; the pixels stay
 /// put. A floating piece (⌘-dragged pixels) moves instead, like a plain drag on it. Not while a
 /// drag, a polygon or a Magnetic Lasso border is in progress. Returns true when a key was used.
-fn selection_arrow_keys(app: &mut PhotocraftApp, ctx: &egui::Context) -> bool {
+fn selection_arrow_keys(app: &mut PhotoStoreApp, ctx: &egui::Context) -> bool {
     if !crate::tool_feedback::is_selection_tool(app.ui.tool) || app.drag.is_some() || !app.ui.polygon.is_empty() || app.ui.magnetic.active() {
         return false;
     }
-    let floating = app.session.active().is_some_and(|st| photocraft_engine::float_cmds::floating(st).is_some());
+    let floating = app.session.active().is_some_and(|st| photostore_engine::float_cmds::floating(st).is_some());
     if !floating && !app.session.is_enabled("select.transformSelection") {
         return false;
     }
@@ -282,14 +282,14 @@ mod tests {
         assert!(near(constrain([30.0, 20.0], Some(v), 4), [30.0, 0.0]));
     }
 
-    fn app_with_layer() -> PhotocraftApp {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    fn app_with_layer() -> PhotoStoreApp {
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.session.execute("file.new", json!({"width": 64, "height": 64})).unwrap();
         app.sync_views();
         app.session.execute("layer.new.layer", json!({})).unwrap();
         app.session
             .edit("paint", |doc, a| {
-                doc.layer_mut(a.unwrap()).unwrap().surface_mut().unwrap().fill_rect(photocraft_geom::Rect::new(8, 8, 24, 24), &[1.0, 0.0, 0.0, 1.0]);
+                doc.layer_mut(a.unwrap()).unwrap().surface_mut().unwrap().fill_rect(photostore_geom::Rect::new(8, 8, 24, 24), &[1.0, 0.0, 0.0, 1.0]);
                 Ok(())
             })
             .unwrap();
@@ -301,11 +301,11 @@ mod tests {
         app
     }
 
-    fn bounds(app: &PhotocraftApp, id: photocraft_doc::LayerId) -> photocraft_geom::Rect {
+    fn bounds(app: &PhotoStoreApp, id: photostore_doc::LayerId) -> photostore_geom::Rect {
         app.session.active().unwrap().doc.layer(id).unwrap().surface().unwrap().content_bounds()
     }
 
-    fn drag(app: &mut PhotocraftApp, pts: &[[f64; 2]], mods: egui::Modifiers) {
+    fn drag(app: &mut PhotoStoreApp, pts: &[[f64; 2]], mods: egui::Modifiers) {
         crate::canvas::tool_event(app, ToolEvent::Down { x: pts[0][0], y: pts[0][1], pressure: 1.0 }, mods);
         for p in &pts[1..pts.len() - 1] {
             crate::canvas::tool_event(app, ToolEvent::Move { x: p[0], y: p[1], pressure: 1.0 }, mods);
@@ -319,10 +319,10 @@ mod tests {
         let mut app = app_with_layer();
         let id = app.session.active().unwrap().active_layer.unwrap();
         drag(&mut app, &[[16.0, 16.0], [22.0, 18.0], [26.0, 19.0]], egui::Modifiers::SHIFT);
-        assert_eq!(bounds(&app, id), photocraft_geom::Rect::new(18, 8, 34, 24));
+        assert_eq!(bounds(&app, id), photostore_geom::Rect::new(18, 8, 34, 24));
         // Switching axis mid-drag: the end point decides.
         drag(&mut app, &[[16.0, 16.0], [22.0, 17.0], [18.0, 30.0], [17.0, 36.0]], egui::Modifiers::SHIFT);
-        assert_eq!(bounds(&app, id), photocraft_geom::Rect::new(18, 28, 34, 44));
+        assert_eq!(bounds(&app, id), photostore_geom::Rect::new(18, 28, 34, 44));
     }
 
     #[test]
@@ -336,14 +336,14 @@ mod tests {
         assert_eq!(st.doc.layers.len(), n0 + 1, "one copy");
         let copy = st.active_layer.unwrap();
         assert_ne!(copy, orig);
-        assert_eq!(bounds(&app, orig), photocraft_geom::Rect::new(8, 8, 24, 24), "original untouched");
-        assert_eq!(bounds(&app, copy), photocraft_geom::Rect::new(18, 13, 34, 29));
+        assert_eq!(bounds(&app, orig), photostore_geom::Rect::new(8, 8, 24, 24), "original untouched");
+        assert_eq!(bounds(&app, copy), photostore_geom::Rect::new(18, 13, 34, 29));
         let st = app.session.active().unwrap();
         assert_eq!(st.history.past_len(), h0 + 1, "one undo step");
         assert_eq!(st.history.undo_label(), Some(DUPLICATE_MOVE_LABEL));
         assert!(app.session.undo());
         assert_eq!(app.session.active().unwrap().doc.layers.len(), n0);
-        assert_eq!(bounds(&app, orig), photocraft_geom::Rect::new(8, 8, 24, 24));
+        assert_eq!(bounds(&app, orig), photostore_geom::Rect::new(8, 8, 24, 24));
         // ⌥-click without a drag makes no copy.
         drag(&mut app, &[[16.0, 16.0], [16.0, 16.0]], egui::Modifiers::ALT);
         assert_eq!(app.session.active().unwrap().doc.layers.len(), n0);
@@ -351,7 +351,7 @@ mod tests {
         drag(&mut app, &[[16.0, 16.0], [30.0, 19.0]], egui::Modifiers::SHIFT | egui::Modifiers::ALT);
         let st = app.session.active().unwrap();
         assert_eq!(st.doc.layers.len(), n0 + 1);
-        assert_eq!(bounds(&app, st.active_layer.unwrap()), photocraft_geom::Rect::new(22, 8, 38, 24));
+        assert_eq!(bounds(&app, st.active_layer.unwrap()), photostore_geom::Rect::new(22, 8, 38, 24));
     }
 
     #[test]
@@ -367,7 +367,7 @@ mod tests {
         let st = app.session.active().unwrap();
         assert_eq!(st.doc.layers.len(), n0 + 2);
         assert_eq!(st.history.past_len(), h0 + 1);
-        assert_eq!(bounds(&app, a), photocraft_geom::Rect::new(8, 8, 24, 24));
+        assert_eq!(bounds(&app, a), photostore_geom::Rect::new(8, 8, 24, 24));
         assert!(st.doc.layer(b).is_some());
     }
 
@@ -377,11 +377,11 @@ mod tests {
         let id = app.session.active().unwrap().active_layer.unwrap();
         nudge(&mut app, 10.0, 0.0, false);
         nudge(&mut app, 0.0, -1.0, false);
-        assert_eq!(bounds(&app, id), photocraft_geom::Rect::new(18, 7, 34, 23));
+        assert_eq!(bounds(&app, id), photostore_geom::Rect::new(18, 7, 34, 23));
         let n0 = app.session.active().unwrap().doc.layers.len();
         nudge(&mut app, 1.0, 0.0, true);
         assert_eq!(app.session.active().unwrap().doc.layers.len(), n0 + 1);
-        assert_eq!(bounds(&app, id), photocraft_geom::Rect::new(18, 7, 34, 23));
+        assert_eq!(bounds(&app, id), photostore_geom::Rect::new(18, 7, 34, 23));
         let ctx = egui::Context::default();
         crate::transform_tool::begin(&mut app, &ctx).unwrap();
         let q0 = app.ui.transform.as_ref().unwrap().quad;
@@ -390,7 +390,7 @@ mod tests {
     }
 
     /// One key press through `arrow_keys`, as egui delivers it.
-    fn press(app: &mut PhotocraftApp, key: egui::Key, mods: egui::Modifiers) -> bool {
+    fn press(app: &mut PhotoStoreApp, key: egui::Key, mods: egui::Modifiers) -> bool {
         let ctx = egui::Context::default();
         ctx.input_mut(|i| {
             i.modifiers = mods;
@@ -407,13 +407,13 @@ mod tests {
         let id = app.session.active().unwrap().active_layer.unwrap();
         let n0 = app.session.active().unwrap().doc.layers.len();
         assert!(press(&mut app, egui::Key::ArrowRight, egui::Modifiers::NONE));
-        assert_eq!(bounds(&app, id), photocraft_geom::Rect::new(9, 8, 25, 24));
+        assert_eq!(bounds(&app, id), photostore_geom::Rect::new(9, 8, 25, 24));
         assert!(press(&mut app, egui::Key::ArrowDown, egui::Modifiers::SHIFT));
-        assert_eq!(bounds(&app, id), photocraft_geom::Rect::new(9, 18, 25, 34));
+        assert_eq!(bounds(&app, id), photostore_geom::Rect::new(9, 18, 25, 34));
         assert!(press(&mut app, egui::Key::ArrowLeft, egui::Modifiers::ALT));
         let st = app.session.active().unwrap();
         assert_eq!(st.doc.layers.len(), n0 + 1, "⌥ duplicated first");
-        assert_eq!(bounds(&app, id), photocraft_geom::Rect::new(9, 18, 25, 34), "the original stays");
+        assert_eq!(bounds(&app, id), photostore_geom::Rect::new(9, 18, 25, 34), "the original stays");
     }
 
     /// #1428: with a selection tool the arrows nudge the selection outline (⇧ 10 px), one step
@@ -425,13 +425,13 @@ mod tests {
         app.ui.tool = Tool::Lasso;
         assert!(!press(&mut app, egui::Key::ArrowRight, egui::Modifiers::NONE), "no selection: not used");
         app.session.execute("select.rect", json!({"x": 4, "y": 4, "width": 10, "height": 10})).unwrap();
-        let sel = |app: &PhotocraftApp| app.session.active().unwrap().doc.selection.as_ref().unwrap().content_bounds();
+        let sel = |app: &PhotoStoreApp| app.session.active().unwrap().doc.selection.as_ref().unwrap().content_bounds();
         let h0 = app.session.active().unwrap().history.past_len();
         assert!(press(&mut app, egui::Key::ArrowRight, egui::Modifiers::NONE));
         assert!(press(&mut app, egui::Key::ArrowDown, egui::Modifiers::SHIFT));
-        assert_eq!(sel(&app), photocraft_geom::Rect::new(5, 14, 15, 24));
+        assert_eq!(sel(&app), photostore_geom::Rect::new(5, 14, 15, 24));
         assert_eq!(app.session.active().unwrap().history.past_len(), h0 + 2);
-        assert_eq!(bounds(&app, id), photocraft_geom::Rect::new(8, 8, 24, 24), "pixels stay put");
+        assert_eq!(bounds(&app, id), photostore_geom::Rect::new(8, 8, 24, 24), "pixels stay put");
         // Not while a polygon is being drawn.
         app.ui.tool = Tool::PolygonLasso;
         app.ui.polygon = vec![[1.0, 1.0]];

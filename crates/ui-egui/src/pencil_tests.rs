@@ -5,12 +5,12 @@ use egui::{Key, Modifiers, Pos2, Rect, vec2};
 use egui_kittest::Harness;
 use serde_json::json;
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::canvas::{ToolEvent, ViewXform, pencil_cursor_rect, tool_event};
 use crate::state::Tool;
 
-fn app() -> PhotocraftApp {
-    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+fn app() -> PhotoStoreApp {
+    let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
     app.run("file.new", json!({"width": 120, "height": 80, "background": "transparent"})).unwrap();
     app.run("tools.setColors", json!({"foreground": "#000000", "background": "#ffffff"})).unwrap();
     app.run("tools.setBrush", json!({"brush": {"size": 3, "hardness": 0.0}})).unwrap();
@@ -22,16 +22,16 @@ fn app() -> PhotocraftApp {
     app
 }
 
-fn layer(app: &PhotocraftApp) -> photocraft_engine::doc::Layer {
+fn layer(app: &PhotoStoreApp) -> photostore_engine::doc::Layer {
     let st = app.session.active().unwrap();
     st.doc.layer(st.active_layer.unwrap()).unwrap().clone()
 }
 
-fn rgba(app: &PhotocraftApp, x: i32, y: i32) -> [f32; 4] {
+fn rgba(app: &PhotoStoreApp, x: i32, y: i32) -> [f32; 4] {
     layer(app).surface().unwrap().rgba(x, y)
 }
 
-fn drag(app: &mut PhotocraftApp, pts: &[(f64, f64)], mods: Modifiers) {
+fn drag(app: &mut PhotoStoreApp, pts: &[(f64, f64)], mods: Modifiers) {
     let (x, y) = pts[0];
     tool_event(app, ToolEvent::Down { x, y, pressure: 1.0 }, mods);
     for &(x, y) in &pts[1..] {
@@ -41,7 +41,7 @@ fn drag(app: &mut PhotocraftApp, pts: &[(f64, f64)], mods: Modifiers) {
     tool_event(app, ToolEvent::Up { x, y }, mods);
 }
 
-fn last(app: &PhotocraftApp) -> (String, serde_json::Value) {
+fn last(app: &PhotoStoreApp) -> (String, serde_json::Value) {
     app.session.journal.last().cloned().unwrap()
 }
 
@@ -140,14 +140,14 @@ fn square_cursor_sits_on_the_pixel_grid() {
 #[test]
 fn b_cycles_brush_pencil_and_mixer_brush() {
     let mut h = Harness::builder().with_size(vec2(1280.0, 800.0)).with_max_steps(64).build_eframe(|cc| {
-        PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
         app.run("file.new", json!({"width": 200, "height": 120})).unwrap();
         app
     });
     h.state_mut().ui.tool = Tool::Move;
     h.run_steps(4);
-    let press = |h: &mut Harness<'_, PhotocraftApp>, m: Modifiers| {
+    let press = |h: &mut Harness<'_, PhotoStoreApp>, m: Modifiers| {
         h.event(egui::Event::Key { key: Key::B, physical_key: None, pressed: true, repeat: false, modifiers: m });
         h.event(egui::Event::Key { key: Key::B, physical_key: None, pressed: false, repeat: false, modifiers: m });
         h.run_steps(2);

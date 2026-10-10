@@ -9,11 +9,11 @@
 //! Writing starts from the layer's original `TySh` (when present) and patches only the text, runs,
 //! paragraphs, fonts, shape and transform, so Photoshop-only settings survive an edit.
 
-use photocraft_color::{Color, ColorMode};
-use photocraft_doc::TextLayer;
-use photocraft_doc::text::{AntiAlias, Caps, CharStyle, Kerning, Orientation, ParagraphRun, ParagraphStyle, TextAlign, TextRun, TextShape, TextWarp};
-use photocraft_geom::Affine;
-use photocraft_psd::descriptor::{Descriptor, Id, UnicodeString, Value as D, VersionedDescriptor};
+use photostore_color::{Color, ColorMode};
+use photostore_doc::TextLayer;
+use photostore_doc::text::{AntiAlias, Caps, CharStyle, Kerning, Orientation, ParagraphRun, ParagraphStyle, TextAlign, TextRun, TextShape, TextWarp};
+use photostore_geom::Affine;
+use photostore_psd::descriptor::{Descriptor, Id, UnicodeString, Value as D, VersionedDescriptor};
 
 use crate::engine_data::{self as ed, Value as E};
 use crate::fonts::guess_from_postscript;
@@ -406,7 +406,7 @@ pub(crate) fn char_style(base: Option<&E>, d: &E, fonts: &[String], k: f32) -> C
     s.discretionary_ligatures = flag("DLigatures").unwrap_or(false);
     for (key, tag) in OPENTYPE_KEYS {
         if flag(key) == Some(true) {
-            s.features.push(photocraft_doc::text::FontFeature { tag: tag.to_string(), value: 1 });
+            s.features.push(photostore_doc::text::FontFeature { tag: tag.to_string(), value: 1 });
         }
     }
     s.kerning = if flag("AutoKerning") == Some(false) { Kerning::Off } else { Kerning::Metrics };

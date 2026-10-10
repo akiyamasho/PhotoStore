@@ -11,8 +11,8 @@ fn main() {
     use objc2_app_kit::{NSApplication, NSEvent};
     use objc2_core_graphics::{CGEvent, CGEventField, CGEventMouseSubtype, CGEventType, CGMouseButton};
     use objc2_foundation::NSPoint;
-    use photocraft_tablet::Sample;
-    use photocraft_tablet::macos::Monitor;
+    use photostore_tablet::Sample;
+    use photostore_tablet::macos::Monitor;
 
     let mtm = MainThreadMarker::new().expect("harness = false runs on the main thread");
     let app = NSApplication::sharedApplication(mtm);

@@ -5,10 +5,10 @@
 
 use std::path::Path;
 
-use photocraft_doc::{DocId, LayerId};
+use photostore_doc::{DocId, LayerId};
 use serde_json::{Map, Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::file_dialog::{FileDialogAnswer, FileDialogRequest};
 use crate::state::DialogKind;
 
@@ -24,7 +24,7 @@ fn no_params(params: &Value) -> bool {
     params.as_object().is_none_or(|o| o.is_empty())
 }
 
-fn current_target(app: &PhotocraftApp) -> Result<(DocId, Option<LayerId>), String> {
+fn current_target(app: &PhotoStoreApp) -> Result<(DocId, Option<LayerId>), String> {
     let state = app.session.active().ok_or("no document")?;
     Ok((state.doc.id, state.active_layer))
 }
@@ -37,7 +37,7 @@ fn picked_path(answer: FileDialogAnswer) -> Result<String, String> {
     }
 }
 
-fn import_file(app: &mut PhotocraftApp, command: &'static str, extensions: &'static [&'static str]) -> Result<Value, String> {
+fn import_file(app: &mut PhotoStoreApp, command: &'static str, extensions: &'static [&'static str]) -> Result<Value, String> {
     let (doc, layer) = current_target(app)?;
     let initial_dir = app.session.active().and_then(|d| d.path.as_deref()).and_then(|p| Path::new(p).parent()).map(|p| p.to_string_lossy().into_owned());
     let extensions = Some(extensions.iter().map(|s| (*s).to_string()).collect());
@@ -52,11 +52,11 @@ fn import_file(app: &mut PhotocraftApp, command: &'static str, extensions: &'sta
     })
 }
 
-fn render_form(app: &mut PhotocraftApp, target: DocId, path: String) -> Result<Value, String> {
+fn render_form(app: &mut PhotoStoreApp, target: DocId, path: String) -> Result<Value, String> {
     app.with_document(target, |app| render_form_on_document(app, target, path))
 }
 
-fn render_form_on_document(app: &mut PhotocraftApp, target: DocId, path: String) -> Result<Value, String> {
+fn render_form_on_document(app: &mut PhotoStoreApp, target: DocId, path: String) -> Result<Value, String> {
     let (start, end, fps) = app
         .session
         .active()
@@ -91,7 +91,7 @@ fn render_form_on_document(app: &mut PhotocraftApp, target: DocId, path: String)
     Ok(json!({"dialog": app.ui.open_dialog(DialogKind::Command, fields)}))
 }
 
-fn render(app: &mut PhotocraftApp) -> Result<Value, String> {
+fn render(app: &mut PhotoStoreApp) -> Result<Value, String> {
     let target = app.active_doc_id()?;
     let stem = app.session.active().map(|s| s.doc.name.rsplit_once('.').map_or(s.doc.name.as_str(), |(n, _)| n)).unwrap_or("Untitled");
     let suggested = format!("{stem}.mp4");
@@ -143,7 +143,7 @@ fn normalized_path(path: &str, format: &str) -> String {
     Path::new(path).with_extension(wanted).to_string_lossy().into_owned()
 }
 
-pub fn confirm(app: &mut PhotocraftApp, fields: &Map<String, Value>) -> Result<Value, String> {
+pub fn confirm(app: &mut PhotoStoreApp, fields: &Map<String, Value>) -> Result<Value, String> {
     let target = fields.get("__targetDoc").and_then(Value::as_u64).map(DocId).ok_or("movie dialog has no target document")?;
     let format = fields.get("format").and_then(Value::as_str).unwrap_or("mp4");
     if !matches!(format, "mp4" | "mov" | "webm" | "gif" | "png") { return Err("unsupported movie output format".into()); }
@@ -171,7 +171,7 @@ pub fn confirm(app: &mut PhotocraftApp, fields: &Map<String, Value>) -> Result<V
 
 /// Handle commands which need a native movie picker or render settings form.
 /// Parameterful calls remain engine calls so automation and scripts keep their existing API.
-pub fn invoke(app: &mut PhotocraftApp, _ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
+pub fn invoke(app: &mut PhotoStoreApp, _ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if !no_params(params) {
         return None;
     }

@@ -12,9 +12,9 @@ version_schema: semver
 release: 1
 section: graphics
 priority: optional
-maintainer: ${PHOTOCRAFT_MAINTAINER}
+maintainer: ${PHOTOSTORE_MAINTAINER}
 vendor: Learning Machines LLC
-homepage: https://getartcraft.com/apps/photostore
+homepage: https://github.com/akiyamasho/PhotoStore/releases
 license: MIT OR Apache-2.0
 description: |-
   Open-source, native image editor with familiar, professional tools.

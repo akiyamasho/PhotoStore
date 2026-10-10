@@ -1,40 +1,40 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
-default-members = ["crates/*", "apps/photocraft", "apps/photocraft-cli", "xtask"]
+default-members = ["crates/*", "apps/photostore", "apps/photostore-cli", "xtask"]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
 
 [workspace.dependencies]
 # internal
-photocraft-geom = { path = "crates/geom" }
-photocraft-color = { path = "crates/color" }
-photocraft-cms = { path = "crates/cms" }
-photocraft-raster = { path = "crates/raster" }
-photocraft-doc = { path = "crates/doc" }
-photocraft-ops = { path = "crates/ops" }
-photocraft-psd = { path = "crates/psd" }
-photocraft-codecs = { path = "crates/codecs" }
-photocraft-raw = { path = "crates/raw" }
-photocraft-affinity = { path = "crates/affinity" }
-photocraft-compose = { path = "crates/compose" }
-photocraft-gpu = { path = "crates/gpu" }
-photocraft-paint = { path = "crates/paint" }
-photocraft-algo = { path = "crates/algo" }
-photocraft-io = { path = "crates/io" }
-photocraft-text = { path = "crates/text" }
-photocraft-vector = { path = "crates/vector" }
-photocraft-format = { path = "crates/format" }
-photocraft-automation = { path = "crates/automation" }
-photocraft-plugins = { path = "crates/plugins" }
-photocraft-engine = { path = "crates/engine" }
-photocraft-ui-egui = { path = "crates/ui-egui" }
-photocraft-testkit = { path = "crates/testkit" }
-photocraft-tablet = { path = "crates/tablet" }
+photostore-geom = { path = "crates/geom" }
+photostore-color = { path = "crates/color" }
+photostore-cms = { path = "crates/cms" }
+photostore-raster = { path = "crates/raster" }
+photostore-doc = { path = "crates/doc" }
+photostore-ops = { path = "crates/ops" }
+photostore-psd = { path = "crates/psd" }
+photostore-codecs = { path = "crates/codecs" }
+photostore-raw = { path = "crates/raw" }
+photostore-affinity = { path = "crates/affinity" }
+photostore-compose = { path = "crates/compose" }
+photostore-gpu = { path = "crates/gpu" }
+photostore-paint = { path = "crates/paint" }
+photostore-algo = { path = "crates/algo" }
+photostore-io = { path = "crates/io" }
+photostore-text = { path = "crates/text" }
+photostore-vector = { path = "crates/vector" }
+photostore-format = { path = "crates/format" }
+photostore-automation = { path = "crates/automation" }
+photostore-plugins = { path = "crates/plugins" }
+photostore-engine = { path = "crates/engine" }
+photostore-ui-egui = { path = "crates/ui-egui" }
+photostore-testkit = { path = "crates/testkit" }
+photostore-tablet = { path = "crates/tablet" }
 
 # external
 thiserror = "2"
@@ -71,7 +71,7 @@ opt-level = 1
 lto = "thin"
 codegen-units = 1
 
-# The browser build (apps/photocraft-web, `data-cargo-profile` in its index.html). Hosts cap the
+# The browser build (apps/photostore-web, `data-cargo-profile` in its index.html). Hosts cap the
 # size of a single file (Cloudflare Pages/Workers: 25 MiB), and the wasm is downloaded on every
 # visit, so this profile optimizes for size: fat LTO, and opt-level "s" for everything except the
 # pixel-processing crates, which keep opt-level 3 so filters and compositing stay fast. panic
@@ -88,15 +88,15 @@ strip = "debuginfo"
 [profile.wasm-release.package."*"]
 opt-level = "s"
 
-[profile.wasm-release.package.photocraft-raster]
+[profile.wasm-release.package.photostore-raster]
 opt-level = 3
-[profile.wasm-release.package.photocraft-color]
+[profile.wasm-release.package.photostore-color]
 opt-level = 3
-[profile.wasm-release.package.photocraft-cms]
+[profile.wasm-release.package.photostore-cms]
 opt-level = 3
-[profile.wasm-release.package.photocraft-compose]
+[profile.wasm-release.package.photostore-compose]
 opt-level = 3
-[profile.wasm-release.package.photocraft-algo]
+[profile.wasm-release.package.photostore-algo]
 opt-level = 3
-[profile.wasm-release.package.photocraft-paint]
+[profile.wasm-release.package.photostore-paint]
 opt-level = 3

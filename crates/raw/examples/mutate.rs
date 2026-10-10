@@ -2,10 +2,10 @@
 //! check that decoding and developing never panics.
 //!
 //! ```text
-//! cargo run --release -p photocraft-raw --example mutate -- ITERATIONS FILE...
+//! cargo run --release -p photostore-raw --example mutate -- ITERATIONS FILE...
 //! ```
 
-use photocraft_raw::{Demosaic, DevelopOptions, Limits, decode, develop_sensor, embedded_preview, identify};
+use photostore_raw::{Demosaic, DevelopOptions, Limits, decode, develop_sensor, embedded_preview, identify};
 
 fn main() {
     let mut args = std::env::args().skip(1);

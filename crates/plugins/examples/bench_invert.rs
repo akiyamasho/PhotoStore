@@ -1,13 +1,13 @@
 //! Times the example Invert plug-in on a large image:
-//! `cargo run -p photocraft-plugins --release --example bench_invert -- [width] [height]`
+//! `cargo run -p photostore-plugins --release --example bench_invert -- [width] [height]`
 //! (default 6000 × 4000 = 24 MP, RGBA 8-bit).
 
 use std::time::Instant;
 
-use photocraft_color::PixelFormat;
-use photocraft_geom::Rect;
-use photocraft_plugins::{Limits, Plugin};
-use photocraft_raster::Surface;
+use photostore_color::PixelFormat;
+use photostore_geom::Rect;
+use photostore_plugins::{Limits, Plugin};
+use photostore_raster::Surface;
 
 fn main() {
     let mut args = std::env::args().skip(1).map(|a| a.parse::<i32>().unwrap_or(0));

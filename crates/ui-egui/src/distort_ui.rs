@@ -9,12 +9,12 @@
 use std::sync::Arc;
 
 use egui::{Color32, ColorImage};
-use photocraft_doc::{Document, LayerContent, LayerId};
-use photocraft_geom::Rect;
-use photocraft_raster::Surface;
+use photostore_doc::{Document, LayerContent, LayerId};
+use photostore_geom::Rect;
+use photostore_raster::Surface;
 use serde_json::{Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::canvas::{ToolEvent, ViewXform};
 
 /// Runtime state of the distortion modes (not serialisable: textures, solvers).
@@ -44,7 +44,7 @@ impl Distort {
 }
 
 /// The active layer's pixels (a pixel layer, or a smart object's rendering) and its id.
-pub(crate) fn active_pixels(app: &PhotocraftApp) -> Result<(LayerId, Surface, bool), String> {
+pub(crate) fn active_pixels(app: &PhotoStoreApp) -> Result<(LayerId, Surface, bool), String> {
     let st = app.session.active().ok_or("no document")?;
     let id = st.active_layer.ok_or("no active layer")?;
     let l = st.doc.layer(id).ok_or("no layer")?;
@@ -84,7 +84,7 @@ pub(crate) fn surface_image(surf: &Surface, r: Rect, max_side: usize) -> ColorIm
 }
 
 /// The document shown on the canvas while Puppet or Perspective Warp previews a layer.
-pub fn display_doc(app: &PhotocraftApp, idx: usize) -> Option<(Arc<Document>, u64)> {
+pub fn display_doc(app: &PhotoStoreApp, idx: usize) -> Option<(Arc<Document>, u64)> {
     if app.session.active_index() != Some(idx) {
         return None;
     }
@@ -98,7 +98,7 @@ pub fn display_doc(app: &PhotocraftApp, idx: usize) -> Option<(Arc<Document>, u6
 }
 
 /// Menu / control routing. `Some` when this module handles the invocation.
-pub fn menu(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
+pub fn menu(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
     let empty = params.as_object().is_none_or(|o| o.is_empty());
     let ui = params.get("ui");
     match id {
@@ -123,7 +123,7 @@ pub fn menu(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: &Val
 }
 
 /// Pointer events (document coordinates) while a mode is active. True when consumed.
-pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifiers) -> bool {
+pub fn pointer(app: &mut PhotoStoreApp, ev: ToolEvent, mods: egui::Modifiers) -> bool {
     if app.distort.liquify.is_some() {
         crate::liquify_ui::pointer(app, ev, mods);
         return true;
@@ -141,7 +141,7 @@ pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifiers) ->
 
 /// Keyboard: ↩ commits, Esc cancels (and Liquify's own shortcuts). True when the key handling
 /// of the rest of the app should be skipped.
-pub fn keys(app: &mut PhotocraftApp, ctx: &egui::Context) -> bool {
+pub fn keys(app: &mut PhotoStoreApp, ctx: &egui::Context) -> bool {
     use egui::{Key, Modifiers};
     let enter = |ctx: &egui::Context| ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
     let esc = |ctx: &egui::Context| ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
@@ -183,7 +183,7 @@ pub fn keys(app: &mut PhotocraftApp, ctx: &egui::Context) -> bool {
 }
 
 /// Canvas overlay for the on-canvas modes.
-pub fn draw_overlay(app: &PhotocraftApp, painter: &egui::Painter, xf: &ViewXform) {
+pub fn draw_overlay(app: &PhotoStoreApp, painter: &egui::Painter, xf: &ViewXform) {
     if let Some(p) = &app.distort.puppet {
         crate::puppet_ui::draw(p, painter, xf);
     }
@@ -193,7 +193,7 @@ pub fn draw_overlay(app: &PhotocraftApp, painter: &egui::Painter, xf: &ViewXform
 }
 
 /// Options bar for the on-canvas modes. True when drawn.
-pub fn options_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) -> bool {
+pub fn options_bar(app: &mut PhotoStoreApp, ui: &mut egui::Ui) -> bool {
     if app.distort.puppet.is_some() {
         crate::puppet_ui::options_bar(app, ui);
         return true;
@@ -206,7 +206,7 @@ pub fn options_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) -> bool {
 }
 
 /// Full-window dialogs (Liquify, Filter Gallery).
-pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
+pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     if app.distort.gallery.is_some() {
         crate::gallery_ui::show(app, ctx);
     }
@@ -216,7 +216,7 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
 }
 
 /// Screen distance (document px) that counts as "on" a handle at the current zoom.
-pub(crate) fn tolerance(app: &PhotocraftApp) -> f64 {
+pub(crate) fn tolerance(app: &PhotoStoreApp) -> f64 {
     let z = app.point_zoom().max(0.01);
     8.0 / f64::from(z)
 }

@@ -1,6 +1,6 @@
 //! Minimum, Maximum, Offset.
 
-use photocraft_geom::Rect;
+use photostore_geom::Rect;
 
 use crate::image::{Edge, Image};
 use crate::{Ctx, Preserve, UndefinedAreas};

@@ -1,6 +1,6 @@
 [package]
-name = "photocraft-io"
-description = "Import/export between photocraft documents and PSD/PSB and flat raster formats"
+name = "photostore-io"
+description = "Import/export between photostore documents and PSD/PSB and flat raster formats"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,25 +12,25 @@ workspace = true
 [features]
 # Real-file corpus tests (opt-in; `cargo xtask test-corpus`). Fail when the corpus is missing.
 corpus = []
-# HEIC/HEIF decode (forwarded to photocraft-codecs; see its `heif` feature).
-heif = ["photocraft-codecs/heif"]
+# HEIC/HEIF decode (forwarded to photostore-codecs; see its `heif` feature).
+heif = ["photostore-codecs/heif"]
 
 [dependencies]
-photocraft-geom = { workspace = true }
-photocraft-color = { workspace = true }
-photocraft-cms = { workspace = true }
-photocraft-raster = { workspace = true }
-photocraft-doc = { workspace = true }
-photocraft-compose = { workspace = true }
-photocraft-algo = { workspace = true }
-photocraft-psd = { workspace = true }
-photocraft-codecs = { workspace = true }
-photocraft-raw = { workspace = true }
-photocraft-affinity = { workspace = true }
-photocraft-text = { workspace = true }
-photocraft-paint = { workspace = true }
-photocraft-vector = { workspace = true }
-photocraft-format = { path = "../format" }
+photostore-geom = { workspace = true }
+photostore-color = { workspace = true }
+photostore-cms = { workspace = true }
+photostore-raster = { workspace = true }
+photostore-doc = { workspace = true }
+photostore-compose = { workspace = true }
+photostore-algo = { workspace = true }
+photostore-psd = { workspace = true }
+photostore-codecs = { workspace = true }
+photostore-raw = { workspace = true }
+photostore-affinity = { workspace = true }
+photostore-text = { workspace = true }
+photostore-paint = { workspace = true }
+photostore-vector = { workspace = true }
+photostore-format = { path = "../format" }
 thiserror = { workspace = true }
 serde_json = { workspace = true }
 blake3 = { version = "1.8", default-features = false, features = ["pure"] }
@@ -49,8 +49,8 @@ resvg = { version = "0.45", default-features = false, features = ["text", "raste
 
 [dev-dependencies]
 crc32fast = "1.5"
-photocraft-affinity = { workspace = true, features = ["synth"] }
+photostore-affinity = { workspace = true, features = ["synth"] }
 flate2 = { workspace = true }
-photocraft-psd = { workspace = true, features = ["testgen"] }
-photocraft-raw = { workspace = true, features = ["testgen"] }
+photostore-psd = { workspace = true, features = ["testgen"] }
+photostore-raw = { workspace = true, features = ["testgen"] }
 proptest = { workspace = true }

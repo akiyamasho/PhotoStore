@@ -3,11 +3,11 @@
 //! Options / Global Light / Create Layer / Scale Effects, Layer Content Options, and exporting
 //! just the active layer (Quick Export as PNG, Export As).
 
-use photocraft_algo::selection::Region;
-use photocraft_color::{BlendMode, ColorMode};
-use photocraft_doc::{BlendIf, BlendRange, Document, Effect, Effects, Knockout, Layer, LayerContent, LayerId, LayerMask, SmartSource, StackMode};
-use photocraft_geom::Rect;
-use photocraft_raster::{Surface, from_rgba_into, to_rgba};
+use photostore_algo::selection::Region;
+use photostore_color::{BlendMode, ColorMode};
+use photostore_doc::{BlendIf, BlendRange, Document, Effect, Effects, Knockout, Layer, LayerContent, LayerId, LayerMask, SmartSource, StackMode};
+use photostore_geom::Rect;
+use photostore_raster::{Surface, from_rgba_into, to_rgba};
 use serde_json::{Value, json};
 
 use crate::commands::{CommandSpec, layer_param};
@@ -199,16 +199,16 @@ fn mask_all_objects(s: &mut Session, p: &Value) -> Result<Value> {
     let layer = doc.layer(id).ok_or(EngineError::NoLayer(id))?;
     let region: Option<Region> = match layer.surface() {
         Some(surf) if matches!(layer.content, LayerContent::Raster(_)) => {
-            photocraft_algo::segment::subject::select_subject(&photocraft_algo::segment::SurfaceSampler(surf), doc.bounds())
+            photostore_algo::segment::subject::select_subject(&photostore_algo::segment::SurfaceSampler(surf), doc.bounds())
         }
         _ => {
             struct Composite<'a>(&'a Document);
-            impl photocraft_algo::segment::Sampler for Composite<'_> {
+            impl photostore_algo::segment::Sampler for Composite<'_> {
                 fn rgba(&self, r: Rect) -> Vec<[f32; 4]> {
-                    photocraft_compose::render(self.0, r).px
+                    photostore_compose::render(self.0, r).px
                 }
             }
-            photocraft_algo::segment::subject::select_subject(&Composite(&doc), doc.bounds())
+            photostore_algo::segment::subject::select_subject(&Composite(&doc), doc.bounds())
         }
     };
     let region = region.ok_or_else(|| other("no objects were found"))?;
@@ -233,7 +233,7 @@ pub fn defringe(px: &mut [[f32; 4]], w: usize, h: usize, width: usize) {
     if !outside.iter().any(|o| *o) {
         return;
     }
-    let dist = photocraft_algo::selection::edt(&outside, w, h);
+    let dist = photostore_algo::selection::edt(&outside, w, h);
     let mut known: Vec<bool> = (0..px.len()).map(|i| !outside[i] && dist[i] > width as f32).collect();
     let mut todo: Vec<usize> = (0..px.len()).filter(|&i| !outside[i] && !known[i]).collect();
     while !todo.is_empty() {
@@ -304,7 +304,7 @@ fn color_decontaminate(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let alpha: Vec<u8> = read_rgba(surf, r).iter().map(|q| (q[3].clamp(0.0, 1.0) * 255.0).round() as u8).collect();
         let region = Region { bbox: r, mask: alpha };
-        *surf = photocraft_algo::matting::decontaminate(surf, &region, radius, amount);
+        *surf = photostore_algo::matting::decontaminate(surf, &region, radius, amount);
         Ok(())
     })?;
     Ok(Value::Null)
@@ -680,15 +680,15 @@ fn transfer_effects(s: &mut Session, p: &Value) -> Result<Value> {
 fn is_below(e: &Effect) -> bool {
     match e {
         Effect::DropShadow(_) | Effect::OuterGlow(_) => true,
-        Effect::Stroke(st) => st.position == photocraft_doc::StrokePosition::Outside,
+        Effect::Stroke(st) => st.position == photostore_doc::StrokePosition::Outside,
         Effect::BevelEmboss(b) => {
-            matches!(b.style, photocraft_doc::BevelStyle::OuterBevel | photocraft_doc::BevelStyle::Emboss | photocraft_doc::BevelStyle::PillowEmboss)
+            matches!(b.style, photostore_doc::BevelStyle::OuterBevel | photostore_doc::BevelStyle::Emboss | photostore_doc::BevelStyle::PillowEmboss)
         }
         _ => false,
     }
 }
 
-fn effect_common_mut(e: &mut Effect) -> Option<&mut photocraft_doc::FxCommon> {
+fn effect_common_mut(e: &mut Effect) -> Option<&mut photostore_doc::FxCommon> {
     match e {
         Effect::DropShadow(s) | Effect::InnerShadow(s) => Some(&mut s.common),
         Effect::OuterGlow(g) | Effect::InnerGlow(g) => Some(&mut g.common),
@@ -742,9 +742,9 @@ fn create_layer(s: &mut Session, p: &Value) -> Result<Value> {
             tmp.global_light = light;
             tmp.patterns = doc.patterns.clone();
             tmp.layers = vec![alone];
-            let buf = photocraft_compose::render(&tmp, area);
+            let buf = photostore_compose::render(&tmp, area);
             let mut surf = Surface::new(fmt);
-            let data: Vec<f32> = buf.px.iter().flat_map(|q| photocraft_raster::from_rgba(&fmt, *q)).collect();
+            let data: Vec<f32> = buf.px.iter().flat_map(|q| photostore_raster::from_rgba(&fmt, *q)).collect();
             surf.write_region(area, &data);
             surf.prune();
             let mut nl = Layer::new(format!("{}'s {}", l.name, e.label()), LayerContent::Raster(surf));
@@ -810,7 +810,7 @@ pub fn layer_document(doc: &Document, id: LayerId) -> Result<Document> {
     tmp.layers = vec![alone];
     tmp.selection = None;
     let area = doc.bounds();
-    let buf = photocraft_compose::render(&tmp, area);
+    let buf = photostore_compose::render(&tmp, area);
     let w = area.width() as usize;
     let mut b = Rect::EMPTY;
     for (i, q) in buf.px.iter().enumerate() {
@@ -823,7 +823,7 @@ pub fn layer_document(doc: &Document, id: LayerId) -> Result<Document> {
         return Err(other("the layer is empty"));
     }
     let fmt = doc.pixel_format();
-    let mut out = Document::new(l.name.clone(), photocraft_doc::Size::new(b.width(), b.height()), doc.mode, doc.depth);
+    let mut out = Document::new(l.name.clone(), photostore_doc::Size::new(b.width(), b.height()), doc.mode, doc.depth);
     out.resolution_dpi = doc.resolution_dpi;
     out.icc_profile = doc.icc_profile.clone();
     let mut surf = Surface::new(fmt);
@@ -831,7 +831,7 @@ pub fn layer_document(doc: &Document, id: LayerId) -> Result<Document> {
         .flat_map(|y| {
             let row = (y - area.y0) as usize * w;
             let px = &buf.px;
-            (b.x0..b.x1).flat_map(move |x| photocraft_raster::from_rgba(&fmt, px[row + (x - area.x0) as usize]))
+            (b.x0..b.x1).flat_map(move |x| photostore_raster::from_rgba(&fmt, px[row + (x - area.x0) as usize]))
         })
         .collect();
     surf.write_region(Rect::from_xywh(0, 0, b.width(), b.height()), &rows);
@@ -856,7 +856,7 @@ fn export_layer(s: &mut Session, p: &Value, cmd: &str, png_only: bool) -> Result
         tmp.execute("image.imageSize", json!({"width": w}))?;
         ldoc = (*tmp.active().ok_or(EngineError::NoDocument)?.doc).clone();
     }
-    let out = photocraft_io::export(&ldoc, path, &Default::default()).map_err(|e| other(e.to_string()))?;
+    let out = photostore_io::export(&ldoc, path, &Default::default()).map_err(|e| other(e.to_string()))?;
     write_file(path, &out.bytes)?;
     Ok(json!({"path": path, "bytes": out.bytes.len(), "width": ldoc.size.width, "height": ldoc.size.height, "warnings": out.warnings}))
 }
@@ -925,7 +925,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "layer.layerStyle.blendingOptions",
             "Blending Options…",
             ["Layer", "Layer Style"],
-            r##"{"layer":id?,"blend":"normal|multiply|…"?,"opacity":0..100?,"fillOpacity":0..100?,"blendIf":{"channel":"gray|red|green|blue|cyan|…"|index="gray","thisLayer":[black,white]|[blackLo,blackHi,whiteLo,whiteHi]?,"underlying":[…]?}|[{…},…]|null?,"channels":[bool,…]?,"knockout":"none|shallow|deep"?,"blendInteriorEffectsAsGroup":bool?,"blendClippedLayersAsGroup":bool?,"transparencyShapesLayer":bool?,"layerMaskHidesEffects":bool?,"vectorMaskHidesEffects":bool?} (Blend If values 0..255; split points fade; null resets. Advanced Blending: channels = which colour channels blend (R G B / C M Y K / L a b); PhotoCraft's defaults are knockout none, interior effects off, clipped layers as group on, transparency shapes on, masks hide effects off)"##,
+            r##"{"layer":id?,"blend":"normal|multiply|…"?,"opacity":0..100?,"fillOpacity":0..100?,"blendIf":{"channel":"gray|red|green|blue|cyan|…"|index="gray","thisLayer":[black,white]|[blackLo,blackHi,whiteLo,whiteHi]?,"underlying":[…]?}|[{…},…]|null?,"channels":[bool,…]?,"knockout":"none|shallow|deep"?,"blendInteriorEffectsAsGroup":bool?,"blendClippedLayersAsGroup":bool?,"transparencyShapesLayer":bool?,"layerMaskHidesEffects":bool?,"vectorMaskHidesEffects":bool?} (Blend If values 0..255; split points fade; null resets. Advanced Blending: channels = which colour channels blend (R G B / C M Y K / L a b); PhotoStore's defaults are knockout none, interior effects off, clipped layers as group on, transparency shapes on, masks hide effects off)"##,
             has_layer,
             blending_options
         ),

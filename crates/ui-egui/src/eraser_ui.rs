@@ -3,12 +3,12 @@
 
 use serde_json::{Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::state::Tool;
 use crate::theme::Tokens;
 use crate::{icons, widgets};
 
-fn report(app: &mut PhotocraftApp, r: Result<Value, String>) {
+fn report(app: &mut PhotoStoreApp, r: Result<Value, String>) {
     if let Err(e) = r {
         app.ui.status = e;
         app.ui.status_error = true;
@@ -16,7 +16,7 @@ fn report(app: &mut PhotocraftApp, r: Result<Value, String>) {
 }
 
 /// Magic Eraser click at document `(x, y)`. Returns false for other tools.
-pub fn click(app: &mut PhotocraftApp, tool: Tool, x: f64, y: f64) -> bool {
+pub fn click(app: &mut PhotoStoreApp, tool: Tool, x: f64, y: f64) -> bool {
     if tool != Tool::MagicEraser {
         return false;
     }
@@ -36,7 +36,7 @@ pub fn click(app: &mut PhotocraftApp, tool: Tool, x: f64, y: f64) -> bool {
 }
 
 /// Finishes a Background Eraser stroke. Returns false for other tools.
-pub fn finish_stroke(app: &mut PhotocraftApp, tool: Tool, points: &[[f64; 3]]) -> bool {
+pub fn finish_stroke(app: &mut PhotoStoreApp, tool: Tool, points: &[[f64; 3]]) -> bool {
     if tool != Tool::BackgroundEraser {
         return false;
     }
@@ -59,7 +59,7 @@ fn opt(ui: &mut egui::Ui, text: &str) {
 }
 
 /// Options bar for the Magic Eraser and Background Eraser. Returns false for other tools.
-pub fn options_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui, tool: Tool) -> bool {
+pub fn options_bar(app: &mut PhotoStoreApp, ui: &mut egui::Ui, tool: Tool) -> bool {
     let o = &mut app.ui.tool_options;
     match tool {
         Tool::MagicEraser => {

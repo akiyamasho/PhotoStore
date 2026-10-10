@@ -8,7 +8,7 @@
 //! threshold with the zoom (`8 px / zoom`). Results carry [`SnapLine`]s so the UI can draw what
 //! was snapped to (smart guides are the layer-to-layer subset of these, drawn in magenta).
 
-use photocraft_doc::{Document, LayerContent, LayerId};
+use photostore_doc::{Document, LayerContent, LayerId};
 use serde::Serialize;
 
 /// What a snap target came from.
@@ -88,7 +88,7 @@ pub fn layer_rect(doc: &Document, id: LayerId) -> Option<[f64; 4]> {
     rect_of(doc, doc.layer(id)?)
 }
 
-fn rect_of(doc: &Document, l: &photocraft_doc::Layer) -> Option<[f64; 4]> {
+fn rect_of(doc: &Document, l: &photostore_doc::Layer) -> Option<[f64; 4]> {
     if l.is_group() || (matches!(l.content, LayerContent::Adjustment(_)) && l.mask.is_none()) {
         return None;
     }
@@ -264,7 +264,7 @@ pub fn union(rects: impl IntoIterator<Item = [f64; 4]>) -> Option<[f64; 4]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use photocraft_doc::{Color, ColorMode, Layer, SampleType, Size};
+    use photostore_doc::{Color, ColorMode, Layer, SampleType, Size};
 
     fn targets() -> SnapTargets {
         let mut t = SnapTargets { extent: [0.0, 0.0, 400.0, 300.0], ..Default::default() };
@@ -353,7 +353,7 @@ mod tests {
         let mut doc = Document::with_background("s", Size::new(200, 100), ColorMode::Rgb, SampleType::U8, Color::WHITE);
         doc.guides.vertical.push(40.0);
         let mut l = Layer::raster("box", doc.pixel_format());
-        l.surface_mut().unwrap().fill_rect(photocraft_geom::Rect::new(10, 20, 30, 60), &[1.0, 0.0, 0.0, 1.0]);
+        l.surface_mut().unwrap().fill_rect(photostore_geom::Rect::new(10, 20, 30, 60), &[1.0, 0.0, 0.0, 1.0]);
         let id = doc.insert_above(None, l);
         let opts = SnapOptions::default();
         let t = SnapTargets::from_document(&doc, &opts, &[]);

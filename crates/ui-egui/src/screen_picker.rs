@@ -1,5 +1,5 @@
 //! Explicit, one-shot desktop sampling. Snapshots remain in memory until selection/cancellation.
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use egui::{Color32, Context, Id, Pos2, Rect, Sense, Stroke, StrokeKind, TextureOptions, vec2};
 use std::sync::{
     Arc, Mutex,
@@ -65,17 +65,17 @@ impl ScreenImage {
         let p = (pos - rect.min) / rect.size();
         Some((((p.x * self.width as f32) as usize).min(self.width.saturating_sub(1)), ((p.y * self.height as f32) as usize).min(self.height.saturating_sub(1))))
     }
-    fn conversion(&self) -> Result<Option<Arc<photocraft_cms::Transform>>, String> {
+    fn conversion(&self) -> Result<Option<Arc<photostore_cms::Transform>>, String> {
         let Some(bytes) = &self.profile else { return Ok(None) };
-        let source = photocraft_cms::Profile::parse(bytes).map_err(|e| e.to_string())?;
-        if source.color_space != photocraft_cms::ColorSpace::Rgb {
+        let source = photostore_cms::Profile::parse(bytes).map_err(|e| e.to_string())?;
+        if source.color_space != photostore_cms::ColorSpace::Rgb {
             return Err("Screen profile must describe RGB pixels".into());
         }
-        photocraft_cms::Transform::new(&source, photocraft_cms::Builtin::Srgb.profile(), photocraft_cms::Intent::RelativeColorimetric, true)
+        photostore_cms::Transform::new(&source, photostore_cms::Builtin::Srgb.profile(), photostore_cms::Intent::RelativeColorimetric, true)
             .map(|t| Some(Arc::new(t)))
             .map_err(|e| e.to_string())
     }
-    fn sample(&self, x: usize, y: usize, conversion: Option<&photocraft_cms::Transform>) -> Result<[f32; 3], String> {
+    fn sample(&self, x: usize, y: usize, conversion: Option<&photostore_cms::Transform>) -> Result<[f32; 3], String> {
         let p = self.pixel(x, y).ok_or("Screen pixel is out of bounds")?;
         let mut rgb = [f32::from(p.r()) / 255.0, f32::from(p.g()) / 255.0, f32::from(p.b()) / 255.0];
         if let Some(t) = conversion {
@@ -88,9 +88,9 @@ impl ScreenImage {
 struct Snapshot {
     image: Arc<ScreenImage>,
     texture: egui::TextureHandle,
-    conversion: Option<Arc<photocraft_cms::Transform>>,
+    conversion: Option<Arc<photostore_cms::Transform>>,
 }
-type Target = (Option<photocraft_doc::DocId>, Option<photocraft_doc::LayerId>, Option<u64>);
+type Target = (Option<photostore_doc::DocId>, Option<photostore_doc::LayerId>, Option<u64>);
 #[derive(Default)]
 struct Runtime {
     request: Option<Id>,
@@ -137,11 +137,11 @@ pub fn button(ui: &mut egui::Ui, id: Id) -> Option<[f32; 3]> {
     }
     result
 }
-fn target(app: &PhotocraftApp) -> Target {
+fn target(app: &PhotoStoreApp) -> Target {
     (app.session.active().map(|s| s.doc.id), app.session.active().and_then(|s| s.active_layer), app.ui.dialogs.last().map(|d| d.id))
 }
 /// Poll before shortcuts. A changed editing target invalidates a pending pick.
-pub fn tick(app: &mut PhotocraftApp, ctx: &Context) -> bool {
+pub fn tick(app: &mut PhotoStoreApp, ctx: &Context) -> bool {
     ctx.data_mut(|d| d.insert_temp(Id::new("screen-color-picker-available"), app.services.screen_pick.is_some()));
     let r = runtime(ctx);
     let mut s = lock(&r);
@@ -261,7 +261,7 @@ pub fn show(ctx: &Context) {
         let shared = r.clone();
         let vid = egui::ViewportId::from_hash_of(("screen-color", generation, n));
         let mut builder = egui::ViewportBuilder::default()
-            .with_title("PhotoCraft — Screen Color Picker")
+            .with_title("PhotoStore — Screen Color Picker")
             .with_decorations(false)
             .with_resizable(false)
             .with_position(image.position / ctx.zoom_factor())
@@ -401,15 +401,15 @@ mod tests {
         i.size.x = f32::NAN;
         assert!(i.validate().is_err());
         let mut i = image();
-        i.profile = Some(photocraft_cms::Builtin::LabD50.profile().to_bytes().as_ref().clone());
+        i.profile = Some(photostore_cms::Builtin::LabD50.profile().to_bytes().as_ref().clone());
         assert!(i.conversion().is_err());
     }
-    fn app() -> PhotocraftApp {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    fn app() -> PhotoStoreApp {
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", serde_json::json!({"width":8,"height":8})).unwrap();
         app
     }
-    fn queued(app: &mut PhotocraftApp, ctx: &Context) -> (Id, std::sync::mpsc::Sender<Result<Capture, String>>, Arc<std::sync::atomic::AtomicBool>) {
+    fn queued(app: &mut PhotoStoreApp, ctx: &Context) -> (Id, std::sync::mpsc::Sender<Result<Capture, String>>, Arc<std::sync::atomic::AtomicBool>) {
         let (tx, rx) = std::sync::mpsc::channel();
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stop = cancelled.clone();

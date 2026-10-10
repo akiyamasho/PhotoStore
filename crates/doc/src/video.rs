@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use crate::{BlendMode, Effect, LayerId};
 
-use photocraft_raster::Surface;
+use photostore_raster::Surface;
 
 /// Where a video layer's footage came from.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

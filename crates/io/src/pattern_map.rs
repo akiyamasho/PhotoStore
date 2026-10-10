@@ -6,11 +6,11 @@
 
 use std::sync::Arc;
 
-use photocraft_color::{ColorMode, PixelFormat, SampleType};
-use photocraft_doc::{Document, Pattern};
-use photocraft_geom::Rect;
-use photocraft_psd::patterns::{PsdPattern, block_key, mode_channels, parse_pattern_block, write_pattern_block};
-use photocraft_raster::Surface;
+use photostore_color::{ColorMode, PixelFormat, SampleType};
+use photostore_doc::{Document, Pattern};
+use photostore_geom::Rect;
+use photostore_psd::patterns::{PsdPattern, block_key, mode_channels, parse_pattern_block, write_pattern_block};
+use photostore_raster::Surface;
 
 use crate::pixels::{deinterleave, interleave, max_sample, psd_depth, sample_for_depth, zero_sample};
 
@@ -124,7 +124,7 @@ pub fn from_global_blocks(doc: &Document) -> Vec<Pattern> {
 
 /// Global blocks to write: the raw ones while they still match [`Document::patterns`], else the
 /// raw pattern blocks replaced by one written from the document (at the first one's position).
-pub fn export_global_blocks(doc: &Document) -> Vec<photocraft_doc::PsdGlobalBlock> {
+pub fn export_global_blocks(doc: &Document) -> Vec<photostore_doc::PsdGlobalBlock> {
     let raw = &doc.metadata.psd_global_blocks;
     if from_global_blocks(doc) == doc.patterns {
         return raw.clone();
@@ -151,19 +151,19 @@ pub fn export_global_blocks(doc: &Document) -> Vec<photocraft_doc::PsdGlobalBloc
 
 /// Reads a `.pat` pattern file.
 pub fn read_pat(bytes: &[u8]) -> Result<Vec<Pattern>, String> {
-    let ps = photocraft_psd::patterns::parse_pat_file(bytes).map_err(|e| format!("not a readable .pat file: {e}"))?;
+    let ps = photostore_psd::patterns::parse_pat_file(bytes).map_err(|e| format!("not a readable .pat file: {e}"))?;
     Ok(ps.iter().filter_map(from_psd).collect())
 }
 
 /// Writes patterns as a `.pat` file.
 pub fn write_pat(patterns: &[Pattern]) -> Result<Vec<u8>, String> {
-    photocraft_psd::patterns::write_pat_file(&patterns.iter().map(to_psd).collect::<Vec<_>>()).map_err(|e| e.to_string())
+    photostore_psd::patterns::write_pat_file(&patterns.iter().map(to_psd).collect::<Vec<_>>()).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use photocraft_color::SampleType;
+    use photostore_color::SampleType;
 
     fn pattern(mode: ColorMode, s: SampleType, alpha: bool) -> Pattern {
         let fmt = PixelFormat::new(mode, s, alpha);
@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn export_reuses_raw_blocks_until_patterns_change() {
-        let mut d = Document::new("x", photocraft_geom::Size { width: 4, height: 4 }, ColorMode::Rgb, SampleType::U8);
+        let mut d = Document::new("x", photostore_geom::Size { width: 4, height: 4 }, ColorMode::Rgb, SampleType::U8);
         let p = pattern(ColorMode::Rgb, SampleType::U8, false);
         let raw = write_pattern_block(&[to_psd(&p)]).unwrap();
         d.metadata.psd_global_blocks = vec![(*b"8BIM", *b"Txt2", Arc::new(vec![1])), (*b"8BIM", *b"Patt", Arc::new(raw.clone()))];

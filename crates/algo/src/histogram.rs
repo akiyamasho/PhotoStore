@@ -132,9 +132,9 @@ mod tests {
 
     #[test]
     fn rgb_and_gray_at_all_depths_use_the_same_float_contract() {
-        use photocraft_color::{ColorMode, PixelFormat, SampleType};
-        use photocraft_geom::Rect;
-        use photocraft_raster::Surface;
+        use photostore_color::{ColorMode, PixelFormat, SampleType};
+        use photostore_geom::Rect;
+        use photostore_raster::Surface;
         for mode in [ColorMode::Rgb, ColorMode::Grayscale] {
             for sample in SampleType::ALL {
                 let mut surface = Surface::new(PixelFormat::new(mode, sample, true));

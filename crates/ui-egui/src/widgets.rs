@@ -1,4 +1,4 @@
-//! Custom widgets for the Photocraft look: cards with pill tabs, thin sliders with round knobs,
+//! Custom widgets for the PhotoStore look: cards with pill tabs, thin sliders with round knobs,
 //! monospace value fields with dimmed units, toggle switches, primary/secondary buttons.
 
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
@@ -799,7 +799,7 @@ fn button_impl(ui: &mut Ui, label: &str, min_width: f32, bg: Color32, fg: Color3
 }
 
 /// Cached RGB data; drawing work is bounded by the 256 display bins, never the image size.
-pub fn rgb_histogram(ui: &mut Ui, histogram: &photocraft_algo::histogram::RgbHistogram, height: f32) -> egui::Response {
+pub fn rgb_histogram(ui: &mut Ui, histogram: &photostore_algo::histogram::RgbHistogram, height: f32) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width().max(1.0), height.max(1.0)), egui::Sense::hover());
     ui.painter().rect_filled(rect, t.radius_sm, t.histogram_background());
@@ -1240,7 +1240,7 @@ mod tests {
             },
             false,
         );
-        crate::PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
+        crate::PhotoStoreApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
         h.ctx.set_os(os);
         *h.state_mut() = true;
         h.run();
@@ -1480,7 +1480,7 @@ pub(crate) fn color_swatch(ui: &mut Ui, color: Color32) -> Response {
     ui.painter().rect_stroke(rect, t.radius_sm, Stroke::new(1.0, t.field_border), StrokeKind::Inside);
     response
 }
-/// A colour swatch that only reports clicks (no popup): for colours edited in PhotoCraft's own
+/// A colour swatch that only reports clicks (no popup): for colours edited in PhotoStore's own
 /// Color Picker dialog. `label` names it for hover text and accessibility.
 pub fn color_swatch_button(ui: &mut Ui, color: Color32, label: &str) -> Response {
     let t = Tokens::get(ui.ctx());
@@ -1578,9 +1578,9 @@ mod screen_color_tests {
             ..Default::default()
         };
         let original = [0.123456, 0.234567, 0.345678];
-        let app = crate::PhotocraftApp::new(photocraft_engine::Session::new(), services);
+        let app = crate::PhotoStoreApp::new(photostore_engine::Session::new(), services);
         let mut h = Harness::builder().with_size(vec2(600.0, 500.0)).build_ui_state(
-            |ui, state: &mut (crate::PhotocraftApp, [f32; 3])| {
+            |ui, state: &mut (crate::PhotoStoreApp, [f32; 3])| {
                 crate::screen_picker::tick(&mut state.0, ui.ctx());
                 color_edit_button_rgb(ui, &mut state.1);
             },
@@ -1614,9 +1614,9 @@ mod screen_color_tests {
                 })),
                 ..Default::default()
             };
-            let app = crate::PhotocraftApp::new(photocraft_engine::Session::new(), services);
+            let app = crate::PhotoStoreApp::new(photostore_engine::Session::new(), services);
             let mut h = Harness::builder().with_size(vec2(600.0, 500.0)).build_ui_state(
-                |ui, state: &mut (crate::PhotocraftApp, Color32, bool)| {
+                |ui, state: &mut (crate::PhotoStoreApp, Color32, bool)| {
                     crate::screen_picker::tick(&mut state.0, ui.ctx());
                     state.2 = color_edit_button_srgba(ui, &mut state.1).changed();
                 },

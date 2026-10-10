@@ -4,8 +4,8 @@
 //! writes it back into the playhead's frame before anything re-syncs. Headless and scriptable. Native
 //! `.pcraft` files persist the complete frame stack.
 
-use photocraft_doc::{Document, FrameLayerState, Layer, LayerContent, Timeline, VideoData};
-use photocraft_raster::Surface;
+use photostore_doc::{Document, FrameLayerState, Layer, LayerContent, Timeline, VideoData};
+use photostore_raster::Surface;
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -44,7 +44,7 @@ fn export_range(p: &Value, total: usize, work_start: usize, work_end: usize, cmd
     Ok((start, end))
 }
 
-fn decode_movie_frames(path: &str, fmt: photocraft_color::PixelFormat, start: Option<u64>, end: Option<u64>, fps_override: Option<f64>, ctx: &crate::jobs::JobCtx) -> Result<(Vec<Surface>, f32)> {
+fn decode_movie_frames(path: &str, fmt: photostore_color::PixelFormat, start: Option<u64>, end: Option<u64>, fps_override: Option<f64>, ctx: &crate::jobs::JobCtx) -> Result<(Vec<Surface>, f32)> {
     let info = crate::media_backend::probe(path).map_err(media_error)?;
     let fps = movie_fps(&info, fps_override)?;
     let count = info.frame_count.or_else(|| {
@@ -84,7 +84,7 @@ pub fn sync_plain(doc: &mut Document) {
     let ranges = doc.timeline.as_ref().map(|t| t.layer_ranges.clone()).unwrap_or_default();
     sync_layers(&mut doc.layers, cur, timeline_fps, &ranges);
     if let Some(t) = &doc.timeline
-        && let Some(states) = if matches!(t.mode, photocraft_doc::TimelineMode::FrameAnimation) {
+        && let Some(states) = if matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation) {
             t.frame_states.get(cur)
         } else {
             t.property_frames.get(cur)
@@ -96,7 +96,7 @@ pub fn sync_plain(doc: &mut Document) {
     if let Some(t) = &doc.timeline { apply_ranges(&mut doc.layers, cur, &t.layer_ranges, t.frame_states.get(cur).or_else(|| t.property_frames.get(cur))); }
 }
 
-fn apply_ranges(layers: &mut [Layer], frame: usize, ranges: &[photocraft_doc::LayerTimelineRange], states: Option<&Vec<FrameLayerState>>) {
+fn apply_ranges(layers: &mut [Layer], frame: usize, ranges: &[photostore_doc::LayerTimelineRange], states: Option<&Vec<FrameLayerState>>) {
     for layer in layers {
         if let Some(range) = ranges.iter().find(|r| r.layer == layer.id) {
             if frame < range.start || frame >= range.end.max(range.start.saturating_add(1)) {
@@ -123,7 +123,7 @@ fn apply_states(geometry: &Document, layers: &mut [Layer], states: &[FrameLayerS
             // delta once per layer avoids accumulating transforms while seeking. Legacy states
             // have no position and retain the document's current geometry.
             if let Some((x, y)) = state.position {
-                let bounds = photocraft_doc::comps::position_bounds(layer);
+                let bounds = photostore_doc::comps::position_bounds(layer);
                 let dx = x.saturating_sub(bounds.x0).clamp(-1_000_000, 1_000_000);
                 let dy = y.saturating_sub(bounds.y0).clamp(-1_000_000, 1_000_000);
                 if (dx != 0 || dy != 0) {
@@ -140,7 +140,7 @@ fn apply_states(geometry: &Document, layers: &mut [Layer], states: &[FrameLayerS
     }
 }
 
-fn source_index(cur: usize, timeline_fps: f64, video: &VideoData, range: Option<&photocraft_doc::LayerTimelineRange>) -> usize {
+fn source_index(cur: usize, timeline_fps: f64, video: &VideoData, range: Option<&photostore_doc::LayerTimelineRange>) -> usize {
     let relative = range.map_or(cur, |r| cur.saturating_sub(r.start));
     let seconds = relative as f64 / timeline_fps.max(0.001);
     if !video.frame_delays_ms.iter().any(|delay| *delay > 0) {
@@ -156,7 +156,7 @@ fn source_index(cur: usize, timeline_fps: f64, video: &VideoData, range: Option<
     video.frames.len().saturating_sub(1)
 }
 
-fn sync_layers(layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[photocraft_doc::LayerTimelineRange]) {
+fn sync_layers(layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[photostore_doc::LayerTimelineRange]) {
     for l in layers.iter_mut() {
         let transform = l.video.as_ref().map(|v| keyframe_transform(v, cur));
         if let Some((_, _, opacity)) = transform { l.opacity = opacity; }
@@ -206,7 +206,7 @@ pub fn store(doc: &mut Document) {
     if let Some(t) = &mut doc.timeline
         && (!t.frame_states.is_empty() || !t.property_frames.is_empty())
     {
-        let states = if matches!(t.mode, photocraft_doc::TimelineMode::FrameAnimation) {
+        let states = if matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation) {
             t.frame_states.get_mut(cur)
         } else {
             t.property_frames.get_mut(cur)
@@ -224,16 +224,16 @@ fn collect_states(layers: &[Layer], states: &mut Vec<FrameLayerState>) {
             layer: layer.id,
             visible: layer.visible,
             opacity: layer.opacity,
-            position: photocraft_doc::comps::layer_position(layer),
+            position: photostore_doc::comps::layer_position(layer),
             blend: Some(layer.blend),
             fill_opacity: Some(layer.fill_opacity),
-            effects: Some(photocraft_doc::FrameEffectsState { enabled: layer.effects.enabled, items: layer.effects.items.clone(), reference: layer.effects.reference }),
+            effects: Some(photostore_doc::FrameEffectsState { enabled: layer.effects.enabled, items: layer.effects.items.clone(), reference: layer.effects.reference }),
         });
         if let Some(children) = layer.children() { collect_states(children, states); }
     }
 }
 
-fn store_layers(layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[photocraft_doc::LayerTimelineRange]) {
+fn store_layers(layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[photostore_doc::LayerTimelineRange]) {
     for l in layers.iter_mut() {
         if let (Some(v), LayerContent::Raster(s)) = (&mut l.video, &l.content) {
             let at = source_index(cur, timeline_fps, v, ranges.iter().find(|range| range.layer == l.id)).min(v.frames.len().saturating_sub(1));
@@ -284,7 +284,7 @@ fn edit_video(s: &mut Session, label: &str, f: impl FnOnce(&mut VideoData, usize
     Ok(json!({"frames": count}))
 }
 
-fn blank_of(fmt: photocraft_color::PixelFormat) -> Surface {
+fn blank_of(fmt: photostore_color::PixelFormat) -> Surface {
     Surface::new(fmt)
 }
 
@@ -356,7 +356,7 @@ fn keyframe(s: &mut Session, p: &Value, remove: bool) -> Result<Value> {
     edit_video(s, if remove { "Delete Video Keyframe" } else { "Add Video Keyframe" }, move |v, _| {
         if frame >= v.frames.len().max(1) { return Err(EngineError::BadParams { cmd: if remove { "timeline.deleteKeyframe" } else { "timeline.addKeyframe" }.into(), msg: "frame is outside the video layer".into() }); }
         v.keyframes.retain(|k| k.frame != frame);
-        if !remove { v.keyframes.push(photocraft_doc::VideoKeyframe { frame, x, y, opacity }); }
+        if !remove { v.keyframes.push(photostore_doc::VideoKeyframe { frame, x, y, opacity }); }
         v.keyframes.sort_by_key(|k| k.frame);
         Ok(())
     })
@@ -405,7 +405,7 @@ fn rasterize(s: &mut Session, _p: &Value) -> Result<Value> {
 
 /// Load frames from `path`: a single image (1 frame), or a directory of images (sorted = an image
 /// sequence). Each becomes a full raster frame in the document's format.
-fn load_frames(path: &str, fmt: photocraft_color::PixelFormat) -> Result<Vec<Surface>> {
+fn load_frames(path: &str, fmt: photostore_color::PixelFormat) -> Result<Vec<Surface>> {
     let p = std::path::Path::new(path);
     let is_img = |f: &std::path::Path| {
         matches!(
@@ -460,7 +460,7 @@ fn new_from_file(s: &mut Session, p: &Value) -> Result<Value> {
             let name = doc.next_layer_name(Path::new(&path).file_stem().and_then(|s| s.to_str()).unwrap_or("Movie"));
             let mut l = Layer::raster(name, fmt);
             let mut v = VideoData::new(frames, source_fps);
-            v.source = photocraft_doc::VideoSource::File { path: path.clone() };
+            v.source = photostore_doc::VideoSource::File { path: path.clone() };
             l.video = Some(v);
             let id = doc.insert_above(*active, l);
             *active = Some(id);
@@ -481,7 +481,7 @@ fn new_from_file(s: &mut Session, p: &Value) -> Result<Value> {
         let name = doc.next_layer_name(std::path::Path::new(&path).file_stem().and_then(|s| s.to_str()).unwrap_or("Video"));
         let mut l = Layer::raster(name, fmt);
         let mut v = VideoData::new(frames, fps);
-        v.source = photocraft_doc::VideoSource::File { path: path.clone() };
+        v.source = photostore_doc::VideoSource::File { path: path.clone() };
         l.video = Some(v);
         let id = doc.insert_above(*active, l);
         *active = Some(id);
@@ -511,7 +511,7 @@ fn replace_footage(s: &mut Session, p: &Value) -> Result<Value> {
                 let v = l.video.as_mut().ok_or_else(|| EngineError::Other("active layer is not a video layer".into()))?;
                 v.frames = frames;
                 v.fps = source_fps;
-                v.source = photocraft_doc::VideoSource::File { path: path.clone() };
+                v.source = photostore_doc::VideoSource::File { path: path.clone() };
                 v.frames.len()
             };
             if let (Some(t), Some(duration)) = (&mut doc.timeline, duration) {
@@ -525,7 +525,7 @@ fn replace_footage(s: &mut Session, p: &Value) -> Result<Value> {
     let frames = load_frames(&path, fmt)?;
     edit_video(s, "Replace Footage", move |v, _| {
         v.frames = frames;
-        v.source = photocraft_doc::VideoSource::File { path: path.clone() };
+        v.source = photostore_doc::VideoSource::File { path: path.clone() };
         Ok(())
     })
 }
@@ -552,7 +552,7 @@ fn reload_frame(s: &mut Session, _p: &Value) -> Result<Value> {
             .ok_or_else(|| EngineError::BadParams { cmd: "layer.videoLayers.reloadFrame".into(), msg: "not a video layer".into() })?;
         (v.source.clone(), st.doc.pixel_format())
     };
-    let photocraft_doc::VideoSource::File { path } = src else {
+    let photostore_doc::VideoSource::File { path } = src else {
         return Err(EngineError::BadParams { cmd: "layer.videoLayers.reloadFrame".into(), msg: "this layer has no file source to reload".into() });
     };
     if is_movie_path(&path) {
@@ -644,7 +644,7 @@ fn frame_animation_duration(t: &Timeline, first: usize, last: usize) -> f64 {
 }
 
 fn sampled_timeline_frame(t: &Timeline, first: usize, last: usize, output: usize, fps: f64) -> usize {
-    if !matches!(t.mode, photocraft_doc::TimelineMode::FrameAnimation) {
+    if !matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation) {
         return first.saturating_add(((output as f64 * f64::from(t.fps.max(0.001)) / fps.max(0.001)) + 1e-9).floor() as usize).min(last);
     }
     let target_ms = output as f64 * 1000.0 / fps.max(0.001);
@@ -657,7 +657,7 @@ fn sampled_timeline_frame(t: &Timeline, first: usize, last: usize, output: usize
 }
 
 fn timeline_export_duration(t: &Timeline, first: usize, last: usize) -> f64 {
-    if matches!(t.mode, photocraft_doc::TimelineMode::FrameAnimation) { frame_animation_duration(t, first, last) } else { (last - first + 1) as f64 / f64::from(t.fps.max(0.001)) }
+    if matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation) { frame_animation_duration(t, first, last) } else { (last - first + 1) as f64 / f64::from(t.fps.max(0.001)) }
 }
 
 fn media_duration_in_timeline_frames(frame_count: usize, source_fps: f32, timeline_fps: f32) -> usize {
@@ -687,7 +687,7 @@ fn render_video(s: &mut Session, p: &Value) -> Result<Value> {
         let source_duration = timeline.as_ref().map_or((last - first + 1) as f64 / doc_fps, |t| timeline_export_duration(t, first, last));
         let fps_num = (fps * 1000.0).round().clamp(1.0, u32::MAX as f64) as u32;
         let writer_fps = f64::from(fps_num) / 1000.0;
-        let source_rate = timeline.as_ref().map_or(true, |t| !matches!(t.mode, photocraft_doc::TimelineMode::FrameAnimation));
+        let source_rate = timeline.as_ref().map_or(true, |t| !matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation));
         let same_source_rate = source_rate && (fps_override.is_none() || (fps - doc_fps).abs() <= 0.0005);
         let selected_frames = (last - first + 1) as u64;
         let frames = if same_source_rate { selected_frames } else { (source_duration * writer_fps - 1e-9).ceil().max(1.0) as u64 };
@@ -710,7 +710,7 @@ fn render_video(s: &mut Session, p: &Value) -> Result<Value> {
                 let surface = crate::file_cmds::flattened(&doc, doc.pixel_format());
                 let mut rgba = vec![[0.0f32; 4]; width as usize * height as usize];
                 surface.read_rgba_into(doc.bounds(), &mut rgba);
-                Ok(photocraft_raster::Rgba8Image { width, height, pixels: rgba.into_iter().flat_map(|p| p.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)).collect() })
+                Ok(photostore_raster::Rgba8Image { width, height, pixels: rgba.into_iter().flat_map(|p| p.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)).collect() })
             }, Some(&mut |done, total| { ctx.progress(done as f32 / total.unwrap_or(1) as f32, "Encoding movie"); !ctx.cancelled() }))
             .map_err(media_error)
         }, move |_s, ()| Ok(json!({"path": result_path, "format": format, "frames": frames}))) ;
@@ -755,7 +755,7 @@ pub fn render_video_with(
 }
 
 fn render_document_with(
-    base: &photocraft_doc::Document,
+    base: &photostore_doc::Document,
     p: &Value,
     mut write: impl FnMut(&str, &[u8]) -> Result<()>,
     mut progress: impl FnMut(usize, usize) -> bool,
@@ -782,8 +782,8 @@ fn render_document_with(
 
     // Animated GIF: one file, every frame quantised to its own palette.
     if format.eq_ignore_ascii_case("gif") {
-        use photocraft_algo::quantize::{self, Dither, Forced, PaletteKind};
-        let loop_mode = base.timeline.as_ref().map(|t| t.loop_mode).unwrap_or(photocraft_doc::TimelineLoop::Loop);
+        use photostore_algo::quantize::{self, Dither, Forced, PaletteKind};
+        let loop_mode = base.timeline.as_ref().map(|t| t.loop_mode).unwrap_or(photostore_doc::TimelineLoop::Loop);
         let sequence_count = if p.get("fps").is_some() {
             let duration = base.timeline.as_ref().map_or((last - first + 1) as f64 / fps, |t| timeline_export_duration(t, first, last));
             (duration * fps - 1e-9).ceil().max(1.0) as usize
@@ -801,7 +801,7 @@ fn render_document_with(
             }).collect()
         };
         let mut gif_sequence = sequence.clone();
-        if matches!(loop_mode, photocraft_doc::TimelineLoop::PingPong) && gif_sequence.len() > 2 {
+        if matches!(loop_mode, photostore_doc::TimelineLoop::PingPong) && gif_sequence.len() > 2 {
             if gif_sequence.len().saturating_mul(2).saturating_sub(2) > MAX_EXPORT_FRAMES { return Err(EngineError::BadParams { cmd: "file.export.renderVideo".into(), msg: "GIF export produces too many frames".into() }); }
             gif_sequence.extend(sequence[1..sequence.len() - 1].iter().rev().copied());
         }
@@ -820,13 +820,13 @@ fn render_document_with(
             surf.read_rgba_into(bounds, &mut px);
             let pal = quantize::build_palette(&px, PaletteKind::Adaptive, 256, Forced::None).map_err(EngineError::Other)?;
             let idx = quantize::quantize(&mut px, w, &pal, Dither::None, 1.0, None);
-            gframes.push(photocraft_codecs::web::GifFrame { indices: idx, palette: pal, transparent: None, delay_cs: delay });
+            gframes.push(photostore_codecs::web::GifFrame { indices: idx, palette: pal, transparent: None, delay_cs: delay });
             // The final report follows encoding/writing, so total means the output exists.
             if !progress((f + 1).min(gif_sequence.len().saturating_sub(1)), gif_sequence.len()) {
                 return Err(cancelled());
             }
         }
-        let gif = photocraft_codecs::web::encode_gif_animated(w as u32, h as u32, &gframes, !matches!(loop_mode, photocraft_doc::TimelineLoop::Once)).map_err(|e| EngineError::Other(e.to_string()))?;
+        let gif = photostore_codecs::web::encode_gif_animated(w as u32, h as u32, &gframes, !matches!(loop_mode, photostore_doc::TimelineLoop::Once)).map_err(|e| EngineError::Other(e.to_string()))?;
         let name = p.get("path").and_then(Value::as_str).and_then(|path| Path::new(path).file_name().and_then(|n| n.to_str())).map(str::to_owned).unwrap_or_else(|| format!("{stem}.gif"));
         let output = p.get("path").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| format!("{dir}/{name}"));
         let overwrite = p.get("overwrite").and_then(Value::as_bool).unwrap_or(false);
@@ -841,7 +841,7 @@ fn render_document_with(
 
     // Image sequence. Frame-animation exposures are sampled at the document clock so explicit
     // delays become repeated output frames (rather than being collapsed to one frame each).
-    let opts = photocraft_io::ExportOptions::default();
+    let opts = photostore_io::ExportOptions::default();
     let output_frames = base.timeline.as_ref().map_or(frames, |t| {
         (timeline_export_duration(t, first, last) * fps - 1e-9).ceil().max(1.0) as usize
     });
@@ -856,7 +856,7 @@ fn render_document_with(
         let path = format!("{stem}_{f:04}.{format}");
         let overwrite = p.get("overwrite").and_then(Value::as_bool).unwrap_or(false);
         if !overwrite && Path::new(&format!("{dir}/{path}")).exists() { return Err(EngineError::Other(format!("output already exists: {dir}/{path}"))); }
-        let bytes = photocraft_io::export(&doc, format, &opts).map(|r| r.bytes).map_err(|e| EngineError::Other(format!("render frame {f}: {e}")))?;
+        let bytes = photostore_io::export(&doc, format, &opts).map(|r| r.bytes).map_err(|e| EngineError::Other(format!("render frame {f}: {e}")))?;
         write(&path, &bytes)?;
         files.push(path);
         if !progress(f + 1, output_frames) {

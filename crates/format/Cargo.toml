@@ -1,5 +1,5 @@
 [package]
-name = "photocraft-format"
+name = "photostore-format"
 description = "Native .pcraft document bundle: manifest + content-addressed zstd tiles"
 version.workspace = true
 edition.workspace = true
@@ -10,11 +10,11 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-photocraft-geom = { workspace = true }
-photocraft-color = { workspace = true }
-photocraft-raster = { workspace = true }
-photocraft-doc = { workspace = true }
-photocraft-codecs = { workspace = true }
+photostore-geom = { workspace = true }
+photostore-color = { workspace = true }
+photostore-raster = { workspace = true }
+photostore-doc = { workspace = true }
+photostore-codecs = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["unbounded_depth"] }
 thiserror = { workspace = true }

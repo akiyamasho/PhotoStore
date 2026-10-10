@@ -1,7 +1,7 @@
-use photocraft_color::{Color, PixelFormat, SampleType};
-use photocraft_doc::TextLayer;
-use photocraft_doc::text::{Caps, CharStyle, FontFeature, Orientation, ParagraphRun, ParagraphStyle, TextAlign, TextDirection, TextRun, TextShape};
-use photocraft_geom::Affine;
+use photostore_color::{Color, PixelFormat, SampleType};
+use photostore_doc::TextLayer;
+use photostore_doc::text::{Caps, CharStyle, FontFeature, Orientation, ParagraphRun, ParagraphStyle, TextAlign, TextDirection, TextRun, TextShape};
+use photostore_geom::Affine;
 
 use crate::{TextEngine, fonts};
 
@@ -22,7 +22,7 @@ fn width(l: &crate::TextLayout) -> f32 {
     l.lines.iter().map(|l| l.x1 - l.x0).fold(0.0, f32::max)
 }
 
-fn alpha_sum(s: &photocraft_raster::Surface, r: photocraft_geom::Rect) -> f64 {
+fn alpha_sum(s: &photostore_raster::Surface, r: photostore_geom::Rect) -> f64 {
     let n = s.channels();
     s.read_region(r).chunks_exact(n).map(|p| f64::from(p[n - 1])).sum()
 }
@@ -371,11 +371,11 @@ fn forced_line_break_starts_a_line_in_the_same_paragraph() {
         let (l, r) = e.render(&TextLayer { transform: Affine::translate(0.0, 40.0), ..point(text, 20.0) }, 72.0, fmt);
         let row = |i: usize| {
             let ln = &l.lines[i];
-            photocraft_geom::Rect::new(-2, (ln.baseline - ln.ascent + 40.0) as i32, 200, (ln.baseline + 40.0) as i32)
+            photostore_geom::Rect::new(-2, (ln.baseline - ln.ascent + 40.0) as i32, 200, (ln.baseline + 40.0) as i32)
         };
         assert!(alpha_sum(&r.surface, row(0)) > 1.0 && alpha_sum(&r.surface, row(1)) > 1.0, "{fmt:?}");
         let one_end = l.lines[0].x1.ceil() as i32 + 2;
-        assert!(alpha_sum(&r.surface, photocraft_geom::Rect::new(one_end, row(0).y0, 200, row(0).y1)) < 1e-3, "{fmt:?}: ink after the first line's text");
+        assert!(alpha_sum(&r.surface, photostore_geom::Rect::new(one_end, row(0).y0, 200, row(0).y1)) < 1e-3, "{fmt:?}: ink after the first line's text");
     }
 }
 
@@ -404,18 +404,18 @@ fn depth_is_respected() {
     assert!(r.surface.format().alpha);
 }
 
-/// Visual check: `PHOTOCRAFT_TEXT_DUMP=/tmp/t.ppm cargo test -p photocraft-text dump -- --ignored`.
+/// Visual check: `PHOTOSTORE_TEXT_DUMP=/tmp/t.ppm cargo test -p photostore-text dump -- --ignored`.
 #[test]
 #[ignore]
 fn dump_sample() {
-    use photocraft_doc::text::{Caps, TextAlign};
-    let Some(path) = std::env::var_os("PHOTOCRAFT_TEXT_DUMP") else {
+    use photostore_doc::text::{Caps, TextAlign};
+    let Some(path) = std::env::var_os("PHOTOSTORE_TEXT_DUMP") else {
         return;
     };
-    let mut e = if std::env::var_os("PHOTOCRAFT_TEXT_SYSTEM").is_some() { TextEngine::with_system_fonts() } else { TextEngine::new() };
+    let mut e = if std::env::var_os("PHOTOSTORE_TEXT_SYSTEM").is_some() { TextEngine::with_system_fonts() } else { TextEngine::new() };
     let s = CharStyle { size_pt: 28.0, ..Default::default() };
     let text =
-        "Photocraft Type\nBold faux, italic faux, underline\nשלום عربي mixed ✓\nJustified paragraph text wraps inside the box nicely and evenly across lines.";
+        "PhotoStore Type\nBold faux, italic faux, underline\nשלום عربي mixed ✓\nJustified paragraph text wraps inside the box nicely and evenly across lines.";
     let runs = vec![
         TextRun { len: 16, style: CharStyle { size_pt: 40.0, color: Color::rgb(0.1, 0.3, 0.9), caps: Caps::Normal, ..s.clone() } },
         TextRun { len: 5, style: CharStyle { faux_bold: true, ..s.clone() } },
@@ -469,7 +469,7 @@ fn variable_font_axes() {
         let s = CharStyle {
             font_family: fam.clone(),
             size_pt: 40.0,
-            variations: vec![photocraft_doc::text::FontVariation { axis: "wght".into(), value: w }],
+            variations: vec![photostore_doc::text::FontVariation { axis: "wght".into(), value: w }],
             ..Default::default()
         };
         let (_, r) = e.render(&TextLayer { transform: Affine::translate(0.0, 50.0), ..styled("Weight", s) }, 72.0, PixelFormat::RGBA8);
@@ -482,7 +482,7 @@ fn variable_font_axes() {
 
 #[test]
 fn warp_bends_rendered_text_and_outlines() {
-    use photocraft_doc::text::TextWarp;
+    use photostore_doc::text::TextWarp;
     let mut e = TextEngine::new();
     let mut t = point("WARPED TEXT", 24.0);
     t.transform = Affine::translate(20.0, 60.0);
@@ -542,7 +542,7 @@ fn txt2_with_modes(text: &str, modes: &[(usize, i64)]) -> Vec<u8> {
 fn with_text_index(tysh: &[u8], index: i32) -> Vec<u8> {
     let mut t = crate::psd::parse_tysh(tysh).unwrap();
     t.text.items.retain(|(k, _)| !k.is("TextIndex"));
-    t.text.items.push((photocraft_psd::descriptor::Id::new("TextIndex"), photocraft_psd::descriptor::Value::Integer(index)));
+    t.text.items.push((photostore_psd::descriptor::Id::new("TextIndex"), photostore_psd::descriptor::Value::Integer(index)));
     crate::psd::write_tysh(&t)
 }
 
@@ -550,7 +550,7 @@ fn with_text_index(tysh: &[u8], index: i32) -> Vec<u8> {
 /// `TextIndex` object still holds the same text.
 #[test]
 fn txt2_carries_optical_kerning() {
-    use photocraft_doc::text::Kerning;
+    use photostore_doc::text::Kerning;
     let t = styled("AVA", CharStyle::default());
     let tysh = with_text_index(&crate::psd::build_tysh(&t, 72.0, None), 0);
     let mut back = crate::psd::text_layer_from_tysh(&tysh, 72.0).unwrap();
@@ -585,7 +585,7 @@ fn txt2_carries_optical_kerning() {
 /// Metrics, because EngineData's `AutoKerning true` covers both).
 #[test]
 fn build_txt2_round_trips_kerning_modes() {
-    use photocraft_doc::text::Kerning;
+    use photostore_doc::text::Kerning;
     let style = |kerning: Kerning, kern: f32| CharStyle { kerning, kern, ..Default::default() };
     let t = runs_of("AVAT", &[(2, style(Kerning::Optical, 0.0)), (1, style(Kerning::Metrics, 0.0)), (1, style(Kerning::Off, 0.0))]);
     let tysh = with_text_index(&crate::psd::build_tysh(&t, 72.0, None), 0);
@@ -615,7 +615,7 @@ fn build_txt2_round_trips_kerning_modes() {
 #[test]
 fn txt2_keeps_a_kept_objects_extras_and_drops_them_with_its_text() {
     use crate::engine_data::Value as E;
-    use photocraft_doc::text::Kerning;
+    use photostore_doc::text::Kerning;
     let style = |kerning: Kerning, kern: f32| CharStyle { kerning, kern, ..Default::default() };
     // The file's block: object 0 with `/21 /1` pen positions, a model extra, and a block extra.
     let obj = E::Dict(vec![
@@ -706,7 +706,7 @@ fn psd_text_fill_is_enabled_in_runs_and_new_default_styles() {
 #[test]
 fn psd_text_fill_is_enabled_after_editing_a_legacy_export() {
     use crate::engine_data::Value as E;
-    // A legacy PhotoCraft export has a normal style and character runs without FillFlag.
+    // A legacy PhotoStore export has a normal style and character runs without FillFlag.
     let mut t = point("Before", 40.0);
     let mut legacy = crate::psd::parse_tysh(&crate::psd::build_tysh(&t, 72.0, None)).unwrap();
     fn remove_fill_flags(value: &mut E) {
@@ -725,7 +725,7 @@ fn psd_text_fill_is_enabled_after_editing_a_legacy_export() {
     remove_fill_flags(&mut data);
     for (key, value) in &mut legacy.text.items {
         if key.as_bytes() == b"EngineData" {
-            *value = photocraft_psd::descriptor::Value::RawData(crate::engine_data::write(&data));
+            *value = photostore_psd::descriptor::Value::RawData(crate::engine_data::write(&data));
         }
     }
     t.psd_raw = Some(crate::psd::write_tysh(&legacy).into());
@@ -743,9 +743,9 @@ fn psd_text_fill_is_enabled_after_editing_a_legacy_export() {
 /// Photoshop's form (see `psd::pair_runs`).
 #[test]
 fn psd_round_trips_manual_kerning() {
-    use photocraft_doc::text::Kerning::{Metrics as M, Off as O};
+    use photostore_doc::text::Kerning::{Metrics as M, Off as O};
     let s = CharStyle::default();
-    let cases: Vec<Vec<(usize, photocraft_doc::text::Kerning, f32)>> = vec![
+    let cases: Vec<Vec<(usize, photostore_doc::text::Kerning, f32)>> = vec![
         vec![(1, O, 100.0), (1, O, -50.0), (2, M, 0.0)],
         vec![(1, M, 0.0), (1, O, 0.0), (2, M, 0.0)],
         vec![(4, O, 0.0)],
@@ -770,7 +770,7 @@ fn psd_round_trips_manual_kerning() {
 
 #[test]
 fn psd_round_trips_antialias_opentype_and_warp() {
-    use photocraft_doc::text::{AntiAlias, TextWarp};
+    use photostore_doc::text::{AntiAlias, TextWarp};
     let style = CharStyle {
         font_family: "Inter".into(),
         size_pt: 20.0,
@@ -800,7 +800,7 @@ fn psd_round_trips_antialias_opentype_and_warp() {
 /// round trip so every editing and export path uses the same position.
 #[test]
 fn legacy_tysh_point_origin_imports_and_round_trips_on_canvas() {
-    use photocraft_psd::descriptor::{Descriptor, Id, Value as D};
+    use photostore_psd::descriptor::{Descriptor, Id, Value as D};
 
     let source = styled("Name", CharStyle { font_family: "Inter".into(), size_pt: 120.0, ..Default::default() });
     let mut tysh = crate::psd::parse_tysh(&crate::psd::build_tysh(&source, 72.0, None)).unwrap();
@@ -868,7 +868,7 @@ fn clusters_sit_on_rendered_glyphs() {
         ("plain", styled("HOHOH", big.clone())),
         ("tracking", styled("HOHOH", CharStyle { tracking: 300.0, ..big.clone() })),
         ("hscale", styled("HOHOH", CharStyle { horizontal_scale: 1.6, ..big.clone() })),
-        ("kerned", styled("HOHOH", CharStyle { kern: 250.0, kerning: photocraft_doc::text::Kerning::Optical, ..big.clone() })),
+        ("kerned", styled("HOHOH", CharStyle { kern: 250.0, kerning: photostore_doc::text::Kerning::Optical, ..big.clone() })),
         ("mixed", mixed),
         ("box", boxed),
     ];
@@ -879,7 +879,7 @@ fn clusters_sit_on_rendered_glyphs() {
         for c in l.clusters.iter().filter(|c| !t.text[c.range.clone()].trim().is_empty()) {
             let ln = &l.lines[c.line];
             // Ink under the cluster's middle, between the line's ascent and descent.
-            let col = photocraft_geom::Rect::new(
+            let col = photostore_geom::Rect::new(
                 (c.x + c.advance * 0.3 + 7.0).floor() as i32,
                 (ln.baseline - ln.ascent + 60.0).floor() as i32,
                 (c.x + c.advance * 0.55 + 7.0).ceil() as i32,
@@ -902,7 +902,7 @@ fn runs_of(text: &str, styles: &[(usize, CharStyle)]) -> TextLayer {
 /// Manual kerning (1/1000 em) after a character moves everything after it by kern × size.
 #[test]
 fn manual_kerning_moves_the_next_glyph() {
-    use photocraft_doc::text::Kerning;
+    use photostore_doc::text::Kerning;
     let mut e = TextEngine::new();
     let s = CharStyle { size_pt: 100.0, ..Default::default() };
     let plain = e.layout(&styled("HOH", s.clone()), 72.0);
@@ -938,7 +938,7 @@ fn manual_kerning_moves_the_next_glyph() {
 /// than the unkerned advance, about neutral for straight stems, and never absurd.
 #[test]
 fn optical_kerning_tightens_open_pairs() {
-    use photocraft_doc::text::Kerning;
+    use photostore_doc::text::Kerning;
     let mut e = TextEngine::new();
     let s = CharStyle { size_pt: 100.0, ..Default::default() };
     let gap = |e: &mut TextEngine, text: &str, k: Kerning| {
@@ -968,7 +968,7 @@ fn optical_kerning_tightens_open_pairs() {
 /// lose their automatic kerning (Photoshop renders it the same way).
 #[test]
 fn kerning_modes_split_pairs() {
-    use photocraft_doc::text::Kerning;
+    use photostore_doc::text::Kerning;
     let mut e = TextEngine::new();
     let s = CharStyle { size_pt: 100.0, ..Default::default() };
     let off = CharStyle { kerning: Kerning::Off, ..s.clone() };

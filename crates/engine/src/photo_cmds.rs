@@ -1,23 +1,23 @@
 //! Computational-photography automation: File › Automate › Photomerge, Merge to HDR Pro and
 //! Crop and Straighten Photos. The registration and blending code
-//! ([`photocraft_algo::panorama`]) is shared with Edit › Auto-Align / Auto-Blend Layers
+//! ([`photostore_algo::panorama`]) is shared with Edit › Auto-Align / Auto-Blend Layers
 //! (`align_cmds`).
 //!
 //! Inputs are files (`"paths"`: an array or a folder) or, with `"useOpenDocuments": true`, the
 //! open documents (Photoshop's *Add Open Files*). Each command creates new documents; the
 //! sources are untouched.
 
-use photocraft_algo::exif;
-use photocraft_algo::hdr::{self, MergeOptions, ToneMethod};
-use photocraft_algo::panorama::{self, AlignOptions, Alignment, Layout, Placement, RoiImage};
-use photocraft_algo::scancrop;
-use photocraft_algo::tone::HdrToning;
-use photocraft_algo::transform::{Homography, Interp, warp_surface};
-use photocraft_algo::warp::warp_mesh_surface;
-use photocraft_color::{ColorMode, PixelFormat, SampleType};
-use photocraft_doc::{Document, Layer, LayerContent, LayerMask, Size};
-use photocraft_geom::Rect;
-use photocraft_raster::{Surface, to_rgba};
+use photostore_algo::exif;
+use photostore_algo::hdr::{self, MergeOptions, ToneMethod};
+use photostore_algo::panorama::{self, AlignOptions, Alignment, Layout, Placement, RoiImage};
+use photostore_algo::scancrop;
+use photostore_algo::tone::HdrToning;
+use photostore_algo::transform::{Homography, Interp, warp_surface};
+use photostore_algo::warp::warp_mesh_surface;
+use photostore_color::{ColorMode, PixelFormat, SampleType};
+use photostore_doc::{Document, Layer, LayerContent, LayerMask, Size};
+use photostore_geom::Rect;
+use photostore_raster::{Surface, to_rgba};
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
@@ -516,7 +516,7 @@ fn photomerge(s: &mut Session, p: &Value) -> Result<Value> {
 /// Fills the transparent areas of a composite (inside its bounding rectangle) with
 /// content-aware fill, at a reduced scale for large panoramas.
 fn content_aware_fill(comp: &Surface, canvas: Rect) -> Surface {
-    use photocraft_algo::content_aware::{FillOptions, fill};
+    use photostore_algo::content_aware::{FillOptions, fill};
     let fmt = comp.format();
     let n = fmt.channels();
     let (w, h) = (canvas.width() as usize, canvas.height() as usize);
@@ -703,12 +703,12 @@ fn merge_to_hdr(s: &mut Session, p: &Value) -> Result<Value> {
         q[3] = 1.0;
     }
     let mut doc = Document::new(format!("Untitled_HDR{}", s.documents().len() + 1), Size::new(w as u32, h as u32), ColorMode::Rgb, depth);
-    doc.icc_profile = if depth == SampleType::F32 { Some(photocraft_cms::builtin::Builtin::LinearSrgb.profile().to_bytes()) } else { icc };
+    doc.icc_profile = if depth == SampleType::F32 { Some(photostore_cms::builtin::Builtin::LinearSrgb.profile().to_bytes()) } else { icc };
     let fmt = doc.pixel_format();
     let n = fmt.channels();
     let mut data = vec![0.0f32; w * h * n];
     for (q, o) in px.iter().zip(data.chunks_exact_mut(n)) {
-        photocraft_raster::from_rgba_into(&fmt, *q, o);
+        photostore_raster::from_rgba_into(&fmt, *q, o);
     }
     let mut surf = Surface::new(fmt);
     surf.write_region(area, &data);
@@ -864,7 +864,7 @@ mod tests {
         let n = fmt.channels();
         let mut data = vec![0.0f32; w * h * n];
         for (q, o) in px.iter().zip(data.chunks_exact_mut(n)) {
-            photocraft_raster::from_rgba_into(&fmt, *q, o);
+            photostore_raster::from_rgba_into(&fmt, *q, o);
         }
         let mut s = Surface::new(fmt);
         s.write_region(Rect::new(0, 0, w as i32, h as i32), &data);
@@ -904,7 +904,7 @@ mod tests {
                 assert!((shown - 1.0).abs() < 0.01, "({x},{y}) {shown}");
             }
             // The composite matches the scene up to the global gain.
-            let comp = photocraft_compose::flatten(d);
+            let comp = photostore_compose::flatten(d);
             let at = |x: i32, y: i32| comp.px[(y * comp.rect.width() as i32 + x) as usize];
             let gains = r["photometric"]["gains"].as_array().unwrap();
             assert!(gains[1][0].as_f64().unwrap() > gains[0][0].as_f64().unwrap() * 1.05, "{r}");
@@ -971,7 +971,7 @@ mod tests {
             radiance
                 .iter()
                 .map(|r| {
-                    let f = |v: f32| photocraft_algo_srgb((v * dt).min(1.0));
+                    let f = |v: f32| photostore_algo_srgb((v * dt).min(1.0));
                     [f(r[0]), f(r[1]), f(r[2]), 1.0]
                 })
                 .collect()
@@ -1015,7 +1015,7 @@ mod tests {
         assert!(s.execute("file.automate.mergeToHdrPro", json!({"useOpenDocuments": true, "exposures": [0, 1]})).is_err());
     }
 
-    fn photocraft_algo_srgb(v: f32) -> f32 {
+    fn photostore_algo_srgb(v: f32) -> f32 {
         if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 }
     }
 

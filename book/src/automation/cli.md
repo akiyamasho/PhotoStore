@@ -1,6 +1,6 @@
 # Command-line interface
 
-`apps/photocraft-cli` provides the following current subcommands:
+`apps/photostore-cli` provides the following current subcommands:
 
 | Command | Purpose |
 |---|---|
@@ -8,15 +8,15 @@
 | `info` | Print document size, mode, depth, and layer information as JSON |
 | `run` | Open or create a document, execute engine commands, and optionally save |
 | `batch` | Apply an action list to files in one input directory |
-| `droplet` | Run a PhotoCraft droplet against files or folders |
+| `droplet` | Run a PhotoStore droplet against files or folders |
 | `commands` | List command IDs and parameter documentation |
 | `mcp` | Start the MCP server on stdio, optionally bridged to the desktop app |
 | `serve` | Start the JSON-lines headless server on stdio or loopback TCP |
 
-Use `photocraft-cli --help` (or `photocraft-cli <subcommand> --help`) as the executable source of truth. A typical bounded command run is:
+Use `photostore-cli --help` (or `photostore-cli <subcommand> --help`) as the executable source of truth. A typical bounded command run is:
 
 ```sh
-photocraft-cli run input.psd \
+photostore-cli run input.psd \
   --cmd image.adjustments.invert \
   --out output.png
 ```
@@ -53,7 +53,7 @@ always baked in **document stacking order**, bottom to top. When `path` is
 omitted, the command returns the .cube text in `cube`; both forms return
 `size` and `layerCount`.
 
-Valid LUT dimensions are 2–129 (same maximum as PhotoCraft's LUT reader).
+Valid LUT dimensions are 2–129 (same maximum as PhotoStore's LUT reader).
 Selected IDs must exist, be visible top-level adjustment layers, and contain
 no duplicates; invalid selections report an error rather than silently
 exporting a different look. Masks, vector masks and clipping are spatial

@@ -20,7 +20,7 @@
       Name="PhotoStore"
       Manufacturer="Learning Machines LLC"
       Version="$(var.Version)"
-      UpgradeCode="D9660F32-2D0A-4ABE-B73D-17BE25F1542C"
+      UpgradeCode="5C8D1E43-6A74-4F20-9B12-8E3A7D5C1B90"
       Scope="perMachine"
       Compressed="yes"
       Language="1033">
@@ -35,9 +35,9 @@
          .exe need an .exe icon identifier (ICE50), even when the source is an ICO. -->
     <Icon Id="PhotoStoreIcon.exe" SourceFile="$(var.IconPath)" />
     <Property Id="ARPPRODUCTICON" Value="PhotoStoreIcon.exe" />
-    <Property Id="ARPURLINFOABOUT" Value="https://getartcraft.com/apps/photostore" />
-    <Property Id="ARPURLUPDATEINFO" Value="https://getartcraft.com/apps/photostore" />
-    <Property Id="ARPHELPLINK" Value="https://discord.gg/artcraft" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/akiyamasho/PhotoStore/releases" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/akiyamasho/PhotoStore/releases" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/akiyamasho/PhotoStore/issues" />
 
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="PhotoStore" />
@@ -81,7 +81,7 @@
 
   <Fragment>
     <ComponentGroup Id="PhotoStoreFiles" Directory="INSTALLFOLDER">
-      <Component Id="PhotoStoreApp" Guid="A6DE41B7-A80F-4C59-A17E-BB68065BF67E">
+      <Component Id="PhotoStoreApp" Guid="B7F42C19-3E65-4A8D-91C0-6D2E5F8A4B73">
         <File Id="PhotoStoreExe" Source="$(var.BinDir)\photostore.exe" KeyPath="yes">
           <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="PhotoStore"
               Description="PhotoStore image editor" WorkingDirectory="INSTALLFOLDER" Advertise="yes"

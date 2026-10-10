@@ -1,7 +1,7 @@
 //! Filter › Camera Raw Filter…: a large dialog like Adobe Camera Raw's (preview on the left,
 //! edit panels on the right: Light, Color, Effects, Curve, Color Mixer, Color Grading, Detail).
 //!
-//! The preview runs [`photocraft_algo::camera_raw::develop`] on a CPU proxy of the layer
+//! The preview runs [`photostore_algo::camera_raw::develop`] on a CPU proxy of the layer
 //! (≤ 900 px, `pixel_scale` keeps pixel radii true to the full image), recomputed when a
 //! control changes. OK runs `filter.cameraRaw` with the non-default settings, so the result is
 //! one history step (or a smart filter on a smart object) and exactly replayable.
@@ -10,15 +10,15 @@
 //! "commit":true | "cancel":true}}}`; the reply describes the dialog.
 
 use egui::{Align2, Color32, FontId, Pos2, Rect as ERect, Sense, Stroke, TextureHandle, pos2, vec2};
-use photocraft_algo::camera_raw::{CameraRaw, Wheel, curve_lut};
-use photocraft_algo::histogram::RgbHistogram;
+use photostore_algo::camera_raw::{CameraRaw, Wheel, curve_lut};
+use photostore_algo::histogram::RgbHistogram;
 
 use crate::camera_raw_scope_ui::{MAX_SAMPLERS, ToneZone};
-use photocraft_doc::LayerId;
-use photocraft_geom::Rect;
+use photostore_doc::LayerId;
+use photostore_geom::Rect;
 use serde_json::{Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::theme::Tokens;
 use crate::widgets;
 
@@ -50,8 +50,8 @@ pub struct CameraRawDialog {
     before_tex: Option<TextureHandle>,
     pub(crate) before_histogram: RgbHistogram,
     pub(crate) processed: Vec<[f32; 4]>,
-    pub(crate) lab_transform: std::sync::Arc<photocraft_cms::Transform>,
-    pub(crate) scope_transform: std::sync::Arc<photocraft_cms::Transform>,
+    pub(crate) lab_transform: std::sync::Arc<photostore_cms::Transform>,
+    pub(crate) scope_transform: std::sync::Arc<photostore_cms::Transform>,
     pub(crate) scope: super::camera_raw_scope_ui::ScopeView,
     pub(crate) after_histogram: RgbHistogram,
     pub(crate) preview_revision: u64,
@@ -126,7 +126,7 @@ impl CameraRawDialog {
         let mut px = self.proxy.clone();
         let mut p = self.params.clone();
         p.pixel_scale = (self.pw as f32 / self.full_w.max(1) as f32).min(1.0);
-        photocraft_algo::camera_raw::develop(&mut px, self.pw, self.ph, &p, self.float);
+        photostore_algo::camera_raw::develop(&mut px, self.pw, self.ph, &p, self.float);
         if let Some(mask) = &self.selection {
             for ((out, original), coverage) in px.iter_mut().zip(&self.proxy).zip(mask) {
                 for (out, original) in out.iter_mut().zip(original) {
@@ -167,11 +167,11 @@ enum Target {
 /// A raw file opened interactively, shown in Camera Raw before it is kept (as Photoshop opens
 /// raws in Adobe Camera Raw first). The document is already developed with the defaults; Open
 /// re-develops it when Temperature, Tint or Exposure changed (those act on the sensor data, see
-/// [`photocraft_io::raw::import_raw_tuned`]) and applies the other settings as one Camera Raw
+/// [`photostore_io::raw::import_raw_tuned`]) and applies the other settings as one Camera Raw
 /// step, then marks the document unmodified. Cancel closes it.
 #[derive(Clone, Debug)]
 pub struct RawOpen {
-    pub document: photocraft_doc::DocId,
+    pub document: photostore_doc::DocId,
     pub name: String,
     pub path: Option<String>,
     /// The file, when it was opened from bytes (no path to read it again from).
@@ -180,18 +180,18 @@ pub struct RawOpen {
 
 /// Should an interactive open of `name` show the open-time Camera Raw dialog? `warnings` are
 /// the import's: only a raw developed from its sensor data qualifies (not a preview fallback).
-pub fn wants_open_dialog(app: &PhotocraftApp, warnings: &[String]) -> bool {
-    app.session.prefs().raw_defaults.open_in_camera_raw && warnings.iter().any(|w| w.contains(photocraft_io::raw::DEVELOPED_NOTE))
+pub fn wants_open_dialog(app: &PhotoStoreApp, warnings: &[String]) -> bool {
+    app.session.prefs().raw_defaults.open_in_camera_raw && warnings.iter().any(|w| w.contains(photostore_io::raw::DEVELOPED_NOTE))
 }
 
 /// `warnings` without the "developed with default settings" note: the open-time dialog shows
 /// how the raw is developed.
 pub fn without_develop_note(warnings: &[String]) -> Vec<String> {
-    warnings.iter().filter(|w| !w.contains(photocraft_io::raw::DEVELOPED_NOTE)).cloned().collect()
+    warnings.iter().filter(|w| !w.contains(photostore_io::raw::DEVELOPED_NOTE)).cloned().collect()
 }
 
 /// Queues the open-time dialog for the active document (shown on the next frame).
-pub fn queue_open_dialog(app: &mut PhotocraftApp, name: &str, path: Option<&str>, bytes: Option<&[u8]>) {
+pub fn queue_open_dialog(app: &mut PhotoStoreApp, name: &str, path: Option<&str>, bytes: Option<&[u8]>) {
     if let Some(st) = app.session.active() {
         app.pending_raw_open = Some(RawOpen {
             document: st.doc.id,
@@ -203,7 +203,7 @@ pub fn queue_open_dialog(app: &mut PhotocraftApp, name: &str, path: Option<&str>
 }
 
 /// Opens the queued open-time dialog on its document's (only) layer.
-fn open_raw(app: &mut PhotocraftApp, ctx: &egui::Context, raw: RawOpen) -> Result<(), String> {
+fn open_raw(app: &mut PhotoStoreApp, ctx: &egui::Context, raw: RawOpen) -> Result<(), String> {
     let index = document_index(app, raw.document).ok_or("the raw document was closed")?;
     app.session.set_active(index);
     let (layer, surf, _) = crate::distort_ui::active_pixels(app)?;
@@ -215,7 +215,7 @@ fn open_raw(app: &mut PhotocraftApp, ctx: &egui::Context, raw: RawOpen) -> Resul
     Ok(())
 }
 
-fn document_index(app: &PhotocraftApp, id: photocraft_doc::DocId) -> Option<usize> {
+fn document_index(app: &PhotoStoreApp, id: photostore_doc::DocId) -> Option<usize> {
     app.session.documents().iter().position(|st| st.doc.id == id)
 }
 
@@ -240,7 +240,7 @@ pub const REDEVELOP_JOB: &str = "cameraRaw.redevelop";
 /// An open-time re-develop running in the background: what to finish with when it lands.
 #[derive(Clone, Debug)]
 pub struct Redevelop {
-    pub job: photocraft_engine::jobs::JobId,
+    pub job: photostore_engine::jobs::JobId,
     params: CameraRaw,
     raw: RawOpen,
     /// The job is the final Camera Raw step (`filter.cameraRaw`), not the re-develop: when it
@@ -254,47 +254,47 @@ pub struct Redevelop {
 /// on) it runs as a job like the open itself: the reply is `{"job", "pending": true}`, the
 /// document is locked meanwhile, and [`on_redevelop_event`] finishes when it lands. Elsewhere
 /// (tests, the web) it runs inline.
-fn commit_open_raw(app: &mut PhotocraftApp, params: &CameraRaw, raw: &RawOpen) -> Result<Value, String> {
+fn commit_open_raw(app: &mut PhotoStoreApp, params: &CameraRaw, raw: &RawOpen) -> Result<Value, String> {
     let index = document_index(app, raw.document).ok_or("the raw document was closed")?;
-    let tuning = photocraft_io::raw::RawTuning { temperature: params.temperature, tint: params.tint, exposure: params.exposure };
+    let tuning = photostore_io::raw::RawTuning { temperature: params.temperature, tint: params.tint, exposure: params.exposure };
     // Without the file the raw-stage settings stay RGB adjustments, like the filter's.
     let source = match (&raw.bytes, &raw.path) {
-        (Some(b), _) => Some(photocraft_engine::jobs::OpenSource::Bytes(b.clone())),
+        (Some(b), _) => Some(photostore_engine::jobs::OpenSource::Bytes(b.clone())),
         #[cfg(not(target_arch = "wasm32"))]
-        (None, Some(p)) => Some(photocraft_engine::jobs::OpenSource::Path(p.clone())),
+        (None, Some(p)) => Some(photostore_engine::jobs::OpenSource::Path(p.clone())),
         _ => None,
     };
-    let Some(source) = source.filter(|_| tuning != photocraft_io::raw::RawTuning::default()) else {
+    let Some(source) = source.filter(|_| tuning != photostore_io::raw::RawTuning::default()) else {
         return finish_open_raw(app, index, params.clone(), None, Some(raw));
     };
     app.session.set_active(index);
     let (name, doc_id) = (raw.name.clone(), raw.document);
-    let work = move |ctx: &photocraft_engine::jobs::JobCtx| -> photocraft_engine::Result<(photocraft_io::ImportResult, bool)> {
+    let work = move |ctx: &photostore_engine::jobs::JobCtx| -> photostore_engine::Result<(photostore_io::ImportResult, bool)> {
         ctx.progress(0.0, "Reading");
         let bytes = match source {
-            photocraft_engine::jobs::OpenSource::Bytes(b) => b,
+            photostore_engine::jobs::OpenSource::Bytes(b) => b,
             #[cfg(not(target_arch = "wasm32"))]
-            photocraft_engine::jobs::OpenSource::Path(p) => {
-                std::sync::Arc::new(std::fs::read(&p).map_err(|e| photocraft_engine::EngineError::Other(format!("{p}: {e}")))?)
+            photostore_engine::jobs::OpenSource::Path(p) => {
+                std::sync::Arc::new(std::fs::read(&p).map_err(|e| photostore_engine::EngineError::Other(format!("{p}: {e}")))?)
             }
             #[cfg(target_arch = "wasm32")]
-            photocraft_engine::jobs::OpenSource::Path(p) => return Err(photocraft_engine::EngineError::Other(format!("{p}: cannot read files here"))),
+            photostore_engine::jobs::OpenSource::Path(p) => return Err(photostore_engine::EngineError::Other(format!("{p}: cannot read files here"))),
         };
         ctx.check()?;
         ctx.progress(0.05, "Developing");
-        photocraft_io::raw::import_raw_tuned(&name, &bytes, &tuning).map_err(|e| photocraft_engine::EngineError::Other(e.to_string()))
+        photostore_io::raw::import_raw_tuned(&name, &bytes, &tuning).map_err(|e| photostore_engine::EngineError::Other(e.to_string()))
     };
-    let apply = move |s: &mut photocraft_engine::Session, (r, wb): (photocraft_io::ImportResult, bool)| replace_raw_document(s, doc_id, r, wb);
+    let apply = move |s: &mut photostore_engine::Session, (r, wb): (photostore_io::ImportResult, bool)| replace_raw_document(s, doc_id, r, wb);
     let label = crate::i18n::fmt(tl!("Developing {name}"), &[("name", &raw.name)]);
     let started = if app.background_jobs {
         app.session.start_job(REDEVELOP_JOB, json!({"name": raw.name}), &label, true, work, apply).map_err(|e| e.to_string())?
     } else {
-        let v = work(&photocraft_engine::jobs::JobCtx::new()).and_then(|t| apply(&mut app.session, t)).map_err(|e| e.to_string())?;
-        photocraft_engine::jobs::Started::Done(v)
+        let v = work(&photostore_engine::jobs::JobCtx::new()).and_then(|t| apply(&mut app.session, t)).map_err(|e| e.to_string())?;
+        photostore_engine::jobs::Started::Done(v)
     };
     match started {
-        photocraft_engine::jobs::Started::Done(v) => finish_redevelop(app, params, raw, &v),
-        photocraft_engine::jobs::Started::Job(job) => {
+        photostore_engine::jobs::Started::Done(v) => finish_redevelop(app, params, raw, &v),
+        photostore_engine::jobs::Started::Job(job) => {
             app.raw_redevelop = Some(Redevelop { job, params: params.clone(), raw: raw.clone(), filter_step: false });
             app.ui.status = label;
             app.ui.status_error = false;
@@ -306,13 +306,13 @@ fn commit_open_raw(app: &mut PhotocraftApp, params: &CameraRaw, raw: &RawOpen) -
 /// Swap the default-developed document `doc_id` for the re-developed one, at the same tab
 /// position and with the same path. Returns `{document, previous, warnings, wb}`.
 fn replace_raw_document(
-    s: &mut photocraft_engine::Session,
-    doc_id: photocraft_doc::DocId,
-    r: photocraft_io::ImportResult,
+    s: &mut photostore_engine::Session,
+    doc_id: photostore_doc::DocId,
+    r: photostore_io::ImportResult,
     wb: bool,
-) -> photocraft_engine::Result<Value> {
+) -> photostore_engine::Result<Value> {
     let index =
-        s.documents().iter().position(|st| st.doc.id == doc_id).ok_or_else(|| photocraft_engine::EngineError::Other("the raw document was closed".into()))?;
+        s.documents().iter().position(|st| st.doc.id == doc_id).ok_or_else(|| photostore_engine::EngineError::Other("the raw document was closed".into()))?;
     let path = s.documents().get(index).and_then(|st| st.path.clone());
     s.close(index);
     let (opened, _) = s.open_document(r.document, path);
@@ -326,7 +326,7 @@ fn replace_raw_document(
 
 /// After the re-develop: keep the old document's view (zoom, scroll) on the new one, report
 /// the import's notes, then apply the remaining settings.
-fn finish_redevelop(app: &mut PhotocraftApp, params: &CameraRaw, raw: &RawOpen, v: &Value) -> Result<Value, String> {
+fn finish_redevelop(app: &mut PhotoStoreApp, params: &CameraRaw, raw: &RawOpen, v: &Value) -> Result<Value, String> {
     let index = v.get("document").and_then(Value::as_u64).ok_or("the re-develop returned no document")? as usize;
     if let Some(new_id) = app.session.documents().get(index).map(|st| st.doc.id) {
         for id in app.view_docs.iter_mut().filter(|id| **id == raw.document) {
@@ -348,7 +348,7 @@ fn finish_redevelop(app: &mut PhotocraftApp, params: &CameraRaw, raw: &RawOpen, 
 /// The other settings as one Camera Raw step on document `index`, then the document is marked
 /// unmodified (developing is part of opening). The step runs like any filter (in the
 /// background in the desktop app); the document is marked unmodified when it lands.
-fn finish_open_raw(app: &mut PhotocraftApp, index: usize, rest: CameraRaw, redeveloped: Option<bool>, raw: Option<&RawOpen>) -> Result<Value, String> {
+fn finish_open_raw(app: &mut PhotoStoreApp, index: usize, rest: CameraRaw, redeveloped: Option<bool>, raw: Option<&RawOpen>) -> Result<Value, String> {
     app.session.set_active(index);
     app.sync_views();
     let mut result = json!({"document": index, "redeveloped": redeveloped.unwrap_or(false)});
@@ -360,7 +360,7 @@ fn finish_open_raw(app: &mut PhotocraftApp, index: usize, rest: CameraRaw, redev
         if r.get("pending").and_then(Value::as_bool) == Some(true)
             && let (Some(job), Some(raw)) = (r.get("job").and_then(Value::as_u64), raw)
         {
-            app.raw_redevelop = Some(Redevelop { job: photocraft_engine::jobs::JobId(job), params: rest.clone(), raw: raw.clone(), filter_step: true });
+            app.raw_redevelop = Some(Redevelop { job: photostore_engine::jobs::JobId(job), params: rest.clone(), raw: raw.clone(), filter_step: true });
         }
         result["filter"] = r;
     }
@@ -368,7 +368,7 @@ fn finish_open_raw(app: &mut PhotocraftApp, index: usize, rest: CameraRaw, redev
     Ok(result)
 }
 
-fn mark_unmodified(app: &mut PhotocraftApp, index: usize) {
+fn mark_unmodified(app: &mut PhotoStoreApp, index: usize) {
     let active = app.session.active_index();
     app.session.set_active(index);
     if let Some(st) = app.session.active_mut() {
@@ -382,10 +382,10 @@ fn mark_unmodified(app: &mut PhotocraftApp, index: usize) {
 
 /// A finished background re-develop ([`REDEVELOP_JOB`]) or open-time Camera Raw step. `true`
 /// when the event was one of those (handled here).
-pub fn on_redevelop_event(app: &mut PhotocraftApp, e: &photocraft_engine::jobs::JobEvent) -> bool {
+pub fn on_redevelop_event(app: &mut PhotoStoreApp, e: &photostore_engine::jobs::JobEvent) -> bool {
     let Some(pending) = app.raw_redevelop.take_if(|r| r.job == e.id) else { return false };
     if pending.filter_step {
-        if matches!(e.outcome, photocraft_engine::jobs::JobOutcome::Done(_))
+        if matches!(e.outcome, photostore_engine::jobs::JobOutcome::Done(_))
             && let Some(index) = e.document.and_then(|id| document_index(app, id))
         {
             mark_unmodified(app, index);
@@ -394,19 +394,19 @@ pub fn on_redevelop_event(app: &mut PhotocraftApp, e: &photocraft_engine::jobs::
         return false;
     }
     match &e.outcome {
-        photocraft_engine::jobs::JobOutcome::Done(v) => match finish_redevelop(app, &pending.params, &pending.raw, v) {
+        photostore_engine::jobs::JobOutcome::Done(v) => match finish_redevelop(app, &pending.params, &pending.raw, v) {
             Ok(_) => {
                 app.ui.status = format!("Opened {}", pending.raw.name);
                 app.ui.status_error = false;
             }
             Err(err) => crate::notices::error(app, format!("{}: {err}", e.label)),
         },
-        photocraft_engine::jobs::JobOutcome::Failed(err) => {
+        photostore_engine::jobs::JobOutcome::Failed(err) => {
             // The document stays open, developed with the defaults.
             app.sync_views();
             crate::notices::error(app, format!("{}: {err}", e.label));
         }
-        photocraft_engine::jobs::JobOutcome::Cancelled => {
+        photostore_engine::jobs::JobOutcome::Cancelled => {
             app.ui.status = crate::i18n::fmt(tl!("Cancelled {label}"), &[("label", &e.label)]);
             app.ui.status_error = false;
         }
@@ -415,7 +415,7 @@ pub fn on_redevelop_event(app: &mut PhotocraftApp, e: &photocraft_engine::jobs::
 }
 
 /// Cancel: closes the dialog; for the open-time dialog also the document it was opening.
-fn cancel(app: &mut PhotocraftApp) {
+fn cancel(app: &mut PhotoStoreApp) {
     let Some(d) = app.camera_raw.take() else { return };
     if let (Target::OpenRaw, Some(raw)) = (d.target, &d.raw_open)
         && let Some(index) = document_index(app, raw.document)
@@ -431,12 +431,12 @@ fn cancel(app: &mut PhotocraftApp) {
 /// engine does), a smart object's filter mask, or nothing.
 enum Coverage {
     Selection,
-    Mask(photocraft_doc::LayerMask),
+    Mask(photostore_doc::LayerMask),
     None,
 }
 
-pub fn open(app: &mut PhotocraftApp, ctx: &egui::Context) -> Result<(), String> {
-    photocraft_engine::commands::find("filter.cameraRaw").map(|c| (c.enabled)(&app.session)).unwrap_or(Err("unknown command".into()))?;
+pub fn open(app: &mut PhotoStoreApp, ctx: &egui::Context) -> Result<(), String> {
+    photostore_engine::commands::find("filter.cameraRaw").map(|c| (c.enabled)(&app.session)).unwrap_or(Err("unknown command".into()))?;
     let (layer, surf, _) = crate::distort_ui::active_pixels(app)?;
     open_pixels(app, ctx, layer, surf, CameraRaw::default(), Coverage::Selection, Target::NewFilter)
 }
@@ -444,10 +444,10 @@ pub fn open(app: &mut PhotocraftApp, ctx: &egui::Context) -> Result<(), String> 
 /// Opens Camera Raw on smart filter `index` of smart layer `layer`, with its stored settings and
 /// the pixels below it; OK updates that filter (`layer.smartFilter.setParams`), as double-clicking
 /// a Camera Raw smart filter does in Photoshop.
-pub fn open_smart_filter(app: &mut PhotocraftApp, ctx: &egui::Context, layer: LayerId, index: usize) -> Result<(), String> {
-    use photocraft_engine::lens_cmds::{RAW, raw_params};
+pub fn open_smart_filter(app: &mut PhotoStoreApp, ctx: &egui::Context, layer: LayerId, index: usize) -> Result<(), String> {
+    use photostore_engine::lens_cmds::{RAW, raw_params};
     let st = app.session.active().ok_or("no document")?;
-    let Some(photocraft_doc::LayerContent::Smart(sm)) = st.doc.layer(layer).map(|l| &l.content) else {
+    let Some(photostore_doc::LayerContent::Smart(sm)) = st.doc.layer(layer).map(|l| &l.content) else {
         return Err("the layer is not a smart object".into());
     };
     let filter = sm.smart_filters.get(index).ok_or("no such smart filter")?;
@@ -455,7 +455,7 @@ pub fn open_smart_filter(app: &mut PhotocraftApp, ctx: &egui::Context, layer: La
         return Err("the smart filter is not a Camera Raw filter".into());
     }
     let params = raw_params(RAW, &filter.params).map_err(|e| e.to_string())?;
-    let surf = photocraft_engine::smart_cmds::render_below_filter(&st.doc, sm, index)
+    let surf = photostore_engine::smart_cmds::render_below_filter(&st.doc, sm, index)
         .map_err(|e| e.to_string())?
         .ok_or("the smart object's contents are unavailable (missing linked file?)")?;
     let coverage = sm.filter_mask.clone().filter(|m| m.enabled).map_or(Coverage::None, Coverage::Mask);
@@ -463,10 +463,10 @@ pub fn open_smart_filter(app: &mut PhotocraftApp, ctx: &egui::Context, layer: La
 }
 
 fn open_pixels(
-    app: &mut PhotocraftApp,
+    app: &mut PhotoStoreApp,
     ctx: &egui::Context,
     layer: LayerId,
-    surf: photocraft_raster::Surface,
+    surf: photostore_raster::Surface,
     params: CameraRaw,
     coverage: Coverage,
     target: Target,
@@ -520,9 +520,9 @@ fn open_pixels(
         Coverage::Mask(mask) => Some(sample(&|x, y| mask.value(x, y))),
         Coverage::None => None,
     };
-    let source = photocraft_engine::color_cmds::composite_profile(&st.doc);
-    let lab_transform = photocraft_cms::cached(&source, photocraft_cms::Builtin::LabD50.profile(), Default::default()).map_err(|e| e.to_string())?;
-    let scope_transform = photocraft_cms::cached(&source, photocraft_cms::Builtin::Srgb.profile(), Default::default()).map_err(|e| e.to_string())?;
+    let source = photostore_engine::color_cmds::composite_profile(&st.doc);
+    let lab_transform = photostore_cms::cached(&source, photostore_cms::Builtin::LabD50.profile(), Default::default()).map_err(|e| e.to_string())?;
+    let scope_transform = photostore_cms::cached(&source, photostore_cms::Builtin::Srgb.profile(), Default::default()).map_err(|e| e.to_string())?;
     if let Some(saved) = app.session.prefs().dialogs.get("filter.cameraRaw.scope")
         && saved.get("samplers").and_then(Value::as_array).is_none_or(|a| a.len() <= MAX_SAMPLERS)
         && let Ok(view) = serde_json::from_value(saved.clone())
@@ -536,7 +536,7 @@ fn open_pixels(
     if selection.is_none() {
         app.ui.camera_raw_scope.selected_region = false;
     }
-    let float = surf.format().sample == photocraft_color::SampleType::F32;
+    let float = surf.format().sample == photostore_color::SampleType::F32;
     let mut d = CameraRawDialog {
         layer,
         layer_name: name,
@@ -587,7 +587,7 @@ fn open_pixels(
 }
 
 /// Menu / control-channel entry point. `None` when the call isn't for this dialog.
-pub fn menu(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
+pub fn menu(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if id != "filter.cameraRaw" {
         return None;
     }
@@ -641,7 +641,7 @@ pub fn menu(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: &Val
     result
 }
 
-fn menu_update(app: &mut PhotocraftApp, ctx: &egui::Context, ui: &Value) -> Option<Result<Value, String>> {
+fn menu_update(app: &mut PhotoStoreApp, ctx: &egui::Context, ui: &Value) -> Option<Result<Value, String>> {
     // Stage both filter and presentation updates. No texture, preference or dialog mutation
     // occurs until every part of the request has passed validation.
     let d = app.camera_raw.as_ref()?;
@@ -715,7 +715,7 @@ fn menu_update(app: &mut PhotocraftApp, ctx: &egui::Context, ui: &Value) -> Opti
     Some(Ok(app.camera_raw.as_ref().map(|d| d.describe(&app.ui.camera_raw_scope, &app.ui.camera_raw_preview)).unwrap_or(Value::Null)))
 }
 
-fn commit(app: &mut PhotocraftApp) -> Result<Value, String> {
+fn commit(app: &mut PhotoStoreApp) -> Result<Value, String> {
     let d = app.camera_raw.as_ref().ok_or(tl!("Camera Raw isn't open"))?;
     let result = match d.target {
         Target::NewFilter => {
@@ -791,7 +791,7 @@ fn wheel(ui: &mut egui::Ui, dirty: &mut bool, title: &str, w: &mut Wheel) {
 }
 
 // The shared Curve editor must never produce a curve `CameraRaw::validate` rejects.
-const _: () = assert!(crate::point_curve::MAX_POINTS == photocraft_algo::camera_raw::MAX_CURVE_POINTS && crate::point_curve::MIN_GAP >= 1.0);
+const _: () = assert!(crate::point_curve::MAX_POINTS == photostore_algo::camera_raw::MAX_CURVE_POINTS && crate::point_curve::MIN_GAP >= 1.0);
 
 /// Small point-curve editor (master channel): click to add, drag to move, right-click to delete.
 fn curve_editor(ui: &mut egui::Ui, p: &mut CameraRaw, dirty: &mut bool, state: &mut crate::state::PointCurveState) -> ERect {
@@ -826,7 +826,7 @@ fn curve_editor(ui: &mut egui::Ui, p: &mut CameraRaw, dirty: &mut bool, state: &
     rect
 }
 
-pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
+pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     if app.camera_raw.is_none()
         && let Some(raw) = app.pending_raw_open.take()
         && let Err(e) = open_raw(app, ctx, raw)
@@ -876,7 +876,7 @@ impl CameraRawDialog {
 
 /// The dialog's contents over the whole of `ctx`'s window. `own_window`: the OS window already
 /// shows the title, so none is painted.
-fn draw(app: &mut PhotocraftApp, ctx: &egui::Context, own_window: bool) {
+fn draw(app: &mut PhotoStoreApp, ctx: &egui::Context, own_window: bool) {
     let t = Tokens::get(ctx);
     let screen = ctx.content_rect();
     let mut action: Option<&str> = None;
@@ -1024,7 +1024,7 @@ fn draw(app: &mut PhotocraftApp, ctx: &egui::Context, own_window: bool) {
                     _ => &mut p.hsl_lum,
                 };
                 for (k, name) in BANDS.iter().enumerate() {
-                    let c = photocraft_algo::camera_raw::HSL_BANDS[k];
+                    let c = photostore_algo::camera_raw::HSL_BANDS[k];
                     let base = hue_color(c);
                     let grad = [Color32::from_gray(128), base];
                     row(ui, &mut dirty, name, &mut arr[k], -100.0..=100.0, Some(&grad));
@@ -1115,7 +1115,7 @@ mod tests {
 
     #[test]
     fn histogram_follows_preview_and_view_changes_do_not_render_or_edit() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
         let ctx = egui::Context::default();
         app.run("file.new", json!({"width": 64, "height": 48})).unwrap();
         app.run("layer.new.layer", json!({})).unwrap();
@@ -1145,14 +1145,14 @@ mod tests {
     /// it is drawn in; the overlay fallback (`embed_viewports`) keeps the dialog open.
     #[test]
     fn closing_the_camera_raw_window_cancels() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
         let ctx = egui::Context::default();
-        PhotocraftApp::setup_context(&ctx, crate::theme::ThemeKind::Pro);
+        PhotoStoreApp::setup_context(&ctx, crate::theme::ThemeKind::Pro);
         app.run("file.new", json!({"width": 64, "height": 48})).unwrap();
         app.run("layer.new.layer", json!({})).unwrap();
         app.run("edit.fill", json!({"color": "#808080"})).unwrap();
         let steps = app.session.active().unwrap().history.past_len();
-        let frame = |app: &mut PhotocraftApp, close: bool| {
+        let frame = |app: &mut PhotoStoreApp, close: bool| {
             let mut input = egui::RawInput::default();
             if close {
                 let info = input.viewports.entry(egui::ViewportId::ROOT).or_default();
@@ -1173,7 +1173,7 @@ mod tests {
 
     #[test]
     fn smart_filter_double_click_edits_the_stored_camera_raw_filter_in_its_own_dialog() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
         let ctx = egui::Context::default();
         app.run("file.new", json!({"width": 64, "height": 48})).unwrap();
         app.run("layer.new.layer", json!({})).unwrap();
@@ -1184,8 +1184,8 @@ mod tests {
         app.run("filter.cameraRaw", json!({"exposure": 1.0, "contrast": 20})).unwrap();
         app.run("layer.smartFilter.setParams", json!({"index": 0, "params": {"pointCurve": legacy}})).unwrap();
         let layer = app.session.active().unwrap().active_layer.unwrap();
-        let smart = |app: &PhotocraftApp| match &app.session.active().unwrap().doc.layer(layer).unwrap().content {
-            photocraft_doc::LayerContent::Smart(sm) => sm.clone(),
+        let smart = |app: &PhotoStoreApp| match &app.session.active().unwrap().doc.layer(layer).unwrap().content {
+            photostore_doc::LayerContent::Smart(sm) => sm.clone(),
             _ => panic!("not a smart object"),
         };
         let steps = app.session.active().unwrap().history.past_len();
@@ -1223,12 +1223,12 @@ mod tests {
 
     #[test]
     fn distant_sparse_pixels_cannot_trigger_an_unbounded_proxy_scan() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
         let ctx = egui::Context::default();
         app.run("file.new", json!({"width":64,"height":48})).unwrap();
         app.run("layer.new.layer", json!({})).unwrap();
         let layer = app.session.active().unwrap().active_layer.unwrap();
-        let mut source = photocraft_raster::Surface::new(photocraft_color::PixelFormat::RGBA8);
+        let mut source = photostore_raster::Surface::new(photostore_color::PixelFormat::RGBA8);
         source.write_region(Rect::new(30_000, 30_000, 30_001, 30_001), &[0.5, 0.5, 0.5, 1.0]);
         let result = open_pixels(&mut app, &ctx, layer, source, CameraRaw::default(), Coverage::None, Target::NewFilter);
         assert!(result.unwrap_err().contains("bounds are too large"));
@@ -1237,7 +1237,7 @@ mod tests {
 
     #[test]
     fn dialog_drives_the_engine() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
         let ctx = egui::Context::default();
         app.run("file.new", json!({"width": 64, "height": 48})).unwrap();
         app.run("layer.new.layer", json!({})).unwrap();
@@ -1260,21 +1260,21 @@ mod tests {
     }
 
     /// An app whose importer is the real one, opening a synthetic DNG.
-    fn raw_app() -> (PhotocraftApp, Vec<u8>) {
-        use photocraft_raw::testgen::{DngSpec, mosaic, scene};
+    fn raw_app() -> (PhotoStoreApp, Vec<u8>) {
+        use photostore_raw::testgen::{DngSpec, mosaic, scene};
         let services = crate::Services {
             import: Some(Box::new(|name: &str, b: &[u8], depth: usize| {
-                photocraft_io::import_with_svg_group_depth(name, b, depth).map(|r| (r.document, r.warnings)).map_err(|e| e.to_string())
+                photostore_io::import_with_svg_group_depth(name, b, depth).map(|r| (r.document, r.warnings)).map_err(|e| e.to_string())
             })),
             ..Default::default()
         };
         let (w, h) = (48, 32);
         let mut spec = DngSpec::cfa(w, h, mosaic(&scene(w, h), w, [0, 1, 1, 2], 0, 30000));
         spec.as_shot_neutral = Some([0.5, 1.0, 0.7]);
-        (PhotocraftApp::new(photocraft_engine::Session::new(), services), spec.build())
+        (PhotoStoreApp::new(photostore_engine::Session::new(), services), spec.build())
     }
 
-    fn mean_red(app: &PhotocraftApp) -> f32 {
+    fn mean_red(app: &PhotoStoreApp) -> f32 {
         let st = app.session.active().unwrap();
         let s = st.doc.layer(st.active_layer.unwrap()).unwrap().surface().unwrap();
         (0..8).map(|i| s.rgba(4 + i * 4, 16)[0]).sum::<f32>() / 8.0
@@ -1285,7 +1285,7 @@ mod tests {
         let (mut app, dng) = raw_app();
         let ctx = egui::Context::default();
         let warnings = app.open_bytes("IMG_0001.dng", &dng).unwrap();
-        assert!(warnings.iter().any(|w| w.contains(photocraft_io::raw::DEVELOPED_NOTE)), "{warnings:?}");
+        assert!(warnings.iter().any(|w| w.contains(photostore_io::raw::DEVELOPED_NOTE)), "{warnings:?}");
         let raw = app.pending_raw_open.take().expect("a raw open queues the dialog");
         open_raw(&mut app, &ctx, raw).unwrap();
         let d = app.camera_raw.as_ref().unwrap();
@@ -1300,7 +1300,7 @@ mod tests {
         assert_eq!(app.session.documents().len(), 1);
         let st = app.session.active().unwrap();
         assert_eq!(st.saved_revision, st.revision, "Open leaves the document unmodified");
-        assert_eq!(st.doc.depth, photocraft_color::SampleType::U16);
+        assert_eq!(st.doc.depth, photostore_color::SampleType::U16);
         assert!(mean_red(&app) > before + 0.05, "{before} → {}", mean_red(&app));
     }
 
@@ -1336,7 +1336,7 @@ mod tests {
         assert_eq!(docs.len(), 3);
         assert_eq!((docs[0].doc.size.width, docs[2].doc.size.width), (10, 12), "the other tabs keep their places");
         assert_ne!(docs[1].doc.id, old_id, "re-developed");
-        assert_eq!(docs[1].doc.depth, photocraft_color::SampleType::U16);
+        assert_eq!(docs[1].doc.depth, photostore_color::SampleType::U16);
         assert_eq!(docs[1].saved_revision, docs[1].revision, "Open leaves the document unmodified");
         assert_eq!(app.session.active_index(), Some(1));
         assert_eq!(app.ui.views[1].zoom, 3.0, "the view carries over to the re-developed document");
@@ -1364,6 +1364,6 @@ mod tests {
         app.open_bytes("c.dng", &dng).unwrap();
         assert!(app.pending_raw_open.is_none());
         // A non-raw never queues the dialog; a closed document is an error, not a panic.
-        assert!(open_raw(&mut app, &ctx, RawOpen { document: photocraft_doc::DocId(u64::MAX), name: "x".into(), path: None, bytes: None }).is_err());
+        assert!(open_raw(&mut app, &ctx, RawOpen { document: photostore_doc::DocId(u64::MAX), name: "x".into(), path: None, bytes: None }).is_err());
     }
 }

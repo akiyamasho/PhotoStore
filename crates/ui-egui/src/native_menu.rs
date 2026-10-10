@@ -3,16 +3,16 @@
 //!
 //! Pure and platform-free, so it is tested everywhere and builds for the web; only the backend
 //! touches AppKit. What the layout does ([`mac_layout`]):
-//! - an **app menu** named PhotoCraft: About (from Help), Settings (Edit › Preferences), Language,
+//! - an **app menu** named PhotoStore: About (from Help), Settings (Edit › Preferences), Language,
 //!   Appearance (Window › Theme), Services, Hide, Hide Others, Show All and Quit (File › Exit,
 //!   still the app's own `file.exit` so the unsaved-changes prompt runs). The other Craft apps
 //!   use the same app menu;
 //! - **Window** gets Minimize, Zoom and Bring All to Front, and **Help** the system search field;
-//! - **clashes** with the system's keys (⌘H, ⌘M, ⌘W, ⌘,) are resolved in PhotoCraft's favour, and
+//! - **clashes** with the system's keys (⌘H, ⌘M, ⌘W, ⌘,) are resolved in PhotoStore's favour, and
 //!   reported; Hide and Minimize move to ⌃⌘H and ⌃⌘M, as Photoshop does.
 //!
 //! **Keys stay with egui.** AppKit runs a menu's key equivalents before the window sees the key,
-//! which would skip PhotoCraft's key rules (text fields keep ⌘C/⌘V/⌘Z, dialogs and Camera Raw are
+//! which would skip PhotoStore's key rules (text fields keep ⌘C/⌘V/⌘Z, dialogs and Camera Raw are
 //! modal, Liquify has its own ⌘Z). So the backend reports a key equivalent as [`Event::Key`], and
 //! [`NativeMenu::raw_input`] feeds it to egui as the key press it was: the shortcut runs through
 //! [`crate::shortcuts::handle`] exactly as without a native menu. A click is [`Event::Click`] and
@@ -23,11 +23,11 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use egui::{Key, Modifiers};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::i18n::{Lang, tr, tr_id};
 use crate::menus::MenuItem;
 
-pub const APP_NAME: &str = "PhotoCraft";
+pub const APP_NAME: &str = "PhotoStore";
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MenuBar {
@@ -102,7 +102,7 @@ pub enum Standard {
     CloseWindow,
 }
 
-/// Hide PhotoCraft: a custom item (the predefined one always takes ⌘H, which is View › Extras).
+/// Hide PhotoStore: a custom item (the predefined one always takes ⌘H, which is View › Extras).
 pub const HIDE: &str = "app.hide";
 /// Minimize: a custom item (the predefined one always takes ⌘M, which is Curves).
 pub const MINIMIZE: &str = "window.minimize";
@@ -263,7 +263,7 @@ pub fn structure_key(bar: &MenuBar) -> u64 {
 
 // ----------------------------------------------------------------------------- shortcuts
 
-/// A shortcut as PhotoCraft writes it (`Cmd+Shift+Z`). `Cmd` is ⌘ and `Ctrl` the Control key,
+/// A shortcut as PhotoStore writes it (`Cmd+Shift+Z`). `Cmd` is ⌘ and `Ctrl` the Control key,
 /// never folded together: ⌃⌘M and ⌘M are different shortcuts.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Chord {
@@ -339,13 +339,13 @@ impl Chord {
 
 // ----------------------------------------------------------------------------- macOS layout
 
-/// A system key equivalent PhotoCraft already uses for something else.
+/// A system key equivalent PhotoStore already uses for something else.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Clash {
     pub shortcut: &'static str,
     /// What macOS uses it for.
     pub system: &'static str,
-    /// The PhotoCraft command bound to it.
+    /// The PhotoStore command bound to it.
     pub command: String,
     /// What the layout did about it.
     pub resolution: &'static str,
@@ -356,7 +356,7 @@ pub struct Layout {
     pub clashes: Vec<Clash>,
 }
 
-/// Turn PhotoCraft's menus (tagged with roles) into a Mac menu bar. See the module docs.
+/// Turn PhotoStore's menus (tagged with roles) into a Mac menu bar. See the module docs.
 pub fn mac_layout(bar: &MenuBar, lang: Lang) -> Layout {
     let mut bar = bar.clone();
     let mut clashes = Vec::new();
@@ -462,7 +462,7 @@ pub fn mac_layout(bar: &MenuBar, lang: Lang) -> Layout {
 }
 
 /// Settings in the app menu: Edit › Preferences, a submenu of settings pages, becomes "Settings"
-/// with ⌘, on its first page unless PhotoCraft binds ⌘, elsewhere.
+/// with ⌘, on its first page unless PhotoStore binds ⌘, elsewhere.
 fn settings_node(node: Node, comma_taken: Option<String>, lang: Lang, clashes: &mut Vec<Clash>) -> Node {
     if let Some(command) = &comma_taken {
         clashes.push(Clash { shortcut: "Cmd+,", system: "Settings", command: command.clone(), resolution: "Settings has no shortcut" });
@@ -568,9 +568,9 @@ fn translate(bar: &mut MenuBar, lang: Lang) {
     }
 }
 
-/// PhotoCraft's menus as a Mac menu bar, in the UI language; `language` is the
+/// PhotoStore's menus as a Mac menu bar, in the UI language; `language` is the
 /// `interface.language` preference (`auto` or a code), checked in the app menu's Language.
-pub fn photocraft_layout(items: &[MenuItem], lang: Lang, language: &str) -> Layout {
+pub fn photostore_layout(items: &[MenuItem], lang: Lang, language: &str) -> Layout {
     let mut bar = from_items(&crate::menus::TOP_MENUS, items);
     bar.tag_item("help.about", ItemRole::About);
     bar.tag_item("file.exit", ItemRole::Quit);
@@ -615,7 +615,7 @@ pub trait Backend {
     fn drain(&mut self) -> Vec<Event>;
 }
 
-/// The native menu bar, while PhotoCraft uses one (the in-window menus are hidden then).
+/// The native menu bar, while PhotoStore uses one (the in-window menus are hidden then).
 pub struct NativeMenu {
     backend: Box<dyn Backend>,
     /// Hash of the state the menus were last built from.
@@ -659,7 +659,7 @@ impl NativeMenu {
 }
 
 /// Run the native menu clicks that arrived since the last frame, like in-window menu clicks.
-pub fn run(app: &mut PhotocraftApp, ctx: &egui::Context) {
+pub fn run(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     let Some(menu) = app.services.native_menu.as_mut() else { return };
     let clicks = std::mem::take(&mut menu.clicks);
     for id in clicks {
@@ -681,7 +681,7 @@ pub fn run(app: &mut PhotocraftApp, ctx: &egui::Context) {
 /// Bring the native menu up to date when anything it shows may have changed: a command ran, the
 /// document or selection changed, or the user clicked or pressed a key. Building the rows walks
 /// every command's enabled state, so it doesn't run on frames that only animate or scroll.
-pub fn sync(app: &mut PhotocraftApp, ctx: &egui::Context) {
+pub fn sync(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     let Some(menu) = app.services.native_menu.as_ref() else { return };
     let input = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. } | egui::Event::PointerButton { pressed: false, .. })));
     let state = state_hash(app, input.then_some(app.frame));
@@ -693,11 +693,11 @@ pub fn sync(app: &mut PhotocraftApp, ctx: &egui::Context) {
     for it in &mut items {
         it.enabled &= crate::menus::modal_allows(app, &it.id);
     }
-    let layout = photocraft_layout(&items, lang, &app.session.prefs().interface.language);
+    let layout = photostore_layout(&items, lang, &app.session.prefs().interface.language);
     let Some(menu) = app.services.native_menu.as_mut() else { return };
     if !menu.logged {
         for c in &layout.clashes {
-            log::info!("menu: {} is {} on macOS and {} in PhotoCraft; {}", c.shortcut, c.system, c.command, c.resolution);
+            log::info!("menu: {} is {} on macOS and {} in PhotoStore; {}", c.shortcut, c.system, c.command, c.resolution);
         }
         menu.logged = true;
     }
@@ -709,7 +709,7 @@ pub fn sync(app: &mut PhotocraftApp, ctx: &egui::Context) {
 /// What the menus' rows depend on, cheaply: commands run, the documents and their revisions,
 /// selection, recent files, panels and view state, the language. `input` forces a change on
 /// frames with a click or key press, which covers state the hash doesn't list.
-fn state_hash(app: &PhotocraftApp, input: Option<u64>) -> u64 {
+fn state_hash(app: &PhotoStoreApp, input: Option<u64>) -> u64 {
     let mut h = DefaultHasher::new();
     input.hash(&mut h);
     let s = &app.session;
@@ -732,8 +732,8 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn app(doc: bool) -> PhotocraftApp {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    fn app(doc: bool) -> PhotoStoreApp {
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         if doc {
             app.run("file.new", json!({"width": 64, "height": 48})).unwrap();
             app.sync_views();
@@ -742,7 +742,7 @@ mod tests {
     }
 
     fn layout(doc: bool) -> Layout {
-        photocraft_layout(&crate::menus::menu_items(&app(doc)), Lang::EN, "auto")
+        photostore_layout(&crate::menus::menu_items(&app(doc)), Lang::EN, "auto")
     }
 
     fn ids(nodes: &[Node]) -> Vec<String> {
@@ -758,10 +758,10 @@ mod tests {
     }
 
     #[test]
-    fn photocraft_gets_a_mac_app_menu() {
+    fn photostore_gets_a_mac_app_menu() {
         let l = layout(true);
         let app = &l.bar.menus[0];
-        assert_eq!((app.title.as_str(), app.role), ("PhotoCraft", MenuRole::App));
+        assert_eq!((app.title.as_str(), app.role), ("PhotoStore", MenuRole::App));
         assert_eq!(
             ids(&app.children),
             [
@@ -781,8 +781,8 @@ mod tests {
             ]
         );
         let quit = l.bar.find("file.exit").unwrap();
-        assert_eq!((quit.label.as_str(), quit.shortcut.as_deref()), ("Quit PhotoCraft", Some("Cmd+Q")));
-        assert_eq!(l.bar.find("help.about").unwrap().label, "About PhotoCraft");
+        assert_eq!((quit.label.as_str(), quit.shortcut.as_deref()), ("Quit PhotoStore", Some("Cmd+Q")));
+        assert_eq!(l.bar.find("help.about").unwrap().label, "About PhotoStore");
     }
 
     #[test]
@@ -793,12 +793,12 @@ mod tests {
         assert!(!ids(&by("Help").children).contains(&"help.about".to_string()));
         assert!(!ids(&by("Edit").children).contains(&"[Preferences]".to_string()));
         let titles: Vec<&str> = l.bar.menus.iter().map(|m| m.title.as_str()).collect();
-        assert_eq!(titles, ["PhotoCraft", "File", "Edit", "Image", "Layer", "Type", "Select", "Filter", "View", "Window", "Help"]);
+        assert_eq!(titles, ["PhotoStore", "File", "Edit", "Image", "Layer", "Type", "Select", "Filter", "View", "Window", "Help"]);
     }
 
-    /// PhotoCraft keeps Photoshop's ⌘H, ⌘M, ⌘W and ⌘, (Hide Layers): the system items give way.
+    /// PhotoStore keeps Photoshop's ⌘H, ⌘M, ⌘W and ⌘, (Hide Layers): the system items give way.
     #[test]
-    fn clashes_are_resolved_in_photocrafts_favour() {
+    fn clashes_are_resolved_in_photostores_favour() {
         let l = layout(true);
         let clash = |sc: &str| l.clashes.iter().find(|c| c.shortcut == sc).map(|c| c.command.as_str());
         assert_eq!(clash("Cmd+H"), Some("view.extras"));
@@ -819,7 +819,7 @@ mod tests {
     fn themes_move_to_the_app_menus_appearance() {
         let mut a = app(false);
         a.ui.theme = crate::theme::ThemeKind::Classic;
-        let l = photocraft_layout(&crate::menus::menu_items(&a), Lang::EN, "auto");
+        let l = photostore_layout(&crate::menus::menu_items(&a), Lang::EN, "auto");
         let app_menu = l.bar.menu(MenuRole::App).unwrap();
         let Some(Node::Submenu { children, .. }) = app_menu.children.iter().find(|n| matches!(n, Node::Submenu { label, .. } if label == "Appearance")) else {
             panic!("an Appearance submenu");
@@ -834,10 +834,10 @@ mod tests {
         assert_eq!(l.bar.find("window.theme.system").unwrap().checked, Some(false));
         let window = ids(&l.bar.menu(MenuRole::Window).unwrap().children);
         assert!(!window.iter().any(|id| id.starts_with("window.theme.") || id == "[Theme]"), "{window:?}");
-        a.session.prefs.edit(|p| p.interface.appearance_mode = photocraft_engine::prefs::AppearanceMode::Auto);
+        a.session.prefs.edit(|p| p.interface.appearance_mode = photostore_engine::prefs::AppearanceMode::Auto);
         for palette in [crate::theme::ThemeKind::Classic, crate::theme::ThemeKind::ProMedium] {
             a.ui.theme = palette;
-            let automatic = photocraft_layout(&crate::menus::menu_items(&a), Lang::EN, "auto");
+            let automatic = photostore_layout(&crate::menus::menu_items(&a), Lang::EN, "auto");
             assert_eq!(automatic.bar.find("window.theme.system").unwrap().checked, Some(true));
             for kind in crate::theme::ThemeKind::ALL {
                 assert_eq!(automatic.bar.find(&format!("window.theme.{}", kind.id())).unwrap().checked, Some(false));
@@ -849,7 +849,7 @@ mod tests {
     /// the preference checked; choosing one sets `interface.language`.
     #[test]
     fn the_app_menu_switches_the_ui_language() {
-        let l = photocraft_layout(&crate::menus::menu_items(&app(false)), Lang::EN, "ja");
+        let l = photostore_layout(&crate::menus::menu_items(&app(false)), Lang::EN, "ja");
         let app_menu = l.bar.menu(MenuRole::App).unwrap();
         let Some(Node::Submenu { children, .. }) = app_menu.children.iter().find(|n| matches!(n, Node::Submenu { label, .. } if label == "Language")) else {
             panic!("a Language submenu");
@@ -858,7 +858,7 @@ mod tests {
         assert_eq!(l.bar.find("app.language.ja").map(|it| (it.label.as_str(), it.checked)), Some(("日本語", Some(true))));
         assert_eq!(l.bar.find("app.language.auto").and_then(|it| it.checked), Some(false));
         // Native names stay native in another UI language.
-        let de = photocraft_layout(&crate::menus::menu_items(&app(false)), Lang::from_pref("de"), "de");
+        let de = photostore_layout(&crate::menus::menu_items(&app(false)), Lang::from_pref("de"), "de");
         assert_eq!(de.bar.find("app.language.ja").map(|it| it.label.as_str()), Some("日本語"));
         let mut a = app(false);
         let ctx = egui::Context::default();
@@ -942,7 +942,7 @@ mod tests {
         }
     }
 
-    /// A key equivalent reaches PhotoCraft's own key handling as the key press it was, so the
+    /// A key equivalent reaches PhotoStore's own key handling as the key press it was, so the
     /// shortcut runs once, through the same rules as without a native menu.
     #[test]
     fn key_equivalents_run_through_the_normal_shortcut_path() {
@@ -981,11 +981,11 @@ mod tests {
             let ctx = egui::Context::default();
             app.run("select.rect", json!({"x": 0, "y": 0, "width": 8, "height": 4})).unwrap();
             app.run("edit.copy", json!({})).unwrap();
-            let layers = |app: &PhotocraftApp| app.session.active().unwrap().doc.layer_count();
+            let layers = |app: &PhotoStoreApp| app.session.active().unwrap().doc.layer_count();
             let before = layers(&app);
             let paste = Chord::parse("Cmd+V").unwrap();
             app.services.native_menu = Some(NativeMenu::new(Box::new(Fake { synced: Default::default(), events: vec![Event::Key(paste)] })));
-            let step = |app: &mut PhotocraftApp, events: Vec<egui::Event>| {
+            let step = |app: &mut PhotoStoreApp, events: Vec<egui::Event>| {
                 let mut raw = egui::RawInput { events, ..Default::default() };
                 eframe::App::raw_input_hook(app, &ctx, &mut raw);
                 frame(&ctx, raw, |ui| {
@@ -1034,7 +1034,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::menus::invoke(&mut app, &ctx, "image.imageSize", json!({})).unwrap();
         assert!(!app.ui.dialogs.is_empty(), "Image Size opened its dialog");
-        let size = |app: &PhotocraftApp| app.session.active().map(|d| (d.doc.size.width, d.doc.size.height));
+        let size = |app: &PhotoStoreApp| app.session.active().map(|d| (d.doc.size.width, d.doc.size.height));
         let zoom = app.ui.views[0].zoom;
         let events = vec![Event::Click("image.imageRotation.90cw".into()), Event::Click("view.zoomIn".into())];
         app.services.native_menu = Some(NativeMenu::new(Box::new(Fake { synced: synced.clone(), events })));
@@ -1063,7 +1063,7 @@ mod tests {
         use egui_kittest::{Harness, kittest::Queryable};
         let counts = |native: bool| -> Vec<usize> {
             let mut h = Harness::builder().with_size(egui::vec2(1440.0, 900.0)).with_max_steps(64).build_eframe(move |cc| {
-                PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
+                PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
                 let mut app = app(true);
                 if native {
                     app.services.native_menu = Some(NativeMenu::new(Box::new(Fake { synced: Default::default(), events: Vec::new() })));

@@ -8,7 +8,7 @@
 use egui::{Align2, Pos2, Rect, Stroke, pos2, vec2};
 use serde_json::{Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::canvas::ViewXform;
 use crate::paint_mouse::Buttons;
 use crate::state::View;
@@ -143,7 +143,7 @@ pub fn trackpad_delta(ctx: &egui::Context, enabled: bool) -> Option<f32> {
 }
 
 /// `view.rotateView`: set or add degrees on the active document's camera.
-pub fn command(app: &mut PhotocraftApp, p: &Value) -> Result<Value, String> {
+pub fn command(app: &mut PhotoStoreApp, p: &Value) -> Result<Value, String> {
     let i = app.session.active_index().ok_or("no document open")?;
     let current = app.ui.views.get(i).map(|v| v.rotation).ok_or("no document open")?;
     let rotation = apply_params(current, p)?;
@@ -153,7 +153,7 @@ pub fn command(app: &mut PhotocraftApp, p: &Value) -> Result<Value, String> {
 }
 
 /// `view.resetView`: angle 0, zoom and centre unchanged.
-pub fn reset(app: &mut PhotocraftApp) -> Result<Value, String> {
+pub fn reset(app: &mut PhotoStoreApp) -> Result<Value, String> {
     let i = app.session.active_index().ok_or("no document open")?;
     let v = app.ui.views.get_mut(i).ok_or("no document open")?;
     v.rotation = 0.0;
@@ -206,7 +206,7 @@ pub fn compass_visible(rotation: f32) -> bool {
 
 /// Draw the compass and handle a click / Escape / double-click reset. Returns true when the
 /// pointer over the compass should not start a rotate drag.
-pub fn overlay(app: &PhotocraftApp, ctx: &egui::Context, painter: &egui::Painter, xf: &ViewXform, view: &mut View, response: &egui::Response) -> bool {
+pub fn overlay(app: &PhotoStoreApp, ctx: &egui::Context, painter: &egui::Painter, xf: &ViewXform, view: &mut View, response: &egui::Response) -> bool {
     if app.ui.tool == crate::state::Tool::RotateView && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) && view.rotation != 0.0 {
         view.rotation = 0.0;
         ctx.data_mut(|d| d.remove::<RotateDrag>(id()));
@@ -350,8 +350,8 @@ mod tests {
         assert!((s.x - c.x).abs() < 1e-3 && (s.y - (c.y + 1.0)).abs() < 1e-3, "flip then rotate {s:?}");
     }
 
-    fn app_docs(n: usize) -> PhotocraftApp {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    fn app_docs(n: usize) -> PhotoStoreApp {
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         for i in 0..n {
             app.run("file.new", json!({"width": 200 + i as u32 * 10, "height": 100})).unwrap();
         }
@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn commands_rotate_reset_and_reject_without_a_document() {
         let ctx = egui::Context::default();
-        let mut empty = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut empty = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         assert_eq!(crate::menus::invoke(&mut empty, &ctx, "view.rotateView", json!({"angle": 30})).unwrap_err(), "no document open");
         assert_eq!(crate::menus::invoke(&mut empty, &ctx, "view.resetView", json!({})).unwrap_err(), "no document open");
 
@@ -403,7 +403,7 @@ mod tests {
         let crate::control::Outcome::Done(bad) = crate::control::handle(&mut app, &ctx, &req) else { panic!("nan") };
         assert_eq!(bad["ok"], false);
         assert_eq!(app.ui.views[0].rotation, 30.0);
-        let mut empty = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut empty = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         let (req, _) = crate::control::ControlRequest::new("ui.set", json!({"tool": "RotateView"}));
         let crate::control::Outcome::Done(ok) = crate::control::handle(&mut empty, &ctx, &req) else { panic!("tool") };
         assert_eq!(ok["ok"], true, "{ok}");
@@ -431,14 +431,14 @@ mod tests {
         assert!(app.ui.views.iter().all(|v| (v.rotation - 12.0).abs() < 1e-4 && (v.zoom - 2.0).abs() < 1e-4));
     }
 
-    fn harness() -> Harness<'static, PhotocraftApp> {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    fn harness() -> Harness<'static, PhotoStoreApp> {
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 400, "height": 300})).unwrap();
         app.sync_views();
         app.ui.extras.rulers = false;
         app.ui.tool = crate::state::Tool::RotateView;
         let mut h = Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
-            |ui, app: &mut PhotocraftApp| {
+            |ui, app: &mut PhotoStoreApp| {
                 if !ui.ctx().fonts(|f| f.families().contains(&egui::FontFamily::Name("medium".into()))) {
                     return;
                 }
@@ -446,12 +446,12 @@ mod tests {
             },
             app,
         );
-        PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
+        PhotoStoreApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
         h.run_steps(4);
         h
     }
 
-    fn press(h: &mut Harness<'static, PhotocraftApp>, p: Pos2, pressed: bool, shift: bool) {
+    fn press(h: &mut Harness<'static, PhotoStoreApp>, p: Pos2, pressed: bool, shift: bool) {
         let modifiers = egui::Modifiers { shift, ..Default::default() };
         h.event(Event::PointerButton { pos: p, button: PointerButton::Primary, pressed, modifiers });
         h.step();
@@ -506,7 +506,7 @@ mod tests {
         app.ui.views[0].rotation = 30.0;
         app.run("select.rect", json!({"x": 10, "y": 20, "width": 40, "height": 10})).unwrap();
         let st = app.session.active().unwrap();
-        let b = st.doc.selection.as_ref().and_then(|s| photocraft_compose::bounds::content_bounds(s).into()).expect("selection");
+        let b = st.doc.selection.as_ref().and_then(|s| photostore_compose::bounds::content_bounds(s).into()).expect("selection");
         // Axis-aligned in the file: the outline is drawn rotated via ViewXform.
         assert!(b.width() >= 40 && b.height() >= 10, "{b:?}");
         let xf = ViewXform { rect: Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0)), zoom: 1.0, center: [100.0, 50.0], flip: false, rotation: 30.0 };

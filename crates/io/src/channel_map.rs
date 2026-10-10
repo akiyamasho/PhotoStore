@@ -6,8 +6,8 @@
 //! 2 = spot channel) and one padding byte. Resource 1007 has the same records without the
 //! version and without the spot kind.
 
-use photocraft_color::{Color, ColorMode};
-use photocraft_doc::{AlphaChannel, ColorIndicates};
+use photostore_color::{Color, ColorMode};
+use photostore_doc::{AlphaChannel, ColorIndicates};
 
 pub(crate) const DISPLAY_INFO: u16 = 1077;
 pub(crate) const DISPLAY_INFO_OLD: u16 = 1007;
@@ -86,8 +86,8 @@ pub(crate) fn decode_color(space: u16, c: [u16; 4]) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use photocraft_color::PixelFormat;
-    use photocraft_raster::Surface;
+    use photostore_color::PixelFormat;
+    use photostore_raster::Surface;
 
     #[test]
     fn display_info_roundtrip() {

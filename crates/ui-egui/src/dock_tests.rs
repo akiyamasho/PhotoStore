@@ -74,8 +74,8 @@ fn move_group_reorders() {
     assert_eq!(l.order()[0], Group::Color);
 }
 
-fn app_with_layers() -> (PhotocraftApp, photocraft_doc::LayerId, photocraft_doc::LayerId) {
-    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+fn app_with_layers() -> (PhotoStoreApp, photostore_doc::LayerId, photostore_doc::LayerId) {
+    let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
     app.run("file.new", json!({"width": 200, "height": 150})).unwrap();
     app.run("layer.new.layer", json!({})).unwrap();
     let pixel = app.session.active().unwrap().active_layer.unwrap();
@@ -86,10 +86,10 @@ fn app_with_layers() -> (PhotocraftApp, photocraft_doc::LayerId, photocraft_doc:
     (app, pixel, adj)
 }
 
-fn harness(app: PhotocraftApp, size: egui::Vec2, theme: ThemeKind) -> Harness<'static, PhotocraftApp> {
+fn harness(app: PhotoStoreApp, size: egui::Vec2, theme: ThemeKind) -> Harness<'static, PhotoStoreApp> {
     // 60 fps steps, so two clicks a frame apart count as a double-click.
     let mut h = Harness::builder().with_size(size).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut PhotocraftApp| {
+        |ui, app: &mut PhotoStoreApp| {
             let ctx = ui.ctx().clone();
             if !ctx.fonts(|f| f.families().contains(&egui::FontFamily::Name("medium".into()))) {
                 return;
@@ -99,17 +99,17 @@ fn harness(app: PhotocraftApp, size: egui::Vec2, theme: ThemeKind) -> Harness<'s
         },
         app,
     );
-    PhotocraftApp::setup_context(&h.ctx, theme);
+    PhotoStoreApp::setup_context(&h.ctx, theme);
     h.state_mut().ui.theme = theme;
     h.run_steps(4);
     h
 }
 
-fn rect_of(h: &Harness<'static, PhotocraftApp>, g: Group) -> Rect {
+fn rect_of(h: &Harness<'static, PhotoStoreApp>, g: Group) -> Rect {
     last_rects(&h.ctx).into_iter().find(|(x, _)| *x == g).map(|(_, r)| r).unwrap_or_else(|| panic!("{g:?} not drawn"))
 }
 
-fn drag(h: &mut Harness<'static, PhotocraftApp>, from: Pos2, to: Pos2) {
+fn drag(h: &mut Harness<'static, PhotoStoreApp>, from: Pos2, to: Pos2) {
     h.event(egui::Event::PointerMoved(from));
     h.run_steps(1);
     h.event(egui::Event::PointerButton { pos: from, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
@@ -127,7 +127,7 @@ fn switching_layer_kinds_keeps_the_layers_panel_still() {
     for theme in [ThemeKind::ProMedium, ThemeKind::Studio] {
         let (app, pixel, adj) = app_with_layers();
         let mut h = harness(app, vec2(1200.0, 800.0), theme);
-        let rects = |h: &Harness<'static, PhotocraftApp>| last_rects(&h.ctx);
+        let rects = |h: &Harness<'static, PhotoStoreApp>| last_rects(&h.ctx);
         let with_adj = rects(&h);
         assert!(with_adj.iter().any(|(g, _)| *g == Group::Layers));
         h.state_mut().run("layer.select", json!({"layer": pixel.0})).unwrap();
@@ -176,16 +176,16 @@ fn dragging_the_splitter_resizes_and_survives_a_ui_state_round_trip() {
 
     // Remembered in the preferences once the mouse is up, and restored at the next launch.
     let prefs = h.state().session.prefs_to_json();
-    let mut s2 = photocraft_engine::Session::new();
+    let mut s2 = photostore_engine::Session::new();
     s2.load_prefs_json(&prefs).unwrap();
-    let mut app3 = PhotocraftApp::new(s2, crate::Services::default());
+    let mut app3 = PhotoStoreApp::new(s2, crate::Services::default());
     restore(&mut app3);
     assert_eq!(app3.ui.dock, h.state().ui.dock);
     // …unless Remember Workspace Changes is off.
-    let mut s3 = photocraft_engine::Session::new();
+    let mut s3 = photostore_engine::Session::new();
     s3.load_prefs_json(&prefs).unwrap();
     s3.prefs.edit(|p| p.workspace.remember_workspace_changes = false);
-    let mut app4 = PhotocraftApp::new(s3, crate::Services::default());
+    let mut app4 = PhotoStoreApp::new(s3, crate::Services::default());
     restore(&mut app4);
     assert_eq!(app4.ui.dock, DockLayout::default());
 }
@@ -329,7 +329,7 @@ fn the_rail_and_window_menu_never_lose_a_panel() {
 #[test]
 fn clicking_around_the_ui_keeps_the_panels_put() {
     let mut h = Harness::builder().with_size(vec2(1440.0, 900.0)).with_max_steps(64).build_eframe(|cc| {
-        PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
+        PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
         let (app, _, _) = app_with_layers();
         app
     });
@@ -396,7 +396,7 @@ fn closing_tabs_keeps_stable_names_across_themes_and_workspace_round_trips() {
     assert_eq!(restored.visible_tabs(Group::Color, false).len(), 4);
 }
 
-fn right_click_tab(h: &mut Harness<'static, PhotocraftApp>, group: Group, original_index: usize) {
+fn right_click_tab(h: &mut Harness<'static, PhotoStoreApp>, group: Group, original_index: usize) {
     let p = last_strips(&h.ctx)
         .into_iter()
         .find(|s| s.group == group)
@@ -465,10 +465,10 @@ fn is_pro(theme: ThemeKind) -> bool {
 }
 
 /// Full app at `size` (1× scale) on a document with `n` layers named "Row 00", "Row 01", …
-fn app_harness_rows(size: egui::Vec2, theme: ThemeKind, n: usize) -> Harness<'static, PhotocraftApp> {
+fn app_harness_rows(size: egui::Vec2, theme: ThemeKind, n: usize) -> Harness<'static, PhotoStoreApp> {
     let mut h = Harness::builder().with_size(size).with_max_steps(64).build_eframe(move |cc| {
-        PhotocraftApp::setup_context(&cc.egui_ctx, theme);
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        PhotoStoreApp::setup_context(&cc.egui_ctx, theme);
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.ui.theme = theme;
         app.run("file.new", json!({"width": 200, "height": 150})).unwrap();
         for i in 0..n {
@@ -482,7 +482,7 @@ fn app_harness_rows(size: egui::Vec2, theme: ThemeKind, n: usize) -> Harness<'st
 }
 
 /// Layer rows fully inside the Layers rows viewport.
-fn rows_in_view(h: &Harness<'static, PhotocraftApp>, n: usize) -> usize {
+fn rows_in_view(h: &Harness<'static, PhotoStoreApp>, n: usize) -> usize {
     use egui_kittest::kittest::Queryable;
     let layers = rect_of(h, Group::Layers);
     (0..n)
@@ -600,7 +600,7 @@ fn tab_strips_never_overlap_the_menu_button() {
                             },
                             None,
                         );
-                        PhotocraftApp::setup_context(&h.ctx, theme);
+                        PhotoStoreApp::setup_context(&h.ctx, theme);
                         h.run_steps(3);
                         let (shown, menu, chevron, card) = h.state().clone().unwrap();
                         let what = format!("{theme:?} {scale}x {width}pt {g:?} selected {sel}");
@@ -634,7 +634,7 @@ fn dock_strips_fit_and_the_chevron_menu_switches_tabs() {
         app.ui.panels.navigator = true;
         app.ui.panels.character = true;
         let mut h = Harness::builder().with_size(vec2(900.0, 1000.0)).with_pixels_per_point(2.0).build_ui_state(
-            |ui, app: &mut PhotocraftApp| {
+            |ui, app: &mut PhotoStoreApp| {
                 if !ui.ctx().fonts(|f| f.families().contains(&egui::FontFamily::Name("medium".into()))) {
                     return;
                 }
@@ -643,7 +643,7 @@ fn dock_strips_fit_and_the_chevron_menu_switches_tabs() {
             },
             app,
         );
-        PhotocraftApp::setup_context(&h.ctx, theme);
+        PhotoStoreApp::setup_context(&h.ctx, theme);
         h.state_mut().ui.theme = theme;
         h.run_steps(4);
         let strips = last_strips(&h.ctx);
@@ -666,7 +666,7 @@ fn dock_strips_fit_and_the_chevron_menu_switches_tabs() {
         },
         0usize,
     );
-    PhotocraftApp::setup_context(&h.ctx, ThemeKind::ProMedium);
+    PhotoStoreApp::setup_context(&h.ctx, ThemeKind::ProMedium);
     h.run_steps(3);
     use egui_kittest::kittest::Queryable;
     h.get_by_label("More panels").click();
@@ -682,7 +682,7 @@ fn tab_hides_all_panels_and_shift_tab_only_the_dock() {
     // brings back what it hid); ⇧Tab hides and shows the dock alone.
     let (mut app, _, _) = app_with_layers();
     let ctx = egui::Context::default();
-    let run = |app: &mut PhotocraftApp, id: &str| crate::menus::invoke(app, &ctx, id, json!({})).unwrap();
+    let run = |app: &mut PhotoStoreApp, id: &str| crate::menus::invoke(app, &ctx, id, json!({})).unwrap();
     app.ui.panels.options_bar = false;
     run(&mut app, "window.togglePanels");
     let p = &app.ui.panels;

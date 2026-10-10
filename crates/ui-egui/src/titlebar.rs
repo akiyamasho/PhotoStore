@@ -1,5 +1,5 @@
 //! The window's own title bar on Windows and Linux, where the window has no OS decorations
-//! ([`PhotocraftApp::custom_titlebar`]): the app's top bar (`panels::title_bar`) is the title bar,
+//! ([`PhotoStoreApp::custom_titlebar`]): the app's top bar (`panels::title_bar`) is the title bar,
 //! as in Photoshop on Windows. The free gap between its menus and controls drags the window and a
 //! double-click there maximizes it (`panels::title_bar`, on every platform); caption buttons at
 //! the far right minimize, maximize/restore and close, and thin invisible zones along the window's
@@ -8,7 +8,7 @@
 use egui::{CursorIcon, Id, LayerId, Order, PointerButton, Rect, ResizeDirection, Sense, Stroke, Ui, ViewportCommand, pos2, vec2};
 use serde_json::json;
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::theme::Tokens;
 
 /// One caption button: as wide as the native Windows ones.
@@ -47,7 +47,7 @@ fn toggle_maximize(ctx: &egui::Context) {
 /// full bar height, flush with the window's edge (even if the bar's contents run wider) so a
 /// maximized window's corner hits Close. Close runs File › Exit, which asks about unsaved
 /// documents first.
-pub fn caption_buttons(app: &mut PhotocraftApp, ui: &mut Ui, bar: Rect) {
+pub fn caption_buttons(app: &mut PhotoStoreApp, ui: &mut Ui, bar: Rect) {
     let t = Tokens::get(ui.ctx());
     let max = maximized(ui.ctx());
     let right = bar.right().min(ui.ctx().content_rect().right());
@@ -205,12 +205,12 @@ pub fn resize_zones(ui: &mut Ui) {
 mod tests {
     use super::*;
     use egui::{Event, Pos2, RawInput, ViewportId};
-    use photocraft_engine::Session;
+    use photostore_engine::Session;
 
     /// A headless window `width` pt wide showing the title bar and the resize zones.
     struct Win {
         ctx: egui::Context,
-        app: PhotocraftApp,
+        app: PhotoStoreApp,
         width: f32,
         time: f64,
         maximized: bool,
@@ -219,8 +219,8 @@ mod tests {
     impl Win {
         fn new(width: f32) -> Self {
             let ctx = egui::Context::default();
-            PhotocraftApp::setup_context(&ctx, crate::theme::ThemeKind::ALL[0]);
-            let mut app = PhotocraftApp::new(Session::new(), crate::Services::default());
+            PhotoStoreApp::setup_context(&ctx, crate::theme::ThemeKind::ALL[0]);
+            let mut app = PhotoStoreApp::new(Session::new(), crate::Services::default());
             app.custom_titlebar = true;
             Self { ctx, app, width, time: 0.0, maximized: false }
         }
@@ -232,7 +232,7 @@ mod tests {
             if let Some(v) = input.viewports.get_mut(&ViewportId::ROOT) {
                 v.maximized = Some(self.maximized);
             }
-            // What `PhotocraftApp::raw_input_hook` does.
+            // What `PhotoStoreApp::raw_input_hook` does.
             release_after_os_resize(&self.ctx, &mut input);
             let app = &mut self.app;
             let mut out = self.ctx.run_ui(input, |ui| {
@@ -309,9 +309,6 @@ mod tests {
             for a in &widgets {
                 assert!(a.right() <= min.left(), "{a:?} runs into the caption buttons at {width}");
             }
-            // Wide windows show the whole group; the narrowest drops Discord (also Help › Discord).
-            let has_discord = texts(&out).iter().any(|(t, _)| t == "Discord");
-            assert_eq!(has_discord, width > 1000.0, "Discord at {width}");
         }
     }
 

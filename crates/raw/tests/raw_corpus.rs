@@ -4,7 +4,7 @@
 //! `cargo xtask corpus --pixls` fetches, `cargo xtask test-corpus` runs.
 #![cfg(feature = "corpus")]
 
-use photocraft_raw::{Limits, RawError, RawFormat};
+use photostore_raw::{Limits, RawError, RawFormat};
 use std::path::PathBuf;
 
 fn pixls(name: &str) -> PathBuf {
@@ -101,7 +101,7 @@ const WANTS: &[Want] = &[
 fn decode_matches_the_measured_oracles() {
     for w in WANTS {
         let bytes = std::fs::read(pixls(w.file)).unwrap_or_else(|e| panic!("{}: {e}", w.file));
-        let s = photocraft_raw::decode(&bytes, &Limits::default()).unwrap_or_else(|e| panic!("{}: {e}", w.file));
+        let s = photostore_raw::decode(&bytes, &Limits::default()).unwrap_or_else(|e| panic!("{}: {e}", w.file));
         assert_eq!(s.format, w.format, "{}", w.file);
         assert_eq!(s.make.as_deref(), Some(w.make), "{}", w.file);
         assert_eq!(s.model.as_deref(), Some(w.model), "{}", w.file);
@@ -119,8 +119,8 @@ fn decode_matches_the_measured_oracles() {
 fn developing_produces_the_crop_in_16bit_rgb() {
     for w in WANTS {
         let bytes = std::fs::read(pixls(w.file)).unwrap_or_else(|e| panic!("{}: {e}", w.file));
-        let s = photocraft_raw::decode(&bytes, &Limits::default()).unwrap_or_else(|e| panic!("{}: {e}", w.file));
-        let d = photocraft_raw::develop_sensor(&s, &photocraft_raw::DevelopOptions::default()).unwrap_or_else(|e| panic!("{}: {e}", w.file));
+        let s = photostore_raw::decode(&bytes, &Limits::default()).unwrap_or_else(|e| panic!("{}: {e}", w.file));
+        let d = photostore_raw::develop_sensor(&s, &photostore_raw::DevelopOptions::default()).unwrap_or_else(|e| panic!("{}: {e}", w.file));
         assert_eq!((d.width as usize, d.height as usize), (s.crop.width, s.crop.height), "{}", w.file);
         assert_eq!(d.rgb.len(), d.width as usize * d.height as usize * 3, "{}", w.file);
         // A real exposure covers a sane share of the range and never leaves it.
@@ -139,7 +139,7 @@ fn developing_produces_the_crop_in_16bit_rgb() {
         assert!(lo < black_cap, "{}: developed blacks at {lo}", w.file);
         assert!(hi > u16::MAX / 4, "{}: developed highlights at {hi}", w.file);
         // Deterministic: a second develop of the same sensor gives the same pixels.
-        let d2 = photocraft_raw::develop_sensor(&s, &photocraft_raw::DevelopOptions::default()).unwrap();
+        let d2 = photostore_raw::develop_sensor(&s, &photostore_raw::DevelopOptions::default()).unwrap();
         assert_eq!(d.rgb, d2.rgb, "{}", w.file);
     }
 }
@@ -149,7 +149,7 @@ fn developing_produces_the_crop_in_16bit_rgb() {
 #[test]
 fn packed_orf_reports_the_documented_gap() {
     let bytes = std::fs::read(pixls("_7061961_copy.ORF")).unwrap();
-    let err = photocraft_raw::decode(&bytes, &Limits::default()).unwrap_err();
+    let err = photostore_raw::decode(&bytes, &Limits::default()).unwrap_err();
     assert!(matches!(err, RawError::Unsupported(ref m) if m.contains("Olympus compressed")), "{err}");
-    assert!(photocraft_raw::embedded_preview(&bytes).is_some(), "the camera's JPEG preview is still reachable");
+    assert!(photostore_raw::embedded_preview(&bytes).is_some(), "the camera's JPEG preview is still reachable");
 }

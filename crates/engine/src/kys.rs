@@ -1,7 +1,7 @@
 //! Photoshop keyboard shortcut sets (`.kys`, Edit › Keyboard Shortcuts › Save Set): parsing and
 //! matching rows to our commands (#1163). `edit.keyboardShortcuts {"importKys": <xml>}` applies a
 //! set here; the app's Keyboard Shortcuts dialog fills its overrides from the same plan
-//! (`photocraft_ui_egui::kys_import`). Tool rows are retained and mapped by stable numeric ids;
+//! (`photostore_ui_egui::kys_import`). Tool rows are retained and mapped by stable numeric ids;
 //! localized labels are used only for dynamic command rows.
 //!
 //! A `.kys` is XML: `<command kind="static|dynamic" name="Gaussian Blur...">` rows, each with

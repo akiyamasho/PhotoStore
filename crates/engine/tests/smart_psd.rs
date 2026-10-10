@@ -1,13 +1,13 @@
-//! Smart objects and smart filters made in PhotoCraft survive a PSD save and open (#215): the
+//! Smart objects and smart filters made in PhotoStore survive a PSD save and open (#215): the
 //! layer comes back as a live smart object (not pixels) with the same nested document (embedded
 //! in `lnk2` as a PSB), transform, filter list and filter mask, and re-renders like before.
 //!
-//! Set `PHOTOCRAFT_SMART_PSD_OUT=<dir>` to keep the exported files (for opening in Photoshop).
+//! Set `PHOTOSTORE_SMART_PSD_OUT=<dir>` to keep the exported files (for opening in Photoshop).
 
-use photocraft_doc::{Document, LayerContent, SmartObject, SmartSource};
-use photocraft_engine::Session;
-use photocraft_engine::smart_cmds::{decode_source, refresh_layer, source_bytes};
-use photocraft_geom::Rect;
+use photostore_doc::{Document, LayerContent, SmartObject, SmartSource};
+use photostore_engine::Session;
+use photostore_engine::smart_cmds::{decode_source, refresh_layer, source_bytes};
+use photostore_geom::Rect;
 use serde_json::json;
 
 const W: i32 = 96;
@@ -25,7 +25,7 @@ fn session(depth: u64) -> Session {
         for y in r.y0..r.y1 {
             for x in r.x0..r.x1 {
                 let v = ((x * 7 + y * 13) % 23) as f32 / 22.0;
-                data.extend(photocraft_raster::from_rgba(&fmt, [v, 1.0 - v, ((x * y) % 7) as f32 / 6.0, 1.0]));
+                data.extend(photostore_raster::from_rgba(&fmt, [v, 1.0 - v, ((x * y) % 7) as f32 / 6.0, 1.0]));
             }
         }
         surf.write_region(r, &data);
@@ -52,7 +52,7 @@ fn max_diff(a: &[[f32; 4]], b: &[[f32; 4]]) -> f32 {
 
 /// Every block with inner structure re-parses strictly (`TaggedBlock::check_structure`).
 fn structure_errors(bytes: &[u8]) -> Vec<String> {
-    let f = photocraft_psd::PsdFile::from_bytes(bytes).unwrap();
+    let f = photostore_psd::PsdFile::from_bytes(bytes).unwrap();
     let mut errs = Vec::new();
     for b in &f.global_blocks {
         if let Err(e) = b.check_structure() {
@@ -70,7 +70,7 @@ fn structure_errors(bytes: &[u8]) -> Vec<String> {
 }
 
 fn keep(name: &str, bytes: &[u8]) {
-    if let Ok(dir) = std::env::var("PHOTOCRAFT_SMART_PSD_OUT") {
+    if let Ok(dir) = std::env::var("PHOTOSTORE_SMART_PSD_OUT") {
         std::fs::write(std::path::Path::new(&dir).join(name), bytes).unwrap();
     }
 }
@@ -94,12 +94,12 @@ fn smart_objects_and_filters_survive_psd() {
         let SmartSource::Embedded { bytes: pcraft, .. } = &before.source else { panic!("embedded") };
         let nested = decode_source("x.pcraft", pcraft).unwrap();
 
-        let out = photocraft_io::export(&doc, "psd", &Default::default()).unwrap();
+        let out = photostore_io::export(&doc, "psd", &Default::default()).unwrap();
         assert!(!out.warnings.iter().any(|w| w.contains("pixels")), "{:?}", out.warnings);
         assert_eq!(structure_errors(&out.bytes), Vec::<String>::new());
         keep(&format!("smart-{depth}.psd"), &out.bytes);
 
-        let back = photocraft_io::import("x.psd", &out.bytes).unwrap().document;
+        let back = photostore_io::import("x.psd", &out.bytes).unwrap().document;
         let (bid, after) = smart(&back);
         assert!(matches!(after.source, SmartSource::Linked { .. }), "depth {depth}: source in lnk2");
         // Same filters, blending and settings (numbers may come back as floats, defaults spelled out).
@@ -128,17 +128,17 @@ fn smart_objects_and_filters_survive_psd() {
         assert!(name.ends_with(".psb"), "{name}");
         let inner = decode_source(&name, &src).unwrap();
         assert_eq!((inner.size, inner.layers.len(), inner.depth), (nested.size, nested.layers.len(), nested.depth));
-        assert!(max_diff(&photocraft_compose::flatten(&inner).px, &photocraft_compose::flatten(&nested).px) <= 1.0 / 255.0 + 1e-6);
+        assert!(max_diff(&photostore_compose::flatten(&inner).px, &photostore_compose::flatten(&nested).px) <= 1.0 / 255.0 + 1e-6);
         // And it re-renders from that source like the original did.
-        let mut l = back.layer(photocraft_doc::LayerId(bid)).unwrap().clone();
+        let mut l = back.layer(photostore_doc::LayerId(bid)).unwrap().clone();
         assert!(refresh_layer(&back, &mut l).unwrap());
         let mut rerendered = back.clone();
-        *rerendered.layer_mut(photocraft_doc::LayerId(bid)).unwrap() = l;
-        let d = max_diff(&photocraft_compose::flatten(&rerendered).px, &photocraft_compose::flatten(&doc).px);
+        *rerendered.layer_mut(photostore_doc::LayerId(bid)).unwrap() = l;
+        let d = max_diff(&photostore_compose::flatten(&rerendered).px, &photostore_compose::flatten(&doc).px);
         assert!(d <= 2.0 / 255.0, "depth {depth}: re-render differs by {d}");
 
         // Saving the re-imported file again keeps the same embedded file (no growth).
-        let again = photocraft_io::export(&back, "psd", &Default::default()).unwrap();
+        let again = photostore_io::export(&back, "psd", &Default::default()).unwrap();
         assert_eq!(structure_errors(&again.bytes), Vec::<String>::new());
         assert!(again.bytes.len() <= out.bytes.len() + 64, "{} vs {}", again.bytes.len(), out.bytes.len());
     }
@@ -170,10 +170,10 @@ fn camera_raw_psd_filters_survive_re_editing_native_save_and_undo() {
         s.execute("select.deselect", json!({})).unwrap();
         s.execute("filter.blur.gaussianBlur", json!({"radius": 2})).unwrap();
         let before = s.active().unwrap().doc.clone();
-        let out = photocraft_io::export(&before, "psd", &Default::default()).unwrap();
+        let out = photostore_io::export(&before, "psd", &Default::default()).unwrap();
         assert!(out.warnings.is_empty(), "{:?}", out.warnings);
         assert!(structure_errors(&out.bytes).is_empty());
-        let back = photocraft_io::import("camera-raw.psd", &out.bytes).unwrap().document;
+        let back = photostore_io::import("camera-raw.psd", &out.bytes).unwrap().document;
         let (layer, imported) = smart(&back);
         let (_, original) = smart(&before);
         let mask_values = |sm: &SmartObject| {
@@ -184,8 +184,8 @@ fn camera_raw_psd_filters_survive_re_editing_native_save_and_undo() {
         assert_eq!(imported.smart_filters.len(), 3);
         assert_eq!(imported.smart_filters[1].command, "filter.cameraRaw");
         assert_eq!(mask_values(&imported), mask_values(&original));
-        let expected = photocraft_engine::lens_cmds::raw_params("filter.cameraRaw", &original.smart_filters[1].params).unwrap();
-        let actual = photocraft_engine::lens_cmds::raw_params("filter.cameraRaw", &imported.smart_filters[1].params).unwrap();
+        let expected = photostore_engine::lens_cmds::raw_params("filter.cameraRaw", &original.smart_filters[1].params).unwrap();
+        let actual = photostore_engine::lens_cmds::raw_params("filter.cameraRaw", &imported.smart_filters[1].params).unwrap();
         assert_eq!(actual, expected, "{depth}-bit");
         let template = imported.smart_filters[1].params["__cameraRawPsd"].clone();
         let mut edited = Session::new();
@@ -197,76 +197,76 @@ fn camera_raw_psd_filters_survive_re_editing_native_save_and_undo() {
         assert_eq!(smart(&edited.active().unwrap().doc).1.smart_filters[1].params["exposure"], imported.smart_filters[1].params["exposure"]);
         edited.redo();
         assert_eq!(*edited.active().unwrap().doc, *changed);
-        let native = photocraft_format::save_to_bytes(&changed, &Default::default()).unwrap();
-        let native_back = photocraft_format::load_from_bytes(&native).unwrap();
+        let native = photostore_format::save_to_bytes(&changed, &Default::default()).unwrap();
+        let native_back = photostore_format::load_from_bytes(&native).unwrap();
         assert_eq!(smart(&native_back).1.smart_filters, smart(&changed).1.smart_filters);
-        let out = photocraft_io::export(&native_back, "psd", &Default::default()).unwrap();
+        let out = photostore_io::export(&native_back, "psd", &Default::default()).unwrap();
         assert!(out.warnings.is_empty(), "{:?}", out.warnings);
         assert!(structure_errors(&out.bytes).is_empty());
-        let back = photocraft_io::import("edited.psd", &out.bytes).unwrap().document;
+        let back = photostore_io::import("edited.psd", &out.bytes).unwrap().document;
         let (_, after) = smart(&back);
         assert_eq!(after.smart_filters.len(), 3);
-        let params = photocraft_engine::lens_cmds::raw_params("filter.cameraRaw", &after.smart_filters[1].params).unwrap();
+        let params = photostore_engine::lens_cmds::raw_params("filter.cameraRaw", &after.smart_filters[1].params).unwrap();
         assert_eq!((params.exposure, params.curve_lights), (0.0, 0.0));
         assert_eq!(params.hsl_hue, expected.hsl_hue);
         assert_eq!(mask_values(&after), mask_values(&original));
         let mut unfiltered = after.clone();
         unfiltered.smart_filters.clear();
-        assert!(photocraft_engine::smart_cmds::render(&back, &unfiltered).unwrap().is_some());
+        assert!(photostore_engine::smart_cmds::render(&back, &unfiltered).unwrap().is_some());
     }
 }
 
-/// Private, user-supplied files remain outside the repository. Set PHOTOCRAFT_CAMERA_RAW_PSD
-/// to check a Camera Raw fixture and PHOTOCRAFT_SMART_PSD_OUT to retain exports for manual checks.
+/// Private, user-supplied files remain outside the repository. Set PHOTOSTORE_CAMERA_RAW_PSD
+/// to check a Camera Raw fixture and PHOTOSTORE_SMART_PSD_OUT to retain exports for manual checks.
 #[test]
 #[ignore = "requires a user-supplied Camera Raw PSD"]
 fn camera_raw_psd_fixture() {
-    let path = std::env::var("PHOTOCRAFT_CAMERA_RAW_PSD").expect("set PHOTOCRAFT_CAMERA_RAW_PSD");
+    let path = std::env::var("PHOTOSTORE_CAMERA_RAW_PSD").expect("set PHOTOSTORE_CAMERA_RAW_PSD");
     let bytes = std::fs::read(&path).unwrap();
-    let imported = photocraft_io::import("fixture.psd", &bytes).unwrap();
+    let imported = photostore_io::import("fixture.psd", &bytes).unwrap();
     let (_, sm) = smart(&imported.document);
     let index = sm
         .smart_filters
         .iter()
         .position(|f| {
-            photocraft_io::smart_map::item_for_filter(f).ok().is_some_and(
-                |item| matches!(item.get("Fltr"), Some(photocraft_psd::descriptor::Value::Descriptor(d)) if d.class_id.is("Adobe Camera Raw Filter")),
+            photostore_io::smart_map::item_for_filter(f).ok().is_some_and(
+                |item| matches!(item.get("Fltr"), Some(photostore_psd::descriptor::Value::Descriptor(d)) if d.class_id.is("Adobe Camera Raw Filter")),
             )
         })
         .expect("a Camera Raw filter");
-    let original_item = photocraft_io::smart_map::item_for_filter(&sm.smart_filters[index]).unwrap();
-    let out = photocraft_io::export(&imported.document, "psd", &Default::default()).unwrap();
+    let original_item = photostore_io::smart_map::item_for_filter(&sm.smart_filters[index]).unwrap();
+    let out = photostore_io::export(&imported.document, "psd", &Default::default()).unwrap();
     assert!(!out.warnings.iter().any(|w| w.contains("smart filter")), "{:?}", out.warnings);
     assert!(structure_errors(&out.bytes).is_empty());
     keep("camera-raw-roundtrip.psd", &out.bytes);
-    let back = photocraft_io::import("roundtrip.psd", &out.bytes).unwrap().document;
+    let back = photostore_io::import("roundtrip.psd", &out.bytes).unwrap().document;
     let (layer, _) = smart(&back);
-    assert_eq!(photocraft_io::smart_map::item_for_filter(&smart(&back).1.smart_filters[index]).unwrap(), original_item);
-    let native = photocraft_format::save_to_bytes(&back, &Default::default()).unwrap();
-    assert_eq!(smart(&photocraft_format::load_from_bytes(&native).unwrap()).1.smart_filters, smart(&back).1.smart_filters);
-    if sm.smart_filters[index].command == photocraft_io::smart_map::UNSUPPORTED_FILTER {
-        assert_eq!(smart(&back).1.smart_filters[index].command, photocraft_io::smart_map::UNSUPPORTED_FILTER);
+    assert_eq!(photostore_io::smart_map::item_for_filter(&smart(&back).1.smart_filters[index]).unwrap(), original_item);
+    let native = photostore_format::save_to_bytes(&back, &Default::default()).unwrap();
+    assert_eq!(smart(&photostore_format::load_from_bytes(&native).unwrap()).1.smart_filters, smart(&back).1.smart_filters);
+    if sm.smart_filters[index].command == photostore_io::smart_map::UNSUPPORTED_FILTER {
+        assert_eq!(smart(&back).1.smart_filters[index].command, photostore_io::smart_map::UNSUPPORTED_FILTER);
         println!("Camera Raw settings survive PSD and native saves; active unmapped controls keep this filter opaque");
         return;
     }
     let mut s = Session::new();
     s.add_document(back, None);
     s.execute("layer.smartFilter.setParams", json!({"layer": layer, "index": index, "params": {"exposure": 0.5}})).unwrap();
-    let out = photocraft_io::export(&s.active().unwrap().doc, "psd", &Default::default()).unwrap();
+    let out = photostore_io::export(&s.active().unwrap().doc, "psd", &Default::default()).unwrap();
     assert!(!out.warnings.iter().any(|w| w.contains("smart filter")), "{:?}", out.warnings);
     assert!(structure_errors(&out.bytes).is_empty());
     keep("camera-raw-edited.psd", &out.bytes);
-    let back = photocraft_io::import("edited.psd", &out.bytes).unwrap().document;
+    let back = photostore_io::import("edited.psd", &out.bytes).unwrap().document;
     let after = &smart(&back).1.smart_filters[index];
     assert_eq!(after.params["exposure"], 0.5);
     let mut expected = original_item;
     let mut fltr = match expected.get("Fltr").unwrap() {
-        photocraft_psd::descriptor::Value::Descriptor(d) => d.clone(),
+        photostore_psd::descriptor::Value::Descriptor(d) => d.clone(),
         _ => panic!("Fltr must be a descriptor"),
     };
-    fltr.items.iter_mut().find(|(key, _)| key.is("Ex12")).unwrap().1 = photocraft_psd::descriptor::Value::Double(0.5);
-    expected.items.iter_mut().find(|(key, _)| key.is("Fltr")).unwrap().1 = photocraft_psd::descriptor::Value::Descriptor(fltr);
-    assert_eq!(photocraft_io::smart_map::item_for_filter(after).unwrap(), expected, "only Exposure changes");
+    fltr.items.iter_mut().find(|(key, _)| key.is("Ex12")).unwrap().1 = photostore_psd::descriptor::Value::Double(0.5);
+    expected.items.iter_mut().find(|(key, _)| key.is("Fltr")).unwrap().1 = photostore_psd::descriptor::Value::Descriptor(fltr);
+    assert_eq!(photostore_io::smart_map::item_for_filter(after).unwrap(), expected, "only Exposure changes");
 }
 
 /// Every colour model: the smart object, its filters and the filter cache's unfiltered pixels
@@ -283,23 +283,23 @@ fn smart_filters_survive_psd_in_every_colour_model() {
         s.execute("layer.smartObjects.convertToSmartObject", json!({})).unwrap();
         s.execute("filter.blur.gaussianBlur", json!({"radius": 1.5})).unwrap();
         let doc = s.active().unwrap().doc.clone();
-        let out = photocraft_io::export(&doc, "psd", &Default::default()).unwrap();
+        let out = photostore_io::export(&doc, "psd", &Default::default()).unwrap();
         assert!(!out.warnings.iter().any(|w| w.contains("smart")), "{mode} {depth}: {:?}", out.warnings);
         assert_eq!(structure_errors(&out.bytes), Vec::<String>::new());
-        let back = photocraft_io::import("x.psd", &out.bytes).unwrap().document;
+        let back = photostore_io::import("x.psd", &out.bytes).unwrap().document;
         let ((_, a), (_, b)) = (smart(&doc), smart(&back));
         assert_eq!(b.smart_filters.len(), 1, "{mode} {depth}");
         assert_eq!(b.smart_filters[0].command, a.smart_filters[0].command);
         // The cache's unfiltered planes decode back to the unfiltered rendering.
-        let f = photocraft_psd::PsdFile::from_bytes(&out.bytes).unwrap();
-        let fx = f.global_blocks.iter().find(|g| &g.key == b"FEid").map(|g| photocraft_psd::filter_effects::FilterEffects::parse(&g.data).unwrap()).unwrap();
+        let f = photostore_psd::PsdFile::from_bytes(&out.bytes).unwrap();
+        let fx = f.global_blocks.iter().find(|g| &g.key == b"FEid").map(|g| photostore_psd::filter_effects::FilterEffects::parse(&g.data).unwrap()).unwrap();
         let item = &fx.items[0];
         let (w, h) = item.rect.size().unwrap();
         let bits = u16::try_from(item.depth).unwrap();
         let first = item.slots[0].as_ref().unwrap().decode(w, h, bits).unwrap();
         let mut unfiltered = a.clone();
         unfiltered.smart_filters.clear();
-        let px = photocraft_engine::smart_cmds::render(&doc, &unfiltered).unwrap().unwrap();
+        let px = photostore_engine::smart_cmds::render(&doc, &unfiltered).unwrap().unwrap();
         let (x, y) = (10 - item.rect.left, 8 - item.rect.top);
         let at = (y as usize * w + x as usize) * usize::from(bits / 8);
         let stored = if bits == 8 { f32::from(first[at]) / 255.0 } else { f32::from(u16::from_be_bytes([first[at], first[at + 1]])) / 65535.0 };
@@ -309,7 +309,7 @@ fn smart_filters_survive_psd_in_every_colour_model() {
     }
 }
 
-/// Writes sample files for checking in Photoshop (`PHOTOCRAFT_SMART_PSD_OUT`): per depth, a
+/// Writes sample files for checking in Photoshop (`PHOTOSTORE_SMART_PSD_OUT`): per depth, a
 /// plain layer, a smart object without filters, and one with filters.
 #[test]
 #[ignore = "writes files for a manual Photoshop check"]
@@ -322,16 +322,16 @@ fn photoshop_samples() {
         s.execute("edit.fill", json!({"color": "#c83c28"})).unwrap();
         s.execute("select.deselect", json!({})).unwrap();
         let tag = format!("{mode}{depth}");
-        keep(&format!("plain-{tag}.psd"), &photocraft_io::export(&s.active().unwrap().doc, "psd", &Default::default()).unwrap().bytes);
+        keep(&format!("plain-{tag}.psd"), &photostore_io::export(&s.active().unwrap().doc, "psd", &Default::default()).unwrap().bytes);
         s.execute("layer.smartObjects.convertToSmartObject", json!({})).unwrap();
-        keep(&format!("nofilter-{tag}.psd"), &photocraft_io::export(&s.active().unwrap().doc, "psd", &Default::default()).unwrap().bytes);
+        keep(&format!("nofilter-{tag}.psd"), &photostore_io::export(&s.active().unwrap().doc, "psd", &Default::default()).unwrap().bytes);
         s.execute("filter.blur.gaussianBlur", json!({"radius": 3})).unwrap();
-        keep(&format!("gauss-{tag}.psd"), &photocraft_io::export(&s.active().unwrap().doc, "psd", &Default::default()).unwrap().bytes);
+        keep(&format!("gauss-{tag}.psd"), &photostore_io::export(&s.active().unwrap().doc, "psd", &Default::default()).unwrap().bytes);
     }
 }
 
 /// PSD export of a 24 MP smart object versus the same layer as pixels (release:
-/// `cargo test --release -p photocraft-engine --test smart_psd -- --ignored --nocapture perf`).
+/// `cargo test --release -p photostore-engine --test smart_psd -- --ignored --nocapture perf`).
 #[test]
 #[ignore = "benchmark"]
 fn perf_24mp_smart_object_export() {
@@ -348,7 +348,7 @@ fn perf_24mp_smart_object_export() {
             for x in r.x0..r.x1 {
                 // Photo-like: smooth gradients plus a little texture (RLE can't collapse it).
                 let v = (x as f32 / w as f32) * 0.7 + (((x * 31 + y * 17) % 29) as f32 / 29.0) * 0.1;
-                data.extend(photocraft_raster::from_rgba(&fmt, [v, (y as f32 / h as f32) * 0.8, 1.0 - v, 1.0]));
+                data.extend(photostore_raster::from_rgba(&fmt, [v, (y as f32 / h as f32) * 0.8, 1.0 - v, 1.0]));
             }
         }
         surf.write_region(r, &data);
@@ -357,7 +357,7 @@ fn perf_24mp_smart_object_export() {
     .unwrap();
     let time = |doc: &Document| {
         let t = std::time::Instant::now();
-        let out = photocraft_io::export(doc, "psd", &Default::default()).unwrap();
+        let out = photostore_io::export(doc, "psd", &Default::default()).unwrap();
         (t.elapsed().as_secs_f64(), out.bytes.len(), out.warnings)
     };
     let (tf, sf, _) = time(&s.active().unwrap().doc);
@@ -384,21 +384,21 @@ fn edited_psd_smart_objects_drop_their_old_file() {
     let mut s = session(8);
     s.execute("layer.smartObjects.convertToSmartObject", json!({})).unwrap();
     let doc = s.active().unwrap().doc.clone();
-    let first = photocraft_io::export(&doc, "psd", &Default::default()).unwrap().bytes;
+    let first = photostore_io::export(&doc, "psd", &Default::default()).unwrap().bytes;
     // Re-open, edit the contents (a new embedded file), save: one embedded file, the new one.
     let mut s2 = Session::new();
-    s2.add_document(photocraft_io::import("a.psd", &first).unwrap().document, None);
+    s2.add_document(photostore_io::import("a.psd", &first).unwrap().document, None);
     let (id, _) = smart(&s2.active().unwrap().doc);
-    s2.select_layer(photocraft_doc::LayerId(id)).unwrap();
+    s2.select_layer(photostore_doc::LayerId(id)).unwrap();
     s2.execute("layer.smartObjects.editContents", json!({})).unwrap();
     s2.execute("image.adjustments.invert", json!({})).unwrap();
     s2.execute("layer.smartObjects.saveContents", json!({})).unwrap();
-    let parent = s2.documents().iter().position(|d| d.doc.layer(photocraft_doc::LayerId(id)).is_some()).unwrap();
+    let parent = s2.documents().iter().position(|d| d.doc.layer(photostore_doc::LayerId(id)).is_some()).unwrap();
     let doc2 = s2.documents()[parent].doc.clone();
-    let second = photocraft_io::export(&doc2, "psd", &Default::default()).unwrap().bytes;
-    let f = photocraft_psd::PsdFile::from_bytes(&second).unwrap();
-    let uuids: Vec<String> = f.global_blocks.iter().filter(|b| &b.key == b"lnk2").flat_map(|b| photocraft_io::linked::block_uuids(&b.data)).collect();
-    let back = photocraft_io::import("b.psd", &second).unwrap().document;
+    let second = photostore_io::export(&doc2, "psd", &Default::default()).unwrap().bytes;
+    let f = photostore_psd::PsdFile::from_bytes(&second).unwrap();
+    let uuids: Vec<String> = f.global_blocks.iter().filter(|b| &b.key == b"lnk2").flat_map(|b| photostore_io::linked::block_uuids(&b.data)).collect();
+    let back = photostore_io::import("b.psd", &second).unwrap().document;
     let (_, sm) = smart(&back);
     let SmartSource::Linked { path } = &sm.source else { panic!() };
     assert_eq!(uuids, vec![path.clone()]);

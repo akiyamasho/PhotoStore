@@ -1,6 +1,6 @@
 //! Stylize: Diffuse, Extrude, Tiles, Trace Contour, Wind.
 
-use photocraft_geom::Rect;
+use photostore_geom::Rect;
 
 use crate::fxutil::{MAXC, luma, native, ncol, subtractive, xy};
 use crate::image::Image;

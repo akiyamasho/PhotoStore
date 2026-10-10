@@ -58,7 +58,7 @@ echo "==> PhotoStore $VERSION for macOS ($ARCH), identity: $IDENTITY, notarize: 
 if [ "$SKIP_BUILD" = 0 ]; then
   args=()
   for t in "${TARGETS[@]}"; do args+=(--target "$t"); done
-  (cd "$ROOT" && cargo build --release --locked -p photocraft -p photocraft-cli --features heif "${args[@]}")
+  (cd "$ROOT" && cargo build --release --locked -p photostore -p photostore-cli --features heif "${args[@]}")
 fi
 
 rm -rf "$WORK"
@@ -107,7 +107,7 @@ cp "$ROOT/assets/app-icon/photostore.icns" "$APP/Contents/Resources/PhotoStore.i
 mkdir -p "$APP/Contents/Resources/Licenses"
 copy_licenses "$APP/Contents/Resources/Licenses"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" \
-  -e "s/@BUILD_SHA@/${PHOTOCRAFT_BUILD_SHA:-unknown}/g" \
+  -e "s/@BUILD_SHA@/${PHOTOSTORE_BUILD_SHA:-unknown}/g" \
   "$HERE/Info.plist.in" >"$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist"
 printf 'APPL????' >"$APP/Contents/PkgInfo"

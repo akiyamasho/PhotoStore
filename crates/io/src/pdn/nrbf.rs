@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use photocraft_raster::Interrupt;
+use photostore_raster::Interrupt;
 
 use super::{Result, invalid};
 

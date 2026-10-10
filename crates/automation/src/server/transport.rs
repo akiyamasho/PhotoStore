@@ -2,7 +2,7 @@
 use super::*;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-impl PhotocraftMcp {
+impl PhotoStoreMcp {
     /// Serve a JSON-lines stream. A malformed line receives -32700/id:null; the next line
     /// is still handled. A single writer serializes parse errors and SDK responses.
     pub async fn serve_io(

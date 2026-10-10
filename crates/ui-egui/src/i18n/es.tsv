@@ -9,7 +9,6 @@
 # Clean-room: every entry was written from the plain meaning of the English label using ordinary
 # Spanish computing vocabulary (capa, pincel, selección, lienzo ...). No proprietary localisation
 # resource, string table or product UI was consulted or copied; add entries the same way.
-# Product and technology names (PhotoCraft, ArtCraft, OpenType, CMYK, Lab ...) stay in Latin
 # letters; the trailing "…" of dialog commands is kept.
 	File	Archivo
 	Edit	Edición
@@ -704,11 +703,9 @@
 	Timeline	Línea de tiempo
 	Tool Presets	Preajustes de herramienta
 	Tools	Herramientas
-	About PhotoCraft	Acerca de PhotoCraft
-	PhotoCraft Website	Sitio web de PhotoCraft
-	PhotoCraft on GitHub	PhotoCraft en GitHub
-	ArtCraft Website	Sitio web de ArtCraft
-	Join the ArtCraft Discord…	Únete al Discord de ArtCraft…
+	About PhotoStore	Acerca de PhotoStore
+	PhotoStore Website	Sitio web de PhotoStore
+	PhotoStore on GitHub	PhotoStore en GitHub
 	Report an Issue…	Informar de un problema…
 	WIA Support…	Compatibilidad con WIA…
 	Apply	Aplicar
@@ -760,7 +757,7 @@
 	All Caps	Todo en mayúsculas
 	All Slices	Todas las secciones
 	All User Slices	Todas las secciones de usuario
-	All shortcuts reset to PhotoCraft defaults.	Se restablecieron todos los atajos a los valores predeterminados de PhotoCraft.
+	All shortcuts reset to PhotoStore defaults.	Se restablecieron todos los atajos a los valores predeterminados de PhotoStore.
 	Alt	Alt
 	Always use pressure for opacity	Usar siempre la presión para la opacidad
 	Always use pressure for size	Usar siempre la presión para el tamaño
@@ -977,7 +974,6 @@
 	Diffusion	Difusión
 	Discard the embedded profile (don't color manage)	Descartar el perfil incrustado (no gestionar el color)
 	Discontiguous	No contiguo
-	Discord	Discord
 	Dismiss	Descartar
 	Display P3	Display P3
 	Display Text	Texto de visualización
@@ -997,8 +993,8 @@
 	Drop an image or PSD anywhere to open it.	Suelte una imagen o un PSD en cualquier lugar para abrirlo.
 	Native file drag-and-drop is unavailable	El arrastrar y soltar archivos de forma nativa no está disponible en Wayland
 	Native file drag-and-drop is not supported on Wayland yet. Use File › Open, or copy the image in your file manager and paste it with {paste}.	El arrastrar y soltar archivos de forma nativa aún no está disponible en Wayland. Usa Archivo › Abrir, o copia la imagen en tu gestor de archivos y pégala con {paste}.
-	To drop files, start PhotoCraft under XWayland: `{command}`	Para soltar archivos, inicia PhotoCraft bajo XWayland: `{command}`
-	Or set Preferences › Performance › Linux display server to X11: PhotoCraft then always starts under XWayland.	O establece Preferencias › Rendimiento › Servidor de pantalla de Linux en X11: PhotoCraft se iniciará siempre bajo XWayland.
+	To drop files, start PhotoStore under XWayland: `{command}`	Para soltar archivos, inicia PhotoStore bajo XWayland: `{command}`
+	Or set Preferences › Performance › Linux display server to X11: PhotoStore then always starts under XWayland.	O establece Preferencias › Rendimiento › Servidor de pantalla de Linux en X11: PhotoStore se iniciará siempre bajo XWayland.
 	Edit › Paste	Edición › Pegar
 	Duplicate Layers…	Duplicar capas…
 	Duplicate style	Duplicar estilo
@@ -1109,7 +1105,6 @@
 	Invert All	Invertir todo
 	Invert has no settings.	Invertir no tiene ajustes.
 	Italic	Cursiva
-	Join us on Discord	Únete a nuestro Discord
 	Justify all	Justificar todo
 	Justify last centered	Justificar último centrado
 	Justify last left	Justificar último a la izquierda
@@ -1244,9 +1239,9 @@
 	Perspective Warp is not active	La deformación en perspectiva no está activa
 	Perspective Warp: draw planes along the image's perspective, then switch to Warp	Deformación en perspectiva: dibuje planos siguiendo la perspectiva de la imagen y luego cambie a Deformar
 	Photo Filter	Filtro fotográfico
-	PhotoCraft	PhotoCraft
-	PhotoCraft Manages Colors	PhotoCraft gestiona el color
-	PhotoCraft — an open-source, native image editor written in Rust.	PhotoCraft — un editor de imágenes nativo y de código abierto escrito en Rust.
+	PhotoStore	PhotoStore
+	PhotoStore Manages Colors	PhotoStore gestiona el color
+	PhotoStore — an open-source, native image editor written in Rust.	PhotoStore — un editor de imágenes nativo y de código abierto escrito en Rust.
 	Pin Depth:	Profundidad del pin:
 	Pixel Length:	Longitud en píxeles:
 	Pixels/Centimeter	Píxeles/centímetro
@@ -1321,11 +1316,11 @@
 	Import Shortcuts…	Importar atajos…
 	Load a keyboard shortcut set saved as .kys	Cargar un conjunto de atajos de teclado guardado como .kys
 	Imported {n} shortcuts from {file}. Click OK to keep them.	Se importaron {n} atajos de {file}. Haz clic en OK para conservarlos.
-	{n} commands are not in PhotoCraft.	{n} comandos no existen en PhotoCraft.
+	{n} commands are not in PhotoStore.	{n} comandos no existen en PhotoStore.
 	Keyboard shortcuts imported	Atajos de teclado importados
 	Your keyboard shortcut set {set} is in use here: {n} shortcuts differ from the defaults. Edit › Keyboard Shortcuts shows them; Reset All to Defaults undoes this.	Tu conjunto de atajos de teclado {set} se usa aquí: {n} atajos difieren de los predeterminados. Edición › Atajos de teclado los muestra; Restablecer todo a valores predeterminados lo deshace.
 	Import keyboard shortcuts?	¿Importar atajos de teclado?
-	PhotoCraft found your keyboard shortcut set {set} from another image editor on this computer: {n} of its shortcuts differ from PhotoCraft's. Import it?	PhotoCraft encontró en este equipo tu conjunto de atajos de teclado {set} de otro editor de imágenes: {n} de sus atajos difieren de los de PhotoCraft. ¿Importarlo?
+	PhotoStore found your keyboard shortcut set {set} from another image editor on this computer: {n} of its shortcuts differ from PhotoStore's. Import it?	PhotoStore encontró en este equipo tu conjunto de atajos de teclado {set} de otro editor de imágenes: {n} de sus atajos difieren de los de PhotoStore. ¿Importarlo?
 	Edit › Keyboard Shortcuts › Reset All to Defaults undoes an import.	Edición › Atajos de teclado › Restablecer todo a valores predeterminados deshace una importación.
 	Don't Import	No importar
 	The keyboard shortcut set was not imported: {error}	No se importó el conjunto de atajos de teclado: {error}
@@ -1513,7 +1508,6 @@
 	Apple Watch 45mm	Apple Watch 45mm
 	Aqua	Aqua
 	Art & Illustration	Arte e ilustración
-	ArtCraft	ArtCraft
 	Background Eraser Tool	Herramienta Borrador de fondo
 	Bevel & Emboss	Bisel y relieve
 	Blend Mode	Modo de fusión
@@ -1549,7 +1543,7 @@
 	Current Tool	Herramienta actual
 	Custom Shape Tool	Herramienta Forma personalizada
 	Cyans	Cianes
-	Default PhotoCraft Size	Tamaño predeterminado de PhotoCraft
+	Default PhotoStore Size	Tamaño predeterminado de PhotoStore
 	Delete Workspace	Eliminar espacio de trabajo
 	Diamond	Diamante
 	Dimensions:	Dimensiones:
@@ -1650,7 +1644,7 @@
 	Pen Tilt	Inclinación del lápiz
 	Pen Tool	Herramienta Pluma
 	Photo	Fotografía
-	PhotoCraft website	Sitio web de PhotoCraft
+	PhotoStore website	Sitio web de PhotoStore
 	Picas	Picas
 	Pillow Emboss	Relieve almohadillado
 	Pixel Replacement	Sustitución de píxeles
@@ -1978,7 +1972,7 @@
 	System Info	Información del sistema
 	More panels	Más paneles
 	More documents	Más documentos
-	These settings aren't available in PhotoCraft yet.	Estos ajustes aún no están disponibles en PhotoCraft.
+	These settings aren't available in PhotoStore yet.	Estos ajustes aún no están disponibles en PhotoStore.
 	Graphics	Gráficos
 	Reset GPU Backend	Restablecer el backend de GPU
 	Applies at next launch.	Se aplicará en el próximo inicio.
@@ -2174,7 +2168,7 @@
 	Automatic uses GPU acceleration when available and falls back to CPU rendering on errors.	Automático utiliza la GPU cuando está disponible y cambia a la CPU si hay errores.
 	Switched to CPU rendering	Se cambió al renderizado por CPU
 	GPU acceleration could not continue. Your documents are unchanged.	La aceleración GPU no pudo continuar. Los documentos no han cambiado.
-	PhotoCraft is using the CPU image compositor. The window may still use your graphics adapter.	PhotoCraft compone las imágenes en la CPU. La ventana aún puede usar el adaptador gráfico.
+	PhotoStore is using the CPU image compositor. The window may still use your graphics adapter.	PhotoStore compone las imágenes en la CPU. La ventana aún puede usar el adaptador gráfico.
 	Retry GPU requires a restart. Save your work first.	Reintentar la GPU requiere reiniciar. Guarda primero tu trabajo.
 	Keep Using CPU	Seguir usando CPU
 	Retry GPU	Reintentar GPU

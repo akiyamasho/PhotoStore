@@ -1,4 +1,4 @@
-use photocraft_color::{ColorMode, PixelFormat, SampleType};
+use photostore_color::{ColorMode, PixelFormat, SampleType};
 use serde_json::json;
 
 use super::*;

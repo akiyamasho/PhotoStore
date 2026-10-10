@@ -2,7 +2,7 @@
 //! record the current revision as saved, so the session stops reporting `dirty` (as `.pcraft`
 //! already did). A flat export stays a copy and leaves the dirty state and path alone.
 
-use photocraft_automation::Headless;
+use photostore_automation::Headless;
 use serde_json::json;
 
 fn tmp(name: &str) -> std::path::PathBuf {
@@ -42,7 +42,7 @@ fn pathless_save_clears_dirty(dir: &std::path::Path, name: &str) {
 
     let bytes = std::fs::read(&path).unwrap();
     if name.ends_with("psd") {
-        assert!(photocraft_io::is_psd(&bytes), "{name}: PSD magic");
+        assert!(photostore_io::is_psd(&bytes), "{name}: PSD magic");
     } else {
         assert_eq!(&bytes[..4], b"8BPS", "{name}: PSB magic");
     }

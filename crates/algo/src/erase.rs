@@ -4,9 +4,9 @@
 //! Works in the surface's own channels at any depth and in any colour model: only the alpha
 //! channel changes (or, under a transparency lock, the colour channels move toward `lock_color`).
 
-use photocraft_color::{read_sample, write_sample};
-use photocraft_geom::Rect;
-use photocraft_raster::Surface;
+use photostore_color::{read_sample, write_sample};
+use photostore_geom::Rect;
+use photostore_raster::Surface;
 
 use crate::selection::Region;
 
@@ -99,8 +99,8 @@ pub fn magic_erase(target: &mut Surface, region: &Region, amount: f32, selection
 #[cfg(test)]
 mod tests {
     use super::*;
-    use photocraft_color::{ColorMode, PixelFormat, SampleType};
-    use photocraft_raster::from_rgba;
+    use photostore_color::{ColorMode, PixelFormat, SampleType};
+    use photostore_raster::from_rgba;
 
     fn region(bbox: Rect, v: u8) -> Region {
         Region { bbox, mask: vec![v; bbox.width() as usize * bbox.height() as usize] }

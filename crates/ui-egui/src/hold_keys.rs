@@ -17,12 +17,12 @@
 //! temporary tool that started a drag lasts until the button is released, as in Photoshop.
 //!
 //! The keys are bindings, not commands: they come from
-//! [`photocraft_engine::prefs::TEMPORARY_TOOLS`] with Edit › Keyboard Shortcuts overrides on top
+//! [`photostore_engine::prefs::TEMPORARY_TOOLS`] with Edit › Keyboard Shortcuts overrides on top
 //! (Tools › Temporary), and the reposition key is whatever the Hand key is.
 
 use egui::{InputState, KeyboardShortcut};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::shortcuts::parse;
 use crate::state::Tool;
 
@@ -87,18 +87,18 @@ pub fn cmd_moves(t: Tool) -> bool {
 }
 
 /// Is ⌘ alone (no other temporary key) making the Move tool now?
-fn cmd_move_held(app: &PhotocraftApp, i: &InputState) -> bool {
+fn cmd_move_held(app: &PhotoStoreApp, i: &InputState) -> bool {
     i.modifiers.command && cmd_moves(app.ui.tool) && app.ui.transform.is_none() && app.ui.text_edit.is_none()
 }
 
 /// Is `id` a held temporary tool rather than a command?
 pub fn is_temporary(id: &str) -> bool {
-    photocraft_engine::prefs::TEMPORARY_TOOLS.iter().any(|t| t.0 == id)
+    photostore_engine::prefs::TEMPORARY_TOOLS.iter().any(|t| t.0 == id)
 }
 
 /// The key binding of a temporary tool in effect (`None` when removed or unparsable).
-pub fn binding(app: &PhotocraftApp, t: Temporary) -> Option<KeyboardShortcut> {
-    let def = photocraft_engine::prefs::TEMPORARY_TOOLS.iter().find(|x| x.0 == t.id()).map(|x| x.2);
+pub fn binding(app: &PhotoStoreApp, t: Temporary) -> Option<KeyboardShortcut> {
+    let def = photostore_engine::prefs::TEMPORARY_TOOLS.iter().find(|x| x.0 == t.id()).map(|x| x.2);
     parse(app.session.prefs().shortcut(t.id(), def)?)
 }
 
@@ -116,7 +116,7 @@ fn held(i: &InputState, sc: &KeyboardShortcut) -> bool {
 
 /// The temporary tool whose key is held now, the most specific binding first (⌘⌥Space before
 /// ⌘Space before Space). Never while a text field has the keyboard.
-pub fn held_tool(app: &PhotocraftApp, ctx: &egui::Context) -> Option<Temporary> {
+pub fn held_tool(app: &PhotoStoreApp, ctx: &egui::Context) -> Option<Temporary> {
     if ctx.text_edit_focused() {
         return None;
     }
@@ -142,7 +142,7 @@ pub fn held_tool(app: &PhotocraftApp, ctx: &egui::Context) -> Option<Temporary> 
 }
 
 /// Is the reposition key (the Hand key, any modifiers) down?
-pub fn reposition_held(app: &PhotocraftApp, ctx: &egui::Context) -> bool {
+pub fn reposition_held(app: &PhotoStoreApp, ctx: &egui::Context) -> bool {
     !ctx.text_edit_focused() && binding(app, Temporary::Hand).is_some_and(|sc| ctx.input(|i| i.key_down(sc.logical_key)))
 }
 
@@ -159,7 +159,7 @@ fn latch_id() -> egui::Id {
 /// drawn (the key repositions it instead); a temporary tool that was in effect when the button
 /// went down stays until the button comes up, release included (the Move tool's release is
 /// what commits the move).
-pub fn for_frame(app: &PhotocraftApp, ctx: &egui::Context, drawing: bool) -> Option<Temporary> {
+pub fn for_frame(app: &PhotoStoreApp, ctx: &egui::Context, drawing: bool) -> Option<Temporary> {
     let (down, released) = ctx.input(|i| (i.pointer.primary_down(), i.pointer.primary_released()));
     let latched = ctx.data(|d| d.get_temp::<Option<Temporary>>(latch_id())).flatten();
     let t = if (down || released) && latched.is_some() {

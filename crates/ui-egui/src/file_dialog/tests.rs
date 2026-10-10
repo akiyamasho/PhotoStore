@@ -8,11 +8,11 @@ type Open = Rc<RefCell<Vec<(FileDialogRequest, FileDialogReply)>>>;
 
 /// An app with an untitled document, whose file dialogs stay open until the test answers them, and
 /// whose writer records the paths it wrote.
-fn app() -> (PhotocraftApp, Open, Rc<RefCell<Vec<String>>>) {
+fn app() -> (PhotoStoreApp, Open, Rc<RefCell<Vec<String>>>) {
     let (open, written): (Open, Rc<RefCell<Vec<String>>>) = Default::default();
     let (held, w) = (open.clone(), written.clone());
     let services = Services {
-        export: Some(Box::new(|_: &photocraft_doc::Document, _: &str, _: &crate::ExportSettings| Ok((b"out".to_vec(), Vec::new())))),
+        export: Some(Box::new(|_: &photostore_doc::Document, _: &str, _: &crate::ExportSettings| Ok((b"out".to_vec(), Vec::new())))),
         write: Some(Box::new(move |path: &str, _: &[u8]| {
             w.borrow_mut().push(path.to_string());
             Ok(())
@@ -20,7 +20,7 @@ fn app() -> (PhotocraftApp, Open, Rc<RefCell<Vec<String>>>) {
         file_dialog: Some(Box::new(move |request, _parent, reply| held.borrow_mut().push((request, reply)))),
         ..Default::default()
     };
-    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), services);
+    let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), services);
     app.run("file.new", json!({"width": 4, "height": 4})).unwrap();
     (app, open, written)
 }
@@ -42,10 +42,10 @@ fn pdn_save_requests_a_native_copy_without_overwriting_the_source() {
 
 /// A real flat JPEG import, optionally edited to contain another layer. A filename without a
 /// path is the web/download case; desktop opens also retain their source location.
-fn jpeg_app(path: Option<&str>, layered: bool) -> (PhotocraftApp, Open, Rc<RefCell<Vec<String>>>) {
+fn jpeg_app(path: Option<&str>, layered: bool) -> (PhotoStoreApp, Open, Rc<RefCell<Vec<String>>>) {
     let (mut app, open, written) = app();
-    let bytes = photocraft_io::export(&app.session.active().unwrap().doc, "My image.JPEG", &Default::default()).unwrap().bytes;
-    let doc = photocraft_io::import("My image.JPEG", &bytes).unwrap().document;
+    let bytes = photostore_io::export(&app.session.active().unwrap().doc, "My image.JPEG", &Default::default()).unwrap().bytes;
+    let doc = photostore_io::import("My image.JPEG", &bytes).unwrap().document;
     app.session.add_document(doc, path.map(str::to_string));
     if layered {
         app.run("layer.new.layer", json!({})).unwrap();
@@ -112,8 +112,8 @@ fn save_dialog_preserves_flat_and_existing_layered_format_defaults() {
 fn transparent_png_keeps_its_format_until_its_lone_layer_becomes_smart() {
     let (mut app, open, written) = app();
     std::sync::Arc::make_mut(&mut app.session.active_mut().unwrap().doc).layers[0].surface_mut().unwrap().write_pixel(0, 0, &[1.0, 0.0, 0.0, 0.0]);
-    let bytes = photocraft_io::export(&app.session.active().unwrap().doc, "transparent.PNG", &Default::default()).unwrap().bytes;
-    let doc = photocraft_io::import("transparent.PNG", &bytes).unwrap().document;
+    let bytes = photostore_io::export(&app.session.active().unwrap().doc, "transparent.PNG", &Default::default()).unwrap().bytes;
+    let doc = photostore_io::import("transparent.PNG", &bytes).unwrap().document;
     assert_eq!(doc.layers.len(), 1);
     assert!(!doc.layers[0].locks.transparency, "transparent PNG imports as an unlocked raster layer");
     assert_eq!(doc.layers[0].surface().unwrap().pixel(0, 0)[3], 0.0);
@@ -126,7 +126,7 @@ fn transparent_png_keeps_its_format_until_its_lone_layer_becomes_smart() {
     app.poll_file_dialog(&ctx, None);
     app.run("layer.smartObjects.convertToSmartObject", json!({})).unwrap();
     assert_eq!(app.session.active().unwrap().doc.layers.len(), 1);
-    assert!(matches!(app.session.active().unwrap().doc.layers[0].content, photocraft_doc::LayerContent::Smart(_)));
+    assert!(matches!(app.session.active().unwrap().doc.layers[0].content, photostore_doc::LayerContent::Smart(_)));
     menus::invoke(&mut app, &ctx, "file.saveAs", json!({})).unwrap();
     app.poll_file_dialog(&ctx, None);
     assert!(matches!(open.borrow().as_slice(), [(FileDialogRequest::Save { suggested }, _)] if suggested == "/pics/transparent.psd"));
@@ -257,7 +257,7 @@ fn save_paths_get_a_lowercase_extension_when_the_preference_is_on() {
 fn save_and_export_dialogs_start_beside_the_document() {
     let (mut app, open, _) = app();
     let ctx = egui::Context::default();
-    let dir = std::env::temp_dir().join("PhotoCraft projects").join("图像");
+    let dir = std::env::temp_dir().join("PhotoStore projects").join("图像");
     let source = dir.join("original.psd");
     app.session.active_mut().unwrap().path = Some(source.to_string_lossy().into_owned());
     for command in ["file.saveAs", "file.export.exportAs", "file.export.saveForWebLegacy"] {

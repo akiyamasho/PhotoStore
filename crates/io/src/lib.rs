@@ -1,8 +1,8 @@
-//! # photocraft-io
+//! # photostore-io
 //!
-//! Import and export between [`photocraft_doc::Document`] and files:
+//! Import and export between [`photostore_doc::Document`] and files:
 //!
-//! * PSD / PSB (detected by the `8BPS` signature) via `photocraft-psd`, with
+//! * PSD / PSB (detected by the `8BPS` signature) via `photostore-psd`, with
 //!   fidelity levels 1–3 (raster layers, masks, blend/opacity/fill,
 //!   visibility, names, groups, clipping, adjustment and fill layers).
 //!   Every layer keeps its unmodelled tagged blocks in `Layer::psd_blocks`
@@ -11,7 +11,7 @@
 //!   smart-object layers also keep their pixels as the cached raster, and fill
 //!   layers keep Photoshop's rendering in `Layer::fill_cache`.
 //! * Camera raws (DNG, CR2, uncompressed / lossless TIFF-EP raws) via
-//!   `photocraft-raw`, developed into a 16-bit ProPhoto RGB "Background"
+//!   `photostore-raw`, developed into a 16-bit ProPhoto RGB "Background"
 //!   layer; unsupported raw variants fall back to the embedded JPEG preview.
 //! * Layered TIFFs (Photoshop layer data in tags 37724 and 34377) open with their
 //!   layers through the PSD path and are written back the same way; see `tiff_layers`.
@@ -21,12 +21,12 @@
 //! * Affinity documents (`.af`, `.afdesign`, `.afphoto`, `.afpub`) open natively
 //!   with no source save path, what isn't imported listed in the warnings; a file
 //!   whose native data can't be read opens as its embedded preview; see `affinity`.
-//! * Every other format goes through `photocraft-codecs` as a single layer
+//! * Every other format goes through `photostore-codecs` as a single layer
 //!   (depth and Gray/RGB/CMYK model preserved): a locked "Background" when the
 //!   image is opaque, a normal "Layer 0" when it has transparency.
 //!
 //! Exports to PSD render the merged composite with
-//! `photocraft_compose::flatten`; flat exports report what is lost.
+//! `photostore_compose::flatten`; flat exports report what is lost.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -57,9 +57,9 @@ pub mod text_styles_map;
 pub mod tiff_layers;
 pub mod vector_map;
 
-use photocraft_codecs::{CodecError, EncodeOptions};
-use photocraft_doc::Document;
-use photocraft_psd::{PsdError, PsdFile};
+use photostore_codecs::{CodecError, EncodeOptions};
+use photostore_doc::Document;
+use photostore_psd::{PsdError, PsdFile};
 
 pub use adjust_map::ADJUSTMENT_KEYS;
 pub use flat::{document_to_image, import_tiff_page};
@@ -89,10 +89,10 @@ pub enum IoError {
     Unsupported(String),
     /// Native `.pcraft` bundle failure.
     #[error("pcraft: {0}")]
-    Pcraft(#[from] photocraft_format::FormatError),
+    Pcraft(#[from] photostore_format::FormatError),
     /// Camera raw decode failure.
     #[error("{0}")]
-    Raw(#[from] photocraft_raw::RawError),
+    Raw(#[from] photostore_raw::RawError),
     /// An SVG that does not parse (or is too large to rasterise).
     #[error("SVG: {0}")]
     Svg(String),
@@ -175,21 +175,21 @@ pub fn is_psd(bytes: &[u8]) -> bool {
 }
 
 /// Imports a file. PSD/PSB, Affinity containers and camera raws are detected by magic; everything
-/// else is decoded with `photocraft-codecs`.
+/// else is decoded with `photostore-codecs`.
 pub fn import(name: &str, bytes: &[u8]) -> Result<ImportResult, IoError> {
-    import_with_svg_group_depth(name, bytes, photocraft_doc::MAX_GROUP_DEPTH)
+    import_with_svg_group_depth(name, bytes, photostore_doc::MAX_GROUP_DEPTH)
 }
 
 /// [`import`] for a background open: checks `ctl` between stages (and per layer for PSD/PSB) and
 /// reports progress. A cancelled import fails with [`IoError::Cancelled`].
-pub fn import_with(name: &str, bytes: &[u8], ctl: &photocraft_raster::Interrupt) -> Result<ImportResult, IoError> {
-    import_with_svg_group_depth_and_interrupt(name, bytes, photocraft_doc::MAX_GROUP_DEPTH, ctl)
+pub fn import_with(name: &str, bytes: &[u8], ctl: &photostore_raster::Interrupt) -> Result<ImportResult, IoError> {
+    import_with_svg_group_depth_and_interrupt(name, bytes, photostore_doc::MAX_GROUP_DEPTH, ctl)
 }
 
 /// Imports a file with a configurable SVG editability threshold. SVG groups deeper than this are
 /// rasterised during conversion; the XML parser safety cap and document nesting limit stay fixed.
 pub fn import_with_svg_group_depth(name: &str, bytes: &[u8], max_group_depth: usize) -> Result<ImportResult, IoError> {
-    import_with_svg_group_depth_and_interrupt(name, bytes, max_group_depth, &photocraft_raster::Interrupt::NONE)
+    import_with_svg_group_depth_and_interrupt(name, bytes, max_group_depth, &photostore_raster::Interrupt::NONE)
 }
 
 /// [`import_with`] with the SVG editable-group threshold selected by the user.
@@ -197,7 +197,7 @@ pub fn import_with_svg_group_depth_and_interrupt(
     name: &str,
     bytes: &[u8],
     max_group_depth: usize,
-    ctl: &photocraft_raster::Interrupt,
+    ctl: &photostore_raster::Interrupt,
 ) -> Result<ImportResult, IoError> {
     ctl.check().map_err(|_| IoError::Cancelled)?;
     let r = import_stages(name, bytes, ctl, max_group_depth)?;
@@ -206,17 +206,17 @@ pub fn import_with_svg_group_depth_and_interrupt(
     Ok(r)
 }
 
-fn import_stages(name: &str, bytes: &[u8], ctl: &photocraft_raster::Interrupt, max_group_depth: usize) -> Result<ImportResult, IoError> {
+fn import_stages(name: &str, bytes: &[u8], ctl: &photostore_raster::Interrupt, max_group_depth: usize) -> Result<ImportResult, IoError> {
     // A declared native extension must reach its loader so malformed bundles retain format errors.
-    if has_extension(name, photocraft_format::EXTENSION) || photocraft_format::is_pcraft(bytes) {
-        return Ok(ImportResult { document: photocraft_format::load_from_bytes(bytes)?, warnings: Vec::new(), source_read_only: false, preview_only: false });
+    if has_extension(name, photostore_format::EXTENSION) || photostore_format::is_pcraft(bytes) {
+        return Ok(ImportResult { document: photostore_format::load_from_bytes(bytes)?, warnings: Vec::new(), source_read_only: false, preview_only: false });
     }
     if is_psd(bytes) {
         let file = PsdFile::from_bytes(bytes)?;
         // Nesting past the document model's cap could never be saved (.pcraft refuses it) and
         // would overflow the importer's recursion; reject the file with the actionable limit.
-        if psd_import::group_depth(&file) > photocraft_doc::MAX_GROUP_DEPTH {
-            return Err(IoError::Unsupported(format!("layer groups nested deeper than {}", photocraft_doc::MAX_GROUP_DEPTH)));
+        if psd_import::group_depth(&file) > photostore_doc::MAX_GROUP_DEPTH {
+            return Err(IoError::Unsupported(format!("layer groups nested deeper than {}", photostore_doc::MAX_GROUP_DEPTH)));
         }
         ctl.check().map_err(|_| IoError::Cancelled)?;
         ctl.progress(0.05);
@@ -251,7 +251,7 @@ fn is_svg_input(name: &str, bytes: &[u8]) -> bool {
     // actionable SVG error. A recognized raster signature still wins over a misleading `.svg`
     // suffix (for example, a WebP downloaded as Firefox_logo.svg).
     svg::is_svg(bytes)
-        || (has_extension(name, "svg") && photocraft_codecs::detect(bytes).is_none())
+        || (has_extension(name, "svg") && photostore_codecs::detect(bytes).is_none())
         || (has_extension(name, "svgz") && bytes.starts_with(&[0x1f, 0x8b]))
 }
 
@@ -276,12 +276,12 @@ pub fn export(doc: &Document, name_or_ext: &str, opts: &ExportOptions) -> Result
     if ext == "ora" {
         return ora::export(doc);
     }
-    if ext == photocraft_format::EXTENSION {
-        let previews = photocraft_format::SaveOptions {
-            thumbnail: Some(photocraft_compose::thumbnail(doc, 256)),
-            composite: Some(photocraft_compose::thumbnail(doc, 1024)),
+    if ext == photostore_format::EXTENSION {
+        let previews = photostore_format::SaveOptions {
+            thumbnail: Some(photostore_compose::thumbnail(doc, 256)),
+            composite: Some(photostore_compose::thumbnail(doc, 1024)),
         };
-        return Ok(ExportResult { bytes: photocraft_format::save_to_bytes(doc, &previews)?, warnings: Vec::new() });
+        return Ok(ExportResult { bytes: photostore_format::save_to_bytes(doc, &previews)?, warnings: Vec::new() });
     }
     if ext == "psd" || ext == "psb" {
         let o = PsdExportOptions { force_psb: opts.force_psb || ext == "psb", ..Default::default() };
@@ -295,8 +295,8 @@ pub fn export(doc: &Document, name_or_ext: &str, opts: &ExportOptions) -> Result
         let bytes = file.to_bytes()?;
         return Ok(ExportResult { bytes, warnings });
     }
-    let format = photocraft_codecs::from_extension(&ext).ok_or_else(|| IoError::UnknownFormat(name_or_ext.to_string()))?;
-    if format == photocraft_codecs::Format::Tiff && opts.tiff_layers && tiff_layers::would_write_layers(doc) {
+    let format = photostore_codecs::from_extension(&ext).ok_or_else(|| IoError::UnknownFormat(name_or_ext.to_string()))?;
+    if format == photostore_codecs::Format::Tiff && opts.tiff_layers && tiff_layers::would_write_layers(doc) {
         return tiff_layers::export_layered(doc, opts);
     }
     flat::export_flat(doc, format, opts)
@@ -310,7 +310,7 @@ pub fn merged_composite(file: &PsdFile) -> Result<Vec<[f32; 4]>, IoError> {
     let h = &file.header;
     // CMYK goes through the colour-managed model conversion (the PSD crate's RGBA preview is a
     // naive, profile-free conversion).
-    if let (Some(img), false) = (img, matches!(h.color_mode, photocraft_psd::ColorMode::Lab | photocraft_psd::ColorMode::Cmyk)) {
+    if let (Some(img), false) = (img, matches!(h.color_mode, photostore_psd::ColorMode::Lab | photostore_psd::ColorMode::Cmyk)) {
         let unmatte = file.merged_has_alpha();
         return Ok(img
             .data
@@ -331,12 +331,12 @@ pub fn merged_composite(file: &PsdFile) -> Result<Vec<[f32; 4]>, IoError> {
     // Generic path (Lab, CMYK and others) via the raster model conversion.
     let (doc, _) = psd_to_document(&PsdFile { layer_info: None, ..file.clone() });
     // Multichannel documents keep their channels apart (no layer): composite them.
-    if doc.layers.is_empty() && doc.mode == photocraft_color::ColorMode::Multichannel {
-        return Ok(photocraft_compose::flatten(&doc).px);
+    if doc.layers.is_empty() && doc.mode == photostore_color::ColorMode::Multichannel {
+        return Ok(photostore_compose::flatten(&doc).px);
     }
     let l = doc.layers.first().ok_or_else(|| IoError::Unsupported("no merged image".into()))?;
     let s = l.surface().ok_or_else(|| IoError::Unsupported("no merged image".into()))?;
-    Ok(photocraft_compose::surface_to_buffer(s, doc.bounds()).px)
+    Ok(photostore_compose::surface_to_buffer(s, doc.bounds()).px)
 }
 
 #[cfg(test)]

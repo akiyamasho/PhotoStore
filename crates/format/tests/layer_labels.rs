@@ -1,5 +1,5 @@
-use photocraft_color::{ColorMode, SampleType};
-use photocraft_doc::{Document, LabelColor, Layer, Size};
+use photostore_color::{ColorMode, SampleType};
+use photostore_doc::{Document, LabelColor, Layer, Size};
 
 #[test]
 fn layer_labels_pcraft_roundtrip_all_colors_and_depths() {
@@ -12,8 +12,8 @@ fn layer_labels_pcraft_roundtrip_all_colors_and_depths() {
             group.label = color;
             doc.layers.push(group);
         }
-        let bytes = photocraft_format::save_to_bytes(&doc, &Default::default()).unwrap();
-        assert_eq!(photocraft_format::load_from_bytes(&bytes).unwrap(), doc, "{depth:?}");
-        assert!(photocraft_format::load_from_bytes(&bytes[..bytes.len() / 2]).is_err());
+        let bytes = photostore_format::save_to_bytes(&doc, &Default::default()).unwrap();
+        assert_eq!(photostore_format::load_from_bytes(&bytes).unwrap(), doc, "{depth:?}");
+        assert!(photostore_format::load_from_bytes(&bytes[..bytes.len() / 2]).is_err());
     }
 }

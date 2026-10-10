@@ -1,5 +1,5 @@
 use super::*;
-use photocraft_psd::abr::{AbrSample, LegacyBrush, LegacyTip, write_v12};
+use photostore_psd::abr::{AbrSample, LegacyBrush, LegacyTip, write_v12};
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -154,18 +154,18 @@ fn commands_persist_and_delete_removes_from_disk() {
     // The tool's brush now is the saved preset's stored tip, still loaded.
     assert!(matches!(&s.tools.brush.tip, TipShape::Stored(r) if r.is_loaded()));
     let (t, _) = session(&dir);
-    let p = photocraft_paint::presets::find(&t.tools.presets, "Scribble").expect("saved preset reloads");
+    let p = photostore_paint::presets::find(&t.tools.presets, "Scribble").expect("saved preset reloads");
     assert_eq!(p.brush.tip, s.tools.brush.tip);
 
     // Rename through the Preset Manager, then delete.
     s.execute("edit.presets.presetManager", json!({"action": "rename", "kind": "brushes", "name": "Scribble", "newName": "Doodle"})).unwrap();
     let (t, _) = session(&dir);
-    assert!(photocraft_paint::presets::find(&t.tools.presets, "Doodle").is_some());
-    assert!(photocraft_paint::presets::find(&t.tools.presets, "Scribble").is_none());
+    assert!(photostore_paint::presets::find(&t.tools.presets, "Doodle").is_some());
+    assert!(photostore_paint::presets::find(&t.tools.presets, "Scribble").is_none());
     s.execute("brush.presets.delete", json!({"name": "Doodle"})).unwrap();
     assert_eq!(dir.files(), [INDEX_FILE], "the group file and its tip are gone");
     let (t, _) = session(&dir);
-    assert!(photocraft_paint::presets::find(&t.tools.presets, "Doodle").is_none());
+    assert!(photostore_paint::presets::find(&t.tools.presets, "Doodle").is_none());
 }
 
 #[test]
@@ -187,7 +187,7 @@ fn imported_abr_group_persists() {
         true,
     )
     .unwrap();
-    let data = photocraft_paint::tile::b64_encode(&abr);
+    let data = photostore_paint::tile::b64_encode(&abr);
     s.execute("brush.presets.importAbr", json!({"data": data, "group": "Legacy Set"})).unwrap();
     let (t, w) = session(&dir);
     assert!(w.is_empty(), "{w:?}");
@@ -212,8 +212,8 @@ fn deleted_builtins_stay_deleted_and_overrides_replace_them() {
     s.tools.brush.size = 77.0;
     s.execute("brush.presets.save", json!({"name": second})).unwrap();
     let (t, _) = session(&dir);
-    assert!(photocraft_paint::presets::find(&t.tools.presets, &first).is_none());
-    let p = photocraft_paint::presets::find(&t.tools.presets, &second).unwrap();
+    assert!(photostore_paint::presets::find(&t.tools.presets, &first).is_none());
+    let p = photostore_paint::presets::find(&t.tools.presets, &second).unwrap();
     assert_eq!((p.builtin, p.brush.size), (false, 77.0));
     assert_eq!(t.tools.presets.iter().filter(|p| p.name.eq_ignore_ascii_case(&second)).count(), 1);
     // No built-in is ever written.
@@ -295,9 +295,9 @@ fn corrupt_and_oversized_files_are_skipped_with_a_warning() {
     be.write(&tip_file(&h), b"PCTIP1\x10garbage").unwrap();
     let (mut t, w) = session(&dir);
     assert_eq!(w.len(), 2, "{w:?}");
-    assert!(photocraft_paint::presets::find(&t.tools.presets, "Good").is_some());
+    assert!(photostore_paint::presets::find(&t.tools.presets, "Good").is_some());
     // Full tips load when a brush is used (#1843): the broken one fails then, not at start.
-    assert!(photocraft_paint::presets::find(&t.tools.presets, "Lost").is_some());
+    assert!(photostore_paint::presets::find(&t.tools.presets, "Lost").is_some());
     let before = t.tools.brush.clone();
     let e = t.execute("tools.setBrush", json!({"preset": "Lost"})).unwrap_err().to_string();
     assert!(e.contains(&h), "{e}");
@@ -344,7 +344,7 @@ fn backends_refuse_paths_outside_the_store() {
     assert_ne!(group_file_name("a/b"), group_file_name("a_b"));
 }
 
-/// `cargo test --release -p photocraft-engine --lib preset_store::tests::bench_load_500 -- --ignored --nocapture`
+/// `cargo test --release -p photostore-engine --lib preset_store::tests::bench_load_500 -- --ignored --nocapture`
 #[test]
 #[ignore]
 fn bench_load_500_sampled_presets() {
@@ -457,7 +457,7 @@ fn reopening_a_library_decodes_no_tips_and_using_a_brush_decodes_only_its_own() 
     // Picking a preset never loads the library's other tips, and the library stays light.
     assert!(user(&t).iter().all(|p| matches!(&p.brush.tip, TipShape::Stored(r) if !r.is_loaded())));
     // The panel's "current brush" match still works on a stored tip.
-    let picked = photocraft_paint::presets::find(&t.tools.presets, "Big 3").unwrap();
+    let picked = photostore_paint::presets::find(&t.tools.presets, "Big 3").unwrap();
     assert_eq!(picked.brush.tip, t.tools.brush.tip);
 }
 
@@ -495,7 +495,7 @@ fn missing_corrupt_or_unknown_tips_fail_when_used_without_panicking() {
     let mut t = Session::new();
     t.attach_preset_store(open(Box::new(mem.clone())));
     t.execute("file.new", json!({"width": 32, "height": 32})).unwrap();
-    let key = |t: &Session, name: &str| match &photocraft_paint::presets::find(&t.tools.presets, name).unwrap().brush.tip {
+    let key = |t: &Session, name: &str| match &photostore_paint::presets::find(&t.tools.presets, name).unwrap().brush.tip {
         TipShape::Stored(r) => r.key.clone(),
         other => panic!("{other:?}"),
     };
@@ -544,7 +544,7 @@ fn a_store_without_previews_makes_them_once_and_then_loads_lazily() {
     let mut s = Session::new();
     let w = s.attach_preset_store(open(Box::new(mem.clone())));
     assert!(w.is_empty(), "{w:?}");
-    let a = photocraft_paint::presets::find(&s.tools.presets, "Old A").unwrap().clone();
+    let a = photostore_paint::presets::find(&s.tools.presets, "Old A").unwrap().clone();
     assert!(matches!(&a.brush.tip, TipShape::Stored(r) if (r.width, r.height) == (300, 200) && !r.is_loaded()));
     assert!(matches!(&a.brush.texture.pattern, Pattern::Stored(r) if r.key == hashes[1]));
     // Attaching rewrote the group with sizes and previews.
@@ -571,10 +571,10 @@ fn a_store_without_previews_makes_them_once_and_then_loads_lazily() {
 
 /// A v6 `.abr` whose presets sit in Photoshop folders (`phry`).
 fn abr_with_folders(presets: &[(&str, &[&str])]) -> Vec<u8> {
-    use photocraft_psd::descriptor::{Descriptor, UnicodeString, Value};
+    use photostore_psd::descriptor::{Descriptor, UnicodeString, Value};
     let descs: Vec<Descriptor> = presets.iter().map(|(n, _)| Descriptor::new("brushPreset").with("Nm  ", Value::Text(UnicodeString::new_nul(n)))).collect();
     let folders: Vec<Vec<String>> = presets.iter().map(|(_, f)| f.iter().map(|x| x.to_string()).collect()).collect();
-    photocraft_psd::abr::write_v6_folders(2, &[], &[], &descs, &folders, true).unwrap()
+    photostore_psd::abr::write_v6_folders(2, &[], &[], &descs, &folders, true).unwrap()
 }
 
 #[test]
@@ -582,9 +582,9 @@ fn imported_abr_folders_persist_and_old_stores_load_flat() {
     let dir = TempDir::new("abr-folders");
     let (mut s, _) = session(&dir);
     let abr = abr_with_folders(&[("Loose", &[]), ("Pen", &["Inks"]), ("Nib", &["Inks", "Fine"]), ("Kit Chalk", &["Dry"])]);
-    let r = s.execute("brush.presets.importAbr", json!({"data": photocraft_paint::tile::b64_encode(&abr), "group": "Kit"})).unwrap();
+    let r = s.execute("brush.presets.importAbr", json!({"data": photostore_paint::tile::b64_encode(&abr), "group": "Kit"})).unwrap();
     assert_eq!((r["count"].as_u64(), r["folders"].as_u64()), (Some(4), Some(3)));
-    let folder = |s: &Session, n: &str| photocraft_paint::presets::find(&s.tools.presets, n).unwrap().folder.join("/");
+    let folder = |s: &Session, n: &str| photostore_paint::presets::find(&s.tools.presets, n).unwrap().folder.join("/");
     assert_eq!((folder(&s, "Loose"), folder(&s, "Nib"), folder(&s, "Kit Chalk")), ("".into(), "Inks/Fine".into(), "Dry".into()));
     // One group file still holds the whole imported set, folders included.
     let groups: Vec<String> = dir.files().into_iter().filter(|f| f.ends_with(".pcbrushes")).collect();
@@ -609,7 +609,7 @@ fn imported_abr_folders_persist_and_old_stores_load_flat() {
     let before = mem.read(&file, MAX_GROUP_BYTES).unwrap();
     let mut o = Session::new();
     assert!(o.attach_preset_store(open(Box::new(mem.clone()))).is_empty());
-    let p = photocraft_paint::presets::find(&o.tools.presets, "Plain").unwrap();
+    let p = photostore_paint::presets::find(&o.tools.presets, "Plain").unwrap();
     assert!(p.group == "Old" && p.folder.is_empty());
     assert_eq!(mem.read(&file, MAX_GROUP_BYTES).unwrap(), before);
     // A hand-edited folder path is bounded.
@@ -620,6 +620,6 @@ fn imported_abr_folders_persist_and_old_stores_load_flat() {
     mem.write(&group_file_name("Deep"), &serde_json::to_vec(&deep).unwrap()).unwrap();
     let mut d = Session::new();
     d.attach_preset_store(open(Box::new(mem.clone())));
-    assert_eq!(photocraft_paint::presets::find(&d.tools.presets, "Deep").unwrap().folder.len(), crate::brush_preset_cmds::MAX_FOLDER_DEPTH);
-    assert!(photocraft_paint::presets::find(&d.tools.presets, "Blank").unwrap().folder.is_empty());
+    assert_eq!(photostore_paint::presets::find(&d.tools.presets, "Deep").unwrap().folder.len(), crate::brush_preset_cmds::MAX_FOLDER_DEPTH);
+    assert!(photostore_paint::presets::find(&d.tools.presets, "Blank").unwrap().folder.is_empty());
 }

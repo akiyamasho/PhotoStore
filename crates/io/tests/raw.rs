@@ -1,10 +1,10 @@
 //! Camera raw import: synthetic DNG / CR2 develop into a 16-bit ProPhoto
 //! document; unsupported raw variants fall back to the embedded preview.
 
-use photocraft_codecs::{ChannelLayout, EncodeOptions, Format, Image};
-use photocraft_color::{ColorMode, SampleType};
-use photocraft_io::{IoError, import};
-use photocraft_raw::testgen::{Cr2Spec, DngSpec, TiffBuilder, Val, mosaic, scene};
+use photostore_codecs::{ChannelLayout, EncodeOptions, Format, Image};
+use photostore_color::{ColorMode, SampleType};
+use photostore_io::{IoError, import};
+use photostore_raw::testgen::{Cr2Spec, DngSpec, TiffBuilder, Val, mosaic, scene};
 
 #[test]
 fn dng_opens_as_16_bit_prophoto() {
@@ -18,7 +18,7 @@ fn dng_opens_as_16_bit_prophoto() {
     assert_eq!(d.depth, SampleType::U16);
     assert_eq!(d.layers.len(), 1);
     let icc = d.icc_profile.as_ref().expect("profile");
-    assert_eq!(icc.as_slice(), &photocraft_cms::Builtin::ProPhotoCompat.profile().to_bytes()[..]);
+    assert_eq!(icc.as_slice(), &photostore_cms::Builtin::ProPhotoCompat.profile().to_bytes()[..]);
     assert!(r.warnings.iter().any(|w| w.contains("DNG") && w.contains("ProPhoto")), "{:?}", r.warnings);
 }
 
@@ -38,7 +38,7 @@ fn cr2_opens() {
 /// baseline JPEG preview in IFD0.
 fn nef_with_preview() -> Vec<u8> {
     let img = Image::from_u8(32, 20, ChannelLayout::Rgb, vec![180; 32 * 20 * 3]).unwrap();
-    let jpeg = photocraft_codecs::encode(&img, Format::Jpeg, &EncodeOptions::default()).unwrap();
+    let jpeg = photostore_codecs::encode(&img, Format::Jpeg, &EncodeOptions::default()).unwrap();
     let mut t = TiffBuilder::default();
     let strip = t.blob(vec![0; 64]);
     let preview = t.blob(jpeg.clone());

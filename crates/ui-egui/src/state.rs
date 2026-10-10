@@ -340,10 +340,10 @@ pub struct Panels {
     /// What Tab hid (toolbar, options bar, dock), so a second Tab brings back just those.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hidden_by_tab: Option<[bool; 3]>,
-    /// The right dock's icon rail. An app that embeds PhotoCraft's UI can hide it for a simpler view.
+    /// The right dock's icon rail. An app that embeds PhotoStore's UI can hide it for a simpler view.
     #[serde(default = "yes")]
     pub rail: bool,
-    /// The title bar with the in-window menus. An app that embeds PhotoCraft's UI and draws its own
+    /// The title bar with the in-window menus. An app that embeds PhotoStore's UI and draws its own
     /// bar can hide it; the caption buttons of a custom title bar go with it.
     #[serde(default = "yes")]
     pub menu_bar: bool,
@@ -402,7 +402,7 @@ pub enum DialogKind {
 pub struct View {
     /// Screen (device) pixels per document pixel: the user-facing zoom (`100%` is `1.0`).
     /// Canvas geometry works in egui points and divides by `ctx.pixels_per_point`
-    /// (`PhotocraftApp::point_zoom`), so a scaled display doesn't magnify the image.
+    /// (`PhotoStoreApp::point_zoom`), so a scaled display doesn't magnify the image.
     pub zoom: f32,
     /// Document-space point shown at the canvas centre.
     pub center: [f32; 2],
@@ -452,7 +452,7 @@ pub struct ToolOptions {
     /// true = "Classic gradient" (paints the pixels).
     pub gradient_classic: bool,
     /// Blend mode used by both live and classic gradient drags.
-    pub gradient_blend_mode: photocraft_color::BlendMode,
+    pub gradient_blend_mode: photostore_color::BlendMode,
     pub fill_opacity: f32,
     /// Paint Bucket fill source: false = Foreground colour, true = Pattern (Patterns panel selection).
     pub bucket_fill_pattern: bool,
@@ -569,7 +569,7 @@ pub struct ToolOptions {
     #[serde(default = "fifty")]
     pub red_eye_darken: f32,
     /// Eyedropper › Sample Size: 1 = Point Sample, else the side of the averaged square (3, 5,
-    /// 11, 31, 51, 101; `photocraft_engine::sample_cmds::SAMPLE_SIZES`). Shared, as in Photoshop,
+    /// 11, 31, 51, 101; `photostore_engine::sample_cmds::SAMPLE_SIZES`). Shared, as in Photoshop,
     /// with the ⌥-click eyedropper of the painting tools, the dialog eyedroppers and the Info panel.
     #[serde(default = "one_u32")]
     pub eyedropper_size: u32,
@@ -627,7 +627,7 @@ impl Default for ToolOptions {
             gradient_reverse: false,
             gradient_dither: true,
             gradient_classic: false,
-            gradient_blend_mode: photocraft_color::BlendMode::Normal,
+            gradient_blend_mode: photostore_color::BlendMode::Normal,
             fill_opacity: 100.0,
             bucket_fill_pattern: false,
             type_font: "Inter".into(),
@@ -738,7 +738,7 @@ pub struct TransformSession {
     pub interpolation: String,
     /// Warp mode (Edit › Transform › Warp): the warp being edited over `rect`, in document px.
     #[serde(default)]
-    pub warp: Option<photocraft_geom::warp::Warp>,
+    pub warp: Option<photostore_geom::warp::Warp>,
     /// Select › Transform Selection: the box transforms the selection outline, not pixels.
     #[serde(default)]
     pub selection: bool,
@@ -795,7 +795,7 @@ pub struct TextEdit {
 pub struct TypeTransform {
     pub document: u64,
     pub revision: u64,
-    pub original: photocraft_geom::Affine,
+    pub original: photostore_geom::Affine,
     pub frame: TransformSession,
     pub(crate) gesture: crate::transform_tool::Gesture,
 }
@@ -900,7 +900,7 @@ pub struct UiState {
     #[serde(default = "default_brush_tool")]
     pub brush_tool: Tool,
     #[serde(default)]
-    pub tool_brushes: Vec<(Tool, photocraft_engine::paint::BrushSettings)>,
+    pub tool_brushes: Vec<(Tool, photostore_engine::paint::BrushSettings)>,
     /// Pen path under construction.
     #[serde(default)]
     pub pen: Option<crate::vector_ui::PenPath>,

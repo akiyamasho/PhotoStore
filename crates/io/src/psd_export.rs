@@ -1,14 +1,14 @@
 //! [`Document`] → PSD/PSB.
 
-use photocraft_color::{ColorMode, PixelFormat, SampleType};
-use photocraft_doc::{Document, Layer, LayerContent, LayerMask, SmartContentsId};
-use photocraft_psd::file::{GlobalLayerMask, LayerInfoPlacement};
-use photocraft_psd::layer::{BlendingRanges, ChannelData, LayerFlags, LayerInfo, LayerMask as PsdMask, MaskData, MaskParameters};
-use photocraft_psd::resources::{ImageResource, ResolutionInfo, ids, version_info_resource};
-use photocraft_psd::{
+use photostore_color::{ColorMode, PixelFormat, SampleType};
+use photostore_doc::{Document, Layer, LayerContent, LayerMask, SmartContentsId};
+use photostore_psd::file::{GlobalLayerMask, LayerInfoPlacement};
+use photostore_psd::layer::{BlendingRanges, ChannelData, LayerFlags, LayerInfo, LayerMask as PsdMask, MaskData, MaskParameters};
+use photostore_psd::resources::{ImageResource, ResolutionInfo, ids, version_info_resource};
+use photostore_psd::{
     BlendMode as PsdBlend, ColorMode as PsdMode, Compression, Header, ImageData, LayerRecord, PsdFile, Rect as PsdRect, SectionType, TaggedBlock, Version,
 };
-use photocraft_raster::Surface;
+use photostore_raster::Surface;
 
 use crate::adjust_map;
 use crate::blocks;
@@ -43,29 +43,29 @@ struct Ex {
     /// Document resolution (for generated type-layer data).
     dpi: f32,
     /// Character/paragraph styles written into every type layer's engine data.
-    text_styles: photocraft_doc::TextStyles,
+    text_styles: photostore_doc::TextStyles,
     mask_fmt: PixelFormat,
     cc: usize,
     cmyk: bool,
     version: Version,
     next_id: u32,
     /// PSD ids assigned to document layers (kept from `psd_id` when unique).
-    layer_ids: std::collections::HashMap<photocraft_doc::LayerId, u32>,
+    layer_ids: std::collections::HashMap<photostore_doc::LayerId, u32>,
     /// The generated `Txt2` object number of each type layer (a preserved `TySh` keeps its own
-    /// `TextIndex`, others get the next free number; see `photocraft_text::psd::build_txt2`),
+    /// `TextIndex`, others get the next free number; see `photostore_text::psd::build_txt2`),
     /// written into the `TySh` data this export re-serializes.
-    text_index: std::collections::HashMap<photocraft_doc::LayerId, i32>,
-    canvas: photocraft_geom::Rect,
+    text_index: std::collections::HashMap<photostore_doc::LayerId, i32>,
+    canvas: photostore_geom::Rect,
     records: Vec<LayerRecord>,
     warnings: Vec<String>,
     /// Guides (artboard blocks list the guides inside each board).
-    guides: photocraft_doc::Guides,
+    guides: photostore_doc::Guides,
     /// Layer comps to regenerate into each layer's `cmls`; None = preserved data still matches.
-    comps: Option<(Vec<photocraft_doc::LayerComp>, Option<photocraft_doc::LayerComp>)>,
+    comps: Option<(Vec<photostore_doc::LayerComp>, Option<photostore_doc::LayerComp>)>,
     /// Smart objects: embedded files and filter caches for the global blocks.
     smart: SmartOut,
     /// The document's patterns, which Pattern Fill layers are rendered from.
-    patterns: Vec<photocraft_doc::Pattern>,
+    patterns: Vec<photostore_doc::Pattern>,
 }
 
 /// How deep embedded documents are exported inside each other before a smart object is written
@@ -94,7 +94,7 @@ struct SmartOut {
     /// Nesting depth of this export (embedded documents are exported recursively).
     depth: u32,
     /// The document's preserved global blocks (embedded files and filter caches from PSD import).
-    globals: Vec<photocraft_doc::PsdGlobalBlock>,
+    globals: Vec<photostore_doc::PsdGlobalBlock>,
     /// uuids of the files in the preserved linked-layer blocks.
     known: std::collections::HashSet<String>,
     /// uuids the layers reference.
@@ -108,28 +108,28 @@ struct SmartOut {
     /// Each placed layer has its own id, even when it duplicates an imported layer.
     placed_used: std::collections::HashSet<String>,
     /// Original instances reserve their imported placement regardless of layer order.
-    placed_owners: std::collections::HashMap<String, photocraft_doc::LayerId>,
+    placed_owners: std::collections::HashMap<String, photostore_doc::LayerId>,
     /// Legacy records without a placed id stay unchanged for the original instance.
-    unplaced_owners: std::collections::HashMap<SmartContentsId, photocraft_doc::LayerId>,
+    unplaced_owners: std::collections::HashMap<SmartContentsId, photostore_doc::LayerId>,
     /// The imported identity that keeps each original linked UUID.
     linked_contents: std::collections::HashMap<String, SmartContentsId>,
     /// Independent copies of preserved linked items, including unavailable external sources.
-    linked_copies: std::collections::BTreeMap<(String, SmartContentsId), photocraft_doc::PsdGlobalBlock>,
+    linked_copies: std::collections::BTreeMap<(String, SmartContentsId), photostore_doc::PsdGlobalBlock>,
     /// Embedded documents decoded while converting them, by uuid (for the filter caches).
     docs: std::collections::HashMap<String, Document>,
     /// Source composites (document pixel format, source space) by uuid; `None` = unreadable.
-    composites: std::collections::HashMap<String, Option<(std::sync::Arc<Surface>, photocraft_geom::Rect)>>,
+    composites: std::collections::HashMap<String, Option<(std::sync::Arc<Surface>, photostore_geom::Rect)>>,
     /// Preserved `FEid` items (by placed id).
-    old_fx: Vec<photocraft_psd::filter_effects::FilterEffectsItem>,
+    old_fx: Vec<photostore_psd::filter_effects::FilterEffectsItem>,
     /// Placed ids whose preserved `FEid` item stays.
     keep_fx: std::collections::HashSet<String>,
     /// Regenerated `FEid` items.
-    new_fx: Vec<photocraft_psd::filter_effects::FilterEffectsItem>,
+    new_fx: Vec<photostore_psd::filter_effects::FilterEffectsItem>,
 }
 
 /// `FEid` data padded to 4 bytes inside the block length: Photoshop counts the padding in the
 /// length and can't open a file whose `FEid` is padded outside it.
-fn padded_fx(fx: &photocraft_psd::filter_effects::FilterEffects) -> Vec<u8> {
+fn padded_fx(fx: &photostore_psd::filter_effects::FilterEffects) -> Vec<u8> {
     let mut d = fx.to_bytes();
     d.resize(d.len().next_multiple_of(4), 0);
     d
@@ -145,7 +145,7 @@ impl SmartOut {
         let old_fx = globals
             .iter()
             .filter(|(_, k, _)| FX_KEYS.contains(&k))
-            .filter_map(|(_, _, d)| photocraft_psd::filter_effects::FilterEffects::parse(d).ok())
+            .filter_map(|(_, _, d)| photostore_psd::filter_effects::FilterEffects::parse(d).ok())
             .flat_map(|fx| fx.items)
             .collect();
         let mut linked_contents = std::collections::HashMap::new();
@@ -156,7 +156,7 @@ impl SmartOut {
         layers.sort_by_key(|(_, _, layer)| (layer.psd_id.is_none(), layer.id));
         for (_, _, layer) in layers {
             if let LayerContent::Smart(sm) = &layer.content
-                && let photocraft_doc::SmartSource::Linked { path } = &sm.source
+                && let photostore_doc::SmartSource::Linked { path } = &sm.source
                 && let Some(placed) = sm.psd_raw.as_ref().and_then(|d| crate::smart_map::parse_sold(d))
                 && placed.idnt == *path
             {
@@ -174,7 +174,7 @@ impl SmartOut {
     /// The document's global blocks with the linked-layer files and filter caches brought up to
     /// date: unreferenced files dropped (when every reference is known), new files appended,
     /// filter caches kept or regenerated per smart object. Unchanged blocks stay byte-identical.
-    fn finish(&self, blocks: Vec<photocraft_doc::PsdGlobalBlock>) -> Vec<photocraft_doc::PsdGlobalBlock> {
+    fn finish(&self, blocks: Vec<photostore_doc::PsdGlobalBlock>) -> Vec<photostore_doc::PsdGlobalBlock> {
         use std::sync::Arc;
         let keep = |u: &str| !self.prune_ok || self.used.contains(u);
         let mut out = Vec::with_capacity(blocks.len() + 2);
@@ -190,7 +190,7 @@ impl SmartOut {
                     Some(d) => out.push((sig, key, Arc::new(d))),
                 }
             } else if FX_KEYS.contains(&&key) {
-                let Ok(mut fx) = photocraft_psd::filter_effects::FilterEffects::parse(&data) else {
+                let Ok(mut fx) = photostore_psd::filter_effects::FilterEffects::parse(&data) else {
                     out.push((sig, key, data));
                     continue;
                 };
@@ -222,7 +222,7 @@ impl SmartOut {
             }
         }
         if !fx_placed && !self.new_fx.is_empty() {
-            let fx = photocraft_psd::filter_effects::FilterEffects { version: 3, items: self.new_fx.clone() };
+            let fx = photostore_psd::filter_effects::FilterEffects { version: 3, items: self.new_fx.clone() };
             out.push((*b"8BIM", *b"FEid", Arc::new(padded_fx(&fx))));
             if !out.iter().any(|(_, k, _)| k == b"FMsk") {
                 // Filter mask overlay: RGB red at 50 %, Photoshop's default.
@@ -246,7 +246,7 @@ fn source_geometry(name: &str, bytes: &[u8]) -> Result<((f64, f64), f64), String
 
 /// The source size of a smart object whose file we can't decode: its rendered bounds taken back
 /// through the inverse transform (the source's top-left is the origin).
-fn size_from_layer(sm: &photocraft_doc::SmartObject) -> (f64, f64) {
+fn size_from_layer(sm: &photostore_doc::SmartObject) -> (f64, f64) {
     let r = sm.cache.as_ref().map(Surface::content_bounds).filter(|r| !r.is_empty());
     let (Some(r), Some(inv)) = (r, sm.transform.inverse()) else { return (1.0, 1.0) };
     let [a, b, c, d, e, f] = inv.m;
@@ -279,7 +279,7 @@ fn psd_mode(m: ColorMode) -> PsdMode {
     }
 }
 
-fn to_psd_rect(r: photocraft_geom::Rect) -> PsdRect {
+fn to_psd_rect(r: photostore_geom::Rect) -> PsdRect {
     PsdRect { top: r.y0, left: r.x0, bottom: r.y1, right: r.x1 }
 }
 
@@ -409,7 +409,7 @@ impl Ex {
         if lspf != 0 {
             blocks.push(TaggedBlock::protection(lspf));
         }
-        if l.label != photocraft_doc::LabelColor::None {
+        if l.label != photostore_doc::LabelColor::None {
             blocks.push(TaggedBlock::sheet_color(blocks::label_index(l.label)));
         }
         blocks.push(TaggedBlock::fill_opacity(q255(l.fill_opacity)));
@@ -417,7 +417,7 @@ impl Ex {
         // could not be decoded at all); otherwise regenerated.
         let fx = &l.effects;
         for effect in &fx.items {
-            use photocraft_doc::effects::Effect;
+            use photostore_doc::effects::Effect;
             let modes = match effect {
                 Effect::DropShadow(s) | Effect::InnerShadow(s) => [Some(s.common.blend), None],
                 Effect::OuterGlow(g) | Effect::InnerGlow(g) => [Some(g.common.blend), None],
@@ -500,7 +500,7 @@ impl Ex {
                 None => raw.push((*keys[0], d.to_vec())),
             }
         };
-        let fill_rule = |raw: &mut Vec<([u8; 4], Vec<u8>)>, regenerated: &mut Vec<([u8; 4], Vec<u8>)>, f: &photocraft_doc::Fill| {
+        let fill_rule = |raw: &mut Vec<([u8; 4], Vec<u8>)>, regenerated: &mut Vec<([u8; 4], Vec<u8>)>, f: &photostore_doc::Fill| {
             let keep = raw.iter().any(|(k, d)| matches!(k, b"SoCo" | b"GdFl" | b"PtFl") && blocks::parse_fill(k, d).as_ref() == Some(f));
             if !keep {
                 raw.retain(|(k, _)| !matches!(k, b"SoCo" | b"GdFl" | b"PtFl"));
@@ -518,7 +518,7 @@ impl Ex {
                 };
                 let cged = raw.iter().find(|(k, _)| k == b"CgEd").map(|(_, d)| d.clone());
                 let keep = raw.iter().any(|(k, d)| {
-                    // A previously saved PhotoCraft v2 Photo Filter block may be 18 bytes.
+                    // A previously saved PhotoStore v2 Photo Filter block may be 18 bytes.
                     // It parses here, but Photoshop requires four-byte alignment, so repair
                     // that legacy record on re-save rather than preserving the broken bytes.
                     let legacy_phfl = k == b"phfl" && d.starts_with(&[0, 2]) && d.len() % 4 != 0;
@@ -532,7 +532,7 @@ impl Ex {
                     }
                     // Photoshop's `clrL` descriptor has no interpolation setting, so the
                     // reopened layer renders trilinear.
-                    if matches!(a, photocraft_doc::Adjustment::ColorLookup { tetrahedral: true, .. }) {
+                    if matches!(a, photostore_doc::Adjustment::ColorLookup { tetrahedral: true, .. }) {
                         self.warnings.push(format!(
                             "layer \"{}\": Color Lookup tetrahedral interpolation is saved as trilinear (PSD has no interpolation setting)",
                             l.name
@@ -551,7 +551,7 @@ impl Ex {
             }
             LayerContent::Text(t) => {
                 // Text layers without PSD data (created here) get a generated TySh.
-                let generated = t.psd_raw.is_none().then(|| std::sync::Arc::new(photocraft_text::psd::build_tysh(t, self.dpi, None)));
+                let generated = t.psd_raw.is_none().then(|| std::sync::Arc::new(photostore_text::psd::build_tysh(t, self.dpi, None)));
                 let src = t.psd_raw.as_ref().or(generated.as_ref());
                 // Character/paragraph style sheets from the document's styles.
                 let styled = src.and_then(|d| crate::text_styles_map::export_tysh(d, t, &self.text_styles, self.dpi)).map(std::sync::Arc::new);
@@ -562,8 +562,8 @@ impl Ex {
                 // however, even when no style sheet needed rebuilding: otherwise two
                 // layers may read the same Txt2 object and acquire the wrong kerning.
                 let idx = self.text_index.get(&l.id).copied().unwrap_or(0);
-                let rewrite = styled.as_ref().or(generated.as_ref()).or_else(|| src.filter(|d| photocraft_text::psd::text_index(d.as_slice()) != Some(idx)));
-                let fresh = rewrite.and_then(|d| photocraft_text::psd::set_text_index(d.as_slice(), idx)).map(std::sync::Arc::new);
+                let rewrite = styled.as_ref().or(generated.as_ref()).or_else(|| src.filter(|d| photostore_text::psd::text_index(d.as_slice()) != Some(idx)));
+                let fresh = rewrite.and_then(|d| photostore_text::psd::set_text_index(d.as_slice(), idx)).map(std::sync::Arc::new);
                 set_principal(&mut raw, &[b"TySh"], fresh.as_ref().or(styled.as_ref().or(src)));
                 if !raw.iter().any(|(k, _)| k == b"TySh") {
                     self.warnings.push(format!("layer \"{}\": text layer written as pixels (no TySh data)", l.name));
@@ -636,7 +636,7 @@ impl Ex {
     /// filter cache (`FEid`). An imported placed layer that nothing changed is written verbatim;
     /// otherwise the blocks are regenerated (from the imported descriptor where the source is
     /// the same). Without a source that can be embedded the layer is written as pixels.
-    fn smart_blocks(&mut self, l: &Layer, sm: &photocraft_doc::SmartObject, template: Option<crate::smart_map::Placed>, raw: &mut Vec<([u8; 4], Vec<u8>)>) {
+    fn smart_blocks(&mut self, l: &Layer, sm: &photostore_doc::SmartObject, template: Option<crate::smart_map::Placed>, raw: &mut Vec<([u8; 4], Vec<u8>)>) {
         use crate::smart_map::{FilterStack, PlacedSpec, filter_fx, plld_bytes, sold_bytes, uuid_from};
         let src = match self.smart_source(sm, template.as_ref()) {
             Ok(s) => s,
@@ -711,9 +711,9 @@ impl Ex {
                 (None, Some((img, img_bounds))) => {
                     let unfiltered = match &sm.perspective {
                         Some(p) => {
-                            photocraft_algo::warp::place_source_projective(&img, img_bounds, &photocraft_algo::transform::Homography(*p), sm.warp.as_ref())
+                            photostore_algo::warp::place_source_projective(&img, img_bounds, &photostore_algo::transform::Homography(*p), sm.warp.as_ref())
                         }
-                        None => photocraft_algo::warp::place_source(&img, img_bounds, &sm.transform, sm.warp.as_ref()),
+                        None => photostore_algo::warp::place_source(&img, img_bounds, &sm.transform, sm.warp.as_ref()),
                     };
                     crate::smart_map::feid_item(&placed, &unfiltered, sm.filter_mask.as_ref(), bounds, self.fmt)
                 }
@@ -732,7 +732,7 @@ impl Ex {
 
     /// Whether an imported placed layer still says what the smart object is: transform, warp,
     /// filter stack and filter mask as stored.
-    fn placed_unchanged(&self, t: &crate::smart_map::Placed, data: &[u8], sm: &photocraft_doc::SmartObject, stack: &crate::smart_map::FilterStack) -> bool {
+    fn placed_unchanged(&self, t: &crate::smart_map::Placed, data: &[u8], sm: &photostore_doc::SmartObject, stack: &crate::smart_map::FilterStack) -> bool {
         if t.transform != sm.transform || blocks::parse_placed_warp(b"SoLd", data) != sm.warp || t.stack.clone().unwrap_or_default() != *stack {
             return false;
         }
@@ -751,15 +751,15 @@ impl Ex {
     /// The `lnk2` file a smart object's source is written as: a preserved embedded file, or a new
     /// one (a `.pcraft` source becomes a PSB of the nested document; image files are embedded as
     /// they are; a linked file is read and embedded).
-    fn smart_source(&mut self, sm: &photocraft_doc::SmartObject, template: Option<&crate::smart_map::Placed>) -> Result<Source, String> {
-        use photocraft_doc::SmartSource;
+    fn smart_source(&mut self, sm: &photostore_doc::SmartObject, template: Option<&crate::smart_map::Placed>) -> Result<Source, String> {
+        use photostore_doc::SmartSource;
         match &sm.source {
             // A file of the imported document, or one its placed-layer data names (a missing
             // link stays a smart object, as in Photoshop).
             SmartSource::Linked { path } if self.smart.known.contains(path) || template.is_some_and(|t| t.idnt == *path) => {
                 let stored = template.filter(|t| t.idnt == *path).and_then(|t| crate::smart_map::stored_size(&t.descriptor));
                 let geometry = stored.map(|size| (size, f64::from(self.dpi))).or_else(|| {
-                    let meta = photocraft_doc::Metadata { psd_global_blocks: self.smart.globals.clone(), ..Default::default() };
+                    let meta = photostore_doc::Metadata { psd_global_blocks: self.smart.globals.clone(), ..Default::default() };
                     let f = crate::linked::find_linked_file(&meta, path)?;
                     source_geometry(&f.file_name, &f.bytes).ok()
                 });
@@ -807,7 +807,7 @@ impl Ex {
 
     /// The composite of the source `uuid` (an embedded file of this export or of the imported
     /// document) in the document's pixel format, its top-left at the origin; decoded once.
-    fn source_composite(&mut self, uuid: &str) -> Option<(std::sync::Arc<Surface>, photocraft_geom::Rect)> {
+    fn source_composite(&mut self, uuid: &str) -> Option<(std::sync::Arc<Surface>, photostore_geom::Rect)> {
         if let Some(c) = self.smart.composites.get(uuid) {
             return c.clone();
         }
@@ -815,7 +815,7 @@ impl Ex {
             Some(d) => Some(d.clone()),
             None => {
                 let file = self.smart.add.iter().find(|f| f.uuid == uuid).cloned().or_else(|| {
-                    let meta = photocraft_doc::Metadata {
+                    let meta = photostore_doc::Metadata {
                         psd_global_blocks: self.smart.globals.iter().chain(self.smart.linked_copies.values()).cloned().collect(),
                         ..Default::default()
                     };
@@ -827,11 +827,11 @@ impl Ex {
         let c = doc.map(|d| {
             let mut s = Surface::new(self.fmt);
             let fmt = self.fmt;
-            let _ = photocraft_compose::render_bands(&d, d.bounds(), 0, |band| -> Result<(), ()> {
+            let _ = photostore_compose::render_bands(&d, d.bounds(), 0, |band| -> Result<(), ()> {
                 let mut vals = Vec::with_capacity(band.px.len() * fmt.channels());
                 let mut v = [0.0f32; 5];
                 for p in &band.px {
-                    let n = photocraft_raster::from_rgba_into(&fmt, *p, &mut v);
+                    let n = photostore_raster::from_rgba_into(&fmt, *p, &mut v);
                     vals.extend_from_slice(&v[..n]);
                 }
                 s.write_region(band.rect, &vals);
@@ -857,11 +857,11 @@ impl Ex {
     }
 
     fn convert_source(&mut self, contents_id: SmartContentsId, file_name: &str, bytes: &[u8]) -> Result<Source, String> {
-        let (name, data, size, dpi, nested) = if photocraft_format::is_pcraft(bytes) {
+        let (name, data, size, dpi, nested) = if photostore_format::is_pcraft(bytes) {
             if self.smart.depth >= MAX_NESTING {
                 return Err(format!("smart objects nest more than {MAX_NESTING} deep"));
             }
-            let doc = photocraft_format::load_from_bytes(bytes).map_err(|e| format!("its contents can't be read: {e}"))?;
+            let doc = photostore_format::load_from_bytes(bytes).map_err(|e| format!("its contents can't be read: {e}"))?;
             let (file, warnings) = document_to_psd_nested(&doc, &PsdExportOptions { force_psb: true, ..Default::default() }, self.smart.depth + 1);
             let data = file.to_bytes().map_err(|e| format!("its contents can't be written: {e}"))?;
             let stem = file_name.rsplit_once('.').map_or(file_name, |(a, _)| a);
@@ -885,7 +885,7 @@ impl Ex {
 
     /// Pixels for a fill layer: Photoshop's cached rendering while valid,
     /// otherwise our own rendering of the fill over the canvas.
-    fn fill_pixels(&self, l: &Layer, f: &photocraft_doc::Fill) -> Surface {
+    fn fill_pixels(&self, l: &Layer, f: &photostore_doc::Fill) -> Surface {
         if let Some(c) = &l.fill_cache
             && c.fill == *f
         {
@@ -894,9 +894,9 @@ impl Ex {
         // In the frame the layer's masks give it, like the compositor (masks are stored apart).
         // Readers composite these pixels (ours keeps them as the fill's rendering), so a pattern
         // fill must be rendered from the document's patterns, not left transparent (#1907).
-        let buf = photocraft_compose::render_fill_content(l, f, self.canvas, &self.patterns);
+        let buf = photostore_compose::render_fill_content(l, f, self.canvas, &self.patterns);
         let mut s = Surface::new(self.fmt);
-        let vals: Vec<f32> = buf.px.iter().flat_map(|p| photocraft_raster::from_rgba(&self.fmt, *p)).collect();
+        let vals: Vec<f32> = buf.px.iter().flat_map(|p| photostore_raster::from_rgba(&self.fmt, *p)).collect();
         s.write_region(self.canvas, &vals);
         s.prune();
         s
@@ -1066,12 +1066,12 @@ fn merged_planes(doc: &Document, fmt: &PixelFormat, cmyk: bool, matte: bool) -> 
     let plane = n * bps;
     let mut planes = vec![0u8; plane * (cc + 1)];
     let (mut has_alpha, mut translucent) = (false, false);
-    let white = photocraft_raster::from_rgba(fmt, [1.0, 1.0, 1.0, 1.0]);
+    let white = photostore_raster::from_rgba(fmt, [1.0, 1.0, 1.0, 1.0]);
     let canvas = doc.bounds();
     let w = canvas.width() as usize;
-    let space = photocraft_compose::cmyk_space(doc);
+    let space = photostore_compose::cmyk_space(doc);
     let lab16 = fmt.mode == ColorMode::Lab && sample == SampleType::U16;
-    let _ = photocraft_compose::render_bands(doc, canvas, 0, |band| -> Result<(), ()> {
+    let _ = photostore_compose::render_bands(doc, canvas, 0, |band| -> Result<(), ()> {
         // Retain alpha whenever it differs from opaque at the stored precision.
         has_alpha |= band.px.iter().any(|p| match sample {
             SampleType::U8 => q255(p[3]) < 255,
@@ -1083,11 +1083,11 @@ fn merged_planes(doc: &Document, fmt: &PixelFormat, cmyk: bool, matte: bool) -> 
         // Converted and encoded on all cores, then copied into each plane.
         let parts = crate::pixels::par_map(crate::pixels::bands(band.px.len()), |range| {
             // The composite came through the document's CMYK profile: convert back through it too.
-            photocraft_color::convert::with_cmyk_space(space.as_ref(), || {
+            photostore_color::convert::with_cmyk_space(space.as_ref(), || {
                 let mut out: Vec<Vec<u8>> = vec![Vec::with_capacity(range.len() * bps); cc + 1];
                 let mut v = [0.0f32; 5];
                 for p in &band.px[range.clone()] {
-                    photocraft_raster::from_rgba_into(fmt, *p, &mut v);
+                    photostore_raster::from_rgba_into(fmt, *p, &mut v);
                     for c in 0..=cc {
                         // Matte against white like Photoshop (see `pixels::matte`).
                         let m = if c < cc && matte { crate::pixels::matte(v[c], v[cc], white[c]) } else { v[c] };
@@ -1118,7 +1118,7 @@ pub fn document_to_psd(doc: &Document) -> PsdFile {
 
 /// Converts a document to a PSD/PSB file model, returning warnings about
 /// anything that could not be represented. The merged composite is rendered
-/// with `photocraft_compose::flatten`.
+/// with `photostore_compose::flatten`.
 pub fn document_to_psd_with(doc: &Document, opts: &PsdExportOptions) -> (PsdFile, Vec<String>) {
     document_to_psd_nested(doc, opts, 0)
 }
@@ -1194,7 +1194,7 @@ pub(crate) fn estimate_psd_size(doc: &Document) -> Option<u64> {
                 add_plane_estimate(&mut raw_bytes, &mut rows, mask_width, mask_height, 1, bytes_per_sample)?;
             }
             if let LayerContent::Smart(smart) = &layer.content
-                && let photocraft_doc::SmartSource::Embedded { bytes, .. } = &smart.source
+                && let photostore_doc::SmartSource::Embedded { bytes, .. } = &smart.source
             {
                 structural_bytes = structural_bytes.checked_add(u64::try_from(bytes.len()).ok()?)?;
             }
@@ -1306,7 +1306,7 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
             let LayerContent::Text(t) = &l.content else {
                 continue;
             };
-            let kept = t.psd_raw.as_deref().and_then(|d| photocraft_text::psd::text_index(d));
+            let kept = t.psd_raw.as_deref().and_then(|d| photostore_text::psd::text_index(d));
             let index = match kept {
                 Some(i) if used_txt.insert(i) => i,
                 _ => {
@@ -1431,19 +1431,19 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
     // EXIF resolution follow the ResolutionInfo resource, so no copy contradicts it (#1691).
     let ppi = Some((doc.resolution_dpi, doc.resolution_dpi)).filter(|d| d.0 > 0.0);
     if let Some(x) = &doc.metadata.xmp {
-        resources.push(ImageResource::new(ids::XMP, photocraft_codecs::export_xmp(x, ppi).as_bytes().to_vec()));
+        resources.push(ImageResource::new(ids::XMP, photostore_codecs::export_xmp(x, ppi).as_bytes().to_vec()));
     }
     if let Some(e) = &doc.metadata.exif {
-        resources.push(ImageResource::new(ids::EXIF, photocraft_codecs::export_exif(e, ppi).into_owned()));
+        resources.push(ImageResource::new(ids::EXIF, photostore_codecs::export_exif(e, ppi).into_owned()));
     }
     let mut global_blocks = Vec::new();
     let preserved = ex.smart.finish(crate::annotations_map::export_blocks(doc, crate::pattern_map::export_global_blocks(doc)));
     // The type layers' `Txt2` is regenerated (the auto-kern modes live there, and a preserved
     // block goes stale as text is edited): one object per `TextIndex`, at the slot each layer's
-    // `TySh` names (unused slots stay empty; see `photocraft_text::psd::build_txt2`). The block
+    // `TySh` names (unused slots stay empty; see `photostore_text::psd::build_txt2`). The block
     // it replaces is handed over so a kept object keeps everything the file held beyond its text
     // and style runs (Photoshop's `/21 /1` glyph pen positions, …).
-    let text_layers: Vec<(i32, &photocraft_doc::TextLayer)> = doc
+    let text_layers: Vec<(i32, &photostore_doc::TextLayer)> = doc
         .walk()
         .into_iter()
         .filter_map(|(_, _, l)| match &l.content {
@@ -1452,7 +1452,7 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
         })
         .collect();
     let previous = (!text_layers.is_empty()).then(|| preserved.iter().find(|(_, key, _)| key == b"Txt2").map(|(_, _, data)| data.to_vec())).flatten();
-    let txt2 = (!text_layers.is_empty()).then(|| photocraft_text::psd::build_txt2(&text_layers, previous.as_deref()));
+    let txt2 = (!text_layers.is_empty()).then(|| photostore_text::psd::build_txt2(&text_layers, previous.as_deref()));
     for (sig, key, data) in preserved {
         if txt2.is_some() && key == *b"Txt2" {
             continue;
@@ -1529,7 +1529,7 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
     }
     // 32-bit files carry Photoshop's HDR toning records as Color Mode Data; Photoshop will not
     // open a 32-bit file without them (#291).
-    let color_mode_data = photocraft_psd::hdr::color_mode_data_for_depth(header.depth);
+    let color_mode_data = photostore_psd::hdr::color_mode_data_for_depth(header.depth);
     let file = PsdFile {
         header,
         color_mode_data,
@@ -1563,15 +1563,15 @@ mod tests {
     use super::*;
 
     fn document(width: u32, height: u32) -> Document {
-        Document::new("size estimate", photocraft_geom::Size::new(width, height), ColorMode::Rgb, SampleType::U8)
+        Document::new("size estimate", photostore_geom::Size::new(width, height), ColorMode::Rgb, SampleType::U8)
     }
 
     #[test]
     fn photo_filter_psd_is_four_byte_aligned_and_round_trips() {
         let color = [60000u16, 30000, 0].map(|x| x as f32 / 65535.0);
-        let adjustment = photocraft_doc::Adjustment::PhotoFilter { color, density: 0.14, preserve_luminosity: true };
+        let adjustment = photostore_doc::Adjustment::PhotoFilter { color, density: 0.14, preserve_luminosity: true };
         let mut doc =
-            Document::with_background("Photo Filter PSD", photocraft_geom::Size::new(32, 24), ColorMode::Rgb, SampleType::U8, photocraft_doc::Color::WHITE);
+            Document::with_background("Photo Filter PSD", photostore_geom::Size::new(32, 24), ColorMode::Rgb, SampleType::U8, photostore_doc::Color::WHITE);
         let mut layer = Layer::new("Warming Filter", LayerContent::Adjustment(adjustment.clone()));
         doc.layers.push(layer.clone());
 

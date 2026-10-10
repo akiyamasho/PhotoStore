@@ -1,13 +1,13 @@
-//! `filter.*` commands (Photoshop's Filter menu) backed by `photocraft-algo`.
+//! `filter.*` commands (Photoshop's Filter menu) backed by `photostore-algo`.
 //!
 //! Every command acts on the active pixel layer (or the cached pixels of a
 //! smart object, recording a smart filter), respects the selection, and is
 //! undoable. `filter.lastFilter` re-runs the most recent filter command.
 
-use photocraft_algo::{
+use photostore_algo::{
     self as algo, Distribution, FilterParams, PolarMode, Preserve, RadialMethod, RadialQuality, RippleSize, SpherizeMode, UndefinedAreas, WaveType,
 };
-use photocraft_doc::{LayerContent, SmartFilter};
+use photostore_doc::{LayerContent, SmartFilter};
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
@@ -164,11 +164,11 @@ pub fn params_for(id: &str, p: &Value) -> Option<FilterParams> {
 pub fn apply_filter_to_surface(
     id: &str,
     params: &Value,
-    surf: &photocraft_raster::Surface,
-    bounds: photocraft_geom::Rect,
-    selection: Option<&photocraft_raster::Surface>,
-    canvas: photocraft_geom::Rect,
-) -> Option<photocraft_raster::Surface> {
+    surf: &photostore_raster::Surface,
+    bounds: photostore_geom::Rect,
+    selection: Option<&photostore_raster::Surface>,
+    canvas: photostore_geom::Rect,
+) -> Option<photostore_raster::Surface> {
     // Liquify / Puppet Warp / Perspective Warp smart filters (distort_cmds).
     if let Some(out) = crate::distort_cmds::apply_to_surface(id, params, surf, canvas) {
         return Some(out);
@@ -186,7 +186,7 @@ pub fn apply_filter_to_surface(
         return crate::plugin_cmds::apply_to_surface(id, params, surf, selection, canvas);
     }
     let fp = params_for(id, params)?;
-    let sel_bounds = selection.map(photocraft_raster::Surface::content_bounds);
+    let sel_bounds = selection.map(photostore_raster::Surface::content_bounds);
     let content = surf.content_bounds();
     let area = algo::output_area(&fp, content, bounds, sel_bounds);
     Some(algo::apply_in(surf, &fp, area, bounds, selection, canvas.union(&content)))
@@ -215,7 +215,7 @@ pub(crate) fn run_filter(s: &mut Session, id: &str, p: &Value) -> Result<Value> 
     let mut fp = params_for(id, p).ok_or_else(|| EngineError::Other(format!("unknown filter {id}")))?;
     crate::filters_ext::resolve(s, &mut fp, p)?;
     let layer = match p.get("layer").and_then(Value::as_u64) {
-        Some(l) => photocraft_doc::LayerId(l),
+        Some(l) => photostore_doc::LayerId(l),
         None => s.active().and_then(|d| d.active_layer).ok_or(EngineError::Other("no active layer".into()))?,
     };
     let label = preset(id).map_or(fp.label(), |(name, _)| name).to_string();
@@ -233,11 +233,11 @@ pub(crate) fn run_filter(s: &mut Session, id: &str, p: &Value) -> Result<Value> 
         s,
         &label,
         move |doc, _, ctx| {
-            let filter = |surf: &photocraft_raster::Surface, fp: &FilterParams, area, bounds, sel: Option<&photocraft_raster::Surface>, extent| {
+            let filter = |surf: &photostore_raster::Surface, fp: &FilterParams, area, bounds, sel: Option<&photostore_raster::Surface>, extent| {
                 ctx.stage(0.0, 1.0, &msg, |ctl| algo::apply_in_with(surf, fp, area, bounds, sel, extent, ctl)).ok_or(EngineError::Cancelled)
             };
             let selection = doc.selection.clone();
-            let sel_bounds = selection.as_ref().map(photocraft_raster::Surface::content_bounds);
+            let sel_bounds = selection.as_ref().map(photostore_raster::Surface::content_bounds);
             // Distortions centre on the selection when there is one, else the canvas.
             let doc_bounds = doc.bounds();
             let bounds = sel_bounds.filter(|b| !b.is_empty()).unwrap_or(doc_bounds);
@@ -270,7 +270,7 @@ pub(crate) fn run_filter(s: &mut Session, id: &str, p: &Value) -> Result<Value> 
                 LayerContent::Smart(_) => {
                     // Non-destructive: record the filter and re-render the smart object from its source.
                     let sf =
-                        SmartFilter { command: id.clone(), params: params.clone(), blend: photocraft_color::BlendMode::Normal, opacity: 1.0, visible: true };
+                        SmartFilter { command: id.clone(), params: params.clone(), blend: photostore_color::BlendMode::Normal, opacity: 1.0, visible: true };
                     return crate::smart_cmds::add_smart_filter(doc, layer, sf, selection.as_ref()).map(|()| fp);
                 }
                 _ => return Err(EngineError::Other("not a pixel layer".into())),
@@ -289,7 +289,7 @@ pub(crate) fn run_filter(s: &mut Session, id: &str, p: &Value) -> Result<Value> 
 }
 
 /// Lock transparency: put the layer's alpha back after a filter, in the tiles it changed.
-fn keep_alpha(old: &photocraft_raster::Surface, new: &mut photocraft_raster::Surface) {
+fn keep_alpha(old: &photostore_raster::Surface, new: &mut photostore_raster::Surface) {
     if old.format() != new.format() || !new.format().alpha {
         return;
     }
@@ -433,7 +433,7 @@ mod tests {
     fn active_pixels(s: &Session) -> Vec<f32> {
         let d = s.active().unwrap();
         let l = d.doc.layer(d.active_layer.unwrap()).unwrap();
-        l.surface().unwrap().read_region(photocraft_geom::Rect::new(0, 0, 48, 32))
+        l.surface().unwrap().read_region(photostore_geom::Rect::new(0, 0, 48, 32))
     }
 
     fn paint_pattern(s: &mut Session) {
@@ -605,7 +605,7 @@ mod tests {
         assert_ne!(active_pixels(&s), before, "the active layer is filtered");
         let d = s.active().unwrap();
         let l = d.doc.layer(first).unwrap();
-        assert_eq!(l.surface().unwrap().read_region(photocraft_geom::Rect::new(0, 0, 48, 32)), first_once, "the first layer is left alone");
+        assert_eq!(l.surface().unwrap().read_region(photostore_geom::Rect::new(0, 0, 48, 32)), first_once, "the first layer is left alone");
     }
 
     #[test]
@@ -632,7 +632,7 @@ mod tests {
             // A white dot on black.
             s.edit("dot", |doc, active| {
                 let surf = doc.layer_mut(active.unwrap()).unwrap().surface_mut().unwrap();
-                surf.fill_rect(photocraft_geom::Rect::new(0, 0, 48, 32), &[0.0, 0.0, 0.0, 1.0]);
+                surf.fill_rect(photostore_geom::Rect::new(0, 0, 48, 32), &[0.0, 0.0, 0.0, 1.0]);
                 surf.write_pixel(24, 16, &[1.0, 1.0, 1.0, 1.0]);
                 Ok(())
             })
@@ -661,17 +661,17 @@ mod tests {
 
     #[test]
     fn smart_object_records_smart_filter() {
-        use photocraft_doc::{Layer, SmartObject, SmartSource};
+        use photostore_doc::{Layer, SmartObject, SmartSource};
         let mut s = session();
         s.edit("smart", |doc, active| {
-            let mut cache = photocraft_raster::Surface::new(doc.pixel_format());
-            cache.fill_rect(photocraft_geom::Rect::new(0, 0, 10, 10), &[1.0, 0.0, 0.0, 1.0]);
+            let mut cache = photostore_raster::Surface::new(doc.pixel_format());
+            cache.fill_rect(photostore_geom::Rect::new(0, 0, 10, 10), &[1.0, 0.0, 0.0, 1.0]);
             let l = Layer::new(
                 "so",
                 LayerContent::Smart(SmartObject {
-                    contents_id: photocraft_doc::SmartContentsId::fresh(),
+                    contents_id: photostore_doc::SmartContentsId::fresh(),
                     source: SmartSource::Linked { path: String::new() },
-                    transform: photocraft_geom::Affine::IDENTITY,
+                    transform: photostore_geom::Affine::IDENTITY,
                     smart_filters: vec![],
                     cache: Some(cache),
                     psd_raw: None,

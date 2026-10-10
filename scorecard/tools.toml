@@ -276,7 +276,7 @@ id = "TOOL-214-22"
 target = "Crop gear menu: Show Cropped Area (H), Enable Crop Shield with Match Canvas / custom colour, opacity and Auto Adjust Opacity"
 status = "done"
 issue = 1919
-note = "crop_shield.rs: fill() resolves the shield (canvas.rs paints it around upright and turned frames), gear popup in the options bar, H ahead of the Hand key in shortcuts.rs, Custom… opens the Color Picker; ToolOptions crop_shield, ui.set cropShield. No Classic Mode / Auto Center Preview (PhotoCraft is always Classic Mode)"
+note = "crop_shield.rs: fill() resolves the shield (canvas.rs paints it around upright and turned frames), gear popup in the options bar, H ahead of the Hand key in shortcuts.rs, Custom… opens the Color Picker; ToolOptions crop_shield, ui.set cropShield. No Classic Mode / Auto Center Preview (PhotoStore is always Classic Mode)"
 
 [[item]]
 id = "TOOL-1053-1"

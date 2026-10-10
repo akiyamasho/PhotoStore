@@ -1,7 +1,7 @@
-//! Photocraft's first UI shell, built on egui/eframe.
+//! PhotoStore's first UI shell, built on egui/eframe.
 //!
 //! This crate is deliberately thin. Every action goes through
-//! [`photocraft_engine::Session::execute`], and all UI state lives in [`state::UiState`] (plain
+//! [`photostore_engine::Session::execute`], and all UI state lives in [`state::UiState`] (plain
 //! data). The [`control`] module exposes both to automation, so agents can drive and inspect every
 //! part of the interface.
 #![forbid(unsafe_code)]
@@ -177,8 +177,8 @@ pub mod zoom_tool;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender};
 
-use photocraft_doc::{DocId, Document};
-use photocraft_engine::Session;
+use photostore_doc::{DocId, Document};
+use photostore_engine::Session;
 use serde_json::Value;
 
 pub use control::{ControlRequest, ControlResponse};
@@ -300,8 +300,8 @@ pub struct Services {
     pub automation_command: Option<AutomationCommandFn>,
     /// Same policy as [`Self::automation_command`], as a function pointer the engine calls for
     /// each step of `actions.play`. Installed on the session only while a control request or
-    /// an automation-driven [`PhotocraftApp::run`] runs, so a local play of a recorded `file.*` step still works.
-    pub automation_authorize: Option<fn(&str, &serde_json::Value) -> photocraft_engine::Result<()>>,
+    /// an automation-driven [`PhotoStoreApp::run`] runs, so a local play of a recorded `file.*` step still works.
+    pub automation_authorize: Option<fn(&str, &serde_json::Value) -> photostore_engine::Result<()>>,
     /// Encode an RGBA8 image as PNG (used for screenshots and `ui.render`).
     pub encode_png: Option<EncodePngFn>,
     /// Open a URL in the system browser (native). Falls back to `ctx.open_url` (web) when unset.
@@ -341,9 +341,9 @@ pub struct Services {
     /// the canvas can show the precise crosshair for painting tools, whatever the preference.
     pub caps_lock: Option<CapsLockFn>,
     /// The persistent brush preset store, loading in the background (desktop; see
-    /// `photocraft_engine::preset_store`). Attached to the session once it arrives; without
+    /// `photostore_engine::preset_store`). Attached to the session once it arrives; without
     /// one, brush presets are session-only unless the shell attached a store before startup.
-    pub preset_store: Option<std::sync::mpsc::Receiver<photocraft_engine::preset_store::Opened>>,
+    pub preset_store: Option<std::sync::mpsc::Receiver<photostore_engine::preset_store::Opened>>,
     /// Reads the displays and their ICC profiles in the background (desktop macOS; see
     /// `monitor_status`). Without one, the canvas uses the profile chosen in Color Settings, or sRGB.
     pub read_displays: Option<monitor_status::ReadDisplaysFn>,
@@ -363,7 +363,7 @@ pub(crate) type HistJob = (DocId, u64, std::sync::mpsc::Receiver<(DocId, f64, st
 /// The Info panel's cached sample: pixel x, y, document revision and Eyedropper Sample Size.
 type InfoSampleKey = (i32, i32, u64, u32);
 
-pub struct PhotocraftApp {
+pub struct PhotoStoreApp {
     pub session: Session,
     pub ui: UiState,
     pub services: Services,
@@ -427,7 +427,7 @@ pub struct PhotocraftApp {
     /// Control replies waiting for queued synthetic input to be processed.
     input_waiters: Vec<Sender<ControlResponse>>,
     /// Live (uncommitted) adjustment edit shown on canvas while a slider is dragged.
-    pub live_adjust: Option<(photocraft_doc::LayerId, Value)>,
+    pub live_adjust: Option<(photostore_doc::LayerId, Value)>,
     /// Frames rendered (for tests and the status bar).
     pub frame: u64,
     /// The pointer rested on the notice stack last frame. Used to give a fresh auto-hide delay in
@@ -462,11 +462,11 @@ pub struct PhotocraftApp {
     view_docs: Vec<DocId>,
     pub fps: f32,
     last_frame_time: f64,
-    thumbs: HashMap<(photocraft_doc::LayerId, u8), (u64, egui::TextureHandle)>,
+    thumbs: HashMap<(photostore_doc::LayerId, u8), (u64, egui::TextureHandle)>,
     /// Snapshots whose live layer/mask keys were last used to prune thumbnail handles.
     thumb_documents: Vec<(DocId, std::sync::Weak<Document>)>,
     /// Content bounds cached per (key, revision): scanning a 36 MP layer every frame cost ~77 ms.
-    bounds_cache: HashMap<u64, (u64, photocraft_geom::Rect)>,
+    bounds_cache: HashMap<u64, (u64, photostore_geom::Rect)>,
     /// Downsampled proxy of the active document for live previews: (doc, revision, k, proxy).
     pub(crate) proxy: Option<(DocId, u64, u32, std::sync::Arc<Document>)>,
     /// Key of the preview currently uploaded to the GPU (doc, params hash).
@@ -487,7 +487,7 @@ pub struct PhotocraftApp {
     /// direct control calls.
     pub(crate) automation_input: bool,
     /// Levels/Curves histogram cache: (document, adjustment layer, revision it is valid for).
-    pub(crate) tone_hist: Option<(DocId, photocraft_doc::LayerId, u64, std::sync::Arc<tone::Histograms>)>,
+    pub(crate) tone_hist: Option<(DocId, photostore_doc::LayerId, u64, std::sync::Arc<tone::Histograms>)>,
     /// Histogram panel cache: (document, revision, computed at ms, histograms).
     pub(crate) doc_hist: Option<(DocId, u64, f64, std::sync::Arc<tone::Histograms>)>,
     /// The document histogram being computed on a worker thread: (document, revision, receiver).
@@ -533,7 +533,7 @@ pub struct PhotocraftApp {
     /// Crop tool gesture in progress (see `crop_ui`).
     pub(crate) crop: crop_ui::CropState,
     /// Type tool layout cache: ((doc, revision, layer), layout).
-    pub(crate) type_layout: Option<((u64, u64, u64), std::sync::Arc<photocraft_text::TextLayout>)>,
+    pub(crate) type_layout: Option<((u64, u64, u64), std::sync::Arc<photostore_text::TextLayout>)>,
     pub(crate) type_transform_preview: Option<type_transform::Preview>,
     /// Channel thumbnails for one document snapshot; view-only revisions reuse their pixels.
     channel_thumbs: Option<(DocId, std::sync::Weak<Document>, bool, Vec<egui::TextureHandle>)>,
@@ -570,7 +570,7 @@ pub struct PhotocraftApp {
     live_tokens: theme::live::LiveTokens,
 }
 
-impl PhotocraftApp {
+impl PhotoStoreApp {
     pub fn new(session: Session, services: Services) -> Self {
         let mut app = Self {
             session,
@@ -680,14 +680,14 @@ impl PhotocraftApp {
         kys_import::offer_import(&mut app);
         notices::wayland_file_drop_guidance(&mut app);
         // File › Scripts › Script Events Manager: "Start Application".
-        photocraft_engine::automate_cmds::fire_event(&mut app.session, "startApplication");
+        photostore_engine::automate_cmds::fire_event(&mut app.session, "startApplication");
         app
     }
 
     /// Draw the document canvas on the GPU (custom WGSL shader) instead of via egui textures.
     /// Call from the app creator with `cc.wgpu_render_state`; without it the CPU path is used.
     pub fn set_wgpu(&mut self, rs: eframe::egui_wgpu::RenderState) {
-        // Preferences › Performance › cache tile size (PHOTOCRAFT_GPU_TILE still overrides).
+        // Preferences › Performance › cache tile size (PHOTOSTORE_GPU_TILE still overrides).
         let tile = self.session.prefs().performance.cache_tile_size;
         // Escaped driver/setup panics must leave the session and CPU canvas alive.
         self.perf.gpu_info.set_adapter(&rs.adapter.get_info());
@@ -717,13 +717,13 @@ impl PhotocraftApp {
     }
 
     /// The GPU canvas's device health flag (tests inject faults through it).
-    pub fn gpu_health(&self) -> Option<photocraft_gpu::DeviceHealth> {
+    pub fn gpu_health(&self) -> Option<photostore_gpu::DeviceHealth> {
         self.gpu.as_ref().map(|g| g.health().clone())
     }
 
     /// Run `hook` once the app has rendered its first frames (and a document opened at launch
     /// has drawn): the desktop app clears its crash-safe GPU startup marker there.
-    pub fn on_started(&mut self, hook: impl FnOnce(&mut PhotocraftApp) + 'static) {
+    pub fn on_started(&mut self, hook: impl FnOnce(&mut PhotoStoreApp) + 'static) {
         self.started = Some(Box::new(hook));
     }
 
@@ -798,7 +798,7 @@ impl PhotocraftApp {
                     .is_some_and(|st| st.active_layer.is_some_and(|layer| params.get("layer").and_then(Value::as_u64).is_none_or(|target| target == layer.0)));
         let r = if id == "actions.play" {
             actions::play(self, &params)
-        } else if photocraft_engine::actions_cmds::shell_view_command(id) {
+        } else if photostore_engine::actions_cmds::shell_view_command(id) {
             actions::run_view(self, id, params)
         } else {
             jobs_ui::run(self, id, params)
@@ -953,7 +953,7 @@ impl PhotocraftApp {
         // No path yet: a bare name isn't a location to save back to (`open_file` sets the path).
         let (_, color) = self.session.open_document(doc, None);
         if let Some(st) = self.session.active_mut() {
-            st.source_read_only = photocraft_io::affinity::is_affinity(bytes);
+            st.source_read_only = photostore_io::affinity::is_affinity(bytes);
         }
         self.sync_views();
         self.ui.status = format!("Opened {name}");
@@ -965,7 +965,7 @@ impl PhotocraftApp {
             notices::io_warnings(self, &format!("Opened {name}"), &warnings);
         }
         // Script events bound to "Open Document".
-        photocraft_engine::automate_cmds::document_opened(&mut self.session);
+        photostore_engine::automate_cmds::document_opened(&mut self.session);
         self.sync_views();
         let ask = color.get("ask").and_then(Value::as_bool) == Some(true);
         if ask && (color.get("mismatch").and_then(Value::as_bool) == Some(true) || color.get("missing").is_some()) {
@@ -1002,7 +1002,7 @@ impl PhotocraftApp {
         // The caller records the path it read from.
         self.session.add_document(doc, None);
         if let Some(st) = self.session.active_mut() {
-            st.source_read_only = photocraft_io::affinity::is_affinity(bytes);
+            st.source_read_only = photostore_io::affinity::is_affinity(bytes);
         }
         self.sync_views();
         self.ui.status = format!("Opened {name}");
@@ -1032,23 +1032,23 @@ impl PhotocraftApp {
         // (including an unlocked transparent PNG) can keep its flat format; editable contents,
         // masks and layer appearance settings need a layered format even with just one layer.
         let plain_raster = matches!(st.doc.layers.as_slice(), [layer]
-            if matches!(layer.content, photocraft_doc::LayerContent::Raster(_))
+            if matches!(layer.content, photostore_doc::LayerContent::Raster(_))
                 && layer.visible && layer.opacity >= 1.0 && layer.fill_opacity >= 1.0
                 && layer.mask.is_none() && layer.vector_mask.is_none()
                 && layer.effects.items.is_empty() && layer.effects.psd_raw.is_none()
-                && matches!(layer.blend, photocraft_color::BlendMode::Normal | photocraft_color::BlendMode::PassThrough)
-                && photocraft_compose::channel_weights(layer, st.doc.mode).is_none()
-                && !photocraft_compose::blend_if_active(layer, st.doc.mode));
+                && matches!(layer.blend, photostore_color::BlendMode::Normal | photostore_color::BlendMode::PassThrough)
+                && photostore_compose::channel_weights(layer, st.doc.mode).is_none()
+                && !photostore_compose::blend_if_active(layer, st.doc.mode));
         let ext = st.path.as_deref().and_then(|p| std::path::Path::new(p).extension()).map(|e| e.to_string_lossy().to_ascii_lowercase());
         let writable = ext.is_some_and(|e| {
-            matches!(e.as_str(), photocraft_format::EXTENSION | "psd" | "psb" | "tif" | "tiff" | "ora")
-                || (plain_raster && photocraft_codecs::from_extension(&e).is_some_and(|f| f.caps().write))
+            matches!(e.as_str(), photostore_format::EXTENSION | "psd" | "psb" | "tif" | "tiff" | "ora")
+                || (plain_raster && photostore_codecs::from_extension(&e).is_some_and(|f| f.caps().write))
         });
         let suggested = match &st.path {
             Some(p) if writable => p.clone(),
             p => {
                 let source = p.as_deref().unwrap_or(&st.doc.name);
-                let ext = if photocraft_engine::file_cmds::extension(source).as_deref() == Some("pdn") { "pcraft" } else { "psd" };
+                let ext = if photostore_engine::file_cmds::extension(source).as_deref() == Some("pdn") { "pcraft" } else { "psd" };
                 std::path::Path::new(source).with_extension(ext).to_string_lossy().into_owned()
             }
         };
@@ -1106,7 +1106,7 @@ impl PhotocraftApp {
                 }
                 // "Save Document" script events and File › Generate › Image Assets.
                 if let Some(i) = app.session.active_index()
-                    && let Some(r) = photocraft_engine::automate_cmds::document_saved(&mut app.session, i)
+                    && let Some(r) = photostore_engine::automate_cmds::document_saved(&mut app.session, i)
                 {
                     app.ui.status = format!("Saved {path}; {} image assets in {}", r["files"].as_array().map_or(0, Vec::len), r["dir"].as_str().unwrap_or(""));
                 }
@@ -1130,7 +1130,7 @@ impl PhotocraftApp {
         let state = self.session.active().ok_or("no document")?;
         // As File › Save: without `path` only a layered file is written back (#416).
         let target = path
-            .or_else(|| state.path.clone().filter(|p| photocraft_engine::file_cmds::saves_in_place(p)))
+            .or_else(|| state.path.clone().filter(|p| photostore_engine::file_cmds::saves_in_place(p)))
             .ok_or("pass `path`: a save without one writes back only to the document's own PSD, PSB or .pcraft file")?;
         let export = self.services.export.as_ref().ok_or("no exporter configured")?;
         let (bytes, warnings) = export(&state.doc, &target, &ExportSettings::default())?;
@@ -1213,7 +1213,7 @@ impl PhotocraftApp {
     }
 }
 
-impl eframe::App for PhotocraftApp {
+impl eframe::App for PhotoStoreApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         i18n::set_current(i18n::Lang::from_pref(&self.session.prefs().interface.language));
         // Caps Lock state read from the OS once per frame (see `Services::caps_lock`): the canvas
@@ -1430,13 +1430,13 @@ fn read_dropped(_f: &dyn egui::DroppedFile) -> Result<Vec<u8>, String> {
     Err("drag-and-drop on the web is handled by the page; use File → Open".into())
 }
 
-impl PhotocraftApp {
+impl PhotoStoreApp {
     /// `params` aimed at the active layer's mask (`"target":"mask"`) when the Layers panel targets
     /// it and command `id` edits the target (adjustments, filters, fills) without naming one:
     /// ⌘I then inverts the mask, as in Photoshop (#780). A targeted alpha channel or Quick Mask
     /// mode wins, as the engine routes those itself.
     pub fn with_mask_target(&self, id: &str, params: Value) -> Value {
-        if !photocraft_engine::channel_cmds::follows_target(id) || params.get("target").is_some() || !self.layer_mask_targeted() {
+        if !photostore_engine::channel_cmds::follows_target(id) || params.get("target").is_some() || !self.layer_mask_targeted() {
             return params;
         }
         match params {
@@ -1452,7 +1452,7 @@ impl PhotocraftApp {
     /// takes over (the engine routes those itself).
     pub fn layer_mask_targeted(&self) -> bool {
         let Some(st) = self.session.active().filter(|_| self.ui.mask_target) else { return false };
-        let composite = st.channel_view.target == photocraft_engine::channel_cmds::ChannelTarget::Composite && st.doc.quick_mask.is_none();
+        let composite = st.channel_view.target == photostore_engine::channel_cmds::ChannelTarget::Composite && st.doc.quick_mask.is_none();
         composite && st.active_layer.and_then(|id| st.doc.layer(id)).is_some_and(|l| l.mask.is_some())
     }
 
@@ -1461,7 +1461,7 @@ impl PhotocraftApp {
     /// pixels brings back that target's foreground/background pair, as in Photoshop (#2166).
     fn sync_mask_targets(&mut self) {
         if let Some(st) = self.session.active() {
-            if photocraft_engine::mask_view_cmds::current(st).is_some() {
+            if photostore_engine::mask_view_cmds::current(st).is_some() {
                 self.ui.mask_target = true;
                 self.ui.vector_mask_target = false;
             }
@@ -1522,7 +1522,7 @@ impl PhotocraftApp {
     }
 
     /// Cached 64px thumbnail of a pixel-ish layer, laid out in document space.
-    pub fn layer_thumb(&mut self, ctx: &egui::Context, doc: &Document, layer: &photocraft_doc::Layer) -> egui::TextureId {
+    pub fn layer_thumb(&mut self, ctx: &egui::Context, doc: &Document, layer: &photostore_doc::Layer) -> egui::TextureId {
         // Key by content, not document revision: COW tiles change pointer only when their pixels
         // change, so unrelated edits (e.g. painting another layer) don't rebuild this thumbnail.
         let rev = layer.surface().map_or(0, surface_fingerprint) ^ (doc.size.width as u64) << 40;
@@ -1537,12 +1537,12 @@ impl PhotocraftApp {
             let Some(s) = layer.surface() else { return [0.0; 4] };
             let n = s.channels();
             s.read_pixel(x, y, &mut px[..n]);
-            photocraft_raster::to_rgba(&s.format(), &px[..n])
+            photostore_raster::to_rgba(&s.format(), &px[..n])
         });
         self.store_thumb(ctx, key, rev, img)
     }
 
-    pub fn mask_thumb(&mut self, ctx: &egui::Context, doc: &Document, id: photocraft_doc::LayerId, mask: &photocraft_doc::LayerMask) -> egui::TextureId {
+    pub fn mask_thumb(&mut self, ctx: &egui::Context, doc: &Document, id: photostore_doc::LayerId, mask: &photostore_doc::LayerMask) -> egui::TextureId {
         let rev = surface_fingerprint(&mask.surface) ^ (doc.size.width as u64) << 40;
         let key = (id, mask_thumbs_ui::THUMB_MASK);
         if let Some((r, tex)) = self.thumbs.get(&key)
@@ -1558,7 +1558,7 @@ impl PhotocraftApp {
         self.store_thumb(ctx, key, rev, img)
     }
 
-    fn store_thumb(&mut self, ctx: &egui::Context, key: (photocraft_doc::LayerId, u8), rev: u64, img: egui::ColorImage) -> egui::TextureId {
+    fn store_thumb(&mut self, ctx: &egui::Context, key: (photostore_doc::LayerId, u8), rev: u64, img: egui::ColorImage) -> egui::TextureId {
         match self.thumbs.get_mut(&key) {
             Some((r, tex)) => {
                 tex.set(img, egui::TextureOptions::LINEAR);
@@ -1578,7 +1578,7 @@ impl PhotocraftApp {
 /// Cheap identity of a surface's pixels: its default (untouched) pixel, tile coordinates and
 /// `Arc` pointers. The default pixel matters: inverting or filling a tile-less mask only changes
 /// it (#2117).
-pub fn surface_fingerprint(s: &photocraft_raster::Surface) -> u64 {
+pub fn surface_fingerprint(s: &photostore_raster::Surface) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ s.tile_count() as u64;
     for &b in s.default_bytes() {
         h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
@@ -1611,7 +1611,7 @@ fn thumb_image(doc: &Document, side: usize, mut f: impl FnMut(i32, i32) -> [f32;
     egui::ColorImage::new([side, side], px)
 }
 
-impl PhotocraftApp {
+impl PhotoStoreApp {
     /// Next step of queued synthetic input (automation): events up to and including the first
     /// release, so egui sees press and release in separate frames. Hosts that don't call
     /// `raw_input_hook` (offscreen harnesses) feed these to their input themselves.
@@ -1635,7 +1635,7 @@ impl PhotocraftApp {
         theme::install_fonts(ctx);
         egui_extras::install_image_loaders(ctx);
         theme::apply(ctx, kind);
-        // egui's own ⌘+ / ⌘- / ⌘0 scale the whole interface; PhotoCraft zooms the canvas instead
+        // egui's own ⌘+ / ⌘- / ⌘0 scale the whole interface; PhotoStore zooms the canvas instead
         // (shortcuts.rs), like Photoshop.
         ctx.options_mut(|o| o.zoom_with_keyboard = false);
         // ⌘/Ctrl + wheel scrolls sideways, as in Photoshop; only a pinch zooms (wheel_nav.rs).
@@ -1643,9 +1643,9 @@ impl PhotocraftApp {
     }
 }
 
-impl PhotocraftApp {
+impl PhotoStoreApp {
     /// Cached `Surface::content_bounds` keyed by an id and the surface's tile identity.
-    pub fn cached_bounds(&mut self, key: u64, surface: &photocraft_raster::Surface) -> photocraft_geom::Rect {
+    pub fn cached_bounds(&mut self, key: u64, surface: &photostore_raster::Surface) -> photostore_geom::Rect {
         let rev = surface_fingerprint(surface);
         if let Some((r, b)) = self.bounds_cache.get(&key)
             && *r == rev
@@ -1661,7 +1661,7 @@ impl PhotocraftApp {
     }
 }
 
-impl PhotocraftApp {
+impl PhotoStoreApp {
     /// Zoom of the active document's main view: screen (device) pixels per document pixel, the
     /// user-facing factor (`100%` is `1.0`).
     pub fn current_zoom(&self) -> f32 {
@@ -1681,7 +1681,7 @@ impl PhotocraftApp {
     }
 }
 
-impl PhotocraftApp {
+impl PhotoStoreApp {
     /// Channels panel thumbnails of the active document snapshot: the composite,
     /// each colour channel (when there is more than one), each alpha channel, then the Quick Mask.
     pub fn channel_thumbs(&mut self, ctx: &egui::Context) -> Vec<egui::TextureId> {
@@ -1695,7 +1695,7 @@ impl PhotocraftApp {
         let snapshot = std::sync::Arc::downgrade(&doc);
         let show_color = self.session.prefs().interface.show_channels_in_color;
         if !matches!(&self.channel_thumbs, Some((d, old, in_color, _)) if *d == id && old.ptr_eq(&snapshot) && *in_color == show_color) {
-            let comp = photocraft_compose::thumbnail(&doc, 56);
+            let comp = photostore_compose::thumbnail(&doc, 56);
             let (w, h) = (comp.width as usize, comp.height as usize);
             let side = w.max(h);
             let make = |f: &dyn Fn(&[u8]) -> egui::Color32, name: &str| {
@@ -1714,11 +1714,11 @@ impl PhotocraftApp {
             let mut texs = vec![make(&|p| egui::Color32::from_rgb(p[0], p[1], p[2]), "composite")];
             if colors > 1 {
                 for k in 0..colors {
-                    let cmyk = fmt.mode == photocraft_doc::ColorMode::Cmyk;
+                    let cmyk = fmt.mode == photostore_doc::ColorMode::Cmyk;
                     texs.push(make(
                         &|p| {
                             let rgba = [p[0], p[1], p[2], 255].map(|v| f32::from(v) / 255.0);
-                            let x = photocraft_raster::from_rgba(&fmt, rgba)[k];
+                            let x = photostore_raster::from_rgba(&fmt, rgba)[k];
                             let g = if cmyk { 1.0 - x } else { x };
                             let byte = (g.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
                             channel_tint(fmt.mode, k, byte, show_color)
@@ -1775,7 +1775,7 @@ fn remembered_new_document_value(key: &str, v: &serde_json::Value) -> bool {
 }
 
 /// Remember the New Document fields `f` its OK used, for the next New Document.
-pub(crate) fn remember_new_document(app: &mut PhotocraftApp, f: &serde_json::Map<String, serde_json::Value>) {
+pub(crate) fn remember_new_document(app: &mut PhotoStoreApp, f: &serde_json::Map<String, serde_json::Value>) {
     let kept: serde_json::Map<String, serde_json::Value> =
         NEW_DOCUMENT_REMEMBERED.iter().filter_map(|k| f.get(*k).filter(|v| remembered_new_document_value(k, v)).map(|v| (k.to_string(), v.clone()))).collect();
     app.session.prefs.edit(|p| p.dialogs.insert(NEW_DOCUMENT.into(), serde_json::Value::Object(kept)));
@@ -1792,8 +1792,8 @@ fn clip_signature(w: u32, h: u32, px: &[u8]) -> u64 {
 /// A channel thumbnail pixel whose lightness is `byte` (255 = white: full light, no ink).
 /// Preferences ▸ Interface ▸ Show Channels in Color tints RGB channels from black to their
 /// primary and CMYK channels from white to their ink, as Photoshop does; otherwise grey.
-fn channel_tint(mode: photocraft_doc::ColorMode, k: usize, byte: u8, in_color: bool) -> egui::Color32 {
-    use photocraft_doc::ColorMode::{Cmyk, Rgb};
+fn channel_tint(mode: photostore_doc::ColorMode, k: usize, byte: u8, in_color: bool) -> egui::Color32 {
+    use photostore_doc::ColorMode::{Cmyk, Rgb};
     if !in_color {
         return egui::Color32::from_gray(byte);
     }
@@ -1808,7 +1808,7 @@ fn channel_tint(mode: photocraft_doc::ColorMode, k: usize, byte: u8, in_color: b
     }
 }
 
-impl PhotocraftApp {
+impl PhotoStoreApp {
     /// Mirror the session clipboard onto the OS clipboard (RGBA8).
     fn export_os_clipboard(&mut self) {
         if !self.session.prefs().general.export_clipboard {
@@ -1866,10 +1866,10 @@ impl PhotocraftApp {
         if self.os_clip_sig == Some(sig) && self.session.clipboard.is_some() {
             return false;
         }
-        let r = photocraft_geom::Rect::new(0, 0, w as i32, h as i32);
-        let mut surface = photocraft_raster::Surface::from_interleaved(photocraft_color::PixelFormat::RGBA8, r, &bytes);
+        let r = photostore_geom::Rect::new(0, 0, w as i32, h as i32);
+        let mut surface = photostore_raster::Surface::from_interleaved(photostore_color::PixelFormat::RGBA8, r, &bytes);
         surface.prune();
-        self.session.clipboard = Some(photocraft_engine::edit_cmds::Clip { surface, bounds: r });
+        self.session.clipboard = Some(photostore_engine::edit_cmds::Clip { surface, bounds: r });
         self.os_clip_sig = Some(sig);
         self.clip_external = true;
         true
@@ -1943,7 +1943,7 @@ mod clipboard_tests {
             clipboard_get_image: Some(Box::new(move || b.lock().unwrap().clone())),
             ..Default::default()
         };
-        let mut app = PhotocraftApp::new(Session::new(), services);
+        let mut app = PhotoStoreApp::new(Session::new(), services);
         app.session.execute("file.new", serde_json::json!({"width": 64, "height": 64})).unwrap();
         app.sync_views();
         app.run("select.rect", serde_json::json!({"x": 0, "y": 0, "width": 8, "height": 4})).unwrap();
@@ -1977,7 +1977,7 @@ mod clipboard_tests {
             })),
             ..Default::default()
         };
-        let mut app = PhotocraftApp::new(Session::new(), services);
+        let mut app = PhotoStoreApp::new(Session::new(), services);
         app.session.execute("prefs.set", serde_json::json!({"values": {"general.exportClipboard": false}})).unwrap();
         app.session.execute("file.new", serde_json::json!({"width": 32, "height": 32})).unwrap();
         app.sync_views();
@@ -1989,13 +1989,13 @@ mod clipboard_tests {
     type OsClip = Arc<Mutex<Option<(u32, u32, Vec<u8>)>>>;
 
     /// An app whose OS clipboard is `os`, counting every read in `reads`.
-    fn app_with_os_clipboard(os: &OsClip, reads: &Arc<std::sync::atomic::AtomicUsize>) -> PhotocraftApp {
+    fn app_with_os_clipboard(os: &OsClip, reads: &Arc<std::sync::atomic::AtomicUsize>) -> PhotoStoreApp {
         let (b, n) = (os.clone(), reads.clone());
         let get = move || {
             n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             b.lock().unwrap().clone()
         };
-        let mut app = PhotocraftApp::new(Session::new(), Services { clipboard_get_image: Some(Box::new(get)), ..Default::default() });
+        let mut app = PhotoStoreApp::new(Session::new(), Services { clipboard_get_image: Some(Box::new(get)), ..Default::default() });
         app.session.execute("file.new", serde_json::json!({"width": 64, "height": 64})).unwrap();
         app.sync_views();
         app
@@ -2016,7 +2016,7 @@ mod clipboard_tests {
         assert_ne!(r["offset"], serde_json::json!([0, 0]), "external image is centred: {r}");
         assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 1, "one read per explicit paste");
         // Without a clipboard service Paste greys until something is copied in the app.
-        let mut plain = PhotocraftApp::new(Session::new(), Services::default());
+        let mut plain = PhotoStoreApp::new(Session::new(), Services::default());
         plain.session.execute("file.new", serde_json::json!({"width": 8, "height": 8})).unwrap();
         assert!(!crate::menus::is_enabled(&plain, "edit.paste"));
     }
@@ -2031,7 +2031,7 @@ mod clipboard_tests {
             n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             b.lock().unwrap().clone()
         };
-        let mut app = PhotocraftApp::new(Session::new(), Services { clipboard_get_image: Some(Box::new(get)), ..Default::default() });
+        let mut app = PhotoStoreApp::new(Session::new(), Services { clipboard_get_image: Some(Box::new(get)), ..Default::default() });
         let ctx = egui::Context::default();
         // Listed right after File › New…, enabled without reading the clipboard.
         let items = crate::menus::menu_items(&app);
@@ -2073,12 +2073,12 @@ mod clipboard_tests {
         *os.lock().unwrap() = Some((4, 4, [255u8, 0, 0, 255].repeat(16)));
         let (b, n) = (os.clone(), reads.clone());
         let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).with_max_steps(64).build_eframe(move |cc| {
-            PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
+            PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
             let get = move || {
                 n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 b.lock().unwrap().clone()
             };
-            let mut app = PhotocraftApp::new(Session::new(), Services { clipboard_get_image: Some(Box::new(get)), ..Default::default() });
+            let mut app = PhotoStoreApp::new(Session::new(), Services { clipboard_get_image: Some(Box::new(get)), ..Default::default() });
             app.session.execute("file.new", serde_json::json!({"width": 64, "height": 64})).unwrap();
             app
         });
@@ -2119,12 +2119,12 @@ mod clipboard_tests {
         const BLUE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
         const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
         const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
-        let mut app = PhotocraftApp::new(Session::new(), Services::default());
+        let mut app = PhotoStoreApp::new(Session::new(), Services::default());
         app.run("file.new", json!({"width": 32, "height": 32})).unwrap();
         let masked = app.run("layer.new.layer", json!({})).unwrap()["layer"].clone();
         app.run("tools.setColors", json!({"foreground": "#ff0000", "background": "#0000ff"})).unwrap();
-        let pair = |app: &PhotocraftApp| (app.session.tools.foreground, app.session.tools.background);
-        let target = |app: &mut PhotocraftApp, mask: bool| {
+        let pair = |app: &PhotoStoreApp| (app.session.tools.foreground, app.session.tools.background);
+        let target = |app: &mut PhotoStoreApp, mask: bool| {
             app.ui.mask_target = mask;
             app.sync_views();
         };
@@ -2157,7 +2157,7 @@ mod clipboard_tests {
 mod channel_tint_tests {
     use super::channel_tint;
     use egui::Color32;
-    use photocraft_doc::ColorMode::{Cmyk, Grayscale, Rgb};
+    use photostore_doc::ColorMode::{Cmyk, Grayscale, Rgb};
 
     #[test]
     fn channels_in_color_tint_rgb_from_black_and_cmyk_inks_from_white() {

@@ -1,25 +1,25 @@
 //! Affinity documents (`.af`, `.afdesign`, `.afphoto`, `.afpub`): the native layers, curves,
-//! shapes, artboards, text, images and masks `photocraft-affinity` reads, mapped to PhotoCraft
+//! shapes, artboards, text, images and masks `photostore-affinity` reads, mapped to PhotoStore
 //! layers (groups, shape layers, type layers, embedded smart objects, pixel layers, layer and
 //! vector masks). What could not be mapped is listed in the warnings. A file whose native data
 //! can't be read opens as its embedded preview, with a warning saying why.
 
 use std::sync::Arc;
 
-use photocraft_affinity::model::{self as af, Align, Blend, Kind, Pixels};
-use photocraft_affinity::paint::{self as ap, Cap, GradientKind, Join};
-use photocraft_color::{BlendMode, Color, ColorMode, PixelFormat, SampleType};
-use photocraft_doc::text::{CharStyle, ParagraphRun, ParagraphStyle, TextAlign, TextRun, TextShape};
-use photocraft_doc::vector::{Knot, LineCap, LineJoin, Path, ShapeLayer, ShapeStroke, StrokeAlign, Subpath, VectorMask};
-use photocraft_doc::{
+use photostore_affinity::model::{self as af, Align, Blend, Kind, Pixels};
+use photostore_affinity::paint::{self as ap, Cap, GradientKind, Join};
+use photostore_color::{BlendMode, Color, ColorMode, PixelFormat, SampleType};
+use photostore_doc::text::{CharStyle, ParagraphRun, ParagraphStyle, TextAlign, TextRun, TextShape};
+use photostore_doc::vector::{Knot, LineCap, LineJoin, Path, ShapeLayer, ShapeStroke, StrokeAlign, Subpath, VectorMask};
+use photostore_doc::{
     Artboard, ArtboardBackground, Document, Fill, GradientStyle, Group, Layer, LayerContent, LayerMask, Locks, SmartObject, SmartSource, TextLayer,
 };
-use photocraft_geom::{Affine, Point, Rect, Size};
-use photocraft_raster::Surface;
+use photostore_geom::{Affine, Point, Rect, Size};
+use photostore_raster::Surface;
 
 use crate::{ImportResult, IoError};
 
-pub use photocraft_affinity::is_affinity;
+pub use photostore_affinity::is_affinity;
 
 /// Extensions recognized as Affinity documents.
 pub const EXTENSIONS: &[&str] = &["af", "afphoto", "afdesign", "afpub"];
@@ -34,7 +34,7 @@ pub fn has_extension(name: &str) -> bool {
 }
 
 pub(crate) fn import(name: &str, bytes: &[u8]) -> Result<ImportResult, IoError> {
-    match photocraft_affinity::read(bytes, photocraft_affinity::Limits::default()) {
+    match photostore_affinity::read(bytes, photostore_affinity::Limits::default()) {
         Ok(d) => {
             let mut b = Builder::new(name, &d)?;
             b.document(&d)?;
@@ -52,13 +52,13 @@ pub(crate) fn import(name: &str, bytes: &[u8]) -> Result<ImportResult, IoError> 
 }
 
 /// The embedded preview, for files whose native document can't be read.
-fn preview(name: &str, bytes: &[u8], native: &photocraft_affinity::Error) -> Result<ImportResult, IoError> {
-    let p = photocraft_affinity::preview(bytes).map_err(|e| IoError::Unsupported(format!("{native}; its embedded preview can't be read either ({e})")))?;
-    let opts = photocraft_codecs::DecodeOptions {
-        limits: photocraft_codecs::Limits { max_width: 4096, max_height: 4096, max_pixels: 4096 * 4096, max_alloc: 128 << 20 },
+fn preview(name: &str, bytes: &[u8], native: &photostore_affinity::Error) -> Result<ImportResult, IoError> {
+    let p = photostore_affinity::preview(bytes).map_err(|e| IoError::Unsupported(format!("{native}; its embedded preview can't be read either ({e})")))?;
+    let opts = photostore_codecs::DecodeOptions {
+        limits: photostore_codecs::Limits { max_width: 4096, max_height: 4096, max_pixels: 4096 * 4096, max_alloc: 128 << 20 },
         ..Default::default()
     };
-    let img = photocraft_codecs::decode_with(p.png, &opts)?;
+    let img = photostore_codecs::decode_with(p.png, &opts)?;
     let mut r = crate::flat::image_to_document(name, &img)?;
     if let Some(layer) = r.document.layers.first_mut() {
         layer.name = "Affinity preview".into();
@@ -273,7 +273,7 @@ impl Builder {
                         gr.artboard = Some(Artboard { rect: r, background: bg, preset: String::new() });
                     }
                 } else {
-                    // PhotoCraft artboards are top-level groups: a nested one clips by a vector mask.
+                    // PhotoStore artboards are top-level groups: a nested one clips by a vector mask.
                     let p = Path::new(vec![Subpath::polygon(&[
                         (f64::from(r.x0), f64::from(r.y0)),
                         (f64::from(r.x1), f64::from(r.y0)),
@@ -350,9 +350,9 @@ impl Builder {
         let mut path = Path::new(subpaths);
         if even_odd {
             // One component filled even-odd, so inner subpaths cut holes as in Affinity.
-            path.fill_rule = photocraft_doc::vector::FillRule::EvenOdd;
+            path.fill_rule = photostore_doc::vector::FillRule::EvenOdd;
             for s in path.subpaths.iter_mut().skip(1) {
-                s.op = photocraft_doc::vector::PathOp::Join;
+                s.op = photostore_doc::vector::PathOp::Join;
             }
         }
         path
@@ -375,7 +375,7 @@ impl Builder {
                     self.warn("elliptical gradients import as circular ones");
                 }
                 let (angle, scale, offset) =
-                    photocraft_compose::gradient_fill::from_handles(style, [o.x as f32, o.y as f32], [e.x as f32, e.y as f32], frame, 0.0);
+                    photostore_compose::gradient_fill::from_handles(style, [o.x as f32, o.y as f32], [e.x as f32, e.y as f32], frame, 0.0);
                 let stops = g.stops.iter().map(|s| (s.offset as f32, Color { alpha: 1.0, ..color(s.color) })).collect();
                 let opacity_stops = g.stops.iter().map(|s| (s.offset as f32, s.color.alpha() as f32)).collect();
                 let midpoints = g.stops.iter().take(g.stops.len().saturating_sub(1)).map(|s| s.half_point() as f32).collect();
@@ -424,7 +424,7 @@ impl Builder {
             })
         });
         let mut sh = ShapeLayer { path, fill, stroke, live: None, cache: None, psd_raw: None };
-        sh.cache = Some(photocraft_vector::render_shape(&sh, self.format, self.canvas));
+        sh.cache = Some(photostore_vector::render_shape(&sh, self.format, self.canvas));
         sh
     }
 
@@ -486,11 +486,11 @@ impl Builder {
         match &img.pixels {
             Pixels::Rgba8(v) => Some((img.width, img.height, v.clone())),
             Pixels::Encoded(bytes) => {
-                let opts = photocraft_codecs::DecodeOptions {
-                    limits: photocraft_codecs::Limits { max_width: 65_535, max_height: 65_535, max_pixels: MAX_PIXELS, max_alloc: 512 << 20 },
+                let opts = photostore_codecs::DecodeOptions {
+                    limits: photostore_codecs::Limits { max_width: 65_535, max_height: 65_535, max_pixels: MAX_PIXELS, max_alloc: 512 << 20 },
                     ..Default::default()
                 };
-                match photocraft_codecs::decode_with(bytes, &opts) {
+                match photostore_codecs::decode_with(bytes, &opts) {
                     Ok(d) => {
                         let (w, h) = d.dimensions();
                         Some((w, h, d.to_rgba8()))

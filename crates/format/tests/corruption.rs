@@ -2,8 +2,8 @@
 
 mod common;
 use common::*;
-use photocraft_color::{ColorMode, SampleType};
-use photocraft_format::*;
+use photostore_color::{ColorMode, SampleType};
+use photostore_format::*;
 use proptest::prelude::*;
 use std::io::Read;
 
@@ -310,7 +310,7 @@ fn deflated_zip_entries_are_readable() {
     assert_eq!(load_from_bytes(&out).unwrap(), rich_doc_ids_from(&b));
 }
 
-fn rich_doc_ids_from(b: &[u8]) -> photocraft_doc::Document {
+fn rich_doc_ids_from(b: &[u8]) -> photostore_doc::Document {
     load_from_bytes(b).unwrap()
 }
 

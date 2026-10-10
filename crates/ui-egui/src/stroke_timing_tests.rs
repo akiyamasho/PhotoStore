@@ -5,17 +5,17 @@ use egui::{Modifiers, PointerButton, Pos2, vec2};
 use egui_kittest::Harness;
 use serde_json::{Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::canvas::ViewXform;
 use crate::state::Tool;
 
-fn harness() -> Harness<'static, PhotocraftApp> {
-    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+fn harness() -> Harness<'static, PhotoStoreApp> {
+    let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
     app.run("file.new", json!({"width": 200, "height": 100, "background": "white"})).unwrap();
     app.sync_views();
     app.ui.tool = Tool::Brush;
     let mut h = Harness::builder().with_size(vec2(900.0, 600.0)).build_ui_state(
-        |ui, app: &mut PhotocraftApp| {
+        |ui, app: &mut PhotoStoreApp| {
             let ctx = ui.ctx().clone();
             if !ctx.fonts(|f| f.families().contains(&egui::FontFamily::Name("medium".into()))) {
                 return;
@@ -24,7 +24,7 @@ fn harness() -> Harness<'static, PhotocraftApp> {
         },
         app,
     );
-    PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
+    PhotoStoreApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
     h.run_steps(4);
     let v = &mut h.state_mut().ui.views[0];
     v.zoom = 1.0;
@@ -34,7 +34,7 @@ fn harness() -> Harness<'static, PhotocraftApp> {
     h
 }
 
-fn screen(h: &Harness<'static, PhotocraftApp>, x: f32, y: f32) -> Pos2 {
+fn screen(h: &Harness<'static, PhotoStoreApp>, x: f32, y: f32) -> Pos2 {
     let app = h.state();
     let v = &app.ui.views[0];
     let xf = ViewXform {
@@ -47,20 +47,20 @@ fn screen(h: &Harness<'static, PhotocraftApp>, x: f32, y: f32) -> Pos2 {
     xf.to_screen(x, y)
 }
 
-fn button(h: &mut Harness<'static, PhotocraftApp>, x: f32, y: f32, down: bool) {
+fn button(h: &mut Harness<'static, PhotoStoreApp>, x: f32, y: f32, down: bool) {
     let p = screen(h, x, y);
     h.event(egui::Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: down, modifiers: Modifiers::NONE });
     h.run_steps(1);
 }
 
-fn move_to(h: &mut Harness<'static, PhotocraftApp>, x: f32, y: f32) {
+fn move_to(h: &mut Harness<'static, PhotoStoreApp>, x: f32, y: f32) {
     let p = screen(h, x, y);
     h.event(egui::Event::PointerMoved(p));
     h.run_steps(1);
 }
 
 /// The points of the committed `paint.stroke`.
-fn committed_points(h: &Harness<'static, PhotocraftApp>) -> Vec<Vec<f64>> {
+fn committed_points(h: &Harness<'static, PhotoStoreApp>) -> Vec<Vec<f64>> {
     let (_, p) = h.state().session.journal.iter().rev().find(|(id, _)| id == "paint.stroke").cloned().expect("a committed stroke");
     p["points"].as_array().expect("points").iter().map(|v| v.as_array().expect("point").iter().filter_map(Value::as_f64).collect()).collect()
 }
@@ -104,7 +104,7 @@ fn stroke_points_carry_increasing_times_from_zero() {
 }
 
 /// Points of the drag in progress after holding the pointer still for a while.
-fn held_points(h: &mut Harness<'static, PhotocraftApp>) -> (usize, usize) {
+fn held_points(h: &mut Harness<'static, PhotoStoreApp>) -> (usize, usize) {
     move_to(h, 20.0, 50.0);
     button(h, 20.0, 50.0, true);
     move_to(h, 30.0, 50.0);

@@ -1,8 +1,8 @@
 //! `layer.layerStyle.*` commands: add/replace layer effects on a layer.
 
-use photocraft_color::{BlendMode, Color};
-use photocraft_doc::adjust::CurvePoint;
-use photocraft_doc::{
+use photostore_color::{BlendMode, Color};
+use photostore_doc::adjust::CurvePoint;
+use photostore_doc::{
     Bevel, BevelStyle, BevelTechnique, Contour, Effect, FxCommon, FxPaint, Glow, GlowSource, GlowTechnique, Gradient, GradientStyle, Satin, Shadow, StrokeFx,
     StrokePosition,
 };
@@ -428,7 +428,7 @@ pub fn overlay_effect(fx: &mut Effect, p: &Value) {
                 bv.gloss_contour = c;
             }
             if let Some(x) = b_of(p, "contour") {
-                bv.contour = x.then(|| photocraft_doc::BevelContour {
+                bv.contour = x.then(|| photostore_doc::BevelContour {
                     contour: builtin_contour(p.get("contourName").and_then(Value::as_str).unwrap_or("Linear")).unwrap_or(Contour::Linear),
                     range: (f(p, "contourRange", 50.0) / 100.0).clamp(0.01, 1.0),
                     anti_alias: false,
@@ -439,7 +439,7 @@ pub fn overlay_effect(fx: &mut Effect, p: &Value) {
                 c.contour = x;
             }
             if let Some(t) = p.get("texture").and_then(Value::as_str).filter(|t| !t.is_empty()) {
-                bv.texture = Some(photocraft_doc::BevelTexture {
+                bv.texture = Some(photostore_doc::BevelTexture {
                     name: t.to_string(),
                     id: t.to_string(),
                     scale: (f(p, "textureScale", 100.0) / 100.0).clamp(0.01, 10.0),
@@ -492,7 +492,7 @@ const MAX_EFFECTS: usize = 256;
 fn replace_effects(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "layer.layerStyle.replace";
     let id = match p.get("layer").and_then(Value::as_u64) {
-        Some(id) => photocraft_doc::LayerId(id),
+        Some(id) => photostore_doc::LayerId(id),
         None => s.active().and_then(|d| d.active_layer).ok_or(EngineError::Other("no active layer".into()))?,
     };
     let entries = p.get("effects").and_then(Value::as_array).ok_or_else(|| bad(CMD, "need `effects`: [{kind, params, fx?}]"))?;
@@ -546,7 +546,7 @@ fn set_effect(s: &mut Session, p: &Value, kind: &str) -> Result<Value> {
     let label = format!("Layer Style: {}", fx.label());
     let add = b(p, "add", false);
     let id = match p.get("layer").and_then(Value::as_u64) {
-        Some(id) => photocraft_doc::LayerId(id),
+        Some(id) => photostore_doc::LayerId(id),
         None => s.active().and_then(|d| d.active_layer).ok_or(EngineError::Other("no active layer".into()))?,
     };
     s.edit(&label, |doc, _| {
@@ -704,7 +704,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 s.edit("Clear Layer Style", |doc, _| {
                     for id in ids {
                         let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
-                        l.effects = photocraft_doc::Effects { enabled: true, ..Default::default() };
+                        l.effects = photostore_doc::Effects { enabled: true, ..Default::default() };
                     }
                     Ok(())
                 })?;
@@ -738,7 +738,7 @@ mod tests {
         s.execute("layer.layerStyle.bevelEmboss", json!({"style": "pillow", "technique": "chiselHard", "contour": true, "contourRange": 70, "texture": "Bubbles", "textureDepth": -200, "textureInvert": true})).unwrap();
         let fx = effects(&s);
         let Effect::BevelEmboss(b) = &fx[0] else { panic!("{fx:?}") };
-        assert_eq!((b.style, b.technique), (photocraft_doc::BevelStyle::PillowEmboss, BevelTechnique::ChiselHard));
+        assert_eq!((b.style, b.technique), (photostore_doc::BevelStyle::PillowEmboss, BevelTechnique::ChiselHard));
         assert!((b.contour.as_ref().unwrap().range - 0.7).abs() < 1e-6);
         let t = b.texture.as_ref().unwrap();
         assert_eq!((t.name.as_str(), t.depth, t.invert), ("Bubbles", -2.0, true));
@@ -843,7 +843,7 @@ mod tests {
         let mut s = session();
         // Two strokes: the first edits a snapshot (params overlay), the second is fresh.
         let first = Effect::Stroke(StrokeFx {
-            common: photocraft_doc::FxCommon::new(BlendMode::Normal, 1.0),
+            common: photostore_doc::FxCommon::new(BlendMode::Normal, 1.0),
             size: 7.0,
             position: StrokePosition::Outside,
             paint: FxPaint::Gradient(Gradient { stops: vec![(0.0, Color::rgb(0.0, 0.0, 1.0)), (1.0, Color::WHITE)], ..Gradient::default() }),
@@ -879,7 +879,7 @@ mod tests {
     fn replace_rejects_bad_entries_gracefully() {
         let mut s = session();
         let stroke = Effect::Stroke(StrokeFx {
-            common: photocraft_doc::FxCommon::new(BlendMode::Normal, 1.0),
+            common: photostore_doc::FxCommon::new(BlendMode::Normal, 1.0),
             size: 3.0,
             position: StrokePosition::Outside,
             paint: FxPaint::Color(Color::BLACK),
@@ -918,7 +918,7 @@ mod tests {
         // An imported contour with an unknown name survives the same round trip.
         let imported = Contour::Custom {
             name: "Photoshop contour".into(),
-            points: vec![photocraft_doc::adjust::CurvePoint { input: 0.0, output: 1.0 }, photocraft_doc::adjust::CurvePoint { input: 1.0, output: 0.0 }],
+            points: vec![photostore_doc::adjust::CurvePoint { input: 0.0, output: 1.0 }, photostore_doc::adjust::CurvePoint { input: 1.0, output: 0.0 }],
         };
         let mut carried = before[0].clone();
         if let Effect::DropShadow(c) = &mut carried {

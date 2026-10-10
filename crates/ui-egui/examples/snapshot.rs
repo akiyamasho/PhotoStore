@@ -1,7 +1,7 @@
-//! Render the full Photocraft UI offscreen (no window, no focus stealing) and save a PNG.
+//! Render the full PhotoStore UI offscreen (no window, no focus stealing) and save a PNG.
 //!
 //! ```sh
-//! cargo run --release -p photocraft-ui-egui --example snapshot -- \
+//! cargo run --release -p photostore-ui-egui --example snapshot -- \
 //!     --out ui.png --size 1440x900 --scale 2 --open photo.jpg \
 //!     --script '[["ui.set", {"tool": "type"}], ["ui.menu.invoke", {"id": "image.imageSize"}]]'
 //! ```
@@ -21,8 +21,8 @@
 //! and document-tab menus that are outside the document-coordinate control pointer.
 //! `--click-at X,Y` opens a screen-space menu (for example the top Select menu) after the script.
 
-use photocraft_ui_egui::control::{ControlRequest, Outcome, handle};
-use photocraft_ui_egui::{PhotocraftApp, Services};
+use photostore_ui_egui::control::{ControlRequest, Outcome, handle};
+use photostore_ui_egui::{PhotoStoreApp, Services};
 use serde_json::Value;
 
 fn arg(args: &[String], name: &str) -> Option<String> {
@@ -42,10 +42,10 @@ fn main() {
 
     let services = Services {
         import: Some(Box::new(|name: &str, bytes: &[u8], depth: usize| {
-            photocraft_io::import_with_svg_group_depth(name, bytes, depth).map(|r| (r.document, r.warnings)).map_err(|e| e.to_string())
+            photostore_io::import_with_svg_group_depth(name, bytes, depth).map(|r| (r.document, r.warnings)).map_err(|e| e.to_string())
         })),
-        export: Some(Box::new(|doc: &photocraft_doc::Document, path: &str, settings: &photocraft_ui_egui::ExportSettings| {
-            let mut opts = photocraft_io::ExportOptions::default();
+        export: Some(Box::new(|doc: &photostore_doc::Document, path: &str, settings: &photostore_ui_egui::ExportSettings| {
+            let mut opts = photostore_io::ExportOptions::default();
             if let Some(q) = settings.jpeg_quality {
                 opts.encode.jpeg_quality = q;
             }
@@ -53,9 +53,9 @@ fn main() {
             if let Some(q) = settings.webp_quality {
                 opts.encode.webp_quality = q;
             }
-            photocraft_io::export(doc, path, &opts).map(|r| (r.bytes, r.warnings)).map_err(|e| e.to_string())
+            photostore_io::export(doc, path, &opts).map(|r| (r.bytes, r.warnings)).map_err(|e| e.to_string())
         })),
-        write: Some(Box::new(|path: &str, bytes: &[u8]| photocraft_format::atomic_write(std::path::Path::new(path), bytes).map_err(|e| e.to_string()))),
+        write: Some(Box::new(|path: &str, bytes: &[u8]| photostore_format::atomic_write(std::path::Path::new(path), bytes).map_err(|e| e.to_string()))),
         ..Default::default()
     };
     let open = arg(&args, "--open");
@@ -67,11 +67,11 @@ fn main() {
     let settle_ms: u64 = arg(&args, "--settle-ms").and_then(|s| s.parse().ok()).unwrap_or(0);
     let mut harness =
         egui_kittest::Harness::builder().with_size(egui::vec2(w, h)).with_pixels_per_point(scale).with_max_steps(64).wgpu().build_eframe(move |cc| {
-            PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
+            PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
             let mut services = services;
             services.is_wayland = wayland_notice;
-            services.xwayland_command = wayland_notice.then(|| "WAYLAND_DISPLAY= photocraft".into());
-            let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), services);
+            services.xwayland_command = wayland_notice.then(|| "WAYLAND_DISPLAY= photostore".into());
+            let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), services);
             app.background_jobs = background_jobs;
             app.custom_titlebar = custom_titlebar;
             // `--safe-gpu`: the CPU canvas, as the desktop app's `--safe-gpu` launch.
@@ -163,7 +163,7 @@ fn main() {
     }
     println!(
         "language: {}",
-        serde_json::json!({"preference": harness.state().session.prefs().interface.language, "resolved": photocraft_ui_egui::i18n::current().code()})
+        serde_json::json!({"preference": harness.state().session.prefs().interface.language, "resolved": photostore_ui_egui::i18n::current().code()})
     );
     let img = harness.render().expect("render");
     img.save(&out).expect("save png");

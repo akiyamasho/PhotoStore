@@ -2,19 +2,19 @@
 
 use std::sync::Arc;
 
-use photocraft_color::{BlendMode, ColorMode, SampleType};
-use photocraft_doc::{Document, Layer, LayerContent, SmartContentsId, SmartFilter, SmartObject, SmartSource};
-use photocraft_geom::{Affine, Size};
-use photocraft_io::{ExportOptions, export, import, linked, smart_map};
-use photocraft_psd::{PsdFile, TaggedBlock};
-use photocraft_raster::Surface;
+use photostore_color::{BlendMode, ColorMode, SampleType};
+use photostore_doc::{Document, Layer, LayerContent, SmartContentsId, SmartFilter, SmartObject, SmartSource};
+use photostore_geom::{Affine, Size};
+use photostore_io::{ExportOptions, export, import, linked, smart_map};
+use photostore_psd::{PsdFile, TaggedBlock};
+use photostore_raster::Surface;
 
 fn fixture() -> Document {
     let mut source = Document::new("contents", Size::new(2, 2), ColorMode::Rgb, SampleType::U8);
     let mut pixels = Surface::new(source.pixel_format());
     pixels.fill_rect(source.bounds(), &[1.0, 0.0, 0.0, 1.0]);
     source.layers.push(Layer::new("red", LayerContent::Raster(pixels.clone())));
-    let bytes = photocraft_format::save_to_bytes(&source, &Default::default()).unwrap();
+    let bytes = photostore_format::save_to_bytes(&source, &Default::default()).unwrap();
     let mut doc = Document::new("instances", Size::new(12, 4), ColorMode::Rgb, SampleType::U8);
     let smart = SmartObject::new(SmartSource::Embedded { file_name: "contents.pcraft".into(), bytes: Arc::new(bytes) }, Affine::IDENTITY, Some(pixels));
     doc.layers.push(Layer::new("original", LayerContent::Smart(smart)));
@@ -133,7 +133,7 @@ fn duplicated_imported_layer_keeps_source_but_gets_its_own_placement() {
         assert_eq!(original.placed, colliding);
         assert_ne!(original.placed, duplicate.placed);
         let filter_cache = after.global_blocks.iter().find(|b| &b.key == b"FEid").unwrap();
-        let filter_cache = photocraft_psd::filter_effects::FilterEffects::parse(&filter_cache.data).unwrap();
+        let filter_cache = photostore_psd::filter_effects::FilterEffects::parse(&filter_cache.data).unwrap();
         assert_eq!(filter_cache.items.len(), 1);
         assert_eq!(filter_cache.items[0].id, duplicate.placed);
         assert_eq!(after.layers().iter().find(|l| l.name() == "original").unwrap().block(b"SoLd").unwrap().data, original_raw);
@@ -162,7 +162,7 @@ fn missing_source_identifiers_do_not_join_imported_contents() {
     record.blocks.retain(|b| !matches!(&b.key, b"SoLd" | b"SoLE" | b"PlLd"));
     record.blocks.push(TaggedBlock::new(*b"SoLd", data));
     *file.layers_mut() = vec![record.clone(), record];
-    let (doc, _) = photocraft_io::psd_to_document(&file);
+    let (doc, _) = photostore_io::psd_to_document(&file);
     let LayerContent::Smart(a) = &doc.layers[0].content else { panic!("first smart object missing") };
     let LayerContent::Smart(b) = &doc.layers[1].content else { panic!("second smart object missing") };
     assert_ne!(a.contents_id, b.contents_id);
@@ -179,7 +179,7 @@ fn independent_unavailable_link_retains_separate_preserved_record() {
     // An opaque external item: the source UUID is known, but no embedded bytes can be loaded.
     block.data[8..12].copy_from_slice(b"liFE");
     let original_record = block.data.clone();
-    let (mut doc, _) = photocraft_io::psd_to_document(&file);
+    let (mut doc, _) = photostore_io::psd_to_document(&file);
     let mut independent = doc.layers[0].duplicate();
     independent.name = "independent".into();
     let sm = smart_mut(&mut independent);

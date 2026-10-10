@@ -5,8 +5,8 @@
 //! (solidity 0) multiply like overprinted process inks, opaque ones cover what is below, which is
 //! how Photoshop previews spot channels.
 
-use photocraft_doc::Document;
-use photocraft_geom::Rect;
+use photostore_doc::Document;
+use photostore_geom::Rect;
 
 use crate::Buffer;
 
@@ -39,14 +39,14 @@ pub fn inks(doc: &Document, rect: Rect) -> Buffer {
 
 /// The starting backdrop of a document render: the inks for Multichannel, else transparent.
 pub(crate) fn backdrop(doc: &Document, rect: Rect) -> Buffer {
-    if doc.mode == photocraft_color::ColorMode::Multichannel { inks(doc, rect) } else { Buffer::transparent(rect) }
+    if doc.mode == photostore_color::ColorMode::Multichannel { inks(doc, rect) } else { Buffer::transparent(rect) }
 }
 
 #[cfg(test)]
 mod tests {
-    use photocraft_color::{Color, ColorMode, PixelFormat, SampleType};
-    use photocraft_doc::{AlphaChannel, Document, Size};
-    use photocraft_raster::Surface;
+    use photostore_color::{Color, ColorMode, PixelFormat, SampleType};
+    use photostore_doc::{AlphaChannel, Document, Size};
+    use photostore_raster::Surface;
 
     use super::*;
 

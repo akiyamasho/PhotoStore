@@ -12,8 +12,8 @@
 
 use std::collections::HashMap;
 
-use photocraft_doc::{Knot, Path, PathOp, Subpath};
-use photocraft_geom::{Point, Rect};
+use photostore_doc::{Knot, Path, PathOp, Subpath};
+use photostore_geom::{Point, Rect};
 
 type P = (f64, f64);
 

@@ -10,7 +10,7 @@
 use egui::{Key, KeyboardShortcut};
 use serde_json::json;
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::shortcuts::{key_matches, parse};
 
 /// What a dispatched shortcut did (kept for tests and `ui.inspect`-style debugging).
@@ -48,7 +48,7 @@ pub const SECONDARY: &[(&str, &str)] = &[("edit.fill", "Shift+Backspace")];
 /// then Edit › Keyboard Shortcuts assignments to any other menu item. D and X
 /// (`tools.defaultColors` / `tools.swapColors`) and the fill keys are commands like any other, so
 /// their overrides apply. Held temporary tools (Space…) are not here: see [`crate::hold_keys`].
-pub fn bindings(app: &PhotocraftApp) -> Vec<(String, KeyboardShortcut)> {
+pub fn bindings(app: &PhotoStoreApp) -> Vec<(String, KeyboardShortcut)> {
     let prefs = app.session.prefs();
     let action_ids: Vec<String> = app.session.actions.list.iter().map(|a| crate::actions::shortcut_id(&a.name)).collect();
     let actions = action_ids.iter().map(|id| (id.as_str(), prefs.shortcut(id, None)));
@@ -62,7 +62,7 @@ pub fn bindings(app: &PhotocraftApp) -> Vec<(String, KeyboardShortcut)> {
             })
     };
     let ui = crate::menus::UI_COMMANDS.iter().map(|(id, _, _, sc)| (*id, if aliased(id, *sc) { None } else { prefs.shortcut(id, *sc) }));
-    let engine = photocraft_engine::command_specs().iter().map(|c| (c.id, prefs.shortcut(c.id, c.shortcut)));
+    let engine = photostore_engine::command_specs().iter().map(|c| (c.id, prefs.shortcut(c.id, c.shortcut)));
     let tools = crate::state::Tool::ALL.iter().map(|t| {
         let id = crate::shortcuts::tool_id(*t);
         (id, prefs.shortcut(id, None))
@@ -70,7 +70,7 @@ pub fn bindings(app: &PhotocraftApp) -> Vec<(String, KeyboardShortcut)> {
     let own: std::collections::HashSet<&str> = crate::menus::UI_COMMANDS
         .iter()
         .map(|c| c.0)
-        .chain(photocraft_engine::command_specs().iter().filter(|c| c.shortcut.is_some() || prefs.shortcuts.contains_key(c.id)).map(|c| c.id))
+        .chain(photostore_engine::command_specs().iter().filter(|c| c.shortcut.is_some() || prefs.shortcuts.contains_key(c.id)).map(|c| c.id))
         .collect();
     let catalog = crate::menu_catalog::CATALOG
         .iter()
@@ -82,7 +82,7 @@ pub fn bindings(app: &PhotocraftApp) -> Vec<(String, KeyboardShortcut)> {
         .filter(|(id, sc)| {
             !sc.is_empty()
                 && !id.starts_with(crate::actions::SHORTCUT_PREFIX)
-                && photocraft_engine::commands::find(id).is_none()
+                && photostore_engine::commands::find(id).is_none()
                 && !crate::menus::UI_COMMANDS.iter().any(|c| c.0 == id.as_str())
                 && !crate::hold_keys::is_temporary(id)
         })
@@ -197,7 +197,7 @@ impl Focus {
 
 /// What decides which keys [`crate::shortcuts::handle`] gives the shortcuts: an open menu, a
 /// dialog, the unsaved-changes prompt, a warp or the Filter Gallery, inline type.
-fn key_owner(app: &PhotocraftApp, ctx: &egui::Context) -> (bool, usize, bool, bool, bool) {
+fn key_owner(app: &PhotoStoreApp, ctx: &egui::Context) -> (bool, usize, bool, bool, bool) {
     let distort = app.distort.active() || app.distort.gallery.is_some();
     (crate::menu_nav::is_open(ctx), app.ui.dialogs.len(), app.discard.is_some(), distort, app.ui.text_edit.is_some())
 }
@@ -208,7 +208,7 @@ fn key_owner(app: &PhotocraftApp, ctx: &egui::Context) -> (bool, usize, bool, bo
 /// someone else (opens a dialog, a prompt, a menu or inline type), leaving the later presses to
 /// it. While typing (inline type), clipboard and select-all shortcuts belong to the text.
 /// Returns true when a shortcut was dispatched.
-pub fn dispatch_pressed(app: &mut PhotocraftApp, ctx: &egui::Context, focus: Focus, editing: bool) -> bool {
+pub fn dispatch_pressed(app: &mut PhotoStoreApp, ctx: &egui::Context, focus: Focus, editing: bool) -> bool {
     // Building the table walks the registry: only do it when a key went down.
     if !ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))) {
         return false;
@@ -250,12 +250,12 @@ pub fn dispatch_pressed(app: &mut PhotocraftApp, ctx: &egui::Context, focus: Foc
 /// kind, as in Photoshop (#1077): Edit › Clear only clears pixel layers, so on an adjustment, fill,
 /// type or shape layer the key did nothing. A selection, a targeted layer mask, a single channel
 /// or Quick Mask keeps Clear.
-fn delete_key_command(app: &PhotocraftApp, id: String) -> String {
+fn delete_key_command(app: &PhotoStoreApp, id: String) -> String {
     if id != "edit.clear" {
         return id;
     }
     let Some(st) = app.session.active() else { return id };
-    let composite = st.channel_view.target == photocraft_engine::channel_cmds::ChannelTarget::Composite && st.doc.quick_mask.is_none();
+    let composite = st.channel_view.target == photostore_engine::channel_cmds::ChannelTarget::Composite && st.doc.quick_mask.is_none();
     let mask = app.ui.mask_target && st.active_layer.and_then(|l| st.doc.layer(l)).is_some_and(|l| l.mask.is_some());
     if st.doc.selection.is_some() || !composite || mask {
         return id;
@@ -264,8 +264,8 @@ fn delete_key_command(app: &PhotocraftApp, id: String) -> String {
 }
 
 /// Why `id` can't run now (the engine's reason when it has one).
-pub fn disabled_reason(app: &PhotocraftApp, id: &str) -> String {
-    photocraft_engine::commands::find(id).and_then(|_| app.session.disabled_reason_with(id, &app.with_mask_target(id, serde_json::Value::Null))).unwrap_or_else(
+pub fn disabled_reason(app: &PhotoStoreApp, id: &str) -> String {
+    photostore_engine::commands::find(id).and_then(|_| app.session.disabled_reason_with(id, &app.with_mask_target(id, serde_json::Value::Null))).unwrap_or_else(
         || match id {
             "tools.decreaseBrushHardness" | "tools.increaseBrushHardness" => "the current tool has no brush tip".into(),
             _ if app.session.active().is_none() => "no document open".into(),
@@ -280,14 +280,14 @@ fn label(id: &str) -> String {
         .find(|c| c.3 == id)
         .map(|c| c.1)
         .or_else(|| crate::menus::UI_COMMANDS.iter().find(|c| c.0 == id).map(|c| c.1))
-        .or_else(|| photocraft_engine::commands::find(id).map(|c| c.label))
+        .or_else(|| photostore_engine::commands::find(id).map(|c| c.label))
         .unwrap_or(id)
         .trim_end_matches('…')
         .to_string()
 }
 
 /// Run a shortcut's command like its menu item (dialogs included), or say why it can't run.
-pub fn dispatch(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str) {
+pub fn dispatch(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str) {
     if matches!(id, "tools.previousBrush" | "tools.nextBrush" | "tools.firstBrush" | "tools.lastBrush") {
         let names: Vec<String> = app.session.tools.presets.iter().map(|p| p.name.clone()).collect();
         if !names.is_empty() {

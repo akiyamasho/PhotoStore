@@ -1,6 +1,6 @@
 # Security overview
 
-PhotoCraft processes complex attacker-controlled files and exposes automation that can act with the user's filesystem permissions. Security is therefore part of parser, engine, I/O, automation, release, and dependency design.
+PhotoStore processes complex attacker-controlled files and exposes automation that can act with the user's filesystem permissions. Security is therefore part of parser, engine, I/O, automation, release, and dependency design.
 
 ## Current posture
 

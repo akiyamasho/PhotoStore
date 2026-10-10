@@ -1,5 +1,5 @@
 use super::*;
-use photocraft_doc::ColorMode;
+use photostore_doc::ColorMode;
 
 fn session(w: u32, h: u32, depth: u32) -> Session {
     let mut s = Session::new();

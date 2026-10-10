@@ -1,7 +1,7 @@
 use super::*;
 
 fn tmp(name: &str) -> String {
-    let d = std::env::temp_dir().join(format!("photocraft-file-cmds-{}-{name}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("photostore-file-cmds-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d.to_string_lossy().into_owned()
@@ -27,7 +27,7 @@ fn png(dir: &str, name: &str, w: u32, h: u32, color: &str) -> String {
 }
 
 fn composite(s: &Session, x: i32, y: i32) -> [f32; 4] {
-    let b = photocraft_compose::render(doc(s), Rect::new(x, y, x + 1, y + 1));
+    let b = photostore_compose::render(doc(s), Rect::new(x, y, x + 1, y + 1));
     b.px[0]
 }
 
@@ -50,7 +50,7 @@ fn close_all_and_close_others() {
 
 #[test]
 fn camera_raw_opens_as_16_bit_with_notes() {
-    use photocraft_raw::testgen::{DngSpec, mosaic, scene};
+    use photostore_raw::testgen::{DngSpec, mosaic, scene};
     let (w, h) = (24, 16);
     let mut spec = DngSpec::cfa(w, h, mosaic(&scene(w, h), w, [0, 1, 1, 2], 0, 65535));
     spec.as_shot_neutral = Some([0.5, 1.0, 0.7]);
@@ -58,7 +58,7 @@ fn camera_raw_opens_as_16_bit_with_notes() {
     let r = open_bytes_as(&mut s, "IMG_0001.dng", &spec.build(), None, None).unwrap();
     assert!(r["warnings"].as_array().is_some_and(|w| w.iter().any(|m| m.as_str().is_some_and(|m| m.contains("DNG")))), "{r}");
     assert_eq!((doc(&s).size.width, doc(&s).size.height), (24, 16));
-    assert_eq!(doc(&s).depth, photocraft_color::SampleType::U16);
+    assert_eq!(doc(&s).depth, photostore_color::SampleType::U16);
     // Damaged raw data is an error, not a crash.
     let mut bad = spec.build();
     bad.truncate(bad.len() / 2);
@@ -103,13 +103,13 @@ fn save_a_copy_keeps_path_and_dirty_state() {
     assert_eq!(s.active().unwrap().path, None);
     assert_eq!(s.active().unwrap().revision, rev);
     assert!(s.active().unwrap().is_dirty());
-    let back = photocraft_io::import("copy.psd", &std::fs::read(&out).unwrap()).unwrap().document;
+    let back = photostore_io::import("copy.psd", &std::fs::read(&out).unwrap()).unwrap().document;
     assert_eq!(back.layers.len(), 2);
-    assert_eq!(back.depth, photocraft_color::SampleType::U16);
+    assert_eq!(back.depth, photostore_color::SampleType::U16);
     // Flattened copy.
     let flat = join(&dir, "flat.psd");
     s.execute("file.saveACopy", json!({"path": flat, "layers": false})).unwrap();
-    assert_eq!(photocraft_io::import("flat.psd", &std::fs::read(&flat).unwrap()).unwrap().document.layers.len(), 1);
+    assert_eq!(photostore_io::import("flat.psd", &std::fs::read(&flat).unwrap()).unwrap().document.layers.len(), 1);
     assert!(s.execute("file.saveACopy", json!({})).is_err());
 }
 
@@ -162,8 +162,8 @@ fn place_embedded_centres_fits_and_embeds() {
 /// is 20×40, red on top.
 fn rotated_jpeg(dir: &str) -> String {
     let px: Vec<u8> = (0..20).flat_map(|_| (0..40).flat_map(|x| if x < 20 { [230, 20, 20] } else { [20, 20, 230] })).collect();
-    let img = photocraft_codecs::Image::from_u8(40, 20, photocraft_codecs::ChannelLayout::Rgb, px).unwrap();
-    let jpeg = photocraft_codecs::encode(&img, photocraft_codecs::Format::Jpeg, &Default::default()).unwrap();
+    let img = photostore_codecs::Image::from_u8(40, 20, photostore_codecs::ChannelLayout::Rgb, px).unwrap();
+    let jpeg = photostore_codecs::encode(&img, photostore_codecs::Format::Jpeg, &Default::default()).unwrap();
     let mut seg = b"Exif\0\0II*\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0\x06\0\0\0\0\0\0\0".to_vec();
     let mut file = vec![0xFF, 0xD8, 0xFF, 0xE1];
     file.extend_from_slice(&((seg.len() + 2) as u16).to_be_bytes());
@@ -209,7 +209,7 @@ fn file_info_round_trips_through_xmp_and_psd() {
     assert_eq!(read_file_info(Some(&xmp))["author"], "V. van Gogh");
     // PSD round trip.
     let (bytes, _) = encode(doc(&s), "x.psd", None).unwrap();
-    let back = photocraft_io::import("x.psd", &bytes).unwrap().document;
+    let back = photostore_io::import("x.psd", &bytes).unwrap().document;
     let info = read_file_info(back.metadata.xmp.as_deref());
     assert_eq!(info["title"], "The Starry Night");
     assert_eq!(info["keywords"], json!(["stars", "night"]));
@@ -282,7 +282,7 @@ fn file_info_translations_survive_undo_and_psd_round_trip() {
         assert!(s.redo());
         assert_eq!(doc(&s).metadata.xmp.as_deref(), Some(edited.as_str()));
         let (bytes, _) = encode(doc(&s), "x.psd", None).unwrap();
-        let back = photocraft_io::import("x.psd", &bytes).unwrap().document;
+        let back = photostore_io::import("x.psd", &bytes).unwrap().document;
         assert_translations_kept(back.metadata.xmp.as_deref().unwrap());
         assert_eq!(read_file_info(back.metadata.xmp.as_deref())["keywords"], json!(["sunrise"]));
     }
@@ -333,9 +333,9 @@ fn flatten_all_layer_effects_and_masks() {
         s.edit("fx", |doc, _| {
             let l = doc.layer_mut(id).unwrap();
             l.effects.enabled = true;
-            l.effects.items.push(photocraft_doc::Effect::ColorOverlay {
-                common: photocraft_doc::effects::FxCommon::new(photocraft_color::BlendMode::Normal, 1.0),
-                color: photocraft_color::Color::rgb(0.0, 1.0, 0.0),
+            l.effects.items.push(photostore_doc::Effect::ColorOverlay {
+                common: photostore_doc::effects::FxCommon::new(photostore_color::BlendMode::Normal, 1.0),
+                color: photostore_color::Color::rgb(0.0, 1.0, 0.0),
             });
             Ok(())
         })
@@ -399,15 +399,15 @@ fn load_files_into_stack_and_image_processor_and_batch() {
     let r = s.execute("file.scripts.imageProcessor", json!({"input": input, "output": out, "format": "jpg", "width": 20, "height": 20})).unwrap();
     let files = r["files"].as_array().unwrap();
     assert_eq!(files.len(), 2, "{r}");
-    let back = photocraft_io::import("a.jpg", &std::fs::read(files[0].as_str().unwrap()).unwrap()).unwrap().document;
+    let back = photostore_io::import("a.jpg", &std::fs::read(files[0].as_str().unwrap()).unwrap()).unwrap().document;
     assert_eq!((back.size.width, back.size.height), (20, 10));
     // Batch: run an action (invert) over the folder, save PNGs.
     let out = join(&dir, "png");
     let r = s.execute("file.automate.batch", json!({"steps": [["image.adjustments.invert", {}]], "input": input, "output": out, "format": "png"})).unwrap();
     assert_eq!(r["files"].as_array().unwrap().len(), 2, "{r}");
     assert!(r["errors"].as_array().unwrap().is_empty());
-    let inv = photocraft_io::import("a.png", &std::fs::read(join(&out, "a.png")).unwrap()).unwrap().document;
-    let px = photocraft_compose::render(&inv, Rect::new(1, 1, 2, 2)).px[0];
+    let inv = photostore_io::import("a.png", &std::fs::read(join(&out, "a.png")).unwrap()).unwrap().document;
+    let px = photostore_compose::render(&inv, Rect::new(1, 1, 2, 2)).px[0];
     assert!(px[0] < 0.01 && px[1] > 0.99 && px[2] > 0.99, "red inverted to cyan: {px:?}");
     assert!(s.execute("file.automate.batch", json!({"steps": [["no.such.command", {}]], "input": input, "output": out})).is_err());
 }
@@ -440,14 +440,14 @@ fn cube_export_uses_only_selected_adjustments_in_document_order() {
     let first = s.execute("layer.newAdjustmentLayer.invert", json!({})).unwrap()["layer"].as_u64().unwrap();
     let second = s.execute("layer.newAdjustmentLayer.invert", json!({})).unwrap()["layer"].as_u64().unwrap();
     let both = s.execute("file.export.colorLookupTables", json!({"size": 3})).unwrap();
-    let all = photocraft_cms::lutfile::parse_cube(both["cube"].as_str().unwrap()).unwrap();
+    let all = photostore_cms::lutfile::parse_cube(both["cube"].as_str().unwrap()).unwrap();
     assert_eq!(both["layerCount"], 2);
     assert!(all.data[0] < 0.001, "two Invert adjustments produce identity");
 
     // Selection comes from the Layers panel rather than the active layer alone.
     s.execute("layer.select", json!({"layer": first})).unwrap();
     let selected = s.execute("file.export.colorLookupTables", json!({"size": 3, "scope": "selected"})).unwrap();
-    let one = photocraft_cms::lutfile::parse_cube(selected["cube"].as_str().unwrap()).unwrap();
+    let one = photostore_cms::lutfile::parse_cube(selected["cube"].as_str().unwrap()).unwrap();
     assert_eq!(selected["layerCount"], 1);
     assert!(one.data[0] > 0.999, "one invert maps black to white");
     assert_eq!(all.size, one.size);
@@ -506,7 +506,7 @@ fn exported_selected_cube_round_trips_through_lookup_importer() {
     assert_eq!(r["size"], 17);
     assert_eq!(r["layerCount"], 1);
     let text = std::fs::read_to_string(&path).unwrap();
-    let parsed = photocraft_cms::lutfile::parse_cube(&text).unwrap();
+    let parsed = photostore_cms::lutfile::parse_cube(&text).unwrap();
     assert_eq!(parsed.size, 17);
     assert_eq!(parsed.data.len(), 17 * 17 * 17 * 3);
     assert!(parsed.data[..3].iter().all(|v| *v > 0.999));
@@ -608,12 +608,12 @@ fn batch_reports_inputs_that_share_an_output_name() {
     std::fs::create_dir_all(&other).unwrap();
     png(&other, "a.png", 8, 8, "#ffffff");
     let droplet = join(&dir, "d.pcdroplet");
-    std::fs::write(&droplet, json!({"photocraftDroplet": 1, "name": "d", "action": {"steps": []}, "options": {"format": "png"}}).to_string()).unwrap();
+    std::fs::write(&droplet, json!({"photostoreDroplet": 1, "name": "d", "action": {"steps": []}, "options": {"format": "png"}}).to_string()).unwrap();
     let out = join(&dir, "droplet");
     let r = s.execute("file.automate.runDroplet", json!({"droplet": droplet, "input": [join(&input, "a.png"), other], "output": out})).unwrap();
     assert_eq!((r["files"].as_array().unwrap().len(), r["errors"].as_array().unwrap().len()), (1, 1), "{r}");
-    let kept = photocraft_io::import("a.png", &std::fs::read(join(&out, "a.png")).unwrap()).unwrap().document;
-    let px = photocraft_compose::render(&kept, Rect::new(1, 1, 2, 2)).px[0];
+    let kept = photostore_io::import("a.png", &std::fs::read(join(&out, "a.png")).unwrap()).unwrap().document;
+    let px = photostore_compose::render(&kept, Rect::new(1, 1, 2, 2)).px[0];
     assert!(px[0] > 0.99 && px[1] < 0.01, "the first input's result is kept: {px:?}");
 }
 

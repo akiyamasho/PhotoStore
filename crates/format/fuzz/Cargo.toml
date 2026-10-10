@@ -1,5 +1,5 @@
 [package]
-name = "photocraft-format-fuzz"
+name = "photostore-format-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2024"
@@ -12,7 +12,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-photocraft-format = { path = ".." }
+photostore-format = { path = ".." }
 
 [[bin]]
 name = "load"

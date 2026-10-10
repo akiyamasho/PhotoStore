@@ -1,11 +1,11 @@
 //! Tagged-block helpers: the preserved block-list encoding, fills, text,
 //! smart objects, locks and label colors.
 
-use photocraft_color::{Color, ColorMode};
-use photocraft_doc::{AdvancedBlending, BlendIf, BlendRange, Fill, GradientStyle, Knockout, LabelColor, Locks};
-use photocraft_geom::Affine;
-use photocraft_psd::descriptor::{Descriptor, Id, UnicodeString, Value, VersionedDescriptor};
-use photocraft_psd::layer::BlendingRanges;
+use photostore_color::{Color, ColorMode};
+use photostore_doc::{AdvancedBlending, BlendIf, BlendRange, Fill, GradientStyle, Knockout, LabelColor, Locks};
+use photostore_geom::Affine;
+use photostore_psd::descriptor::{Descriptor, Id, UnicodeString, Value, VersionedDescriptor};
+use photostore_psd::layer::BlendingRanges;
 
 /// `brst` (channel blending restrictions): a list of big-endian u32 channel indices left out of
 /// blending → a bit mask (bit `i` = channel `i`; indices above 31 are ignored).
@@ -101,7 +101,7 @@ pub fn ranges_from_blend_if(b: &BlendIf, channels: usize) -> BlendingRanges {
 
 /// `lspf` bits (Adobe spec: bit 0 transparency, 1 composite, 2 position).
 /// Artboard (bit 3, `0x08`, as reference files write it) and "all" (bit 31) are undocumented.
-/// Older PhotoCraft builds wrote the artboard lock at bit 4 (`0x10`); that value is still
+/// Older PhotoStore builds wrote the artboard lock at bit 4 (`0x10`); that value is still
 /// accepted on read so those files keep their lock, and is rewritten at `0x08`.
 pub fn locks_from_lspf(v: u32) -> Locks {
     Locks { transparency: v & 1 != 0, pixels: v & 2 != 0, position: v & 4 != 0, artboard: v & 0x08 != 0 || v & 0x10 != 0, all: v & 0x8000_0000 != 0 }
@@ -273,7 +273,7 @@ pub(crate) fn gradient_stops_editable(grad: &Descriptor, method: Option<&[u8]>) 
     let mut raw = gradient_stops_raw(grad);
     let m = crate::gradient_bake::Method::from_code(method);
     // Lab stops (Lab documents) interpolate in L*a*b*, which only baking reproduces.
-    let lab = raw.stops.iter().all(|(_, c)| c.mode == photocraft_color::ColorMode::Lab);
+    let lab = raw.stops.iter().all(|(_, c)| c.mode == photostore_color::ColorMode::Lab);
     if raw.stops.len() >= 2 && (raw.smooth > 0.0 || m != crate::gradient_bake::Method::Classic || lab) {
         raw.stops = crate::gradient_bake::bake(std::mem::take(&mut raw.stops), &raw.mids, raw.smooth, m);
         raw.mids.clear();
@@ -521,8 +521,8 @@ pub(crate) fn with_pattern_placement(mut d: Descriptor, angle: f32, link: bool, 
 /// The warp of a placed layer (`SoLd`/`SoLE` `warp` descriptor): style, bend, distortions,
 /// axis, bounds and, for `warpCustom`, the 4 × 4 `customEnvelopeWarp` mesh. Read-only: the raw
 /// block is what gets written back. `None` when absent or `warpNone` with no mesh.
-pub fn parse_placed_warp(key: &[u8; 4], data: &[u8]) -> Option<photocraft_geom::warp::Warp> {
-    use photocraft_geom::warp::{BezierMesh, Warp, WarpStyle};
+pub fn parse_placed_warp(key: &[u8; 4], data: &[u8]) -> Option<photostore_geom::warp::Warp> {
+    use photostore_geom::warp::{BezierMesh, Warp, WarpStyle};
     if key != b"SoLd" && key != b"SoLE" {
         return None;
     }
@@ -617,7 +617,7 @@ pub fn parse_smart_perspective(key: &[u8; 4], data: &[u8]) -> Option<[f64; 9]> {
     if (0..2).all(|i| (q[0][i] + q[2][i] - q[1][i] - q[3][i]).abs() <= tol) || w <= 0.0 || h <= 0.0 {
         return None;
     }
-    photocraft_algo::transform::Homography::rect_to_quad([0.0, 0.0, w, h], q).map(|m| m.0)
+    photostore_algo::transform::Homography::rect_to_quad([0.0, 0.0, w, h], q).map(|m| m.0)
 }
 
 /// `masterFXSwitch` from an `lfx2` block (defaults to `true`).
@@ -638,8 +638,8 @@ mod tests {
     /// alpha) and survive a write; the ramp's alpha follows them.
     #[test]
     fn gradient_fill_opacity_stops_become_alpha() {
-        use photocraft_color::Color;
-        use photocraft_doc::{Fill, GradientStyle};
+        use photostore_color::Color;
+        use photostore_doc::{Fill, GradientStyle};
         let red = Color::rgba(1.0, 0.0, 0.0, 1.0);
         let f = Fill::gradient(vec![(0.0, red), (1.0, Color { alpha: 0.0, ..red })], 90.0, 1.0, GradientStyle::Linear, false);
         let (k, data) = super::write_fill(&f);
@@ -647,7 +647,7 @@ mod tests {
         let Fill::Gradient { stops, opacity_stops, .. } = &back else { panic!("gradient") };
         assert_eq!(opacity_stops, &vec![(0.0, 1.0), (1.0, 0.0)]);
         assert!(stops.iter().all(|s| s.1.c[0] == 1.0 && s.1.c[1] == 0.0));
-        let ramp = photocraft_compose::gradient_fill::Ramp::new(&back).unwrap();
+        let ramp = photostore_compose::gradient_fill::Ramp::new(&back).unwrap();
         assert_eq!(ramp.sample(0.0)[3], 1.0);
         assert!(ramp.sample(1.0)[3] < 0.01);
         // Opaque gradients come back without opacity stops.
@@ -658,8 +658,8 @@ mod tests {
 
     #[test]
     fn lab_descriptor_colours_round_trip() {
-        use photocraft_color::ColorMode;
-        use photocraft_psd::descriptor::{Descriptor, Value};
+        use photostore_color::ColorMode;
+        use photostore_psd::descriptor::{Descriptor, Value};
         let d = Descriptor::new("LbCl").with("Lmnc", Value::Double(19.07)).with("A   ", Value::Double(52.29)).with("B   ", Value::Double(-85.08));
         let c = super::color_from_desc(&d).unwrap();
         assert_eq!(c.mode, ColorMode::Lab);
@@ -675,8 +675,8 @@ mod tests {
 
     #[test]
     fn blending_ranges_map_to_blend_if() {
-        use photocraft_doc::{BlendIf, BlendRange};
-        use photocraft_psd::layer::BlendingRanges;
+        use photostore_doc::{BlendIf, BlendRange};
+        use photostore_psd::layer::BlendingRanges;
         // Full ranges (what every layer without Blend If carries) → the default setting.
         assert_eq!(super::blend_if_from_ranges(&BlendingRanges::full(3)), BlendIf::default());
         assert_eq!(super::blend_if_from_ranges(&BlendingRanges::default()), BlendIf::default());
@@ -702,7 +702,7 @@ mod tests {
 
     #[test]
     fn advanced_blending_blocks_round_trip() {
-        use photocraft_doc::{AdvancedBlending, Knockout};
+        use photostore_doc::{AdvancedBlending, Knockout};
         let a = AdvancedBlending {
             knockout: Knockout::Deep,
             blend_interior: true,
@@ -743,8 +743,8 @@ mod tests {
 
     #[test]
     fn placed_layer_warp_is_read() {
-        use photocraft_geom::warp::WarpStyle;
-        use photocraft_psd::descriptor::ObjectArray;
+        use photostore_geom::warp::WarpStyle;
+        use photostore_psd::descriptor::ObjectArray;
         let e = |t: &str, v: &str| Value::Enumerated { type_id: Id::new(t), value: Id::new(v) };
         let bounds = Descriptor::new("Rctn")
             .with("Top ", Value::UnitFloat { unit: *b"#Pxl", value: 0.0 })
@@ -793,7 +793,7 @@ mod tests {
         for bits in [0u32, 1, 2, 4, 8, 0x0D, 0x8000_0000, 0x8000_000F] {
             assert_eq!(lspf_from_locks(&locks_from_lspf(bits)), bits);
         }
-        // Older PhotoCraft files wrote the artboard lock at 0x10; it reads back as artboard
+        // Older PhotoStore files wrote the artboard lock at 0x10; it reads back as artboard
         // and is rewritten at the reference value 0x08.
         assert!(locks_from_lspf(0x10).artboard);
         assert_eq!(lspf_from_locks(&locks_from_lspf(0x10)), 0x08);

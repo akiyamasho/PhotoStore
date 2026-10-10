@@ -31,7 +31,7 @@ pub(crate) struct CursorLifecycle;
 
 impl egui::plugin::Plugin for CursorLifecycle {
     fn debug_name(&self) -> &'static str {
-        "PhotoCraft tool cursor"
+        "PhotoStore tool cursor"
     }
 
     fn on_begin_pass(&mut self, ui: &mut egui::Ui) {
@@ -99,7 +99,7 @@ fn show(painter: &Painter, at: Pos2, shape: Shape) -> CursorIcon {
 }
 
 fn cached_image(ctx: &egui::Context, shape: Shape, scale: f32) -> Option<CustomCursorImage> {
-    let id = egui::Id::new("photocraft-tool-cursor");
+    let id = egui::Id::new("photostore-tool-cursor");
     if let Some(cached) = ctx.data(|d| d.get_temp::<Cached>(id))
         && cached.shape == shape
         && cached.scale == scale

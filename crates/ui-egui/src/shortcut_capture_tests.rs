@@ -7,17 +7,17 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use serde_json::{Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 
-fn key(h: &mut Harness<'_, PhotocraftApp>, key: Key, pressed: bool, modifiers: Modifiers) {
+fn key(h: &mut Harness<'_, PhotoStoreApp>, key: Key, pressed: bool, modifiers: Modifiers) {
     h.event(Event::Key { key, physical_key: None, pressed, repeat: false, modifiers });
 }
 
 /// The Keyboard Shortcuts dialog with `command` selected, filtered to it.
-fn dialog(ppp: f32, command: &str, filter: &str) -> (Harness<'static, PhotocraftApp>, u64) {
+fn dialog(ppp: f32, command: &str, filter: &str) -> (Harness<'static, PhotoStoreApp>, u64) {
     let mut h = Harness::builder().with_size(egui::vec2(1100.0, 760.0)).with_pixels_per_point(ppp).with_max_steps(64).build_eframe(|cc| {
-        PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
-        PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default())
+        PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
+        PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default())
     });
     let ctx = h.ctx.clone();
     let id = crate::menus::invoke(h.state_mut(), &ctx, "edit.keyboardShortcuts", json!({})).unwrap()["dialog"].as_u64().unwrap();
@@ -28,13 +28,13 @@ fn dialog(ppp: f32, command: &str, filter: &str) -> (Harness<'static, Photocraft
     (h, id)
 }
 
-fn field(h: &Harness<'_, PhotocraftApp>, id: u64, name: &str) -> Value {
+fn field(h: &Harness<'_, PhotoStoreApp>, id: u64, name: &str) -> Value {
     h.state().ui.dialogs.iter().find(|d| d.id == id).unwrap().fields.get(name).cloned().unwrap_or(Value::Null)
 }
 
 /// Click the selected command's shortcut button, then press `modifier` and `k` like a keyboard:
 /// the modifier key goes down first (its own key event), then the key with the modifier held.
-fn capture(h: &mut Harness<'_, PhotocraftApp>, button: &str, modifier: Key, held: Modifiers, k: Key) {
+fn capture(h: &mut Harness<'_, PhotoStoreApp>, button: &str, modifier: Key, held: Modifiers, k: Key) {
     h.get_by_label(button).click();
     h.run_steps(2);
     key(h, modifier, true, held);
@@ -136,7 +136,7 @@ fn a_function_key_moved_off_a_panel_toggle_runs_its_new_command() {
 fn a_user_shortcut_wins_over_a_default_it_was_not_moved_from() {
     // A key assigned by hand (here through the prefs file, so no row was cleared) still reaches
     // the command it was given to rather than the built-in owner.
-    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
     app.run("edit.keyboardShortcuts", json!({"set": {"select.modify.feather": "F7"}, "allowUnknown": true, "removeConflicts": false})).unwrap();
     let f7 = crate::shortcuts::parse("F7").unwrap();
     let bound: Vec<String> = crate::shortcut_dispatch::bindings(&app).into_iter().filter(|(_, sc)| *sc == f7).map(|(id, _)| id).collect();

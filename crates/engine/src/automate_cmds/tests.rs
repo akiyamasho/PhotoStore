@@ -1,7 +1,7 @@
 use super::*;
 
 fn tmp(name: &str) -> String {
-    let d = std::env::temp_dir().join(format!("photocraft-automate-{}-{name}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("photostore-automate-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d.to_string_lossy().into_owned()
@@ -33,7 +33,7 @@ fn scripts_parse_json_and_lines() {
     let b = parse_script("# make a doc\nfile.new {\"width\": 12, \"height\": 8}\n\nimage.imageRotation.90cw\n").unwrap();
     assert_eq!(b.len(), 2);
     assert_eq!(b[1].0, "image.imageRotation.90cw");
-    let c = parse_script(r#"{"photocraftDroplet":1,"action":{"steps":[["file.new",{}]]}}"#).unwrap();
+    let c = parse_script(r#"{"photostoreDroplet":1,"action":{"steps":[["file.new",{}]]}}"#).unwrap();
     assert_eq!(c.len(), 1);
     assert!(parse_script("file.new {bad json").is_err());
 }
@@ -97,7 +97,7 @@ fn droplets_are_written_and_run() {
     let dp = r["path"].as_str().unwrap().to_string();
     assert!(dp.ends_with("Rotate.pcdroplet"));
     let v: Value = serde_json::from_slice(&std::fs::read(&dp).unwrap()).unwrap();
-    assert_eq!(v["photocraftDroplet"], 1);
+    assert_eq!(v["photostoreDroplet"], 1);
     #[cfg(unix)]
     {
         let shim = r["shim"].as_str().unwrap();
@@ -108,7 +108,7 @@ fn droplets_are_written_and_run() {
     }
     let r = s.execute("file.automate.runDroplet", json!({"droplet": dp, "input": [dir.clone()]})).unwrap();
     assert_eq!(r["files"].as_array().unwrap().len(), inputs.len(), "{r}");
-    let out = photocraft_codecs::decode(&std::fs::read(format!("{dir}/out/img0.png")).unwrap()).unwrap();
+    let out = photostore_codecs::decode(&std::fs::read(format!("{dir}/out/img0.png")).unwrap()).unwrap();
     assert_eq!(out.dimensions(), (20, 40));
     assert!(s.execute("file.automate.createDroplet", json!({"path": path, "steps": [["bogus", {}]]})).is_err());
 }
@@ -123,9 +123,9 @@ fn statistics_makes_a_stack_mode_smart_object() {
     let d = &s.active().unwrap().doc;
     assert_eq!(d.layers.len(), 1);
     let LayerContent::Smart(so) = &d.layers[0].content else { panic!("not a smart object") };
-    assert_eq!(so.stack_mode, Some(photocraft_doc::StackMode::Mean));
+    assert_eq!(so.stack_mode, Some(photostore_doc::StackMode::Mean));
     // Mean of 20, 60, 100 = 60.
-    let px = photocraft_compose::flatten(d).px[0];
+    let px = photostore_compose::flatten(d).px[0];
     assert!((px[0] * 255.0 - 60.0).abs() < 1.5, "{px:?}");
     assert!(s.execute("file.scripts.statistics", json!({"mode": "average", "input": dir})).is_err());
 }

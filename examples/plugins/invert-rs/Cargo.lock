@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "photocraft-plugin-invert"
+name = "photostore-plugin-invert"
 version = "1.0.0"

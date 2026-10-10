@@ -3,16 +3,16 @@
 //! Text offsets in parameters and results are **character** indices (Unicode scalar values),
 //! so JSON clients never split a UTF-8 sequence. Sizes, leading, indents and spacing are in
 //! points (converted with the document resolution); tracking is in 1/1000 em; positions and
-//! boxes are document pixels. Every edit re-renders the layer with `photocraft-text` and
+//! boxes are document pixels. Every edit re-renders the layer with `photostore-text` and
 //! regenerates its PSD `TySh` data, so the layer saves as editable text.
 
 use std::sync::Arc;
 
-use photocraft_color::Color;
-use photocraft_doc::text::{
+use photostore_color::Color;
+use photostore_doc::text::{
     AntiAlias, Caps, CharStyle, FontFeature, FontVariation, Kerning, Orientation, ParagraphRun, ParagraphStyle, TextAlign, TextDirection, TextRun, TextShape,
 };
-use photocraft_doc::{Affine, Document, Layer, LayerContent, LayerId, TextLayer};
+use photostore_doc::{Affine, Document, Layer, LayerContent, LayerId, TextLayer};
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
@@ -135,9 +135,9 @@ pub fn apply_char_props(s: &mut CharStyle, p: &Value) -> bool {
         s.postscript_name = None;
         let l = v.to_lowercase();
         s.italic = l.contains("italic") || l.contains("oblique");
-        let g = photocraft_text::fonts::guess_from_postscript(&format!("X-{}", v.replace(' ', "")));
+        let g = photostore_text::fonts::guess_from_postscript(&format!("X-{}", v.replace(' ', "")));
         s.weight = g.weight;
-        if let Some(face) = photocraft_text::shared().lock().unwrap_or_else(|e| e.into_inner()).fonts.named_face(&s.font_family, v) {
+        if let Some(face) = photostore_text::shared().lock().unwrap_or_else(|e| e.into_inner()).fonts.named_face(&s.font_family, v) {
             s.weight = face.weight.round() as u16;
             s.italic = face.italic;
             s.postscript_name = face.postscript_name;
@@ -357,7 +357,7 @@ pub fn style_paragraphs(t: &mut TextLayer, a: usize, b: usize, f: &dyn Fn(&mut P
         .collect();
     let style_at = |off: usize| old[starts.iter().rposition(|&s| s <= off).unwrap_or(0)].style.clone();
     let mut out: Vec<(usize, ParagraphStyle)> = Vec::new();
-    for pr in photocraft_text::layout::split_paragraphs(&t.text) {
+    for pr in photostore_text::layout::split_paragraphs(&t.text) {
         let mut st = style_at(pr.start);
         let touches = (pr.start < b && pr.end > a) || (a == b && a >= pr.start && (a < pr.end || pr.end == t.text.len()));
         if touches {
@@ -418,10 +418,10 @@ pub fn replace_text(t: &mut TextLayer, a: usize, b: usize, new: &str) {
 /// Re-renders the layer's pixels and regenerates its PSD `TySh` data.
 pub fn refresh(doc: &Document, t: &mut TextLayer) {
     let dpi = doc.resolution_dpi;
-    let mut eng = photocraft_text::shared().lock().unwrap_or_else(|e| e.into_inner());
+    let mut eng = photostore_text::shared().lock().unwrap_or_else(|e| e.into_inner());
     let (layout, r) = eng.render(t, dpi, doc.pixel_format());
     t.cache = Some(r.surface);
-    t.psd_raw = Some(Arc::new(photocraft_text::psd::build_tysh(t, dpi, layout.bounds())));
+    t.psd_raw = Some(Arc::new(photostore_text::psd::build_tysh(t, dpi, layout.bounds())));
 }
 
 /// Runs `f` on a type layer as one undo step. `f` may set an explicit layer name (`type.edit`'s
@@ -502,7 +502,7 @@ pub(crate) fn with_text_targets(
     let ids = format_targets(s, p)?;
     let damage = s.edit(label, |doc, _| {
         let snapshot = doc.clone();
-        let mut damage = Some(photocraft_geom::Rect::EMPTY);
+        let mut damage = Some(photostore_geom::Rect::EMPTY);
         for id in &ids {
             let Some(LayerContent::Text(t)) = doc.layer_mut(*id).map(|l| &mut l.content) else { return Err(EngineError::NoLayer(*id)) };
             let before = t.cache.as_ref().map(|c| c.tile_bounds());
@@ -583,7 +583,7 @@ fn info(s: &Session, p: &Value) -> Result<Value> {
             v
         })
         .collect();
-    let layout = photocraft_text::shared().lock().unwrap_or_else(|e| e.into_inner()).layout(t, d.doc.resolution_dpi);
+    let layout = photostore_text::shared().lock().unwrap_or_else(|e| e.into_inner()).layout(t, d.doc.resolution_dpi);
     let lines: Vec<Value> = layout
         .lines
         .iter()
@@ -630,7 +630,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let text = norm_text(p.get("text").and_then(Value::as_str).unwrap_or(""));
                 // Type › Save Default Type Styles sets the starting styles; the colour is always
                 // the foreground colour, as in Photoshop.
-                let (mut style, mut para) = s.type_defaults.clone().unwrap_or_else(|| (CharStyle { font_family: photocraft_text::fonts::DEFAULT_FAMILY.into(), ..Default::default() }, ParagraphStyle::default()));
+                let (mut style, mut para) = s.type_defaults.clone().unwrap_or_else(|| (CharStyle { font_family: photostore_text::fonts::DEFAULT_FAMILY.into(), ..Default::default() }, ParagraphStyle::default()));
                 let fg = s.tools.foreground;
                 style.color = Color::rgba(fg[0], fg[1], fg[2], fg[3]);
                 apply_char_props(&mut style, p);
@@ -716,7 +716,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         let a = byte_at(&t.text, at - 1);
                         let b = byte_at(&t.text, at);
                         let now = {
-                            let mut eng = photocraft_text::shared().lock().unwrap_or_else(|e| e.into_inner());
+                            let mut eng = photostore_text::shared().lock().unwrap_or_else(|e| e.into_inner());
                             eng.pair_kerning(t, doc.resolution_dpi, a)
                         }
                         .ok_or_else(|| bad("type.edit", "no kerning pair at the caret (line break or line end)"))?;
@@ -839,7 +839,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     if t.cache.is_none() {
                         refresh(&snapshot, t);
                     }
-                    let surface = t.cache.take().unwrap_or_else(|| photocraft_raster::Surface::new(snapshot.pixel_format()));
+                    let surface = t.cache.take().unwrap_or_else(|| photostore_raster::Surface::new(snapshot.pixel_format()));
                     let surface = if surface.format() == snapshot.pixel_format() { surface } else { surface.convert(snapshot.pixel_format()) };
                     l.content = LayerContent::Raster(surface);
                     l.psd_blocks.retain(|(k, _)| k != b"TySh");
@@ -867,7 +867,7 @@ pub fn specs() -> Vec<CommandSpec> {
             enabled: |_| Ok(()),
             journal: false,
             run: |_, p| {
-                let mut eng = photocraft_text::shared().lock().unwrap_or_else(|e| e.into_inner());
+                let mut eng = photostore_text::shared().lock().unwrap_or_else(|e| e.into_inner());
                 match p.get("family").and_then(Value::as_str) {
                     Some(f) => {
                         let faces: Vec<Value> = eng.fonts.faces(f).into_iter().map(|x| json!({ "family": x.family, "style": x.style, "postscriptName": x.postscript_name, "weight": x.weight, "italic": x.italic, "axes": x.axes })).collect();
@@ -951,7 +951,7 @@ mod tests {
             st.saved_revision = st.revision;
         }
         let rev = s.active().unwrap().revision;
-        let unknown = [(doc_id, LayerId(9999)), (photocraft_doc::DocId(u64::MAX), id)];
+        let unknown = [(doc_id, LayerId(9999)), (photostore_doc::DocId(u64::MAX), id)];
         assert!(s.refresh_type_layers(&[&[(doc_id, id)][..], &unknown].concat()).is_empty());
         assert!(text_layer(&s, id.0).cache.is_some());
         let st = s.active().unwrap();
@@ -980,7 +980,7 @@ mod tests {
         let r = c.content_bounds();
         assert!(c.read_region(r).as_chunks::<4>().0.iter().any(|p| p[3] > 0.9 && p[0] > 0.9 && p[1] < 0.1));
         // The TySh we generated parses back to the same model.
-        let back = photocraft_text::psd::text_layer_from_tysh(t.psd_raw.as_ref().unwrap(), 72.0).unwrap();
+        let back = photostore_text::psd::text_layer_from_tysh(t.psd_raw.as_ref().unwrap(), 72.0).unwrap();
         assert_eq!(back.text, "Hello");
         let strip = |mut r: Vec<TextRun>| {
             for x in &mut r {
@@ -1273,7 +1273,7 @@ mod tests {
 
     /// Cost of one Alt+←/→ press (`kernPair`: two measuring layouts + the edit's re-render) on
     /// a headline and on a 2000-character paragraph. Release timings for the dev log:
-    /// `cargo test --release -p photocraft-engine kern_pair_cost -- --ignored --nocapture`.
+    /// `cargo test --release -p photostore-engine kern_pair_cost -- --ignored --nocapture`.
     #[test]
     #[ignore]
     fn kern_pair_cost() {
@@ -1313,7 +1313,7 @@ mod tests {
         let id = s.execute("type.create", json!({"x": 5, "y": 50, "text": "AVA", "size": 40, "font": "Inter"})).unwrap()["layer"].as_u64().unwrap();
         let metric = {
             let t = text_layer(&s, id);
-            photocraft_text::shared().lock().unwrap().pair_kerning(&t, 72.0, 0).unwrap()
+            photostore_text::shared().lock().unwrap().pair_kerning(&t, 72.0, 0).unwrap()
         };
         assert!(metric < -10.0, "Inter kerns AV: {metric}");
         let steps = s.active().unwrap().history.entries().len();

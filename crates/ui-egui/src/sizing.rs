@@ -6,7 +6,7 @@
 use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde_json::{Map, Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::state::DialogKind;
 use crate::theme::Tokens;
 
@@ -14,8 +14,8 @@ const UNITS: [(&str, &str); 7] =
     [("px", "Pixels"), ("percent", "Percent"), ("in", "Inches"), ("cm", "Centimeters"), ("mm", "Millimeters"), ("pt", "Points"), ("pica", "Picas")];
 
 /// Dialog unit for the Units & Rulers preference.
-fn pref_unit(u: photocraft_engine::prefs::Unit) -> &'static str {
-    use photocraft_engine::prefs::Unit;
+fn pref_unit(u: photostore_engine::prefs::Unit) -> &'static str {
+    use photostore_engine::prefs::Unit;
     match u {
         Unit::Pixels => "px",
         Unit::Percent => "percent",
@@ -28,8 +28,8 @@ fn pref_unit(u: photocraft_engine::prefs::Unit) -> &'static str {
 }
 
 /// Image Size resampling for Preferences › General › Image Interpolation.
-fn pref_resample(i: photocraft_engine::prefs::Interpolation) -> &'static str {
-    use photocraft_engine::prefs::Interpolation;
+fn pref_resample(i: photostore_engine::prefs::Interpolation) -> &'static str {
+    use photostore_engine::prefs::Interpolation;
     match i {
         Interpolation::Nearest => "nearest",
         Interpolation::Bilinear => "bilinear",
@@ -44,12 +44,12 @@ pub fn is_sizing(command: &str) -> bool {
     matches!(command, "image.imageSize" | "image.canvasSize")
 }
 
-pub fn open(app: &mut PhotocraftApp, command: &str) -> Option<u64> {
+pub fn open(app: &mut PhotoStoreApp, command: &str) -> Option<u64> {
     let unit = pref_unit(app.session.prefs().units_and_rulers.rulers);
     let resample = pref_resample(app.session.prefs().general.image_interpolation);
     let d = &app.session.active()?.doc;
     let (w, h, res) = (d.size.width as f64, d.size.height as f64, d.resolution_dpi as f64);
-    let label = photocraft_engine::commands::find(command).map(|c| c.label).unwrap_or("Image Size…");
+    let label = photostore_engine::commands::find(command).map(|c| c.label).unwrap_or("Image Size…");
     let mut f = Map::new();
     f.insert("__command".into(), json!(command));
     f.insert("__label".into(), json!(label));
@@ -392,20 +392,20 @@ mod tests {
 
     #[test]
     fn dialog_maps_to_engine_command() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.session.execute("file.new", json!({"width": 200, "height": 100})).unwrap();
         let id = open(&mut app, "image.imageSize").unwrap();
         let d = app.ui.dialog_mut(id).unwrap();
         d.fields.insert("width".into(), json!(100));
         d.fields.insert("height".into(), json!(50));
         crate::dialogs::confirm(&mut app, id).unwrap();
-        assert_eq!(app.session.active().unwrap().doc.size, photocraft_doc::Size::new(100, 50));
+        assert_eq!(app.session.active().unwrap().doc.size, photostore_doc::Size::new(100, 50));
         let id = open(&mut app, "image.canvasSize").unwrap();
         let d = app.ui.dialog_mut(id).unwrap();
         d.fields.insert("width".into(), json!(120));
         d.fields.insert("anchor".into(), json!("topLeft"));
         crate::dialogs::confirm(&mut app, id).unwrap();
-        assert_eq!(app.session.active().unwrap().doc.size, photocraft_doc::Size::new(120, 50));
+        assert_eq!(app.session.active().unwrap().doc.size, photostore_doc::Size::new(120, 50));
     }
 
     /// #441: a typed zero width showed "0 px × 1 px" while OK resized to 1×1.
@@ -413,10 +413,10 @@ mod tests {
     fn typed_zero_width_shows_the_applied_size() {
         use egui::accesskit::Role;
         use egui_kittest::{Harness, kittest::Queryable};
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.session.execute("file.new", json!({"width": 4, "height": 4})).unwrap();
         let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(|ui, app| crate::dialogs::show(app, ui.ctx()), app);
-        PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
+        PhotoStoreApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
         let id = open(h.state_mut(), "image.imageSize").unwrap();
         h.run_steps(3);
         let width = h.query_all_by_role(Role::SpinButton).next().map(|n| n.rect()).expect("the Width field");
@@ -433,6 +433,6 @@ mod tests {
         let f = h.state().ui.dialogs.first().map(|d| d.fields.clone()).expect("the dialog is open");
         assert_eq!((num(&f, "width"), num(&f, "height")), (1.0, 1.0), "{f:?}");
         crate::dialogs::confirm(h.state_mut(), id).unwrap();
-        assert_eq!(h.state().session.active().unwrap().doc.size, photocraft_doc::Size::new(1, 1));
+        assert_eq!(h.state().session.active().unwrap().doc.size, photostore_doc::Size::new(1, 1));
     }
 }

@@ -104,8 +104,8 @@ mod tests {
         let l = st.doc.layers.last().unwrap();
         let surf = l.surface().unwrap();
         let fmt = surf.format();
-        let v = surf.read_region(photocraft_geom::Rect::new(x, y, x + 1, y + 1));
-        photocraft_raster::to_rgba(&fmt, &v)
+        let v = surf.read_region(photostore_geom::Rect::new(x, y, x + 1, y + 1));
+        photostore_raster::to_rgba(&fmt, &v)
     }
 
     #[test]
@@ -188,7 +188,7 @@ mod tests {
         assert_eq!(px(&s, 0, 0)[3], 0.0);
     }
 
-    /// `cargo test --release -p photocraft-engine --lib fill_keys_24mp -- --ignored --nocapture`
+    /// `cargo test --release -p photostore-engine --lib fill_keys_24mp -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn fill_keys_24mp() {

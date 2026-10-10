@@ -2,17 +2,17 @@
 //! visible layer with pixels under the pointer (or its outermost group in Group mode) and the drag
 //! then moves it; ⌘/Ctrl held at the press inverts the option for that click.
 
-use photocraft_doc::LayerId;
-use photocraft_geom::Rect;
+use photostore_doc::LayerId;
+use photostore_geom::Rect;
 use serde_json::json;
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::canvas::ToolEvent;
 use crate::state::{Tool, ToolOptions};
 
 /// A 64×64 document with two painted layers: A covers (8..24)², B covers (40..56)². B is active.
-fn app() -> (PhotocraftApp, LayerId, LayerId) {
-    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+fn app() -> (PhotoStoreApp, LayerId, LayerId) {
+    let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
     app.session.execute("file.new", json!({"width": 64, "height": 64})).unwrap();
     app.sync_views();
     let mut ids = Vec::new();
@@ -33,15 +33,15 @@ fn app() -> (PhotocraftApp, LayerId, LayerId) {
     (app, ids[0], ids[1])
 }
 
-fn bounds(app: &PhotocraftApp, id: LayerId) -> Rect {
+fn bounds(app: &PhotoStoreApp, id: LayerId) -> Rect {
     app.session.active().unwrap().doc.layer(id).unwrap().surface().unwrap().content_bounds()
 }
 
-fn active(app: &PhotocraftApp) -> Option<LayerId> {
+fn active(app: &PhotoStoreApp) -> Option<LayerId> {
     app.session.active().unwrap().active_layer
 }
 
-fn drag(app: &mut PhotocraftApp, from: [f64; 2], by: [f64; 2], mods: egui::Modifiers) {
+fn drag(app: &mut PhotoStoreApp, from: [f64; 2], by: [f64; 2], mods: egui::Modifiers) {
     crate::canvas::tool_event(app, ToolEvent::Down { x: from[0], y: from[1], pressure: 1.0 }, mods);
     let mid = [from[0] + by[0] / 2.0, from[1] + by[1] / 2.0];
     crate::canvas::tool_event(app, ToolEvent::Move { x: mid[0], y: mid[1], pressure: 1.0 }, mods);
@@ -135,7 +135,7 @@ fn every_theme_shows_the_auto_select_toggle() {
     for theme in [crate::theme::ThemeKind::ProMedium, crate::theme::ThemeKind::Studio] {
         let (app, _, _) = app();
         let mut h = Harness::builder().with_size(egui::vec2(1400.0, 60.0)).build_ui_state(
-            |ui, app: &mut PhotocraftApp| {
+            |ui, app: &mut PhotoStoreApp| {
                 if !ui.ctx().fonts(|f| f.families().contains(&egui::FontFamily::Name("medium".into()))) {
                     return;
                 }
@@ -143,7 +143,7 @@ fn every_theme_shows_the_auto_select_toggle() {
             },
             app,
         );
-        PhotocraftApp::setup_context(&h.ctx, theme);
+        PhotoStoreApp::setup_context(&h.ctx, theme);
         h.run_steps(4);
         assert!(h.state().ui.tool_options.move_auto_select);
         h.get_by_label("Auto-Select:").click();
@@ -162,7 +162,7 @@ fn every_theme_shows_the_type_options() {
         let (mut app, _, _) = app();
         app.ui.tool = Tool::Type;
         let mut h = Harness::builder().with_size(egui::vec2(1600.0, 60.0)).build_ui_state(
-            |ui, app: &mut PhotocraftApp| {
+            |ui, app: &mut PhotoStoreApp| {
                 if !ui.ctx().fonts(|f| f.families().contains(&egui::FontFamily::Name("medium".into()))) {
                     return;
                 }
@@ -170,7 +170,7 @@ fn every_theme_shows_the_type_options() {
             },
             app,
         );
-        PhotocraftApp::setup_context(&h.ctx, theme);
+        PhotoStoreApp::setup_context(&h.ctx, theme);
         h.run_steps(4);
         let combos: Vec<String> = h
             .query_all_by_role(egui::accesskit::Role::ComboBox)

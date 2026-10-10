@@ -4,8 +4,8 @@
 //! The outline is traced at display resolution: `outline_scaled` samples every `step`-th pixel, so
 //! a 36 MP selection at 12% zoom costs a ~0.5 MP scan instead of reading the whole mask.
 
-use photocraft_geom::Rect;
-use photocraft_raster::Surface;
+use photostore_geom::Rect;
+use photostore_raster::Surface;
 
 /// A boundary segment in document pixel coordinates (axis-aligned).
 pub type Segment = ([i32; 2], [i32; 2]);
@@ -106,7 +106,7 @@ fn outline_scaled_impl(mask: &Surface, bounds: Rect, step: u32, parallel: bool) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use photocraft_color::PixelFormat;
+    use photostore_color::PixelFormat;
 
     #[test]
     fn rectangle_has_four_edges() {

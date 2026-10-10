@@ -1,15 +1,15 @@
 //! Non-destructive pixel-mask controls, shared by docked and floating Properties.
 
-use photocraft_doc::Layer;
+use photostore_doc::Layer;
 use serde_json::json;
 
-use crate::{PhotocraftApp, widgets};
+use crate::{PhotoStoreApp, widgets};
 
-pub fn targeted(app: &PhotocraftApp, layer: &Layer) -> bool {
+pub fn targeted(app: &PhotoStoreApp, layer: &Layer) -> bool {
     app.ui.mask_target && !app.ui.vector_mask_target && layer.mask.is_some()
 }
 
-pub fn properties(app: &mut PhotocraftApp, ui: &mut egui::Ui, layer: &Layer) {
+pub fn properties(app: &mut PhotoStoreApp, ui: &mut egui::Ui, layer: &Layer) {
     let Some(mask) = &layer.mask else { return };
     let Some(document) = app.session.active().map(|s| s.doc.id.0) else { return };
     ui.push_id((document, layer.id, "pixel-mask-properties"), |ui| {

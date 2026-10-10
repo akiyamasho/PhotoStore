@@ -1,6 +1,6 @@
 [package]
-name = "photocraft-automation"
-description = "MCP server (rmcp) over the Photocraft engine, plus a bridge to a running GUI"
+name = "photostore-automation"
+description = "MCP server (rmcp) over the PhotoStore engine, plus a bridge to a running GUI"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,13 +10,13 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-photocraft-geom = { workspace = true }
-photocraft-doc = { workspace = true }
-photocraft-compose = { workspace = true }
-photocraft-codecs = { workspace = true }
-photocraft-io = { workspace = true }
-photocraft-format = { path = "../format" }
-photocraft-engine = { workspace = true }
+photostore-geom = { workspace = true }
+photostore-doc = { workspace = true }
+photostore-compose = { workspace = true }
+photostore-codecs = { workspace = true }
+photostore-io = { workspace = true }
+photostore-format = { path = "../format" }
+photostore-engine = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

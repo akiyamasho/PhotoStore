@@ -1,6 +1,6 @@
 //! Closing a background tab must preserve the active document, not its old index.
-use photocraft_doc::DocId;
-use photocraft_engine::Session;
+use photostore_doc::DocId;
+use photostore_engine::Session;
 use serde_json::json;
 
 fn session_with_documents(count: usize) -> (Session, Vec<DocId>) {

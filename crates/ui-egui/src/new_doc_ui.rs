@@ -14,7 +14,7 @@ pub type Preset = (&'static str, u32, u32, f32);
 
 /// Photoshop's New Document categories and their blank-document presets.
 pub const CATEGORIES: &[(&str, &[Preset])] = &[
-    ("Recent", &[("Default PhotoCraft Size", 2100, 1500, 300.0), ("HDTV 1080p", 1920, 1080, 72.0)]),
+    ("Recent", &[("Default PhotoStore Size", 2100, 1500, 300.0), ("HDTV 1080p", 1920, 1080, 72.0)]),
     (
         "Photo",
         &[
@@ -229,7 +229,7 @@ fn page_icon(ui: &egui::Ui, r: Rect, w: u32, h: u32, t: &Tokens) {
 }
 
 /// Restore a snapshot without replacing the new document's name or its clipboard offer.
-pub fn apply_saved_preset(f: &mut Map<String, Value>, preset: &photocraft_engine::document_preset_cmds::DocumentPreset) {
+pub fn apply_saved_preset(f: &mut Map<String, Value>, preset: &photostore_engine::document_preset_cmds::DocumentPreset) {
     f.remove("backgroundColor");
     if let Some(params) = preset.settings.command_params().as_object() {
         f.extend(params.clone());
@@ -243,7 +243,7 @@ pub fn apply_saved_preset(f: &mut Map<String, Value>, preset: &photocraft_engine
     f.remove(&typed_key("height"));
 }
 
-fn saved_presets(app: &mut crate::PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
+fn saved_presets(app: &mut crate::PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     let presets = app.session.presets.documents.clone();
     if presets.is_empty() {
         ui.label(tl!("No saved presets yet."));
@@ -280,7 +280,7 @@ fn saved_presets(app: &mut crate::PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<
     });
 }
 
-fn save_preset(app: &mut crate::PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
+fn save_preset(app: &mut crate::PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     ui.add_space(12.0);
     if f.get("__savingPreset").and_then(Value::as_bool) != Some(true) {
         if widgets::secondary_button(ui, tl!("Save Preset…"), 240.0).clicked() {
@@ -326,7 +326,7 @@ fn save_preset(app: &mut crate::PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<St
     }
 }
 
-pub fn body(app: &mut crate::PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
+pub fn body(app: &mut crate::PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     let t = Tokens::get(ui.ctx());
     let cat = get_s(f, "__category", "Recent");
     // Category tabs.
@@ -600,7 +600,7 @@ mod tests {
     #[test]
     fn clipboard_preset_comes_first_and_is_selected() {
         // Nothing on the clipboard: the dialog opens as before.
-        let mut app = crate::PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = crate::PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         let f = app.new_document_fields();
         assert_eq!(f, crate::state::UiState::new_document_fields());
         assert!(clipboard_preset(&f).is_none());
@@ -626,7 +626,7 @@ mod tests {
         assert_eq!(p["height"], 3508);
         assert_eq!(p["resolution"], 300.0);
         assert!(p.get("__preset").is_none() && p.get("__unit").is_none());
-        let mut s = photocraft_engine::Session::new();
+        let mut s = photostore_engine::Session::new();
         s.execute("file.new", p).unwrap();
         let d = &s.active().unwrap().doc;
         assert_eq!((d.size.width, d.size.height, d.resolution_dpi), (2480, 3508, 300.0));
@@ -634,7 +634,7 @@ mod tests {
 
     #[test]
     fn saved_selection_restores_all_settings_but_keeps_the_document_name() {
-        let mut session = photocraft_engine::Session::new();
+        let mut session = photostore_engine::Session::new();
         session
             .execute(
                 "document.presets.save",
@@ -667,14 +667,14 @@ mod tests {
     /// The real dialog (#254): a typed size must reach `file.new`, however it is confirmed.
     mod dialog {
         use super::super::{CATEGORIES, apply_preset};
-        use crate::PhotocraftApp;
+        use crate::PhotoStoreApp;
         use crate::state::{DialogKind, UiState};
         use egui::accesskit::Role;
         use egui_kittest::{Harness, kittest::Queryable};
         use std::sync::{Arc, Mutex};
 
         /// The real preference services, backed by an in-memory store shared across app restarts.
-        fn harness_with_store(store: &Arc<Mutex<Option<String>>>) -> Harness<'static, PhotocraftApp> {
+        fn harness_with_store(store: &Arc<Mutex<Option<String>>>) -> Harness<'static, PhotoStoreApp> {
             let (read, write) = (store.clone(), store.clone());
             let services = crate::Services {
                 load_prefs: Some(Box::new(move || read.lock().unwrap().clone())),
@@ -684,7 +684,7 @@ mod tests {
                 })),
                 ..Default::default()
             };
-            let app = PhotocraftApp::new(photocraft_engine::Session::new(), services);
+            let app = PhotoStoreApp::new(photostore_engine::Session::new(), services);
             let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
                 |ui, app| {
                     crate::prefs_ui::tick(app, ui.ctx());
@@ -692,13 +692,13 @@ mod tests {
                 },
                 app,
             );
-            PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
+            PhotoStoreApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
             h.state_mut().ui.open_dialog(DialogKind::NewDocument, UiState::new_document_fields());
             h.run_steps(3);
             h
         }
 
-        fn name_preset(h: &mut Harness<'static, PhotocraftApp>, name: &str) {
+        fn name_preset(h: &mut Harness<'static, PhotoStoreApp>, name: &str) {
             h.get_by_label("Save Preset…").click();
             h.run_steps(2);
             h.get_by_role_and_label(Role::TextInput, "Preset Name").click();
@@ -779,16 +779,16 @@ mod tests {
             assert_eq!(h.state().session.presets.documents.len(), 1);
         }
 
-        fn harness() -> Harness<'static, PhotocraftApp> {
-            let app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        fn harness() -> Harness<'static, PhotoStoreApp> {
+            let app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
             let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(|ui, app| crate::dialogs::show(app, ui.ctx()), app);
-            PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
+            PhotoStoreApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
             h.state_mut().ui.open_dialog(DialogKind::NewDocument, UiState::new_document_fields());
             h.run_steps(3);
             h
         }
 
-        fn click_at(h: &mut Harness<'static, PhotocraftApp>, at: egui::Pos2) {
+        fn click_at(h: &mut Harness<'static, PhotoStoreApp>, at: egui::Pos2) {
             h.hover_at(at);
             h.run_steps(1);
             h.drag_at(at);
@@ -798,12 +798,12 @@ mod tests {
         }
 
         /// The Width (0), Height (1) and Resolution (2) fields.
-        fn field(h: &Harness<'static, PhotocraftApp>, i: usize) -> egui::Rect {
+        fn field(h: &Harness<'static, PhotoStoreApp>, i: usize) -> egui::Rect {
             h.query_all_by_role(Role::SpinButton).nth(i).map(|n| n.rect()).expect("a size field")
         }
 
         /// Click into field `i` (which selects its text) and type `text`, as a user does.
-        fn type_into(h: &mut Harness<'static, PhotocraftApp>, i: usize, text: &str) {
+        fn type_into(h: &mut Harness<'static, PhotoStoreApp>, i: usize, text: &str) {
             let r = field(h, i);
             click_at(h, r.center());
             for c in text.chars() {
@@ -812,21 +812,21 @@ mod tests {
             }
         }
 
-        fn fields(h: &Harness<'static, PhotocraftApp>) -> serde_json::Map<String, serde_json::Value> {
+        fn fields(h: &Harness<'static, PhotoStoreApp>) -> serde_json::Map<String, serde_json::Value> {
             h.state().ui.dialogs.first().map(|d| d.fields.clone()).expect("the dialog is open")
         }
 
-        fn set_fields(h: &mut Harness<'static, PhotocraftApp>, f: serde_json::Map<String, serde_json::Value>) {
+        fn set_fields(h: &mut Harness<'static, PhotoStoreApp>, f: serde_json::Map<String, serde_json::Value>) {
             h.state_mut().ui.dialogs[0].fields = f;
             h.run_steps(2);
         }
 
-        fn enter(h: &mut Harness<'static, PhotocraftApp>) {
+        fn enter(h: &mut Harness<'static, PhotoStoreApp>) {
             h.key_press(egui::Key::Enter);
             h.run_steps(3);
         }
 
-        fn created(h: &Harness<'static, PhotocraftApp>) -> (u32, u32, f32) {
+        fn created(h: &Harness<'static, PhotoStoreApp>) -> (u32, u32, f32) {
             assert!(h.state().ui.dialogs.is_empty(), "the dialog closed");
             let d = &h.state().session.active().expect("a new document").doc;
             (d.size.width, d.size.height, d.resolution_dpi)
@@ -888,7 +888,7 @@ mod tests {
             let heading = h.get_by_label_contains("BLANK DOCUMENT PRESETS").rect();
             // Pick the second card, then the first (Clipboard) again.
             click_at(&mut h, heading.left_bottom() + egui::vec2(80.0 + 172.0, 60.0));
-            assert_eq!(fields(&h).get("__preset").and_then(|v| v.as_str()), Some("Default PhotoCraft Size"));
+            assert_eq!(fields(&h).get("__preset").and_then(|v| v.as_str()), Some("Default PhotoStore Size"));
             click_at(&mut h, heading.left_bottom() + egui::vec2(80.0, 60.0));
             assert_eq!(fields(&h).get("__preset").and_then(|v| v.as_str()), Some(super::super::CLIPBOARD));
             enter(&mut h);

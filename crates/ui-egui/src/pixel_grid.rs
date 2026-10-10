@@ -9,10 +9,10 @@
 //! document (AGENTS.md rule 8).
 
 use egui::{Color32, Painter, Stroke};
-use photocraft_doc::Document;
-use photocraft_geom::Rect as DRect;
+use photostore_doc::Document;
+use photostore_geom::Rect as DRect;
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::canvas::ViewXform;
 
 /// The grid shows above this zoom (1.0 = 100%). Shared with the GPU canvas.
@@ -134,7 +134,7 @@ pub fn cache_region(visible: DRect, bounds: DRect) -> DRect {
 
 impl GridLines {
     fn build(doc: &Document, revision: u64, preview_key: u64, region: DRect) -> Self {
-        let segs = if region.is_empty() { Vec::new() } else { segments(&photocraft_compose::render(doc, region).px, region) };
+        let segs = if region.is_empty() { Vec::new() } else { segments(&photostore_compose::render(doc, region).px, region) };
         Self { revision, preview_key, region, segs }
     }
 
@@ -146,7 +146,7 @@ impl GridLines {
 
 /// Draw the grid of document `idx` over the CPU-composited canvas. `visible` is the document
 /// area in view (document pixels); `output` the display the canvas is drawn for.
-pub fn paint(app: &mut PhotocraftApp, painter: &Painter, xf: &ViewXform, idx: usize, output: Option<u32>, visible: DRect) {
+pub fn paint(app: &mut PhotoStoreApp, painter: &Painter, xf: &ViewXform, idx: usize, output: Option<u32>, visible: DRect) {
     let Some((id, revision)) = app.session.documents().get(idx).map(|st| (st.doc.id, st.revision)) else { return };
     let (doc, preview_key) = crate::canvas::display_doc(app, idx);
     let need = visible.intersect(&doc.bounds());

@@ -1,4 +1,4 @@
-//! The Photocraft document model: pure data, no rendering, no UI.
+//! The PhotoStore document model: pure data, no rendering, no UI.
 //!
 //! Layer order: inside every group (and the root), `children[0]` is the **bottom** layer, matching
 //! compositing order and the PSD file order. UIs display the list reversed.
@@ -37,9 +37,9 @@ pub use effects::{
 };
 pub use mode::{ColorTable, Duotone, DuotoneInk, StackMode};
 pub use pattern::Pattern;
-pub use photocraft_color::{BlendMode, Color, ColorMode, PixelFormat, SampleType};
-pub use photocraft_geom::{Affine, Rect, Size};
-pub use photocraft_raster::Surface;
+pub use photostore_color::{BlendMode, Color, ColorMode, PixelFormat, SampleType};
+pub use photostore_geom::{Affine, Rect, Size};
+pub use photostore_raster::Surface;
 use serde::{Deserialize, Serialize};
 pub use slices::{Slice, SliceKind, SliceOrigin, Slices};
 pub use text_styles::TextStyles;
@@ -283,7 +283,7 @@ pub struct Effects {
 /// PSD export, `.pcraft` save and load) recurses once per level, so deeper trees risk
 /// overflowing the 1 MiB main-thread stacks of Windows and wasm. PSD import and the engine
 /// commands that nest layers (`layer.groupLayers`, `layer.moveTo`, Artboard from Layers) enforce
-/// this up front; `photocraft-format` refuses to save deeper trees.
+/// this up front; `photostore-format` refuses to save deeper trees.
 pub const MAX_GROUP_DEPTH: usize = 100;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -486,7 +486,7 @@ pub struct SmartObject {
     pub filter_mask: Option<LayerMask>,
     /// Edit › Transform › Warp on the smart object, in source-image coordinates; applied before
     /// `transform` when re-rendering from the source, so warping stays lossless.
-    pub warp: Option<photocraft_geom::warp::Warp>,
+    pub warp: Option<photostore_geom::warp::Warp>,
     /// Layer › Smart Objects › Stack Mode: when set, the source's top-level layers are combined
     /// per pixel with this statistic instead of composited.
     pub stack_mode: Option<StackMode>,
@@ -873,7 +873,7 @@ impl Document {
         bg.locks.position = true;
         if let Some(s) = bg.surface_mut() {
             let rgba = fill.to_rgb();
-            let px = photocraft_raster::from_rgba(&s.format(), [rgba[0], rgba[1], rgba[2], fill.alpha]);
+            let px = photostore_raster::from_rgba(&s.format(), [rgba[0], rgba[1], rgba[2], fill.alpha]);
             s.fill_rect(d.bounds(), &px);
         }
         d.layers.push(bg);

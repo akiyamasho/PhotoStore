@@ -8,13 +8,13 @@
 //! recomposited per frame.
 
 use egui::{Color32, TextureOptions};
-use photocraft_doc::{AlphaChannel, ColorMode, Document};
-use photocraft_engine::channel_cmds::{ChannelView, color_count};
-use photocraft_engine::mask_view_cmds::MaskViewMode;
-use photocraft_geom::Rect;
-use photocraft_raster::{Surface, from_rgba, to_rgba};
+use photostore_doc::{AlphaChannel, ColorMode, Document};
+use photostore_engine::channel_cmds::{ChannelView, color_count};
+use photostore_engine::mask_view_cmds::MaskViewMode;
+use photostore_geom::Rect;
+use photostore_raster::{Surface, from_rgba, to_rgba};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 
 /// Largest overlay texture side; bigger documents show a downsampled overlay.
 const MAX_SIDE: u32 = 4096;
@@ -50,7 +50,7 @@ fn sample(s: &Surface, r: Rect, factor: u32) -> Vec<f32> {
 
 /// Composite RGBA (over white, like Photoshop's channel views) at `factor` stride.
 fn composite(doc: &Document, r: Rect, factor: u32) -> Vec<[f32; 4]> {
-    let buf = photocraft_compose::render(doc, r);
+    let buf = photostore_compose::render(doc, r);
     let (w, h) = (r.width().div_ceil(factor), r.height().div_ceil(factor));
     let bw = r.width();
     let mut out = Vec::with_capacity((w * h) as usize);
@@ -125,7 +125,7 @@ pub fn render(doc: &Document, v: &ChannelView, r: Rect, factor: u32, in_color: b
         vec![[0.0; 4]; n]
     };
     // Rubylith: `color` at `opacity` × coverage over the accumulated pixels.
-    let mut tint = |values: Vec<f32>, color: photocraft_color::Color, opacity: f32, coverage: &dyn Fn(f32) -> f32| {
+    let mut tint = |values: Vec<f32>, color: photostore_color::Color, opacity: f32, coverage: &dyn Fn(f32) -> f32| {
         let c = color.to_rgb();
         for (o, val) in out.iter_mut().zip(values) {
             let a = (coverage(val.clamp(0.0, 1.0)) * opacity).clamp(0.0, 1.0);
@@ -190,7 +190,7 @@ fn view_key(v: &ChannelView, in_color: bool) -> u64 {
 }
 
 /// Make the channel-view texture of document `idx` current; `None` = nothing to draw.
-pub fn ensure(app: &mut PhotocraftApp, ctx: &egui::Context, idx: usize) -> Option<egui::TextureId> {
+pub fn ensure(app: &mut PhotoStoreApp, ctx: &egui::Context, idx: usize) -> Option<egui::TextureId> {
     let st = app.session.documents().get(idx)?;
     let view = st.channel_view.clone();
     let (revision, last_damage) = (st.revision, st.last_damage);
@@ -266,8 +266,8 @@ pub fn ensure(app: &mut PhotocraftApp, ctx: &egui::Context, idx: usize) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use photocraft_engine::Session;
-    use photocraft_engine::channel_cmds::ChannelTarget;
+    use photostore_engine::Session;
+    use photostore_engine::channel_cmds::ChannelTarget;
     use serde_json::json;
 
     fn session() -> Session {
@@ -325,7 +325,7 @@ mod tests {
         assert!(px[36].a() <= 4, "next to nothing over the revealed end: {:?}", px[36]);
     }
 
-    /// `cargo test --release -p photocraft-ui-egui --lib mask_view_switch_24mp -- --ignored --nocapture`
+    /// `cargo test --release -p photostore-ui-egui --lib mask_view_switch_24mp -- --ignored --nocapture`
     #[test]
     #[ignore = "benchmark"]
     fn mask_view_switch_24mp() {

@@ -4,17 +4,17 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::corpus_pins::{self, AG_PSD_COMMIT, HEIC_RS_COMMIT, OPENEXR_COMMIT, PHOTOCRAFT_CORPUS_COMMIT, PILLOW_HEIF_COMMIT, PNGSUITE_URL, PSD_TOOLS_COMMIT};
+use crate::corpus_pins::{self, AG_PSD_COMMIT, HEIC_RS_COMMIT, OPENEXR_COMMIT, PHOTOSTORE_CORPUS_COMMIT, PILLOW_HEIF_COMMIT, PNGSUITE_URL, PSD_TOOLS_COMMIT};
 use crate::pinned::{PinnedCorpus, USER_AGENT};
 use crate::{cargo, root, run};
 
 /// Crates with corpus tests (behind their `corpus` feature).
-pub const CORPUS_CRATES: &[&str] = &["photocraft-psd", "photocraft-codecs", "photocraft-io", "photocraft-engine"];
+pub const CORPUS_CRATES: &[&str] = &["photostore-psd", "photostore-codecs", "photostore-io", "photostore-engine"];
 /// Opt-in corpus crates: fetched and tested only with `test-corpus --pixls`.
-pub const PIXLS_CRATES: &[&str] = &["photocraft-raw"];
+pub const PIXLS_CRATES: &[&str] = &["photostore-raw"];
 
 /// Corpus crates with a `heif` feature: test-corpus enables it so the HEIF corpus tests run.
-const HEIF_CRATES: &[&str] = &["photocraft-codecs", "photocraft-io"];
+const HEIF_CRATES: &[&str] = &["photostore-codecs", "photostore-io"];
 
 /// Paths whose changes make `test-corpus --changed` run (the file-format and rendering crates).
 const CRITICAL: &[&str] = &[
@@ -78,19 +78,19 @@ pub fn cmd(args: &[&str]) -> Result<(), String> {
     Ok(())
 }
 
-/// The authoring clone of photocraft-corpus: `$PHOTOCRAFT_CORPUS_REPO`, else `../photocraft-corpus`.
+/// The authoring clone of photostore-corpus: `$PHOTOSTORE_CORPUS_REPO`, else `../photostore-corpus`.
 fn local_clone() -> Result<PathBuf, String> {
-    if let Some(p) = std::env::var_os("PHOTOCRAFT_CORPUS_REPO").filter(|v| !v.is_empty()) {
+    if let Some(p) = std::env::var_os("PHOTOSTORE_CORPUS_REPO").filter(|v| !v.is_empty()) {
         return Ok(PathBuf::from(p));
     }
-    let sibling = root().parent().map(|p| p.join("photocraft-corpus"));
+    let sibling = root().parent().map(|p| p.join("photostore-corpus"));
     sibling.filter(|s| s.join("photoshop").is_dir()).ok_or_else(|| {
-        "no local photocraft-corpus clone: expected ../photocraft-corpus next to this checkout, or set PHOTOCRAFT_CORPUS_REPO=<path>".to_string()
+        "no local photostore-corpus clone: expected ../photostore-corpus next to this checkout, or set PHOTOSTORE_CORPUS_REPO=<path>".to_string()
     })
 }
 
 /// Fetches every corpus that is missing or stale (verified ones are left alone). With `local`,
-/// `corpus/photoshop` is copied from the authoring clone of photocraft-corpus instead. With
+/// `corpus/photoshop` is copied from the authoring clone of photostore-corpus instead. With
 /// `update`, every pinned corpus is refetched and its manifest rewritten (`--update-manifest`).
 pub fn fetch_all(local: bool, update: bool) -> Result<(), String> {
     fetch_pngsuite()?;
@@ -128,9 +128,9 @@ fn list() {
   cargo xtask test-corpus       fetch, then run every corpus test (--release --features corpus)
 
   corpus/photoshop/  [{}] our Photoshop-authored oracles (MIT OR Apache-2.0), from
-                     https://github.com/storytold/photocraft-corpus at {PHOTOCRAFT_CORPUS_COMMIT}
+                     https://github.com/storytold/photocraft-corpus at {PHOTOSTORE_CORPUS_COMMIT}
                      manifest xtask/photoshop-corpus.sha256. Fetch: --photoshop
-                     (--photoshop --local copies from ../photocraft-corpus or $PHOTOCRAFT_CORPUS_REPO)
+                     (--photoshop --local copies from ../photostore-corpus or $PHOTOSTORE_CORPUS_REPO)
   corpus/psd/        [{}] 170 small psd-tools + ag-psd files (MIT), psd-tools@{} and
                      ag-psd@{}, manifest xtask/psd-corpus.sha256. Fetch: --psd
   corpus/psd-tools/  [{}] the full psd-tools test set (MIT) at {PSD_TOOLS_COMMIT}
@@ -221,7 +221,7 @@ pub fn test_cmd(args: &[&str]) -> Result<(), String> {
         match *a {
             "-p" | "--package" => {
                 let name = it.next().ok_or("-p needs a crate name")?;
-                let full = if name.starts_with("photocraft-") { (*name).to_string() } else { format!("photocraft-{name}") };
+                let full = if name.starts_with("photostore-") { (*name).to_string() } else { format!("photostore-{name}") };
                 if !CORPUS_CRATES.contains(&full.as_str()) && !PIXLS_CRATES.contains(&full.as_str()) {
                     return Err(format!("{full} has no corpus tests (crates: {} or the opt-in {})", CORPUS_CRATES.join(", "), PIXLS_CRATES.join(", ")));
                 }
@@ -237,8 +237,8 @@ pub fn test_cmd(args: &[&str]) -> Result<(), String> {
     // `--pixls` opts in (and fetches), and a raw change under --changed does too: the raw
     // corpus tests are not part of the default set until a maintainer decides otherwise.
     let wants_pixls = ours.contains(&"--pixls") || crates.iter().any(|c| PIXLS_CRATES.contains(&c.as_str())) || raw_changed;
-    if wants_pixls && !crates.iter().any(|c| c == "photocraft-raw") {
-        crates.push("photocraft-raw".to_string());
+    if wants_pixls && !crates.iter().any(|c| c == "photostore-raw") {
+        crates.push("photostore-raw".to_string());
     }
     if wants_pixls {
         crate::pinned::fetch_pixls(false)?;

@@ -20,14 +20,14 @@
 //! with [`apply`], so every change is a journaled command (Rule 1).
 
 use egui::{CursorIcon, RichText, Stroke, vec2};
-use photocraft_engine::BrushSettings;
-use photocraft_engine::paint::{BrushPreset, MAX_BRUSH_SIZE, TipShape};
+use photostore_engine::BrushSettings;
+use photostore_engine::paint::{BrushPreset, MAX_BRUSH_SIZE, TipShape};
 use serde_json::{Value, json};
 
 use crate::brush_panel::{BrushesPanelState, Renaming, new_preset_name, run_or_status};
 use crate::brushes_tab::{self, Action, ListLayout};
 use crate::theme::Tokens;
-use crate::{PhotocraftApp, icons, widgets};
+use crate::{PhotoStoreApp, icons, widgets};
 
 /// Width of the picker's contents.
 pub const WIDTH: f32 = 300.0;
@@ -99,7 +99,7 @@ pub fn list_state() -> BrushesPanelState {
 
 /// The picker's view remembered across restarts: the gear's three card parts and the footer
 /// scale (`Preferences::brush_picker`).
-fn view(app: &PhotocraftApp) -> Value {
+fn view(app: &PhotoStoreApp) -> Value {
     let st = &app.ui.brush_picker_list;
     json!({"showName": st.show_name, "showStroke": st.show_stroke, "showTip": st.show_tip, "scale": st.scale})
 }
@@ -108,7 +108,7 @@ fn view(app: &PhotocraftApp) -> Value {
 /// gear's card parts and the footer scale. Cheap: a small JSON compare per frame. Run every
 /// frame (not from the picker's own code) so a view set while the picker is closed — by the
 /// control channel — is remembered too.
-pub fn persist(app: &mut PhotocraftApp, ctx: &egui::Context) {
+pub fn persist(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     if ctx.input(|i| i.pointer.any_down()) {
         return;
     }
@@ -121,7 +121,7 @@ pub fn persist(app: &mut PhotocraftApp, ctx: &egui::Context) {
 /// Restore the picker's remembered view at launch. A missing or malformed part keeps its
 /// default, the scale is clamped to the slider's range, and the three parts can't all come
 /// back off (an empty card would show no brush at all).
-pub fn restore(app: &mut PhotocraftApp) {
+pub fn restore(app: &mut PhotoStoreApp) {
     let saved = app.session.prefs().brush_picker.clone();
     let st = &mut app.ui.brush_picker_list;
     if let Some(v) = saved.get("showName").and_then(Value::as_bool) {
@@ -144,7 +144,7 @@ pub fn restore(app: &mut PhotocraftApp) {
 }
 
 /// Run what the picker asked for.
-pub fn apply(app: &mut PhotocraftApp, ctx: &egui::Context, picks: Vec<Pick>) {
+pub fn apply(app: &mut PhotoStoreApp, ctx: &egui::Context, picks: Vec<Pick>) {
     for pick in picks {
         match pick {
             Pick::List(a) => brushes_tab::apply(app, vec![a]),
@@ -165,7 +165,7 @@ pub fn apply(app: &mut PhotocraftApp, ctx: &egui::Context, picks: Vec<Pick>) {
 }
 
 /// Show the Brush Settings panel on its settings tab (what F5 does when it is hidden).
-pub fn open_settings(app: &mut PhotocraftApp, ctx: &egui::Context) {
+pub fn open_settings(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     if app.ui.panels.brush_settings {
         app.ui.brush_tab = 0;
         return;
@@ -177,7 +177,7 @@ pub fn open_settings(app: &mut PhotocraftApp, ctx: &egui::Context) {
 
 /// The options-bar button beside the brush chip that shows and hides the Brush Settings panel
 /// (Photoshop's "Toggle the Brush Settings panel"). It runs Window › Brush Settings (F5).
-pub fn settings_toggle(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+pub fn settings_toggle(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
     let on = app.ui.panels.brush_settings;
     if named(icons::button(ui, "sliders-horizontal", 24.0, on, "Toggle the Brush Settings panel  (F5)"), "Toggle the Brush Settings panel").clicked()
         && let Err(e) = crate::menus::invoke(app, ui.ctx(), "window.panel.brushSettings", json!({}))

@@ -1,6 +1,6 @@
 //! Unsharp Mask, Smart Sharpen (basic), High Pass.
 
-use photocraft_geom::Rect;
+use photostore_geom::Rect;
 
 use crate::Ctx;
 use crate::blur::{conv_sep, gaussian_kernel};

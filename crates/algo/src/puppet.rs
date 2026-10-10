@@ -18,8 +18,8 @@
 //! * **Rendering.** Triangles are rasterized with [`crate::warp::warp_triangles`] (tile-parallel,
 //!   premultiplied, bilinear/bicubic), back to front by the depth of their nearest pin.
 
-use photocraft_geom::Rect;
-use photocraft_raster::Surface;
+use photostore_geom::Rect;
+use photostore_raster::Surface;
 use serde::{Deserialize, Serialize};
 
 use crate::transform::Interp;
@@ -794,7 +794,7 @@ pub fn puppet_warp(src: &Surface, bounds: Rect, w: &PuppetWarp, interp: Interp) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use photocraft_color::{ColorMode, PixelFormat, SampleType};
+    use photostore_color::{ColorMode, PixelFormat, SampleType};
 
     fn blob(st: SampleType) -> Surface {
         let mut s = Surface::new(PixelFormat::new(ColorMode::Rgb, st, true));

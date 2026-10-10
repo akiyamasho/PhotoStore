@@ -1,6 +1,6 @@
 # Summary
 
-[PhotoCraft Documentation](README.md)
+[PhotoStore Documentation](README.md)
 
 # Getting started
 
@@ -53,6 +53,7 @@
 
 # Project
 
+- [Fork provenance](project/fork.md)
 - [Roadmap](project/roadmap.md)
 - [Credits](project/credits.md)
 - [Licenses](project/licenses.md)

@@ -1,9 +1,9 @@
 # OpenRaster documents
 
-PhotoCraft opens and saves OpenRaster (`.ora`), the layered format Krita, MyPaint, GIMP, Pinta
+PhotoStore opens and saves OpenRaster (`.ora`), the layered format Krita, MyPaint, GIMP, Pinta
 and others share. File › Open, recent files, drops, Save and Save As, the CLI (`convert`, `info`,
 `batch`) and automation (`doc.open`, `doc.save`, MCP) all use the same reader and writer in
-`photocraft-io`. The browser build accepts `.ora` too. A file is recognised by its `mimetype`
+`photostore-io`. The browser build accepts `.ora` too. A file is recognised by its `mimetype`
 entry, so an OpenRaster file with another extension still opens as one.
 
 ## What is kept
@@ -34,9 +34,9 @@ Photoshop's Soft Light and Hard Mix, which differ slightly, also with a warning.
 
 ## Limits and safety
 
-The reader takes the archive with the bounded ZIP reader of `photocraft-format` (no ZIP64,
+The reader takes the archive with the bounded ZIP reader of `photostore-format` (no ZIP64,
 CRC-checked), parses `stack.xml` with `roxmltree` (16 MiB cap), and decodes each layer image
-through `photocraft-codecs` with size limits. Canvases are at most 300,000 px a side, at most
+through `photostore-codecs` with size limits. Canvases are at most 300,000 px a side, at most
 8,192 layers and groups, nesting at most `MAX_GROUP_DEPTH` deep, and 1 GiB of decoded pixels in
 total. Malformed archives, XML, numbers and images return errors; truncated and corrupted files
 are covered by tests.
@@ -48,20 +48,20 @@ opacity, visibility, locks and every blend mode at 8 and 16 bit, check masks, re
 kinds, the archive layout and malformed input. `crates/automation/tests/openraster.rs` saves,
 reopens, edits and saves in place through the agent surface; the CLI test converts both ways.
 
-Real-file checks use Krita-authored oracles from
-[photocraft-corpus](https://github.com/storytold/photocraft-corpus) (`krita/`, made by
+Real-file checks use Krita-authored oracles from the inherited
+[PhotoCraft corpus](https://github.com/storytold/photocraft-corpus) (`krita/`, made by
 `tools/krita-oracles/generate.py`). Each Krita file carries Krita's rendering of itself in
 `mergedimage.png`:
 
 ```sh
-KRITA_TEST_DIR=/path/to/photocraft-corpus/krita cargo test -p photocraft-io --test krita_corpus -- --ignored --nocapture
+KRITA_TEST_DIR=/path/to/photocraft-corpus/krita cargo test -p photostore-io --test krita_corpus -- --ignored --nocapture
 ```
 
 2026-10-09, Krita 5.2.9: 30 of 34 `.ora` files render within 3/255 of Krita's merged image; the
 other four differ for known reasons listed in `crates/io/tests/krita_corpus.rs` (Krita's
 tie-break in Darker and Lighter Color, Hard Mix at a channel sum of exactly 1, and a
 linear-light 16-bit document that Krita blends in linear light). In the other direction,
-Krita opened every PhotoCraft re-export of those files and rendered 33 of them identically to
+Krita opened every PhotoStore re-export of those files and rendered 33 of them identically to
 its original; the exception is Photoshop's Soft Light, which is written as `svg:soft-light`.
 MyPaint and GIMP files have not been checked yet.
 

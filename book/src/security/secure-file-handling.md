@@ -1,6 +1,6 @@
 # Secure file handling
 
-PhotoCraft reads and writes documents in the desktop app, CLI, headless RPC server, and MCP server.
+PhotoStore reads and writes documents in the desktop app, CLI, headless RPC server, and MCP server.
 Remote automation paths are untrusted relative names resolved beneath explicitly granted roots.
 
 ## Implemented

@@ -1,20 +1,20 @@
 use super::*;
 use egui_kittest::{Harness, kittest::Queryable};
 
-fn harness(adjustment: bool, theme: crate::theme::ThemeKind) -> Harness<'static, PhotocraftApp> {
-    let mut session = photocraft_engine::Session::new();
+fn harness(adjustment: bool, theme: crate::theme::ThemeKind) -> Harness<'static, PhotoStoreApp> {
+    let mut session = photostore_engine::Session::new();
     session.execute("file.new", json!({"width": 64, "height": 64})).unwrap();
     let command = if adjustment { "layer.newAdjustmentLayer.curves" } else { "layer.new.layer" };
     session.execute(command, json!({})).unwrap();
     if session.active().unwrap().doc.layer(session.active().unwrap().active_layer.unwrap()).unwrap().mask.is_none() {
         session.execute("layer.layerMask.revealAll", json!({})).unwrap();
     }
-    let mut app = PhotocraftApp::new(session, crate::Services::default());
+    let mut app = PhotoStoreApp::new(session, crate::Services::default());
     app.ui.mask_target = true;
     app.ui.panels.properties = true;
     app.last_canvas_rect = Rect::from_min_size(egui::Pos2::ZERO, vec2(800.0, 600.0));
     let mut h = Harness::builder().with_size(vec2(800.0, 600.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut PhotocraftApp| {
+        |ui, app: &mut PhotoStoreApp| {
             if ui.ctx().fonts(|f| f.families().contains(&egui::FontFamily::Name("semibold".into()))) {
                 if Tokens::get(ui.ctx()).pro {
                     properties_body(app, ui);
@@ -25,12 +25,12 @@ fn harness(adjustment: bool, theme: crate::theme::ThemeKind) -> Harness<'static,
         },
         app,
     );
-    PhotocraftApp::setup_context(&h.ctx, theme);
+    PhotoStoreApp::setup_context(&h.ctx, theme);
     h.run_steps(4);
     h
 }
 
-fn mask(h: &Harness<'_, PhotocraftApp>) -> photocraft_doc::LayerMask {
+fn mask(h: &Harness<'_, PhotoStoreApp>) -> photostore_doc::LayerMask {
     let s = h.state().session.active().unwrap();
     s.doc.layer(s.active_layer.unwrap()).unwrap().mask.clone().unwrap()
 }
@@ -56,7 +56,7 @@ fn pixel_mask_properties_follow_target_for_raster_and_adjustment_in_both_themes(
     }
 }
 
-fn drag(h: &mut Harness<'_, PhotocraftApp>, field: usize, fractions: &[f32]) {
+fn drag(h: &mut Harness<'_, PhotoStoreApp>, field: usize, fractions: &[f32]) {
     let r = h.query_all_by_role(egui::accesskit::Role::Slider).nth(field).unwrap().rect();
     let pos = |f: f32| pos2(r.left() + 7.0 + (r.width() - 14.0) * f, r.center().y);
     let start = pos(fractions[0]);

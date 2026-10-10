@@ -1,7 +1,7 @@
 //! History panel actions beyond stepping (#1117): Delete (the trash button) and New Document (the
 //! "Create new document from current state" button). Stepping to a state is Edit › Undo / Redo.
 //!
-//! States are indexed like [`photocraft_ops::History::entries`]: 0 is the oldest state still
+//! States are indexed like [`photostore_ops::History::entries`]: 0 is the oldest state still
 //! held, the last index is the current document. Snapshots are not implemented.
 
 use serde_json::{Value, json};
@@ -60,13 +60,13 @@ fn new_document(s: &mut Session, p: &Value) -> Result<Value> {
     let src = src.ok_or_else(|| bad(CMD, format!("state {i} is not held")))?;
     let label = st.history.entries().get(i).cloned().unwrap_or_default();
     let mut doc = (*src).clone();
-    doc.id = photocraft_doc::DocId::fresh();
+    doc.id = photostore_doc::DocId::fresh();
     doc.name = match p.get("name").and_then(Value::as_str) {
         Some(n) if !n.trim().is_empty() => n.to_string(),
         _ if !label.trim().is_empty() => label,
         _ => format!("{} copy", doc.name),
     };
-    for_each_layer(&mut doc.layers, &mut |l| l.id = photocraft_doc::LayerId::fresh());
+    for_each_layer(&mut doc.layers, &mut |l| l.id = photostore_doc::LayerId::fresh());
     let name = doc.name.clone();
     let index = s.add_document(doc, None);
     Ok(json!({ "document": index, "name": name }))

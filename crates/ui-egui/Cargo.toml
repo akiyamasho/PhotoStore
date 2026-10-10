@@ -1,5 +1,5 @@
 [package]
-name = "photocraft-ui-egui"
+name = "photostore-ui-egui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,25 +8,25 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-photocraft-geom = { workspace = true }
-photocraft-color = { workspace = true }
-photocraft-cms = { workspace = true }
-photocraft-raster = { workspace = true }
-photocraft-doc = { workspace = true }
-photocraft-compose = { workspace = true }
-photocraft-gpu = { workspace = true }
-photocraft-engine = { workspace = true }
-photocraft-io = { workspace = true }
-photocraft-plugins = { workspace = true }
-photocraft-algo = { workspace = true }
-photocraft-text = { workspace = true }
-photocraft-vector = { workspace = true }
+photostore-geom = { workspace = true }
+photostore-color = { workspace = true }
+photostore-cms = { workspace = true }
+photostore-raster = { workspace = true }
+photostore-doc = { workspace = true }
+photostore-compose = { workspace = true }
+photostore-gpu = { workspace = true }
+photostore-engine = { workspace = true }
+photostore-io = { workspace = true }
+photostore-plugins = { workspace = true }
+photostore-algo = { workspace = true }
+photostore-text = { workspace = true }
+photostore-vector = { workspace = true }
 # Only MAX_BRUSH_SIZE: `ui.set brushSize` validates against the Brush Settings range up front.
-photocraft-paint = { workspace = true }
+photostore-paint = { workspace = true }
 # Reading files to open them (bounded reads, a clear error for files larger than memory).
-photocraft-format = { workspace = true }
-# Decoding the brand mark's PNG (`brand.rs`); already linked through photocraft-io.
-photocraft-codecs = { workspace = true }
+photostore-format = { workspace = true }
+# Decoding the brand mark's PNG (`brand.rs`); already linked through photostore-io.
+photostore-codecs = { workspace = true }
 egui = { workspace = true }
 egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit"] }
@@ -34,7 +34,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 base64 = "0.22"
-# Inflating the translation catalogs, stored deflated (build.rs); already linked through photocraft-io.
+# Inflating the translation catalogs, stored deflated (build.rs); already linked through photostore-io.
 flate2 = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -44,12 +44,12 @@ sys-locale = "=0.3.2"
 
 [dev-dependencies]
 # Synthetic raw files for the open-time Camera Raw dialog tests.
-photocraft-raw = { workspace = true, features = ["testgen"] }
+photostore-raw = { workspace = true, features = ["testgen"] }
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot", "eframe"] }
 # Benchmark helpers for the `--json` benches `cargo xtask perf` runs (in-process RSS, percentiles).
-photocraft-testkit = { workspace = true }
+photostore-testkit = { workspace = true }
 # Only for examples/perf_scenarios.rs (a 500-brush .abr for the #210 import row).
-photocraft-psd = { workspace = true }
+photostore-psd = { workspace = true }
 
 [build-dependencies]
 # Deflates the translation catalogs (build.rs); already linked at run time to inflate them.

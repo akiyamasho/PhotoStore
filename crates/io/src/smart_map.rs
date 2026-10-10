@@ -14,20 +14,20 @@
 //! ```
 //!
 //! The list is in application order (first = bottom, applied first), like
-//! [`SmartObject::smart_filters`](photocraft_doc::SmartObject). Filters PhotoCraft implements map
+//! [`SmartObject::smart_filters`](photostore_doc::SmartObject). Filters PhotoStore implements map
 //! to their command id and dialog parameters; any other filter becomes a
 //! [`UNSUPPORTED_FILTER`] entry that keeps its descriptor verbatim (hex in `params.psd`), so it is
 //! listed, can be hidden, reordered or deleted, and is written back unchanged.
 
-use photocraft_color::{BlendMode, ColorMode, PixelFormat, SampleType};
-use photocraft_doc::{LayerMask, SmartFilter};
-use photocraft_geom::warp::{Warp, WarpStyle};
-use photocraft_geom::{Affine, Rect as GeomRect};
-use photocraft_psd::Compression;
-use photocraft_psd::Rect as PsdRect;
-use photocraft_psd::descriptor::{Class, Descriptor, Id, ObjectArray, ReferenceItem, UnicodeString, Value, VersionedDescriptor};
-use photocraft_psd::filter_effects::{EffectsPlane, FilterEffectsItem};
-use photocraft_raster::Surface;
+use photostore_color::{BlendMode, ColorMode, PixelFormat, SampleType};
+use photostore_doc::{LayerMask, SmartFilter};
+use photostore_geom::warp::{Warp, WarpStyle};
+use photostore_geom::{Affine, Rect as GeomRect};
+use photostore_psd::Compression;
+use photostore_psd::Rect as PsdRect;
+use photostore_psd::descriptor::{Class, Descriptor, Id, ObjectArray, ReferenceItem, UnicodeString, Value, VersionedDescriptor};
+use photostore_psd::filter_effects::{EffectsPlane, FilterEffectsItem};
+use photostore_raster::Surface;
 use serde_json::{Map, Value as J, json};
 
 use crate::blocks::{enum_of, get_desc, num};
@@ -35,7 +35,7 @@ use crate::blocks::{enum_of, get_desc, num};
 #[path = "camera_raw_map.rs"]
 mod camera_raw;
 
-/// Command id of a Photoshop smart filter PhotoCraft does not implement. Its params hold the
+/// Command id of a Photoshop smart filter PhotoStore does not implement. Its params hold the
 /// filter's name, Photoshop filter id and descriptor (`psd`, hex); it renders as a pass-through.
 pub const UNSUPPORTED_FILTER: &str = "psd.unsupportedFilter";
 
@@ -124,7 +124,7 @@ pub fn filter_stack(fx: &Descriptor) -> FilterStack {
 
 // ---------- the filters we model ----------
 
-/// Photoshop filter → PhotoCraft command, keyed by the `Fltr` class (and `filterID`).
+/// Photoshop filter → PhotoStore command, keyed by the `Fltr` class (and `filterID`).
 struct Known {
     class: &'static str,
     filter_id: i32,
@@ -517,7 +517,7 @@ fn quad_points(s: &PlacedSpec<'_>) -> [f64; 8] {
     let (w, h) = s.size;
     let [a, b, c, d, e, f] = s.transform.m;
     let map = |x: f64, y: f64| match &s.perspective {
-        Some(p) => photocraft_algo::transform::Homography(*p).apply(x, y),
+        Some(p) => photostore_algo::transform::Homography(*p).apply(x, y),
         None => (a * x + c * y + e, b * x + d * y + f),
     };
     let mut out = [0.0; 8];
@@ -733,7 +733,7 @@ pub fn feid_item(placed: &str, unfiltered: &Surface, mask: Option<&LayerMask>, b
     // Fully transparent pixels carry white, as in Photoshop's own cache: filters that look at
     // colour regardless of alpha (Shadows/Highlights) read it.
     let mut vals = px.read_region(r);
-    let white = photocraft_raster::from_rgba(&doc_fmt, [1.0, 1.0, 1.0, 1.0]);
+    let white = photostore_raster::from_rgba(&doc_fmt, [1.0, 1.0, 1.0, 1.0]);
     for p in vals.chunks_exact_mut(cc + 1) {
         if p[cc] <= 0.0 {
             p[..cc].copy_from_slice(&white[..cc]);
@@ -903,9 +903,9 @@ mod tests {
             assert!((a - b).abs() < 1e-9);
         }
         assert_eq!(p.stack, Some(stack));
-        let tb = photocraft_psd::TaggedBlock::new(*b"SoLd", sold.clone());
+        let tb = photostore_psd::TaggedBlock::new(*b"SoLd", sold.clone());
         tb.check_structure().unwrap();
-        let pl = photocraft_psd::TaggedBlock::new(*b"PlLd", plld_bytes(&spec, &mut w));
+        let pl = photostore_psd::TaggedBlock::new(*b"PlLd", plld_bytes(&spec, &mut w));
         pl.check_structure().unwrap();
         // A template keeps its other keys; an unmoved transform keeps its exact quad.
         let mut tmpl = sold_descriptor(&sold).unwrap();
@@ -921,7 +921,7 @@ mod tests {
     /// and comes back as the same projective map; an affine one reads back as no perspective.
     #[test]
     fn perspective_placement_round_trips_through_sold() {
-        let h = photocraft_algo::transform::Homography::rect_to_quad([0.0, 0.0, 64.0, 32.0], [[10.0, 5.0], [80.0, 8.0], [70.0, 50.0], [12.0, 40.0]]).unwrap();
+        let h = photostore_algo::transform::Homography::rect_to_quad([0.0, 0.0, 64.0, 32.0], [[10.0, 5.0], [80.0, 8.0], [70.0, 50.0], [12.0, 40.0]]).unwrap();
         let mut w = Vec::new();
         let mut spec = PlacedSpec {
             idnt: "id",
@@ -960,7 +960,7 @@ mod tests {
         assert!(quad_moved(&template, &spec), "moved half a pixel");
         spec.transform = t;
         spec.perspective =
-            photocraft_algo::transform::Homography::rect_to_quad([0.0, 0.0, 20.0, 10.0], [[3.0, 4.0], [23.0, 4.0], [20.0, 12.0], [3.0, 14.0]]).map(|h| h.0);
+            photostore_algo::transform::Homography::rect_to_quad([0.0, 0.0, 20.0, 10.0], [[3.0, 4.0], [23.0, 4.0], [20.0, 12.0], [3.0, 14.0]]).map(|h| h.0);
         assert!(quad_moved(&template, &spec), "one corner moved (Distort)");
         assert!(quad_moved(&Descriptor::new("null"), &spec), "no stored quad");
     }
@@ -1013,7 +1013,7 @@ mod tests {
 
     #[test]
     fn warps_are_written_and_read_back() {
-        use photocraft_geom::warp::BezierMesh;
+        use photostore_geom::warp::BezierMesh;
         let bounds = [0.0, 0.0, 60.0, 30.0];
         let mut custom = BezierMesh::identity(bounds, 1, 1);
         custom.points[15] = [67.0, 30.0];

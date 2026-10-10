@@ -1,19 +1,19 @@
 //! Save identity belongs to the editable document, after a successful write only.
 
-use crate::{ExportSettings, PhotocraftApp, Services, menus};
-use photocraft_engine::Session;
+use crate::{ExportSettings, PhotoStoreApp, Services, menus};
+use photostore_engine::Session;
 use serde_json::json;
 use std::{cell::RefCell, rc::Rc};
 
-fn app() -> PhotocraftApp {
-    let mut app = PhotocraftApp::new(
+fn app() -> PhotoStoreApp {
+    let mut app = PhotoStoreApp::new(
         Session::new(),
         Services {
             import: Some(Box::new(|name, bytes, max_svg_group_depth| {
-                photocraft_io::import_with_svg_group_depth(name, bytes, max_svg_group_depth).map(|r| (r.document, r.warnings)).map_err(|e| e.to_string())
+                photostore_io::import_with_svg_group_depth(name, bytes, max_svg_group_depth).map(|r| (r.document, r.warnings)).map_err(|e| e.to_string())
             })),
             export: Some(Box::new(|doc, path, _| {
-                photocraft_io::export(doc, path, &Default::default()).map(|r| (r.bytes, r.warnings)).map_err(|e| e.to_string())
+                photostore_io::export(doc, path, &Default::default()).map(|r| (r.bytes, r.warnings)).map_err(|e| e.to_string())
             })),
             write: Some(Box::new(|_, _| Ok(()))),
             automation_write: Some(Box::new(|_, _| Ok(()))),
@@ -25,7 +25,7 @@ fn app() -> PhotocraftApp {
     app
 }
 
-fn identity(app: &PhotocraftApp) -> (String, Option<String>, u64, u64) {
+fn identity(app: &PhotoStoreApp) -> (String, Option<String>, u64, u64) {
     let st = app.session.active().unwrap();
     (st.doc.name.clone(), st.path.clone(), st.revision, st.saved_revision)
 }
@@ -48,7 +48,7 @@ fn new_document_psd_and_subsequent_save_as_adopt_the_written_file_name() {
         menus::invoke(&mut app, &ctx, "file.saveAs", json!({"path": "作品/My image.PSD"})).unwrap();
         assert_eq!(identity(&app), ("My image.PSD".into(), Some("作品/My image.PSD".into()), revision, revision));
         assert_eq!(app.session.active().unwrap().doc.id, id);
-        let reopened = photocraft_io::import("My image.PSD", &bytes.borrow()).unwrap();
+        let reopened = photostore_io::import("My image.PSD", &bytes.borrow()).unwrap();
         assert_eq!(reopened.document.size, app.session.active().unwrap().doc.size);
         assert_eq!(reopened.document.depth.bits(), depth);
         menus::invoke(&mut app, &ctx, "file.saveAs", json!({"path": "作品/次の画像.psd"})).unwrap();

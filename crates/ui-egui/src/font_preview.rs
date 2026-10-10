@@ -4,9 +4,9 @@ use std::collections::VecDeque;
 use std::sync::PoisonError;
 
 use egui::{ColorImage, Rect, TextureHandle, TextureOptions, pos2, vec2};
-use photocraft_color::{ColorMode, PixelFormat, SampleType};
-use photocraft_doc::TextLayer;
-use photocraft_geom::Affine;
+use photostore_color::{ColorMode, PixelFormat, SampleType};
+use photostore_doc::TextLayer;
+use photostore_geom::Affine;
 
 const SAMPLE: &str = "AaBbCc";
 const WIDTH: f32 = 100.0;
@@ -19,7 +19,7 @@ type Key = (String, u32, (u64, u64));
 #[derive(Clone, Default)]
 struct Cache(VecDeque<(Key, Option<TextureHandle>)>);
 
-fn image(engine: &mut photocraft_text::TextEngine, family: &str, scale: u32) -> Option<ColorImage> {
+fn image(engine: &mut photostore_text::TextEngine, family: &str, scale: u32) -> Option<ColorImage> {
     // Unknown/unreadable families keep their plain menu label, rather than a misleading fallback.
     if !engine.fonts.has_family(family) {
         return None;
@@ -41,20 +41,20 @@ fn image(engine: &mut photocraft_text::TextEngine, family: &str, scale: u32) -> 
     let height = (HEIGHT as u32 * scale) as usize;
     let transform = Affine::translate(f64::from(-bounds[0]), f64::from((height as f32 - (bounds[3] - bounds[1])) / 2.0 - bounds[1]));
     // Reject oversized ink before the rasterizer allocates a surface (malformed installed fonts).
-    let ink = photocraft_text::render::ink_rect(&layout, &transform);
+    let ink = photostore_text::render::ink_rect(&layout, &transform);
     if ink.is_empty() || ink.width() > width as u32 * 4 || ink.height() > height as u32 * 4 {
         return None;
     }
-    let rendered = photocraft_text::render::rasterize(&layout, &transform, PixelFormat::new(ColorMode::Rgb, SampleType::U8, true), layer.antialias);
+    let rendered = photostore_text::render::rasterize(&layout, &transform, PixelFormat::new(ColorMode::Rgb, SampleType::U8, true), layer.antialias);
     let mut rgba = vec![[0u8; 4]; width * height];
-    rendered.surface.read_rgba8_into(photocraft_geom::Rect::new(0, 0, width as i32, height as i32), &mut rgba);
+    rendered.surface.read_rgba8_into(photostore_geom::Rect::new(0, 0, width as i32, height as i32), &mut rgba);
     Some(ColorImage::from_rgba_unmultiplied([width, height], &rgba.into_iter().flat_map(|p| [255, 255, 255, p[3]]).collect::<Vec<_>>()))
 }
 
 pub(crate) fn paint(ui: &egui::Ui, family: &str, row: Rect) {
     let ctx = ui.ctx();
     let scale = ctx.pixels_per_point().ceil().clamp(1.0, 4.0) as u32;
-    let key = (family.to_owned(), scale, (photocraft_text::fonts::generation(), photocraft_text::served::generation()));
+    let key = (family.to_owned(), scale, (photostore_text::fonts::generation(), photostore_text::served::generation()));
     let id = egui::Id::new("font-menu-previews");
     let cached = ctx.data_mut(|d| {
         let cache = d.get_temp_mut_or_default::<Cache>(id);
@@ -65,7 +65,7 @@ pub(crate) fn paint(ui: &egui::Ui, family: &str, row: Rect) {
         Some(texture)
     });
     let texture = cached.unwrap_or_else(|| {
-        let texture = image(&mut photocraft_text::shared().lock().unwrap_or_else(PoisonError::into_inner), family, scale)
+        let texture = image(&mut photostore_text::shared().lock().unwrap_or_else(PoisonError::into_inner), family, scale)
             .map(|img| ctx.load_texture(format!("font-sample-{family}"), img, TextureOptions::LINEAR));
         ctx.data_mut(|d| {
             let cache = d.get_temp_mut_or_default::<Cache>(id);
@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn previews_use_the_requested_face_and_scale() {
-        let mut engine = photocraft_text::TextEngine::new();
+        let mut engine = photostore_text::TextEngine::new();
         let sans = image(&mut engine, "Inter", 1).expect("bundled sans");
         let mono = image(&mut engine, "JetBrains Mono", 1).expect("bundled mono");
         assert_eq!(sans.size, [100, 24]);

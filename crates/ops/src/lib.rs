@@ -1,6 +1,6 @@
 //! Undo/redo history.
 //!
-//! Because pixel tiles are `Arc`-shared copy-on-write (see `photocraft-raster`), a full
+//! Because pixel tiles are `Arc`-shared copy-on-write (see `photostore-raster`), a full
 //! [`Document`] clone costs O(layers + tiles) pointer copies, not pixel copies. History therefore
 //! stores whole-document snapshots per transaction, which is simple, obviously correct, and the
 //! same approach Photoshop's History panel exposes to users (one state per step).
@@ -13,7 +13,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
-use photocraft_doc::{Document, LayerId};
+use photostore_doc::{Document, LayerId};
 
 mod tiles;
 
@@ -269,7 +269,7 @@ fn tile_bytes(doc: &Document, seen: &mut HashSet<usize>) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use photocraft_doc::{Color, ColorMode, Layer, SampleType, Size};
+    use photostore_doc::{Color, ColorMode, Layer, SampleType, Size};
 
     fn base() -> Document {
         Document::with_background("h", Size::new(64, 64), ColorMode::Rgb, SampleType::U8, Color::WHITE)
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn shared_masks_channels_and_repeated_snapshot_references_count_once() {
-        use photocraft_doc::{AlphaChannel, LayerMask, PixelFormat, Surface};
+        use photostore_doc::{AlphaChannel, LayerMask, PixelFormat, Surface};
         let mut doc = base();
         let mut gray = Surface::new(PixelFormat::GRAY8);
         gray.write_pixel(1, 1, &[1.0]);
@@ -522,12 +522,12 @@ mod tests {
 
     #[test]
     fn transferred_tiles_cannot_make_the_budget_check_underestimate_current() {
-        use photocraft_doc::{PixelFormat, Surface};
+        use photostore_doc::{PixelFormat, Surface};
         let before = Arc::new(base());
         let mut current = (*before).clone();
         let mut large = Surface::new(PixelFormat::new(ColorMode::Cmyk, SampleType::F32, true));
         large.write_pixel(256, 0, &[1.0; 5]);
-        current.layers[0].surface_mut().unwrap().put_tiles(large.take_tiles(photocraft_doc::Rect::from_xywh(256, 0, 1, 1)));
+        current.layers[0].surface_mut().unwrap().put_tiles(large.take_tiles(photostore_doc::Rect::from_xywh(256, 0, 1, 1)));
         let mut h = History::new(50);
         h.max_bytes = tile_bytes(&current, &mut HashSet::new()) - 1;
         h.record("A", before.clone(), LayerTarget::default());

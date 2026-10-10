@@ -1,5 +1,5 @@
 [package]
-name = "photocraft-engine"
+name = "photostore-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,35 +12,35 @@ workspace = true
 corpus = []
 
 [dependencies]
-photocraft-geom = { workspace = true }
-photocraft-color = { workspace = true }
-photocraft-cms = { workspace = true }
-photocraft-raster = { workspace = true }
-photocraft-doc = { workspace = true }
-photocraft-ops = { workspace = true }
-photocraft-compose = { workspace = true }
+photostore-geom = { workspace = true }
+photostore-color = { workspace = true }
+photostore-cms = { workspace = true }
+photostore-raster = { workspace = true }
+photostore-doc = { workspace = true }
+photostore-ops = { workspace = true }
+photostore-compose = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 rayon = { workspace = true }
-photocraft-paint = { workspace = true }
-photocraft-algo = { workspace = true }
-photocraft-text = { workspace = true }
-photocraft-vector = { workspace = true }
-photocraft-io = { workspace = true }
-photocraft-psd = { workspace = true }
-photocraft-format = { workspace = true }
-photocraft-plugins = { workspace = true }
+photostore-paint = { workspace = true }
+photostore-algo = { workspace = true }
+photostore-text = { workspace = true }
+photostore-vector = { workspace = true }
+photostore-io = { workspace = true }
+photostore-psd = { workspace = true }
+photostore-format = { workspace = true }
+photostore-plugins = { workspace = true }
 blake3 = { version = "1.8", default-features = false, features = ["pure"] }
-photocraft-codecs = { workspace = true }
+photostore-codecs = { workspace = true }
 flate2 = { workspace = true }
 # Photoshop `.kys` shortcut sets (`edit.keyboardShortcuts` `importKys`); already in the tree
-# through photocraft-ui-egui and usvg.
+# through photostore-ui-egui and usvg.
 roxmltree = "0.20"
 
 [dev-dependencies]
-photocraft-affinity = { workspace = true, features = ["synth"] }
+photostore-affinity = { workspace = true, features = ["synth"] }
 # Synthetic camera raw files for the open tests.
-photocraft-raw = { workspace = true, features = ["testgen"] }
+photostore-raw = { workspace = true, features = ["testgen"] }
 # WebAssembly text -> binary for plug-in test modules (Apache-2.0 WITH LLVM-exception).
 wat = "1.228"

@@ -3,10 +3,10 @@
 
 use serde_json::json;
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 
-fn app_with_two_documents() -> PhotocraftApp {
-    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+fn app_with_two_documents() -> PhotoStoreApp {
+    let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
     app.run("file.new", json!({"width": 64, "height": 48})).unwrap();
     app.run("file.new", json!({"width": 32, "height": 32})).unwrap();
     assert_eq!(app.ui.views.len(), 2);

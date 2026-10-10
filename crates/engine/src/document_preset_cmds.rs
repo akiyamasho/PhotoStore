@@ -1,7 +1,7 @@
 //! Named New Document configurations. The existing preferences services persist these with the
 //! other presets; selecting one only returns settings, and document creation stays in `file.new`.
 
-use photocraft_color::{ColorMode, SampleType};
+use photostore_color::{ColorMode, SampleType};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

@@ -1,5 +1,5 @@
 use super::*;
-use photocraft_geom::Rect;
+use photostore_geom::Rect;
 
 fn session(w: u32, h: u32, depth: u64, mode: &str) -> Session {
     let mut s = Session::new();
@@ -16,7 +16,7 @@ fn paint(s: &mut Session, f: impl Fn(i32, i32) -> [f32; 4]) {
         let mut data = Vec::new();
         for y in b.y0..b.y1 {
             for x in b.x0..b.x1 {
-                data.extend(photocraft_raster::from_rgba(&fmt, f(x, y)));
+                data.extend(photostore_raster::from_rgba(&fmt, f(x, y)));
             }
         }
         surf.write_region(b, &data);
@@ -85,12 +85,12 @@ fn rotate_arbitrary_other_modes() {
 fn flattened_mode_pixels_match_the_allocating_conversion_at_every_channel_count() {
     let px = [[0.0, 0.25, 0.75, 0.0], [0.9, 0.3, 0.2, 0.2], [0.1, 0.7, 0.4, 0.7], [1.0; 4]];
     for mode in [ColorMode::Indexed, ColorMode::Bitmap, ColorMode::Duotone] {
-        let mut document = Document::with_background("mode", Size::new(2, 2), ColorMode::Rgb, SampleType::F32, photocraft_doc::Color::WHITE);
+        let mut document = Document::with_background("mode", Size::new(2, 2), ColorMode::Rgb, SampleType::F32, photostore_doc::Color::WHITE);
         let mut active = None;
         single_layer(&mut document, &mut active, mode, &px, "result", false);
         let fmt = document.pixel_format();
         let mut expected = Surface::new(fmt);
-        let converted: Vec<f32> = px.iter().flat_map(|q| photocraft_raster::from_rgba(&fmt, *q)).collect();
+        let converted: Vec<f32> = px.iter().flat_map(|q| photostore_raster::from_rgba(&fmt, *q)).collect();
         expected.write_region(document.bounds(), &converted);
         let actual = document.layers[0].surface().unwrap();
         assert_eq!(actual.to_interleaved(document.bounds()), expected.to_interleaved(document.bounds()), "{mode:?}");
@@ -238,7 +238,7 @@ fn duotone_inks_and_display() {
     assert_eq!(inks[1].curve.last().unwrap().output, 0.8);
     // Display: warm midtones (red > blue) where the gray image is neutral.
     let shown = display_document(d).unwrap();
-    let px = photocraft_compose::render(&shown, Rect::from_xywh(8, 4, 1, 1)).px[0];
+    let px = photostore_compose::render(&shown, Rect::from_xywh(8, 4, 1, 1)).px[0];
     assert!(px[0] > px[2] + 0.05, "{px:?}");
     assert!(display_document(&Document::new("x", Size::new(1, 1), ColorMode::Grayscale, SampleType::U8)).is_none());
     // Tritone defaults and leaving the mode.
@@ -254,8 +254,8 @@ fn duotone_inks_and_display() {
 fn modes_round_trip_through_pcraft() {
     let mut s = session(12, 12, 8, "rgb");
     s.execute("image.mode.indexedColor", json!({"colors": 6})).unwrap();
-    let bytes = photocraft_format::save_to_bytes(doc(&s), &Default::default()).unwrap();
-    let back = photocraft_format::load_from_bytes(&bytes).unwrap();
+    let bytes = photostore_format::save_to_bytes(doc(&s), &Default::default()).unwrap();
+    let back = photostore_format::load_from_bytes(&bytes).unwrap();
     assert_eq!(back.color_table, doc(&s).color_table);
     assert_eq!(back.mode, ColorMode::Indexed);
 }

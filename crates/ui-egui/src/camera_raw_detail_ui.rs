@@ -1,9 +1,9 @@
 //! Full-resolution refinement of Camera Raw's interactive proxy. Native work is off the
 //! UI thread; only one revision runs at a time, and obsolete results never replace new edits.
 use egui::{Color32, ColorImage, Context, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
-use photocraft_algo::camera_raw::CameraRaw;
-use photocraft_geom::Rect as PixelRect;
-use photocraft_raster::Surface;
+use photostore_algo::camera_raw::CameraRaw;
+use photostore_geom::Rect as PixelRect;
+use photostore_raster::Surface;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -13,7 +13,7 @@ use std::sync::{
 #[derive(Clone)]
 pub(crate) enum Coverage {
     Selection(Surface),
-    Mask(photocraft_doc::LayerMask),
+    Mask(photostore_doc::LayerMask),
     None,
 }
 
@@ -239,7 +239,7 @@ impl DetailPreview {
                     if p[3] <= 0.0 || !p.iter().all(|v| v.is_finite()) {
                         return Color32::TRANSPARENT;
                     }
-                    let (lo, hi) = photocraft_algo::histogram::clipping(*p);
+                    let (lo, hi) = photostore_algo::histogram::clipping(*p);
                     match mode {
                         ClippingMode::ShadowChannels => t.histogram_color(7 ^ lo),
                         ClippingMode::HighlightChannels => {
@@ -282,7 +282,7 @@ impl DetailPreview {
 }
 
 fn develop(source: &Surface, area: PixelRect, params: &CameraRaw, coverage: &Coverage) -> Surface {
-    let mut result = photocraft_engine::lens_cmds::camera_raw_surface(source, area, params);
+    let mut result = photostore_engine::lens_cmds::camera_raw_surface(source, area, params);
     if matches!(coverage, Coverage::None) {
         return result;
     }
@@ -346,7 +346,7 @@ fn crop_image(surface: &Surface, area: PixelRect) -> ColorImage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use photocraft_color::PixelFormat;
+    use photostore_color::PixelFormat;
     #[test]
     fn refinement_uses_the_engine_at_source_resolution_and_respects_selection() {
         let area = PixelRect::new(10, -5, 42, 19);
@@ -357,7 +357,7 @@ mod tests {
         }
         source.write_region(area, &values);
         let params = CameraRaw { exposure: 0.5, texture: 15.0, grain_amount: 30.0, ..Default::default() };
-        let expected = photocraft_engine::lens_cmds::camera_raw_surface(&source, area, &params);
+        let expected = photostore_engine::lens_cmds::camera_raw_surface(&source, area, &params);
         assert_eq!(develop(&source, area, &params, &Coverage::None), expected);
         let mask = Surface::with_default(PixelFormat::GRAY8, &[0.0]);
         assert_eq!(develop(&source, area, &params, &Coverage::Selection(mask)), source);
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn full_resolution_sampling_and_crops_keep_fine_detail_at_every_supported_depth() {
-        use photocraft_color::{ColorMode, PixelFormat, SampleType};
+        use photostore_color::{ColorMode, PixelFormat, SampleType};
         for depth in [SampleType::U8, SampleType::U16, SampleType::F32] {
             for mode in [ColorMode::Rgb, ColorMode::Grayscale] {
                 let format = PixelFormat { mode, sample: depth, alpha: true };
@@ -402,7 +402,7 @@ mod tests {
                 source.write_region(area, &pixels);
                 let params = CameraRaw { exposure: 0.5, sharpen_amount: 20.0, grain_amount: 30.0, ..Default::default() };
                 let full = develop(&source, area, &params, &Coverage::None);
-                let expected = photocraft_engine::lens_cmds::camera_raw_surface(&source, area, &params);
+                let expected = photostore_engine::lens_cmds::camera_raw_surface(&source, area, &params);
                 assert_eq!(full, expected);
                 let mut preview = DetailPreview::new(source, area, Coverage::None);
                 preview.result = Some((1, full));

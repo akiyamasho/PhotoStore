@@ -5,9 +5,9 @@
 //! The built-in groups are our own designs, built from the same effect params as
 //! `layer.layerStyle.*`.
 
-use photocraft_color::{BlendMode, ColorMode, SampleType};
-use photocraft_doc::{Document, Effect, Layer, Size};
-use photocraft_geom::Rect;
+use photostore_color::{BlendMode, ColorMode, SampleType};
+use photostore_doc::{Document, Effect, Layer, Size};
+use photostore_geom::Rect;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -156,12 +156,12 @@ fn list(s: &mut Session, _: &Value) -> Result<Value> {
 }
 
 /// Target layers: `"layers": [ids]`, `"layer": id`, else every selected layer.
-fn targets(s: &Session, p: &Value) -> Vec<photocraft_doc::LayerId> {
+fn targets(s: &Session, p: &Value) -> Vec<photostore_doc::LayerId> {
     if let Some(a) = p.get("layers").and_then(Value::as_array) {
-        return a.iter().filter_map(Value::as_u64).map(photocraft_doc::LayerId).collect();
+        return a.iter().filter_map(Value::as_u64).map(photostore_doc::LayerId).collect();
     }
     if let Some(id) = p.get("layer").and_then(Value::as_u64) {
-        return vec![photocraft_doc::LayerId(id)];
+        return vec![photostore_doc::LayerId(id)];
     }
     crate::layer_multi_cmds::selected(s)
 }
@@ -193,7 +193,7 @@ fn apply(s: &mut Session, p: &Value) -> Result<Value> {
         for id in &ids {
             let l = doc.layer_mut(*id).ok_or(EngineError::NoLayer(*id))?;
             // Styles can't sit on the Background: Photoshop turns it into a normal layer first.
-            if l.name == "Background" && l.locks.transparency && l.locks.position && matches!(l.content, photocraft_doc::LayerContent::Raster(_)) {
+            if l.name == "Background" && l.locks.transparency && l.locks.position && matches!(l.content, photostore_doc::LayerContent::Raster(_)) {
                 l.name = "Layer 0".into();
                 l.locks.transparency = false;
                 l.locks.position = false;
@@ -330,7 +330,7 @@ pub fn thumbnail(s: &Session, style: &StylePreset, size: u32) -> Vec<u8> {
         l.fill_opacity = f;
     }
     doc.layers.push(l);
-    photocraft_compose::render(&doc, doc.bounds()).to_rgba8().pixels
+    photostore_compose::render(&doc, doc.bounds()).to_rgba8().pixels
 }
 
 pub fn specs() -> Vec<CommandSpec> {

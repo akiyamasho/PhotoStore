@@ -6,16 +6,16 @@ use egui::{Event, Key, Modifiers, vec2};
 use egui_kittest::Harness;
 use serde_json::json;
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::state::Tool;
 use crate::vector_ui::PenPath;
 
-fn harness() -> Harness<'static, PhotocraftApp> {
-    let mut s = photocraft_engine::Session::new();
+fn harness() -> Harness<'static, PhotoStoreApp> {
+    let mut s = photostore_engine::Session::new();
     s.execute("file.new", json!({"width": 200, "height": 100})).unwrap();
     let mut h = Harness::builder().with_size(vec2(1280.0, 800.0)).with_max_steps(64).build_eframe(move |cc| {
-        PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
-        PhotocraftApp::new(s, crate::Services::default())
+        PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
+        PhotoStoreApp::new(s, crate::Services::default())
     });
     h.run_steps(6);
     h
@@ -30,7 +30,7 @@ fn command() -> Modifiers {
     }
 }
 
-fn press(h: &mut Harness<'_, PhotocraftApp>, key: Key, m: Modifiers) {
+fn press(h: &mut Harness<'_, PhotoStoreApp>, key: Key, m: Modifiers) {
     h.event(Event::ModifiersChanged(m));
     h.event(Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: m });
     h.event(Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: m });
@@ -44,7 +44,7 @@ fn rect_path(x: f64, y: f64, w: f64, h: f64) -> serde_json::Value {
 }
 
 /// The selection's bounds (x, y, width, height), if any.
-fn selection(h: &Harness<'_, PhotocraftApp>) -> Option<[i64; 4]> {
+fn selection(h: &Harness<'_, PhotoStoreApp>) -> Option<[i64; 4]> {
     let r = h.state().session.active()?.doc.selection.as_ref()?.content_bounds();
     Some([r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0].map(i64::from))
 }

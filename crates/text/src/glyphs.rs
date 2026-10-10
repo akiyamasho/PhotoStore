@@ -1,10 +1,10 @@
 //! Glyphs panel support: the characters a face maps (its `cmap`), Photoshop's "Show" categories,
 //! and small glyph previews.
 
-use photocraft_color::{ColorMode, PixelFormat, SampleType};
-use photocraft_doc::TextLayer;
-use photocraft_doc::text::{CharStyle, TextRun};
-use photocraft_geom::Affine;
+use photostore_color::{ColorMode, PixelFormat, SampleType};
+use photostore_doc::TextLayer;
+use photostore_doc::text::{CharStyle, TextRun};
+use photostore_geom::Affine;
 use skrifa::MetadataProvider;
 
 use crate::FontDb;
@@ -127,11 +127,11 @@ pub fn preview(engine: &mut crate::TextEngine, style: &CharStyle, c: char, px: u
         &layout,
         &Affine::translate(f64::from(tx), f64::from(px as f32 * 0.78)),
         fmt,
-        photocraft_doc::text::AntiAlias::Smooth,
+        photostore_doc::text::AntiAlias::Smooth,
         None,
     );
     let mut rgba = vec![[0u8; 4]; (px * px) as usize];
-    r.surface.read_rgba8_into(photocraft_geom::Rect::new(0, 0, px as i32, px as i32), &mut rgba);
+    r.surface.read_rgba8_into(photostore_geom::Rect::new(0, 0, px as i32, px as i32), &mut rgba);
     (px, rgba.into_iter().map(|p| p[3]).collect())
 }
 

@@ -28,7 +28,7 @@
 //!
 //! Buffers are interleaved `w × h × ch` normalised floats (any model/depth); deterministic.
 
-use photocraft_geom::Rect;
+use photostore_geom::Rect;
 
 use crate::inpaint::{Adapt, CompleteParams, Px, complete_masked};
 use crate::poisson::membrane_fill_with;
@@ -177,7 +177,7 @@ fn variant(src: Src, deg: f32, scale: f32, mirror: bool) -> Variant {
 /// nothing can be sampled.
 pub fn fill(w: usize, h: usize, ch: usize, img: &[f32], hole: &[bool], source: &[bool], opts: &FillOptions) -> Vec<f32> {
     // Never cancelled; the fallback (the input unchanged) is unreachable.
-    fill_with(w, h, ch, img, hole, source, opts, &photocraft_raster::Interrupt::NONE).unwrap_or_else(|_| img.to_vec())
+    fill_with(w, h, ch, img, hole, source, opts, &photostore_raster::Interrupt::NONE).unwrap_or_else(|_| img.to_vec())
 }
 
 /// [`fill`] that can be cancelled (see [`crate::inpaint::complete_with`]) and reports progress.
@@ -190,8 +190,8 @@ pub fn fill_with(
     hole: &[bool],
     source: &[bool],
     opts: &FillOptions,
-    ctl: &photocraft_raster::Interrupt,
-) -> Result<Vec<f32>, photocraft_raster::Cancelled> {
+    ctl: &photostore_raster::Interrupt,
+) -> Result<Vec<f32>, photostore_raster::Cancelled> {
     assert_eq!(img.len(), w * h * ch);
     assert_eq!(hole.len(), w * h);
     assert_eq!(source.len(), w * h);
@@ -251,7 +251,7 @@ pub fn fill_with(
     // The completion is nearly all the work.
     let cancel = || ctl.cancelled();
     let progress = |f: f32| ctl.progress(f * 0.99);
-    let filled = complete_masked(mw, mh, ch, &mimg, &roles, &params, &photocraft_raster::Interrupt::new(&cancel, &progress))?;
+    let filled = complete_masked(mw, mh, ch, &mimg, &roles, &params, &photostore_raster::Interrupt::new(&cancel, &progress))?;
     let mut out = img.to_vec();
     match filled {
         Some(f) => {
@@ -484,7 +484,7 @@ mod tests {
         let (img, hole) = stripes(w, h);
         let source = vec![true; w * h];
         let yes = || true;
-        let cancelled = photocraft_raster::Interrupt::cancel_only(&yes);
+        let cancelled = photostore_raster::Interrupt::cancel_only(&yes);
         assert!(fill_with(w, h, 1, &img, &hole, &source, &FillOptions::default(), &cancelled).is_err());
         let last = AtomicU32::new(0);
         let no = || false;
@@ -492,7 +492,7 @@ mod tests {
             assert!(f >= f32::from_bits(last.load(Ordering::Relaxed)), "progress went backwards");
             last.store(f.to_bits(), Ordering::Relaxed);
         };
-        let out = fill_with(w, h, 1, &img, &hole, &source, &FillOptions::default(), &photocraft_raster::Interrupt::new(&no, &progress)).unwrap();
+        let out = fill_with(w, h, 1, &img, &hole, &source, &FillOptions::default(), &photostore_raster::Interrupt::new(&no, &progress)).unwrap();
         assert_eq!(f32::from_bits(last.load(Ordering::Relaxed)), 1.0);
         assert_eq!(out, fill(w, h, 1, &img, &hole, &source, &FillOptions::default()), "same result as the plain fill");
     }

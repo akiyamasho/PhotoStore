@@ -1,9 +1,9 @@
 //! Duplicated smart objects share their editable contents, but not instance settings (#2163).
 
-use photocraft_doc::{Layer, LayerContent, LayerId, SmartObject};
-use photocraft_engine::Session;
-use photocraft_engine::smart_cmds::{decode_source, source_bytes};
-use photocraft_geom::Rect;
+use photostore_doc::{Layer, LayerContent, LayerId, SmartObject};
+use photostore_engine::Session;
+use photostore_engine::smart_cmds::{decode_source, source_bytes};
+use photostore_geom::Rect;
 use serde_json::json;
 
 fn session(depth: u64) -> (Session, u64, u64) {
@@ -31,7 +31,7 @@ fn smart(s: &Session, id: u64) -> &SmartObject {
 
 fn contents_pixel(s: &Session, id: u64) -> [f32; 4] {
     let (name, bytes) = source_bytes(&s.active().unwrap().doc.metadata, &smart(s, id).source).unwrap();
-    photocraft_compose::flatten(&decode_source(&name, &bytes).unwrap()).px[0]
+    photostore_compose::flatten(&decode_source(&name, &bytes).unwrap()).px[0]
 }
 
 #[test]
@@ -108,12 +108,12 @@ fn shared_and_independent_contents_survive_native_psd_and_psb() {
         // Initially byte-identical independent copies must not be merged by blob deduplication.
         let doc = &s.active().unwrap().doc;
         let back = if format == "pcraft" {
-            let bytes = photocraft_format::save_to_bytes(doc, &Default::default()).unwrap();
-            photocraft_format::load_from_bytes(&bytes).unwrap()
+            let bytes = photostore_format::save_to_bytes(doc, &Default::default()).unwrap();
+            photostore_format::load_from_bytes(&bytes).unwrap()
         } else {
-            let out = photocraft_io::export(doc, format, &Default::default()).unwrap();
+            let out = photostore_io::export(doc, format, &Default::default()).unwrap();
             assert!(out.warnings.is_empty(), "{format}: {:?}", out.warnings);
-            photocraft_io::import(&format!("duplicates.{format}"), &out.bytes).unwrap().document
+            photostore_io::import(&format!("duplicates.{format}"), &out.bytes).unwrap().document
         };
         let named = |name: &str| back.walk().into_iter().find(|(_, _, l)| l.name == name).unwrap().2.id.0;
         let (original, duplicate, independent) = (named("original"), named("duplicate"), named("independent"));
@@ -178,8 +178,8 @@ fn replacing_shared_contents_does_not_reuse_or_commit_a_stale_editor() {
     let (mut s, original, duplicate) = session(16);
     let child = s.execute("layer.smartObjects.editContents", json!({"layer": original})).unwrap()["document"].as_u64().unwrap() as usize;
     paint(&mut s, [0.0, 1.0, 0.0, 1.0]);
-    let path = std::env::temp_dir().join(format!("photocraft-shared-contents-{}-{original}.pcraft", std::process::id()));
-    std::fs::write(&path, photocraft_format::save_to_bytes(&s.active().unwrap().doc, &Default::default()).unwrap()).unwrap();
+    let path = std::env::temp_dir().join(format!("photostore-shared-contents-{}-{original}.pcraft", std::process::id()));
+    std::fs::write(&path, photostore_format::save_to_bytes(&s.active().unwrap().doc, &Default::default()).unwrap()).unwrap();
     paint(&mut s, [1.0, 0.0, 0.0, 1.0]);
     s.set_active(0);
     let replaced = s.execute("layer.smartObjects.replaceContents", json!({"layer": duplicate, "path": path}));
@@ -193,5 +193,5 @@ fn replacing_shared_contents_does_not_reuse_or_commit_a_stale_editor() {
     s.execute("file.close", json!({})).unwrap();
     assert_eq!(contents_pixel(&s, original), [0.0, 1.0, 0.0, 1.0]);
     s.execute("layer.smartObjects.editContents", json!({"layer": original})).unwrap();
-    assert_eq!(photocraft_compose::flatten(&s.active().unwrap().doc).px[0], [0.0, 1.0, 0.0, 1.0]);
+    assert_eq!(photostore_compose::flatten(&s.active().unwrap().doc).px[0], [0.0, 1.0, 0.0, 1.0]);
 }

@@ -1,6 +1,6 @@
-use photocraft_color::{Color, PixelFormat, SampleType};
-use photocraft_doc::{Fill, FillRule, LineCap, LineJoin, Path, PathOp, ShapeLayer, ShapeStroke, StrokeAlign, Subpath, VectorMask};
-use photocraft_geom::Rect;
+use photostore_color::{Color, PixelFormat, SampleType};
+use photostore_doc::{Fill, FillRule, LineCap, LineJoin, Path, PathOp, ShapeLayer, ShapeStroke, StrokeAlign, Subpath, VectorMask};
+use photostore_geom::Rect;
 
 use crate::*;
 
@@ -33,7 +33,7 @@ fn rect_area_exact_and_rotated() {
     let got = area(&cov(&p, Rect::new(0, 0, 200, 100)));
     assert!((got - 100.45 * 50.2).abs() < 1e-2, "{got}");
     // Rotated square: area preserved.
-    let rot = p.transform(&photocraft_geom::Affine::rotate(0.4).then(&photocraft_geom::Affine::translate(60.0, 30.0)));
+    let rot = p.transform(&photostore_geom::Affine::rotate(0.4).then(&photostore_geom::Affine::translate(60.0, 30.0)));
     let got = area(&cov(&rot, Rect::new(-100, -100, 400, 400)));
     assert!((got - 100.45 * 50.2).abs() / (100.45 * 50.2) < 1e-4, "{got}");
 }
@@ -218,15 +218,15 @@ fn render_shape_formats_and_paint() {
         ..Default::default()
     };
     for sample in SampleType::ALL {
-        for mode in [photocraft_color::ColorMode::Rgb, photocraft_color::ColorMode::Grayscale, photocraft_color::ColorMode::Cmyk] {
+        for mode in [photostore_color::ColorMode::Rgb, photostore_color::ColorMode::Grayscale, photostore_color::ColorMode::Cmyk] {
             let fmt = PixelFormat::new(mode, sample, true);
             let s = render_shape(&sh, fmt, Rect::new(0, 0, 20, 20));
             assert_eq!(s.format(), fmt);
             assert_eq!(s.content_bounds(), Rect::new(1, 1, 13, 13));
-            let centre = photocraft_raster::to_rgba(&fmt, &s.pixel(7, 7));
-            let edge = photocraft_raster::to_rgba(&fmt, &s.pixel(2, 7));
+            let centre = photostore_raster::to_rgba(&fmt, &s.pixel(7, 7));
+            let edge = photostore_raster::to_rgba(&fmt, &s.pixel(2, 7));
             assert!((centre[3] - 1.0).abs() < 1e-3);
-            if mode == photocraft_color::ColorMode::Rgb {
+            if mode == photostore_color::ColorMode::Rgb {
                 assert!(centre[0] > 0.99 && centre[2] < 0.01);
                 assert!(edge[2] > 0.99, "{edge:?}");
             }
@@ -241,7 +241,7 @@ fn render_shape_formats_and_paint() {
 fn gradient_fill_spans_bounds() {
     let sh = ShapeLayer {
         path: shapes::rect(0.0, 0.0, 100.0, 10.0),
-        fill: Some(Fill::gradient(vec![(0.0, Color::BLACK), (1.0, Color::WHITE)], 0.0, 1.0, photocraft_doc::GradientStyle::Linear, false)),
+        fill: Some(Fill::gradient(vec![(0.0, Color::BLACK), (1.0, Color::WHITE)], 0.0, 1.0, photostore_doc::GradientStyle::Linear, false)),
         ..Default::default()
     };
     let rgba = CompiledShape::new(&sh, DEFAULT_TOLERANCE, Rect::new(0, 0, 100, 10)).render_rgba(Rect::new(0, 0, 100, 10));
@@ -250,7 +250,7 @@ fn gradient_fill_spans_bounds() {
 
 /// A gradient fill with every non-default field, rendered through `Paint`: the expectations
 /// below are hand-derived (the compositor's own rendering is checked against them by the
-/// parity tests in `photocraft-compose`).
+/// parity tests in `photostore-compose`).
 fn grad(fill: Fill, canvas: Rect) -> Vec<[f32; 4]> {
     let sh = ShapeLayer { path: shapes::rect(0.0, 0.0, 100.0, 10.0), fill: Some(fill), ..Default::default() };
     let c = Rect::new(0, 0, canvas.x1.min(100), canvas.y1.min(10));
@@ -265,7 +265,7 @@ fn gradient_midpoints_opacity_stops_offset_and_sorted_stops() {
         stops,
         angle: 0.0,
         scale: 1.0,
-        style: photocraft_doc::GradientStyle::Linear,
+        style: photostore_doc::GradientStyle::Linear,
         reverse: false,
         opacity_stops,
         midpoints,
@@ -294,7 +294,7 @@ fn gradient_without_align_with_layer_uses_the_canvas_frame() {
         stops: vec![(0.0, Color::BLACK), (1.0, Color::WHITE)],
         angle: 0.0,
         scale: 1.0,
-        style: photocraft_doc::GradientStyle::Linear,
+        style: photostore_doc::GradientStyle::Linear,
         reverse: false,
         opacity_stops: vec![],
         midpoints: vec![],
@@ -316,7 +316,7 @@ fn gradient_dither_is_deterministic_and_one_level() {
         stops: vec![(0.0, Color::BLACK), (1.0, Color::WHITE)],
         angle: 30.0,
         scale: 1.3,
-        style: photocraft_doc::GradientStyle::Radial,
+        style: photostore_doc::GradientStyle::Radial,
         reverse: false,
         opacity_stops: vec![],
         midpoints: vec![],
@@ -438,10 +438,10 @@ fn perf_6016() {
         let r = 2400.0 + 500.0 * (t * 37.0).sin() + 200.0 * (t * 101.0).cos();
         let (x, y) = (3008.0 + r * t.cos(), 3008.0 + r * t.sin());
         let d = 6.0;
-        knots.push(photocraft_doc::Knot::smooth(
-            photocraft_geom::Point::new(x, y),
-            photocraft_geom::Point::new(x - d * t.sin(), y + d * t.cos()),
-            photocraft_geom::Point::new(x + d * t.sin(), y - d * t.cos()),
+        knots.push(photostore_doc::Knot::smooth(
+            photostore_geom::Point::new(x, y),
+            photostore_geom::Point::new(x - d * t.sin(), y + d * t.cos()),
+            photostore_geom::Point::new(x + d * t.sin(), y - d * t.cos()),
         ));
     }
     let mut path = Path::new(vec![Subpath { closed: true, knots, op: PathOp::Combine }]);

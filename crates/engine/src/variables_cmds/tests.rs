@@ -1,6 +1,6 @@
 use super::*;
-use photocraft_doc::{Layer, TextLayer};
-use photocraft_geom::Rect;
+use photostore_doc::{Layer, TextLayer};
+use photostore_geom::Rect;
 
 /// A document with a raster layer "photo", a togglable raster "badge" and a text layer "title".
 fn session() -> (Session, LayerId, LayerId, LayerId) {
@@ -10,9 +10,9 @@ fn session() -> (Session, LayerId, LayerId, LayerId) {
         .edit("setup", |doc, _| {
             let fmt = doc.pixel_format();
             let mut photo = Layer::raster("photo", fmt);
-            photo.surface_mut().unwrap().fill_rect(Rect::new(0, 0, 64, 48), &photocraft_raster::from_rgba(&fmt, [0.5, 0.5, 0.5, 1.0]));
+            photo.surface_mut().unwrap().fill_rect(Rect::new(0, 0, 64, 48), &photostore_raster::from_rgba(&fmt, [0.5, 0.5, 0.5, 1.0]));
             let mut badge = Layer::raster("badge", fmt);
-            badge.surface_mut().unwrap().fill_rect(Rect::new(0, 0, 10, 10), &photocraft_raster::from_rgba(&fmt, [1.0, 0.0, 0.0, 1.0]));
+            badge.surface_mut().unwrap().fill_rect(Rect::new(0, 0, 10, 10), &photostore_raster::from_rgba(&fmt, [1.0, 0.0, 0.0, 1.0]));
             let title = Layer::new("title", LayerContent::Text(TextLayer { text: "Old".into(), ..Default::default() }));
             let (p, b, t) = (photo.id, badge.id, title.id);
             doc.layers.push(photo);
@@ -222,7 +222,7 @@ fn csv_multiline_values_apply_persist_and_export_as_two_data_sets() {
             .iter()
             .map(|path| {
                 let path = path.as_str().unwrap();
-                photocraft_io::import(path, &std::fs::read(path).unwrap()).unwrap().document
+                photostore_io::import(path, &std::fs::read(path).unwrap()).unwrap().document
             })
             .collect();
         assert!(images.iter().all(|image| image.size == doc(&reopened).size));
@@ -258,7 +258,7 @@ fn csv_import_preserves_unicode_pixel_paths() {
     let csv = format!("{dir}/sets.csv");
     let mut src = Session::new();
     src.execute("file.new", json!({"width": 8, "height": 8, "background": "#0000ff"})).unwrap();
-    let bytes = photocraft_io::export(&src.active().unwrap().doc, "png", &photocraft_io::ExportOptions::default()).unwrap().bytes;
+    let bytes = photostore_io::export(&src.active().unwrap().doc, "png", &photostore_io::ExportOptions::default()).unwrap().bytes;
     std::fs::write(&png, bytes).unwrap();
     s.execute("image.variables.define", json!({"defs": [{"name": "фото", "layer": photo.0, "type": "pixelReplacement", "method": "conform"}]})).unwrap();
     std::fs::write(&csv, format!("DataSet,фото\nсиний,\"{png}\"\n")).unwrap();
@@ -330,7 +330,7 @@ fn pixel_replacement_changes_the_layer() {
     {
         let mut src = Session::new();
         src.execute("file.new", json!({"width": 8, "height": 8, "background": "#0000ff"})).unwrap();
-        let bytes = photocraft_io::export(&src.active().unwrap().doc, "png", &photocraft_io::ExportOptions::default()).unwrap().bytes;
+        let bytes = photostore_io::export(&src.active().unwrap().doc, "png", &photostore_io::ExportOptions::default()).unwrap().bytes;
         std::fs::write(&png, bytes).unwrap();
     }
     s.execute(
@@ -368,7 +368,7 @@ fn applied_text_is_rendered_in_the_document_and_in_exports() {
     let mut s = Session::new();
     s.execute("file.new", json!({"width": 200, "height": 60, "background": "white"})).unwrap();
     let id = s.execute("type.create", json!({"x": 4, "y": 40, "text": "HELLO", "size": 32, "color": "#000000"})).unwrap()["layer"].clone();
-    let dark = |d: &Document| photocraft_compose::render(d, d.bounds()).px.iter().filter(|p| p[0] < 0.5).count();
+    let dark = |d: &Document| photostore_compose::render(d, d.bounds()).px.iter().filter(|p| p[0] < 0.5).count();
     assert!(dark(doc(&s)) > 0);
     s.execute("image.variables.define", json!({"defs": [{"name": "headline", "layer": id, "type": "textReplacement"}]})).unwrap();
     s.execute("image.variables.dataSets", json!({"dataSets": [{"name": "row1", "values": [{"variable": "headline", "kind": "text", "value": "BYE"}]}]}))
@@ -376,7 +376,7 @@ fn applied_text_is_rendered_in_the_document_and_in_exports() {
     let dir = tmp("text-export");
     let out = s.execute("file.export.dataSetsAsFiles", json!({"dir": dir, "format": "png"})).unwrap();
     let path = out["files"][0].as_str().unwrap();
-    let exported = photocraft_io::import(path, &std::fs::read(path).unwrap()).unwrap().document;
+    let exported = photostore_io::import(path, &std::fs::read(path).unwrap()).unwrap().document;
     assert!(dark(&exported) > 0, "the exported row keeps its text");
     s.execute("image.applyDataSet", json!({"name": "row1"})).unwrap();
     assert!(dark(doc(&s)) > 0, "the applied text is drawn");

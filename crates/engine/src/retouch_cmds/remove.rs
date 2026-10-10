@@ -3,7 +3,7 @@
 //! The stroke's footprint is the hole. A stroke that closes around an object also removes what it
 //! encloses (`closeLoops`), and the hole grows by [`GROW`] pixels so the object's soft edge and
 //! halo go with it. The hole is completed from a window around the stroke by patch-based
-//! completion with texture features (`photocraft_algo::remove`, `photocraft_algo::nonlocal`). The
+//! completion with texture features (`photostore_algo::remove`, `photostore_algo::nonlocal`). The
 //! selection, when there is one, limits what changes. Large holes take seconds, so the command
 //! runs as a background job (#210): with progress, cancellable, and the document unchanged until
 //! it applies, in one undo step.
@@ -93,9 +93,9 @@ fn hole(plan: &Plan, sel: Option<&Surface>) -> Vec<bool> {
         }
     }
     if plan.close_loops {
-        m = photocraft_algo::remove::close_loops(w, h, &m);
+        m = photostore_algo::remove::close_loops(w, h, &m);
     }
-    m = photocraft_algo::remove::dilate(w, h, &m, GROW);
+    m = photostore_algo::remove::dilate(w, h, &m, GROW);
     if let Some(sel) = sel {
         for (v, c) in m.iter_mut().zip(coverage(sel, win)) {
             *v &= c > 0.0;
@@ -123,7 +123,7 @@ fn run_remove(doc: &mut Document, plan: &Plan, p: &Value, ctx: &crate::jobs::Job
     };
     let (w, h) = (win.width() as usize, win.height() as usize);
     let mut data = ctx
-        .stage(0.0, 1.0, label, |ctl| photocraft_algo::remove::remove_with(w, h, img.ch, &img.data, &hole, SEED, ctl))
+        .stage(0.0, 1.0, label, |ctl| photostore_algo::remove::remove_with(w, h, img.ch, &img.data, &hole, SEED, ctl))
         .map_err(|_| EngineError::Cancelled)?;
     // The fill's seam blending can step slightly past the storable range.
     clamp_samples(&fmt, &mut data);

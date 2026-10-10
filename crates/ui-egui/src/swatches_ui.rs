@@ -1,4 +1,4 @@
-//! Window › Swatches: the swatch library (`photocraft_engine::presets::swatches`) in the shared
+//! Window › Swatches: the swatch library (`photostore_engine::presets::swatches`) in the shared
 //! preset browser: groups with disclosure triangles, a colour grid with name tooltips, a context
 //! menu (Rename, Delete, Move to), and the footer (size · New Group · New Swatch · Delete).
 //!
@@ -7,14 +7,14 @@
 //! panel menu (the group's "…" button) adds New Swatch, New Group, Import/Replace (`.aco`,
 //! `.ase`), Export (`.aco`) and Export for Exchange (`.ase`) and Reset. Every action is a
 //! `swatches.*` engine command; this module only draws and dispatches. Colours are shown in the
-//! RGB working space through `photocraft-cms` (cached per library revision and colour settings).
+//! RGB working space through `photostore-cms` (cached per library revision and colour settings).
 
 use std::sync::Arc;
 
 use egui::{Color32, CornerRadius, Rect};
 use serde_json::{Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::preset_panels::{Ev, GroupView, ItemView, Place, browser, run};
 
 /// The browser's panel key (selection, folder state and thumbnail size live under it).
@@ -28,13 +28,13 @@ fn c32(c: [f32; 3]) -> Color32 {
 }
 
 /// Display colours of every swatch, rebuilt when the library or the working spaces change.
-fn colors(app: &PhotocraftApp, ctx: &egui::Context) -> Arc<Vec<Vec<Color32>>> {
+fn colors(app: &PhotoStoreApp, ctx: &egui::Context) -> Arc<Vec<Vec<Color32>>> {
     let c = &app.session.color.settings;
     let key = egui::Id::new(("swatch-colors", app.session.presets.rev, &c.working_rgb, &c.working_cmyk, &c.working_gray));
     if let Some(v) = ctx.data(|d| d.get_temp::<Arc<Vec<Vec<Color32>>>>(key)) {
         return v;
     }
-    let conv = photocraft_engine::presets::swatches::SwatchConv::new(&app.session);
+    let conv = photostore_engine::presets::swatches::SwatchConv::new(&app.session);
     let v: Arc<Vec<Vec<Color32>>> = Arc::new(app.session.presets.swatches.iter().map(|g| g.items.iter().map(|s| c32(conv.rgb(&s.color))).collect()).collect());
     ctx.data_mut(|d| {
         // Only the newest table is kept.
@@ -48,7 +48,7 @@ fn colors(app: &PhotocraftApp, ctx: &egui::Context) -> Arc<Vec<Vec<Color32>>> {
 }
 
 /// Set the foreground (or background) colour from a swatch.
-pub fn use_swatch(app: &mut PhotocraftApp, name: &str, background: bool) {
+pub fn use_swatch(app: &mut PhotoStoreApp, name: &str, background: bool) {
     let target = if background { "background" } else { "foreground" };
     if run(app, "swatches.use", json!({"swatch": name, "target": target})).is_some() && !background {
         // Clicking a swatch while characters are selected recolours them (#364).
@@ -57,7 +57,7 @@ pub fn use_swatch(app: &mut PhotocraftApp, name: &str, background: bool) {
 }
 
 /// The Swatches panel body.
-pub fn panel(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+pub fn panel(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
     let lib = &app.session.presets.swatches;
     let groups: Vec<GroupView> = lib
         .iter()
@@ -81,8 +81,8 @@ pub fn panel(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     }
 }
 
-fn handle(app: &mut PhotocraftApp, e: Ev, background: bool) {
-    let sel = |app: &mut PhotocraftApp, k: &str| {
+fn handle(app: &mut PhotoStoreApp, e: Ev, background: bool) {
+    let sel = |app: &mut PhotoStoreApp, k: &str| {
         app.ui.presets_ui.selected.insert(PANEL.into(), k.to_string());
     };
     match e {
@@ -116,7 +116,7 @@ fn handle(app: &mut PhotocraftApp, e: Ev, background: bool) {
 
 /// New Swatch: the foreground colour, named and selected, then renamed in place (Photoshop asks
 /// for the name).
-fn new_swatch(app: &mut PhotocraftApp) {
+fn new_swatch(app: &mut PhotoStoreApp) {
     let group = app
         .ui
         .presets_ui
@@ -131,7 +131,7 @@ fn new_swatch(app: &mut PhotocraftApp) {
     }
 }
 
-fn new_group(app: &mut PhotocraftApp) {
+fn new_group(app: &mut PhotoStoreApp) {
     if let Some(r) = run(app, "swatches.newGroup", json!({"name": "Group"})) {
         let g = r["group"].as_str().unwrap_or_default().to_string();
         app.ui.presets_ui.renaming = Some((PANEL.into(), format!("group:{g}"), g));
@@ -146,11 +146,11 @@ fn source(name: &str, bytes: &[u8]) -> Value {
         return json!({"path": name});
     }
     let _ = name;
-    json!({"data": photocraft_engine::paint::tile::b64_encode(bytes)})
+    json!({"data": photostore_engine::paint::tile::b64_encode(bytes)})
 }
 
 /// Import an `.aco`/`.ase` file's bytes (File › Open, drag and drop, the panel menu).
-pub fn import_bytes(app: &mut PhotocraftApp, name: &str, bytes: &[u8], replace: bool) -> Result<Value, String> {
+pub fn import_bytes(app: &mut PhotoStoreApp, name: &str, bytes: &[u8], replace: bool) -> Result<Value, String> {
     let stem = std::path::Path::new(name).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.trim().is_empty());
     let mut p = source(name, bytes);
     p["mode"] = json!(if replace { "replace" } else { "append" });
@@ -170,13 +170,13 @@ pub fn import_bytes(app: &mut PhotocraftApp, name: &str, bytes: &[u8], replace: 
     Ok(r)
 }
 
-fn import_dialog(app: &mut PhotocraftApp, replace: bool) -> Result<Value, String> {
+fn import_dialog(app: &mut PhotoStoreApp, replace: bool) -> Result<Value, String> {
     app.pick_file_bytes(move |app, name, bytes| import_bytes(app, &name, &bytes, replace))
 }
 
-fn export_dialog(app: &mut PhotocraftApp, format: &str) -> Result<Value, String> {
+fn export_dialog(app: &mut PhotoStoreApp, format: &str) -> Result<Value, String> {
     let r = app.run("swatches.export", json!({"format": format}))?;
-    let bytes = r["data"].as_str().and_then(photocraft_engine::paint::tile::b64_decode).ok_or("the export returned no data")?;
+    let bytes = r["data"].as_str().and_then(photostore_engine::paint::tile::b64_decode).ok_or("the export returned no data")?;
     let n = r["count"].as_u64().unwrap_or(0);
     app.pick_save(&format!("Swatches.{format}"), move |app, path| {
         let write = app.services.write.as_mut().ok_or("no writer configured")?;
@@ -188,7 +188,7 @@ fn export_dialog(app: &mut PhotocraftApp, format: &str) -> Result<Value, String>
 }
 
 /// The Swatches entries of the panel group's menu ("…").
-pub fn panel_menu(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+pub fn panel_menu(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
     let empty = app.session.presets.swatches.iter().all(|g| g.items.is_empty());
     let mut act: Option<&str> = None;
     if ui.button(tl!("New Swatch…")).clicked() {
@@ -240,7 +240,7 @@ pub fn panel_menu(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
 
 /// The Color Picker's Add to Swatches: the picked colour, in the model the user typed it in
 /// (CMYK or Lab values kept by the picker), else RGB.
-pub fn add_from_picker(app: &mut PhotocraftApp, f: &serde_json::Map<String, Value>) {
+pub fn add_from_picker(app: &mut PhotoStoreApp, f: &serde_json::Map<String, Value>) {
     let color = if let Some(c) = f.get("__cmyk").and_then(|v| serde_json::from_value::<[f32; 4]>(v.clone()).ok()) {
         json!({"model": "cmyk", "values": c.map(|v| v * 100.0)})
     } else if let Some(l) = f.get("__lab").and_then(|v| serde_json::from_value::<[f32; 3]>(v.clone()).ok()) {
@@ -263,7 +263,7 @@ mod tests {
     use egui::{Modifiers, vec2};
     use egui_kittest::Harness;
 
-    fn click(h: &mut Harness<'_, PhotocraftApp>, p: egui::Pos2, modifiers: Modifiers) {
+    fn click(h: &mut Harness<'_, PhotoStoreApp>, p: egui::Pos2, modifiers: Modifiers) {
         h.hover_at(p);
         // Held modifiers, as when the user holds Alt while clicking.
         h.event(egui::Event::ModifiersChanged(modifiers));
@@ -276,14 +276,14 @@ mod tests {
     }
 
     /// The first swatch: below the first group header (22 px), after the 8 px grid inset.
-    fn first_cell(h: &Harness<'_, PhotocraftApp>) -> egui::Pos2 {
+    fn first_cell(h: &Harness<'_, PhotoStoreApp>) -> egui::Pos2 {
         h.ctx.input(|i| i.viewport_rect()).min + vec2(8.0 + 12.0 + 8.0, 22.0 + 2.0 + 12.0 + 8.0)
     }
 
     /// Clicking a swatch while characters are selected recolours them, not just the foreground.
     #[test]
     fn clicking_a_swatch_recolours_selected_type() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 400, "height": 200})).unwrap();
         let id = app.run("type.create", json!({"text": "Hello world", "size": 40, "x": 20, "y": 100, "color": "#ffffff"})).unwrap()["layer"].as_u64().unwrap();
         app.ui.tool = Tool::Type;
@@ -291,14 +291,14 @@ mod tests {
             Some(crate::state::TextEdit { layer: id, caret: 0, anchor: 5, session: "s".into(), created: false, dragging: false, resize: None, preedit: None });
         // Recolour with a visible colour: put Red first.
         app.run("swatches.move", json!({"swatch": "Red", "to": "Grays", "position": 0})).unwrap();
-        let mut h = Harness::builder().with_size(vec2(300.0, 300.0)).build_ui_state(|ui, app: &mut PhotocraftApp| panel(app, ui), app);
+        let mut h = Harness::builder().with_size(vec2(300.0, 300.0)).build_ui_state(|ui, app: &mut PhotoStoreApp| panel(app, ui), app);
         h.run_steps(2);
         let p = first_cell(&h);
         click(&mut h, p, Modifiers::NONE);
         let red = [230.0 / 255.0, 40.0 / 255.0, 40.0 / 255.0, 1.0];
         assert_eq!(h.state().session.tools.foreground, red);
         let st = h.state().session.active().unwrap();
-        let Some(photocraft_doc::LayerContent::Text(t)) = st.doc.layer(photocraft_doc::LayerId(id)).map(|l| &l.content) else { panic!("type layer") };
+        let Some(photostore_doc::LayerContent::Text(t)) = st.doc.layer(photostore_doc::LayerId(id)).map(|l| &l.content) else { panic!("type layer") };
         let runs = t.char_runs();
         assert_eq!(runs[0].len, 5, "the selection is its own run");
         assert_eq!(runs[0].style.color.to_rgba8(), [230, 40, 40, 255]);
@@ -307,9 +307,9 @@ mod tests {
 
     #[test]
     fn alt_click_sets_the_background_and_selects() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.session.tools.background = [0.0, 0.0, 1.0, 1.0];
-        let mut h = Harness::builder().with_size(vec2(300.0, 300.0)).build_ui_state(|ui, app: &mut PhotocraftApp| panel(app, ui), app);
+        let mut h = Harness::builder().with_size(vec2(300.0, 300.0)).build_ui_state(|ui, app: &mut PhotoStoreApp| panel(app, ui), app);
         h.run_steps(2);
         let p = first_cell(&h);
         click(&mut h, p, Modifiers::ALT);
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn new_swatch_from_the_foreground_and_picker() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.session.tools.foreground = [0.5, 0.25, 1.0, 1.0];
         app.ui.presets_ui.selected.insert(PANEL.into(), "Dark Red".into());
         new_swatch(&mut app);
@@ -336,7 +336,7 @@ mod tests {
         f.insert("__cmyk".into(), json!([1.0, 0.0, 0.0, 0.0]));
         add_from_picker(&mut app, &f);
         let s = app.session.presets.swatches[0].items.last().unwrap();
-        assert_eq!(s.color, photocraft_engine::presets::swatches::SwatchColor::Cmyk([1.0, 0.0, 0.0, 0.0]));
+        assert_eq!(s.color, photostore_engine::presets::swatches::SwatchColor::Cmyk([1.0, 0.0, 0.0, 0.0]));
     }
 
     #[test]
@@ -346,7 +346,7 @@ mod tests {
         let written: Written = Arc::default();
         let w = written.clone();
         let aco =
-            photocraft_psd::aco::write(&[photocraft_psd::aco::AcoSwatch { name: "Teal".into(), color: photocraft_psd::aco::AcoColor::Rgb([0, 32768, 32768]) }])
+            photostore_psd::aco::write(&[photostore_psd::aco::AcoSwatch { name: "Teal".into(), color: photostore_psd::aco::AcoColor::Rgb([0, 32768, 32768]) }])
                 .unwrap();
         use crate::file_dialog::FileDialogAnswer;
         let answers = vec![
@@ -362,9 +362,9 @@ mod tests {
             })),
             ..Default::default()
         };
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), services);
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), services);
         // Each dialog answers at the end of the frame.
-        let frame = |app: &mut PhotocraftApp| app.poll_file_dialog(&egui::Context::default(), None);
+        let frame = |app: &mut PhotoStoreApp| app.poll_file_dialog(&egui::Context::default(), None);
         import_dialog(&mut app, false).unwrap();
         frame(&mut app);
         assert_eq!(app.session.presets.swatches.last().unwrap().name, "Ocean");

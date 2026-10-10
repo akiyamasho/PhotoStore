@@ -3,7 +3,7 @@
 use egui::{Align2, Color32, CornerRadius, RichText, Sense, Stroke, vec2};
 
 use crate::theme::{self, Tokens};
-use crate::{PhotocraftApp, icons};
+use crate::{PhotoStoreApp, icons};
 
 /// Case-insensitive subsequence match score (higher is better); None = no match.
 pub fn fuzzy_score(query: &str, text: &str) -> Option<i32> {
@@ -87,7 +87,7 @@ fn recent_hits(recents: &[String], menus: &[crate::menus::MenuItem], lang: crate
         .collect()
 }
 
-pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
+pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     if !app.ui.palette_open {
         return;
     }
@@ -241,11 +241,11 @@ mod tests {
     use serde_json::json;
 
     use super::{fuzzy_score, push_recent};
-    use crate::PhotocraftApp;
+    use crate::PhotoStoreApp;
 
     #[test]
     fn open_palette_interrupts_the_ime_only_when_it_takes_focus() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
         // Fonts bind on the next pass; this one opens nothing.
@@ -278,8 +278,8 @@ mod tests {
     #[test]
     fn the_palette_records_and_replays_recent_commands_on_an_empty_query() {
         let mut h = Harness::builder().with_size(vec2(1200.0, 800.0)).with_max_steps(64).build_eframe(|cc| {
-            PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
-            PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default())
+            PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
+            PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default())
         });
         h.state_mut().run("file.new", json!({"width": 64, "height": 64})).unwrap();
         h.state_mut().sync_views();
@@ -328,8 +328,8 @@ mod tests {
     fn palette_opens_the_keyboard_shortcuts_dialog() {
         for with_doc in [false, true] {
             let mut h = Harness::builder().with_size(vec2(1200.0, 800.0)).with_max_steps(64).build_eframe(|cc| {
-                PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
-                PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default())
+                PhotoStoreApp::setup_context(&cc.egui_ctx, Default::default());
+                PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default())
             });
             if with_doc {
                 h.state_mut().run("file.new", json!({"width": 64, "height": 64})).unwrap();

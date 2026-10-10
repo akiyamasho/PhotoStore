@@ -1,11 +1,11 @@
 //! Image menu: Image Size, Canvas Size, Crop, Trim, Mode (colour model and
 //! bit depth) conversions, Duplicate.
 
-use photocraft_algo::resample::{Resample, crop_surface, resize_surface_in_canvas, translate_surface};
-use photocraft_color::{ColorMode, SampleType};
-use photocraft_doc::{Document, Effect, Effects, FxPaint, Layer, LayerContent, Size};
-use photocraft_geom::Rect;
-use photocraft_raster::Surface;
+use photostore_algo::resample::{Resample, crop_surface, resize_surface_in_canvas, translate_surface};
+use photostore_color::{ColorMode, SampleType};
+use photostore_doc::{Document, Effect, Effects, FxPaint, Layer, LayerContent, Size};
+use photostore_geom::Rect;
+use photostore_raster::Surface;
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
@@ -164,7 +164,7 @@ fn image_size(s: &mut Session, p: &Value) -> Result<Value> {
             doc.selection = Some(resize_surface_in_canvas(sel, sx, sy, Resample::Bilinear, canvas));
         }
         // Vector geometry, guides and marks scale with the pixels; vectors re-render sharp.
-        crate::canvas_geom::transform_geometry(doc, &photocraft_geom::Affine { m: [sx, 0.0, 0.0, sy, 0.0, 0.0] });
+        crate::canvas_geom::transform_geometry(doc, &photostore_geom::Affine { m: [sx, 0.0, 0.0, sy, 0.0, 0.0] });
         doc.size = Size::new(nw, nh);
         crate::canvas_geom::refresh(doc, crate::canvas_geom::Refresh::All);
         Ok(())
@@ -207,7 +207,7 @@ fn translate_doc(doc: &mut Document, cmd: &str, dx: i32, dy: i32) -> Result<()> 
     }
     // Type, shapes, smart objects, vector masks, paths, guides, slices, notes… (caches above
     // are already translated exactly, so nothing needs re-rendering for the move itself).
-    crate::canvas_geom::transform_geometry(doc, &photocraft_geom::Affine::translate(f64::from(dx), f64::from(dy)));
+    crate::canvas_geom::transform_geometry(doc, &photostore_geom::Affine::translate(f64::from(dx), f64::from(dy)));
     Ok(())
 }
 
@@ -286,7 +286,7 @@ fn canvas_size(s: &mut Session, p: &Value) -> Result<Value> {
             && let LayerContent::Raster(surf) = &mut bg.content
         {
             let fmt = surf.format();
-            let px = photocraft_raster::from_rgba(&fmt, ext);
+            let px = photostore_raster::from_rgba(&fmt, ext);
             let keep = surf.content_bounds().intersect(&old);
             let saved = surf.to_interleaved(keep);
             surf.fill_rect(canvas, &px);
@@ -408,7 +408,7 @@ fn rotated_crop(s: &mut Session, r: Rect, angle: f64, delete: bool) -> Result<Va
 fn trim(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.active().ok_or(EngineError::NoDocument)?;
     let canvas = d.doc.bounds();
-    let buf = photocraft_compose::flatten(&d.doc);
+    let buf = photostore_compose::flatten(&d.doc);
     let based = p.get("basedOn").and_then(Value::as_str).unwrap_or("transparent");
     let w = canvas.width() as usize;
     let reference = match based {
@@ -469,18 +469,18 @@ fn convert_depth(s: &mut Session, depth: SampleType) -> Result<Value> {
 fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.active().ok_or(EngineError::NoDocument)?;
     let mut doc = (*d.doc).clone();
-    doc.id = photocraft_doc::DocId::fresh();
+    doc.id = photostore_doc::DocId::fresh();
     doc.name = p.get("name").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("{} copy", d.doc.name));
     if p.get("mergedOnly").and_then(Value::as_bool).unwrap_or(false) {
-        let buf = photocraft_compose::flatten(&doc);
+        let buf = photostore_compose::flatten(&doc);
         let fmt = doc.pixel_format();
         let mut surf = Surface::new(fmt);
-        let vals: Vec<f32> = buf.px.iter().flat_map(|q| photocraft_raster::from_rgba(&fmt, *q)).collect();
+        let vals: Vec<f32> = buf.px.iter().flat_map(|q| photostore_raster::from_rgba(&fmt, *q)).collect();
         surf.write_region(doc.bounds(), &vals);
         surf.prune();
         doc.layers = vec![Layer::new("Background", LayerContent::Raster(surf))];
     }
-    for_each_layer(&mut doc.layers, &mut |l| l.id = photocraft_doc::LayerId::fresh());
+    for_each_layer(&mut doc.layers, &mut |l| l.id = photostore_doc::LayerId::fresh());
     let name = doc.name.clone();
     let index = s.add_document(doc, None);
     Ok(json!({ "document": index, "name": name }))
@@ -630,7 +630,7 @@ mod tests {
         s.edit("paint", |doc, active| {
             let l = doc.layer_mut(active.unwrap()).unwrap();
             l.surface_mut().unwrap().fill_rect(Rect::new(10, 5, 20, 15), &[1.0, 0.0, 0.0, 1.0]);
-            l.mask = Some(photocraft_doc::LayerMask::reveal_all());
+            l.mask = Some(photostore_doc::LayerMask::reveal_all());
             l.effects.items.push(Effect::default_drop_shadow());
             Ok(())
         })
@@ -685,7 +685,7 @@ mod tests {
                 s.execute("select.all", json!({})).unwrap();
                 s.execute("image.imageSize", json!({"width": w, "resample": resample})).unwrap();
                 let d = doc(&s);
-                let flat = photocraft_compose::flatten(d);
+                let flat = photostore_compose::flatten(d);
                 let (w, h) = (flat.rect.width() as usize, flat.rect.height() as usize);
                 let mid = flat.px[(h / 2) * w + w / 2];
                 assert!((mid[3] - 1.0).abs() < 1e-3, "{depth} {resample}: {mid:?}");

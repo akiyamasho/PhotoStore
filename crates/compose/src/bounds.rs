@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 
-use photocraft_geom::{Rect, TILE_SIZE};
-use photocraft_raster::{Surface, Tile};
+use photostore_geom::{Rect, TILE_SIZE};
+use photostore_raster::{Surface, Tile};
 
 struct Entry {
     tile: Weak<Tile>,
@@ -43,7 +43,7 @@ pub fn content_bounds(s: &Surface) -> Rect {
     }
     let fmt = s.format();
     let mut dp = vec![0u8; fmt.bytes_per_pixel()];
-    photocraft_raster::encode_pixel(&fmt, &s.default_pixel(), &mut dp);
+    photostore_raster::encode_pixel(&fmt, &s.default_pixel(), &mut dp);
     let mut c = cache().lock().unwrap_or_else(|e| e.into_inner());
     if c.len() > 1 << 16 {
         c.retain(|_, e| e.tile.strong_count() > 0);

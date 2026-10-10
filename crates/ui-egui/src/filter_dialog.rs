@@ -5,10 +5,10 @@
 
 use std::sync::Arc;
 
-use photocraft_doc::Document;
+use photostore_doc::Document;
 use serde_json::{Map, Value, json};
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::theme::Tokens;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -175,7 +175,7 @@ pub fn preview_factor(command: &str, params: &Value, k: u32) -> u32 {
     if k <= 1 || FULL_RESOLUTION_PREVIEW.contains(&command) {
         return 1;
     }
-    let Some(spec) = photocraft_engine::commands::find(command) else { return k };
+    let Some(spec) = photostore_engine::commands::find(command) else { return k };
     parse_spec(spec.params).into_iter().fold(k, |k, p| match p.kind {
         Kind::Range { min, .. } if min > 0.0 && is_pixel_param(&p.key) => match params.get(&p.key).and_then(Value::as_f64) {
             Some(v) if v.is_finite() => k.min((v / f64::from(min)).floor().clamp(1.0, f64::from(k)) as u32),
@@ -222,7 +222,7 @@ pub fn has_dialog(command: &str) -> bool {
                 | "image.mode.colorTable"
                 | "edit.definePattern"
         ))
-        && photocraft_engine::commands::find(command).is_some_and(|c| !parse_spec(c.params).is_empty())
+        && photostore_engine::commands::find(command).is_some_and(|c| !parse_spec(c.params).is_empty())
 }
 
 /// Keep only portable, schema-valid choices. Never retain document ids, free-form
@@ -237,7 +237,7 @@ fn rememberable(kind: &Kind, value: &Value) -> bool {
     }
 }
 
-fn restore_remembered(app: &PhotocraftApp, command: &str, spec: &str, fields: &mut Map<String, Value>) {
+fn restore_remembered(app: &PhotoStoreApp, command: &str, spec: &str, fields: &mut Map<String, Value>) {
     let Some(Value::Object(saved)) = app.session.prefs().dialogs.get(command) else { return };
     for p in parse_spec(spec) {
         if let Some(v) = saved.get(&p.key).filter(|v| rememberable(&p.kind, v)) {
@@ -247,11 +247,11 @@ fn restore_remembered(app: &PhotocraftApp, command: &str, spec: &str, fields: &m
 }
 
 /// Remember successful built-in schema dialogs; failed or cancelled dialogs do not persist.
-pub(crate) fn remember(app: &mut PhotocraftApp, command: &str, fields: &Map<String, Value>) {
+pub(crate) fn remember(app: &mut PhotoStoreApp, command: &str, fields: &Map<String, Value>) {
     if !fields.contains_key("__filter") || fields.contains_key("__spec") {
         return;
     }
-    let Some(spec) = photocraft_engine::commands::find(command) else { return };
+    let Some(spec) = photostore_engine::commands::find(command) else { return };
     let saved: Map<String, Value> =
         parse_spec(spec.params).into_iter().filter_map(|p| fields.get(&p.key).filter(|v| rememberable(&p.kind, v)).map(|v| (p.key, v.clone()))).collect();
     if !saved.is_empty() {
@@ -259,8 +259,8 @@ pub(crate) fn remember(app: &mut PhotocraftApp, command: &str, fields: &Map<Stri
     }
 }
 
-pub fn open(app: &mut PhotocraftApp, command: &str) -> Option<u64> {
-    let spec = photocraft_engine::commands::find(command)?;
+pub fn open(app: &mut PhotoStoreApp, command: &str) -> Option<u64> {
+    let spec = photostore_engine::commands::find(command)?;
     let mut fields = Map::new();
     fields.insert("__command".into(), json!(command));
     fields.insert("__label".into(), json!(spec.label));
@@ -294,7 +294,7 @@ pub fn open(app: &mut PhotocraftApp, command: &str) -> Option<u64> {
     }
     // Photoshop's Pattern Name dialog starts from the name the pattern would get anyway.
     if command == "edit.definePattern" {
-        fields.insert("name".into(), json!(photocraft_engine::pattern_cmds::default_name(&app.session)));
+        fields.insert("name".into(), json!(photostore_engine::pattern_cmds::default_name(&app.session)));
     }
     if parse_spec(spec.params).iter().any(|p| p.kind == Kind::Document) {
         // The document picker lists every open document (params refer to them by index).
@@ -306,9 +306,9 @@ pub fn open(app: &mut PhotocraftApp, command: &str) -> Option<u64> {
 }
 
 /// Arbitrary rotation starts at the angle that straightens the ruler line, when there is one.
-fn straighten_defaults(app: &PhotocraftApp, fields: &mut Map<String, Value>) {
+fn straighten_defaults(app: &PhotoStoreApp, fields: &mut Map<String, Value>) {
     let Some(r) = app.session.active().and_then(|d| d.doc.measurement.ruler) else { return };
-    let rot = photocraft_engine::analysis_cmds::straighten_angle(&r);
+    let rot = photostore_engine::analysis_cmds::straighten_angle(&r);
     // A ruler read from a damaged file could hold non-finite ends: keep the 0° default then.
     if !rot.is_finite() {
         return;
@@ -319,7 +319,7 @@ fn straighten_defaults(app: &PhotocraftApp, fields: &mut Map<String, Value>) {
 
 /// A filter dialog with live preview for `command` whose parameters follow `spec` (registry
 /// notation) instead of the command's own; `fixed` params (e.g. a plug-in id) are passed through.
-pub fn open_with_spec(app: &mut PhotocraftApp, command: &str, label: &str, spec: &str, fixed: Map<String, Value>) -> u64 {
+pub fn open_with_spec(app: &mut PhotoStoreApp, command: &str, label: &str, spec: &str, fixed: Map<String, Value>) -> u64 {
     let mut fields = fixed;
     fields.insert("__command".into(), json!(command));
     fields.insert("__label".into(), json!(label));
@@ -375,7 +375,7 @@ pub fn body(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     // Plug-in dialogs carry their own spec (from the plug-in's manifest).
     let spec = match f.get("__spec").and_then(Value::as_str) {
         Some(s) => s.to_string(),
-        None => match photocraft_engine::commands::find(&cmd) {
+        None => match photostore_engine::commands::find(&cmd) {
             Some(c) => c.params.to_string(),
             None => return,
         },
@@ -529,7 +529,7 @@ pub fn params_of(f: &Map<String, Value>) -> Value {
 }
 
 /// Compute a preview document: run `command` with `params` on the proxy (scaled) copy of `doc`.
-pub fn preview_document(doc: &Document, active: Option<photocraft_doc::LayerId>, command: &str, params: &Value, k: u32) -> Option<Document> {
+pub fn preview_document(doc: &Document, active: Option<photostore_doc::LayerId>, command: &str, params: &Value, k: u32) -> Option<Document> {
     preview_document_with(doc, active, command, params, k, None)
 }
 
@@ -537,14 +537,14 @@ pub fn preview_document(doc: &Document, active: Option<photocraft_doc::LayerId>,
 /// (a preview superseded by newer dialog values).
 pub fn preview_document_with(
     doc: &Document,
-    active: Option<photocraft_doc::LayerId>,
+    active: Option<photostore_doc::LayerId>,
     command: &str,
     params: &Value,
     k: u32,
-    cancel: Option<&photocraft_engine::jobs::JobCtx>,
+    cancel: Option<&photostore_engine::jobs::JobCtx>,
 ) -> Option<Document> {
     let proxy = crate::proxy::proxy_document(doc, k);
-    let mut s = photocraft_engine::Session::new();
+    let mut s = photostore_engine::Session::new();
     s.set_inline_job_ctx(cancel.cloned());
     s.add_document(proxy, None);
     if let Some(id) = active {
@@ -554,7 +554,7 @@ pub fn preview_document_with(
     if k > 1
         && let Some(o) = p.as_object_mut()
     {
-        let spec = photocraft_engine::commands::find(command).map(|c| parse_spec(c.params)).unwrap_or_default();
+        let spec = photostore_engine::commands::find(command).map(|c| parse_spec(c.params)).unwrap_or_default();
         for (key, v) in o.iter_mut() {
             if is_pixel_param(key)
                 && let Some(x) = v.as_f64()
@@ -586,10 +586,10 @@ pub struct FilterPreview {
 /// Match the full request before accepting a worker result, including a reopened dialog.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FilterPreviewKey {
-    pub doc: photocraft_doc::DocId,
+    pub doc: photostore_doc::DocId,
     pub revision: u64,
     pub dialog: u64,
-    pub active: Option<photocraft_doc::LayerId>,
+    pub active: Option<photostore_doc::LayerId>,
     pub command: String,
     pub params: Value,
     pub k: u32,
@@ -601,7 +601,7 @@ mod tests {
 
     #[test]
     fn restores_only_valid_previous_filter_choices() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
         app.session.prefs.edit(|prefs| {
             prefs.dialogs.insert("filter.blur.gaussianBlur".into(), json!({"radius": 11.0, "bogus": 42}));
         });
@@ -619,7 +619,7 @@ mod tests {
 
     #[test]
     fn remembering_dialogs_never_persists_paths_or_document_indices() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
         let mut fields = Map::new();
         fields.insert("__filter".into(), json!(true));
         fields.insert("radius".into(), json!(7.0));
@@ -661,7 +661,7 @@ mod tests {
 
     #[test]
     fn indexed_counts_are_integer_json_while_dither_amounts_keep_their_decimals() {
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
         open(&mut app, "image.mode.indexedColor").unwrap();
         let mut defaults = app.ui.dialogs.first().unwrap().fields.clone();
         let before = params_of(&defaults)["colors"].clone();
@@ -708,7 +708,7 @@ mod tests {
 
     #[test]
     fn every_filter_command_spec_parses() {
-        for c in photocraft_engine::command_specs().iter().filter(|c| c.id.starts_with("filter.")) {
+        for c in photostore_engine::command_specs().iter().filter(|c| c.id.starts_with("filter.")) {
             let _ = parse_spec(c.params);
         }
         assert!(has_dialog("filter.blur.gaussianBlur"));
@@ -724,7 +724,7 @@ mod tests {
                 missing.insert(s);
             }
         };
-        for c in photocraft_engine::command_specs().iter().filter(|c| c.id.starts_with("filter.") || c.id.starts_with("image.adjustments.")) {
+        for c in photostore_engine::command_specs().iter().filter(|c| c.id.starts_with("filter.") || c.id.starts_with("image.adjustments.")) {
             for p in parse_spec(c.params) {
                 if !p.key.chars().all(|c| c.is_ascii_alphanumeric()) || matches!(p.kind, Kind::Json) {
                     continue;
@@ -741,10 +741,10 @@ mod tests {
                 }
             }
         }
-        for f in photocraft_algo::GalleryFilter::ALL {
+        for f in photostore_algo::GalleryFilter::ALL {
             check(f.name().to_string());
         }
-        for cat in photocraft_algo::GALLERY_CATEGORIES {
+        for cat in photostore_algo::GALLERY_CATEGORIES {
             check(cat.to_string());
         }
         assert!(missing.is_empty(), "missing Korean dynamic labels: {missing:#?}");
@@ -754,13 +754,13 @@ mod tests {
     fn preview_runs_engine_command_on_proxy() {
         let mut doc = Document::with_background(
             "p",
-            photocraft_doc::Size::new(64, 64),
-            photocraft_doc::ColorMode::Rgb,
-            photocraft_doc::SampleType::U8,
-            photocraft_doc::Color::WHITE,
+            photostore_doc::Size::new(64, 64),
+            photostore_doc::ColorMode::Rgb,
+            photostore_doc::SampleType::U8,
+            photostore_doc::Color::WHITE,
         );
         let bg = doc.layers[0].id;
-        doc.layers[0].surface_mut().unwrap().fill_rect(photocraft_geom::Rect::new(0, 0, 32, 64), &[0.0, 0.0, 0.0, 1.0]);
+        doc.layers[0].surface_mut().unwrap().fill_rect(photostore_geom::Rect::new(0, 0, 32, 64), &[0.0, 0.0, 0.0, 1.0]);
         let out = preview_document(&doc, Some(bg), "filter.blur.gaussianBlur", &json!({"radius": 4.0}), 1).unwrap();
         let p = out.layers[0].surface().unwrap().pixel(32, 32);
         assert!(p[0] > 0.2 && p[0] < 0.8, "edge blurred: {p:?}");
@@ -769,8 +769,8 @@ mod tests {
 
     #[test]
     fn core_filter_previews_keep_minimum_settings_after_downsampling() {
-        use photocraft_doc::{Color, ColorMode, SampleType, Size};
-        use photocraft_geom::Rect;
+        use photostore_doc::{Color, ColorMode, SampleType, Size};
+        use photostore_geom::Rect;
 
         for depth in [SampleType::U8, SampleType::U16, SampleType::F32] {
             let mut doc = Document::with_background("preview", Size::new(32, 32), ColorMode::Rgb, depth, Color::WHITE);
@@ -816,7 +816,7 @@ mod tests {
     #[test]
     fn color_to_alpha_dialog_defaults_draw_and_preview() {
         const ID: &str = "filter.other.colorToAlpha";
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 32, "height": 32})).unwrap();
         let id = open(&mut app, ID).unwrap();
         let mut f = app.ui.dialogs.iter().find(|d| d.id == id).unwrap().fields.clone();
@@ -828,13 +828,13 @@ mod tests {
 
         let mut doc = Document::with_background(
             "p",
-            photocraft_doc::Size::new(32, 32),
-            photocraft_doc::ColorMode::Rgb,
-            photocraft_doc::SampleType::U16,
-            photocraft_doc::Color::WHITE,
+            photostore_doc::Size::new(32, 32),
+            photostore_doc::ColorMode::Rgb,
+            photostore_doc::SampleType::U16,
+            photostore_doc::Color::WHITE,
         );
         let bg = doc.layers[0].id;
-        doc.layers[0].surface_mut().unwrap().fill_rect(photocraft_geom::Rect::new(0, 0, 8, 32), &[0.0, 0.0, 0.0, 1.0]);
+        doc.layers[0].surface_mut().unwrap().fill_rect(photostore_geom::Rect::new(0, 0, 8, 32), &[0.0, 0.0, 0.0, 1.0]);
         for k in [1, 2] {
             let out = preview_document(&doc, Some(bg), ID, &want, k).unwrap();
             let s = out.layers[0].surface().unwrap();
@@ -846,13 +846,13 @@ mod tests {
 
     #[test]
     fn preview_stays_inside_the_selection_at_every_proxy_factor() {
-        use photocraft_doc::SampleType;
+        use photostore_doc::SampleType;
         for depth in [SampleType::U8, SampleType::U16, SampleType::F32] {
             let mut doc =
-                Document::with_background("p", photocraft_doc::Size::new(64, 64), photocraft_doc::ColorMode::Rgb, depth, photocraft_doc::Color::gray(0.5));
+                Document::with_background("p", photostore_doc::Size::new(64, 64), photostore_doc::ColorMode::Rgb, depth, photostore_doc::Color::gray(0.5));
             let bg = doc.layers[0].id;
-            let mut sel = photocraft_raster::Surface::new(photocraft_doc::PixelFormat::GRAY8);
-            sel.fill_rect(photocraft_geom::Rect::new(0, 0, 32, 64), &[1.0]);
+            let mut sel = photostore_raster::Surface::new(photostore_doc::PixelFormat::GRAY8);
+            sel.fill_rect(photostore_geom::Rect::new(0, 0, 32, 64), &[1.0]);
             doc.selection = Some(sel);
             for k in [1, 2, 4] {
                 let out = preview_document(&doc, Some(bg), "filter.noise.addNoise", &json!({"amount": 100.0}), k).unwrap();
@@ -869,12 +869,12 @@ mod tests {
     fn define_pattern_asks_for_a_name() {
         // Edit › Define Pattern… named the pattern after the document without asking ("ask", then
         // "ask 2"). Photoshop's Pattern Name dialog starts from that name and lets you change it.
-        let spec = photocraft_engine::commands::find("edit.definePattern").unwrap();
+        let spec = photostore_engine::commands::find("edit.definePattern").unwrap();
         assert_eq!(parse_spec(spec.params), vec![Param { key: "name".into(), kind: Kind::Text }, Param { key: "rect".into(), kind: Kind::Json }]);
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 8, "height": 8, "name": "ask.jpg"})).unwrap();
         let ctx = egui::Context::default();
-        let define = |app: &mut PhotocraftApp, name: Option<&str>| {
+        let define = |app: &mut PhotoStoreApp, name: Option<&str>| {
             crate::menus::invoke(app, &ctx, "edit.definePattern", Value::Null).unwrap();
             let d = app.ui.dialogs.last().expect("Define Pattern opens a dialog").clone();
             let shown = d.fields["name"].as_str().unwrap().to_string();
@@ -901,7 +901,7 @@ mod tests {
         let p = parse_spec(r#"{"a":0..10=1,"b":json} (notes [x,y,z] here, and more) → {"c":id}"#);
         assert_eq!(p, vec![Param { key: "a".into(), kind: Kind::Range { min: 0.0, max: 10.0, default: 1.0 } }, Param { key: "b".into(), kind: Kind::Json }]);
         // Every command with a schema dialog has plain parameter keys.
-        for c in photocraft_engine::command_specs().iter().filter(|c| has_dialog(c.id)) {
+        for c in photostore_engine::command_specs().iter().filter(|c| has_dialog(c.id)) {
             for p in parse_spec(c.params) {
                 assert!(p.key.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_'), "{}: junk parameter {:?}", c.id, p.key);
             }
@@ -911,7 +911,7 @@ mod tests {
     #[test]
     fn selective_color_dialog_ok_applies() {
         // With the junk `reds: 0` the dialog's OK failed (`reds` must be an array of 4 numbers).
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 8, "height": 8})).unwrap();
         let id = open(&mut app, "image.adjustments.selectiveColor").unwrap();
         let fields = app.ui.dialogs.last().unwrap().fields.clone();
@@ -926,16 +926,16 @@ mod tests {
     fn waves(n: u32) -> Document {
         let mut doc = Document::with_background(
             "w",
-            photocraft_doc::Size::new(n, n),
-            photocraft_doc::ColorMode::Rgb,
-            photocraft_doc::SampleType::U8,
-            photocraft_doc::Color::WHITE,
+            photostore_doc::Size::new(n, n),
+            photostore_doc::ColorMode::Rgb,
+            photostore_doc::SampleType::U8,
+            photostore_doc::Color::WHITE,
         );
         let s = doc.layers[0].surface_mut().unwrap();
         for y in 0..n as i32 {
             for x in 0..n as i32 {
                 let v = 0.5 + 0.4 * (x as f32 / 23.0).sin() * (y as f32 / 31.0).cos();
-                s.fill_rect(photocraft_geom::Rect::new(x, y, x + 1, y + 1), &[v, 1.0 - v, x as f32 / n as f32, 1.0]);
+                s.fill_rect(photostore_geom::Rect::new(x, y, x + 1, y + 1), &[v, 1.0 - v, x as f32 / n as f32, 1.0]);
             }
         }
         doc
@@ -943,7 +943,7 @@ mod tests {
 
     /// Mean absolute RGB difference of two documents, compared at 1/4 scale.
     fn diff_at_quarter(a: &Document, b: &Document) -> f32 {
-        let quarter = |d: &Document| photocraft_compose::flatten(&crate::proxy::proxy_document(d, (d.size.width / 64).max(1)));
+        let quarter = |d: &Document| photostore_compose::flatten(&crate::proxy::proxy_document(d, (d.size.width / 64).max(1)));
         let (a, b) = (quarter(a), quarter(b));
         assert_eq!(a.px.len(), b.px.len());
         a.px.iter().zip(&b.px).map(|(p, q)| (0..3).map(|c| (p[c] - q[c]).abs()).sum::<f32>() / 3.0).sum::<f32>() / a.px.len() as f32
@@ -990,7 +990,7 @@ mod tests {
         assert_eq!(preview_factor("no.such.command", &json!({"cellSize": 1.0}), 4), 4);
         assert_eq!(preview_factor("filter.pixelate.pointillize", &json!({"cellSize": 5.0}), 0), 1);
         // Every previewed command, at each pixel-sized param's minimum, default and in between.
-        let previewed = photocraft_engine::command_specs().iter().filter(|c| has_dialog(c.id) && (c.id.starts_with("filter.") || PREVIEWED.contains(&c.id)));
+        let previewed = photostore_engine::command_specs().iter().filter(|c| has_dialog(c.id) && (c.id.starts_with("filter.") || PREVIEWED.contains(&c.id)));
         for c in previewed {
             for p in parse_spec(c.params) {
                 let Kind::Range { min, default, .. } = p.kind else { continue };

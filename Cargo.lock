@@ -4172,8 +4172,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "photocraft"
-version = "0.6.0"
+name = "photostore"
+version = "0.6.1"
 dependencies = [
  "arboard",
  "async-io",
@@ -4189,18 +4189,18 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "open",
- "photocraft-automation",
- "photocraft-codecs",
- "photocraft-color",
- "photocraft-compose",
- "photocraft-doc",
- "photocraft-engine",
- "photocraft-format",
- "photocraft-geom",
- "photocraft-io",
- "photocraft-raster",
- "photocraft-tablet",
- "photocraft-ui-egui",
+ "photostore-automation",
+ "photostore-codecs",
+ "photostore-color",
+ "photostore-compose",
+ "photostore-doc",
+ "photostore-engine",
+ "photostore-format",
+ "photostore-geom",
+ "photostore-io",
+ "photostore-raster",
+ "photostore-tablet",
+ "photostore-ui-egui",
  "rfd",
  "ron",
  "serde_json",
@@ -4213,8 +4213,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "photocraft-affinity"
-version = "0.6.0"
+name = "photostore-affinity"
+version = "0.6.1"
 dependencies = [
  "crc32fast",
  "flate2",
@@ -4223,12 +4223,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "photocraft-algo"
-version = "0.6.0"
+name = "photostore-algo"
+version = "0.6.1"
 dependencies = [
- "photocraft-color",
- "photocraft-geom",
- "photocraft-raster",
+ "photostore-color",
+ "photostore-geom",
+ "photostore-raster",
  "rayon",
  "rustfft",
  "serde",
@@ -4236,19 +4236,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "photocraft-automation"
-version = "0.6.0"
+name = "photostore-automation"
+version = "0.6.1"
 dependencies = [
  "base64",
  "cap-std",
  "getrandom 0.3.4",
- "photocraft-codecs",
- "photocraft-compose",
- "photocraft-doc",
- "photocraft-engine",
- "photocraft-format",
- "photocraft-geom",
- "photocraft-io",
+ "photostore-codecs",
+ "photostore-compose",
+ "photostore-doc",
+ "photostore-engine",
+ "photostore-format",
+ "photostore-geom",
+ "photostore-io",
  "rmcp",
  "schemars",
  "serde",
@@ -4258,30 +4258,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "photocraft-cli"
-version = "0.6.0"
+name = "photostore-cli"
+version = "0.6.1"
 dependencies = [
- "photocraft-automation",
- "photocraft-codecs",
- "photocraft-engine",
- "photocraft-format",
- "photocraft-io",
+ "photostore-automation",
+ "photostore-codecs",
+ "photostore-engine",
+ "photostore-format",
+ "photostore-io",
  "serde_json",
  "tokio",
  "winresource",
 ]
 
 [[package]]
-name = "photocraft-cms"
-version = "0.6.0"
+name = "photostore-cms"
+version = "0.6.1"
 dependencies = [
  "moxcms",
  "rayon",
 ]
 
 [[package]]
-name = "photocraft-codecs"
-version = "0.6.0"
+name = "photostore-codecs"
+version = "0.6.1"
 dependencies = [
  "exr",
  "flate2",
@@ -4289,7 +4289,7 @@ dependencies = [
  "image",
  "image-webp",
  "jpeg-encoder",
- "photocraft-heif",
+ "photostore-heif",
  "png 0.18.1",
  "proptest",
  "rayon",
@@ -4301,63 +4301,63 @@ dependencies = [
 ]
 
 [[package]]
-name = "photocraft-color"
-version = "0.6.0"
+name = "photostore-color"
+version = "0.6.1"
 dependencies = [
- "photocraft-cms",
+ "photostore-cms",
  "serde",
 ]
 
 [[package]]
-name = "photocraft-compose"
-version = "0.6.0"
+name = "photostore-compose"
+version = "0.6.1"
 dependencies = [
  "criterion",
- "photocraft-color",
- "photocraft-doc",
- "photocraft-geom",
- "photocraft-paint",
- "photocraft-raster",
- "photocraft-vector",
+ "photostore-color",
+ "photostore-doc",
+ "photostore-geom",
+ "photostore-paint",
+ "photostore-raster",
+ "photostore-vector",
  "proptest",
  "rayon",
 ]
 
 [[package]]
-name = "photocraft-doc"
-version = "0.6.0"
+name = "photostore-doc"
+version = "0.6.1"
 dependencies = [
- "photocraft-color",
- "photocraft-geom",
- "photocraft-raster",
+ "photostore-color",
+ "photostore-geom",
+ "photostore-raster",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "photocraft-engine"
-version = "0.6.0"
+name = "photostore-engine"
+version = "0.6.1"
 dependencies = [
  "blake3",
  "flate2",
- "photocraft-affinity",
- "photocraft-algo",
- "photocraft-cms",
- "photocraft-codecs",
- "photocraft-color",
- "photocraft-compose",
- "photocraft-doc",
- "photocraft-format",
- "photocraft-geom",
- "photocraft-io",
- "photocraft-ops",
- "photocraft-paint",
- "photocraft-plugins",
- "photocraft-psd",
- "photocraft-raster",
- "photocraft-raw",
- "photocraft-text",
- "photocraft-vector",
+ "photostore-affinity",
+ "photostore-algo",
+ "photostore-cms",
+ "photostore-codecs",
+ "photostore-color",
+ "photostore-compose",
+ "photostore-doc",
+ "photostore-format",
+ "photostore-geom",
+ "photostore-io",
+ "photostore-ops",
+ "photostore-paint",
+ "photostore-plugins",
+ "photostore-psd",
+ "photostore-raster",
+ "photostore-raw",
+ "photostore-text",
+ "photostore-vector",
  "rayon",
  "roxmltree",
  "serde",
@@ -4367,16 +4367,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "photocraft-format"
-version = "0.6.0"
+name = "photostore-format"
+version = "0.6.1"
 dependencies = [
  "blake3",
  "flate2",
- "photocraft-codecs",
- "photocraft-color",
- "photocraft-doc",
- "photocraft-geom",
- "photocraft-raster",
+ "photostore-codecs",
+ "photostore-color",
+ "photostore-doc",
+ "photostore-geom",
+ "photostore-raster",
  "proptest",
  "rustix 1.1.5",
  "ruzstd",
@@ -4386,58 +4386,58 @@ dependencies = [
 ]
 
 [[package]]
-name = "photocraft-geom"
-version = "0.6.0"
+name = "photostore-geom"
+version = "0.6.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
-name = "photocraft-gpu"
-version = "0.6.0"
+name = "photostore-gpu"
+version = "0.6.1"
 dependencies = [
  "half",
  "log",
- "photocraft-color",
- "photocraft-compose",
- "photocraft-doc",
- "photocraft-geom",
- "photocraft-raster",
- "photocraft-vector",
+ "photostore-color",
+ "photostore-compose",
+ "photostore-doc",
+ "photostore-geom",
+ "photostore-raster",
+ "photostore-vector",
  "pollster 1.0.1",
  "rayon",
  "wgpu",
 ]
 
 [[package]]
-name = "photocraft-heif"
-version = "0.6.0"
+name = "photostore-heif"
+version = "0.6.1"
 dependencies = [
  "heic-rs",
 ]
 
 [[package]]
-name = "photocraft-io"
-version = "0.6.0"
+name = "photostore-io"
+version = "0.6.1"
 dependencies = [
  "blake3",
  "crc32fast",
  "flate2",
- "photocraft-affinity",
- "photocraft-algo",
- "photocraft-cms",
- "photocraft-codecs",
- "photocraft-color",
- "photocraft-compose",
- "photocraft-doc",
- "photocraft-format",
- "photocraft-geom",
- "photocraft-paint",
- "photocraft-psd",
- "photocraft-raster",
- "photocraft-raw",
- "photocraft-text",
- "photocraft-vector",
+ "photostore-affinity",
+ "photostore-algo",
+ "photostore-cms",
+ "photostore-codecs",
+ "photostore-color",
+ "photostore-compose",
+ "photostore-doc",
+ "photostore-format",
+ "photostore-geom",
+ "photostore-paint",
+ "photostore-psd",
+ "photostore-raster",
+ "photostore-raw",
+ "photostore-text",
+ "photostore-vector",
  "proptest",
  "resvg",
  "roxmltree",
@@ -4446,30 +4446,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "photocraft-ops"
-version = "0.6.0"
+name = "photostore-ops"
+version = "0.6.1"
 dependencies = [
- "photocraft-doc",
+ "photostore-doc",
 ]
 
 [[package]]
-name = "photocraft-paint"
-version = "0.6.0"
+name = "photostore-paint"
+version = "0.6.1"
 dependencies = [
- "photocraft-color",
- "photocraft-geom",
- "photocraft-raster",
+ "photostore-color",
+ "photostore-geom",
+ "photostore-raster",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "photocraft-plugins"
-version = "0.6.0"
+name = "photostore-plugins"
+version = "0.6.1"
 dependencies = [
- "photocraft-color",
- "photocraft-geom",
- "photocraft-raster",
+ "photostore-color",
+ "photostore-geom",
+ "photostore-raster",
  "rayon",
  "serde",
  "serde_json",
@@ -4479,33 +4479,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "photocraft-psd"
-version = "0.6.0"
+name = "photostore-psd"
+version = "0.6.1"
 dependencies = [
  "flate2",
- "photocraft-psd",
+ "photostore-psd",
  "proptest",
  "serde",
  "thiserror 2.0.21",
 ]
 
 [[package]]
-name = "photocraft-raster"
-version = "0.6.0"
+name = "photostore-raster"
+version = "0.6.1"
 dependencies = [
- "photocraft-color",
- "photocraft-geom",
+ "photostore-color",
+ "photostore-geom",
  "proptest",
  "serde",
 ]
 
 [[package]]
-name = "photocraft-raw"
-version = "0.6.0"
+name = "photostore-raw"
+version = "0.6.1"
 dependencies = [
  "flate2",
  "jxl-oxide",
- "photocraft-raw",
+ "photostore-raw",
  "png 0.18.1",
  "rayon",
  "zune-core 0.5.3",
@@ -4513,8 +4513,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "photocraft-tablet"
-version = "0.6.0"
+name = "photostore-tablet"
+version = "0.6.1"
 dependencies = [
  "block2 0.6.2",
  "objc2 0.6.4",
@@ -4525,33 +4525,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "photocraft-testkit"
-version = "0.6.0"
+name = "photostore-testkit"
+version = "0.6.1"
 dependencies = [
  "memory-stats",
- "photocraft-color",
- "photocraft-geom",
- "photocraft-raster",
+ "photostore-color",
+ "photostore-geom",
+ "photostore-raster",
  "serde_json",
 ]
 
 [[package]]
-name = "photocraft-text"
-version = "0.6.0"
+name = "photostore-text"
+version = "0.6.1"
 dependencies = [
  "flate2",
  "parley",
- "photocraft-color",
- "photocraft-doc",
- "photocraft-geom",
- "photocraft-psd",
- "photocraft-raster",
+ "photostore-color",
+ "photostore-doc",
+ "photostore-geom",
+ "photostore-psd",
+ "photostore-raster",
  "skrifa",
 ]
 
 [[package]]
-name = "photocraft-ui-egui"
-version = "0.6.0"
+name = "photostore-ui-egui"
+version = "0.6.1"
 dependencies = [
  "base64",
  "eframe",
@@ -4560,25 +4560,25 @@ dependencies = [
  "egui_kittest",
  "flate2",
  "log",
- "photocraft-algo",
- "photocraft-cms",
- "photocraft-codecs",
- "photocraft-color",
- "photocraft-compose",
- "photocraft-doc",
- "photocraft-engine",
- "photocraft-format",
- "photocraft-geom",
- "photocraft-gpu",
- "photocraft-io",
- "photocraft-paint",
- "photocraft-plugins",
- "photocraft-psd",
- "photocraft-raster",
- "photocraft-raw",
- "photocraft-testkit",
- "photocraft-text",
- "photocraft-vector",
+ "photostore-algo",
+ "photostore-cms",
+ "photostore-codecs",
+ "photostore-color",
+ "photostore-compose",
+ "photostore-doc",
+ "photostore-engine",
+ "photostore-format",
+ "photostore-geom",
+ "photostore-gpu",
+ "photostore-io",
+ "photostore-paint",
+ "photostore-plugins",
+ "photostore-psd",
+ "photostore-raster",
+ "photostore-raw",
+ "photostore-testkit",
+ "photostore-text",
+ "photostore-vector",
  "rayon",
  "serde",
  "serde_json",
@@ -4587,31 +4587,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "photocraft-vector"
-version = "0.6.0"
+name = "photostore-vector"
+version = "0.6.1"
 dependencies = [
- "photocraft-color",
- "photocraft-doc",
- "photocraft-geom",
- "photocraft-raster",
+ "photostore-color",
+ "photostore-doc",
+ "photostore-geom",
+ "photostore-raster",
  "rayon",
 ]
 
 [[package]]
-name = "photocraft-web"
-version = "0.6.0"
+name = "photostore-web"
+version = "0.6.1"
 dependencies = [
  "eframe",
  "egui",
  "js-sys",
  "log",
- "photocraft-codecs",
- "photocraft-doc",
- "photocraft-engine",
- "photocraft-io",
- "photocraft-paint",
- "photocraft-psd",
- "photocraft-ui-egui",
+ "photostore-codecs",
+ "photostore-doc",
+ "photostore-engine",
+ "photostore-io",
+ "photostore-paint",
+ "photostore-psd",
+ "photostore-ui-egui",
  "rfd",
  "serde_json",
  "wasm-bindgen",
@@ -7432,7 +7432,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "serde",
  "serde_json",

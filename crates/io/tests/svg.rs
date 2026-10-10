@@ -1,10 +1,10 @@
 //! SVG import: shapes, groups, transforms, curves, text, gradients, rasterised fallbacks, the
 //! size limit, sniffing and malformed input.
 
-use photocraft_color::blend::BlendMode;
-use photocraft_doc::vector::{FillRule, LineCap, LineJoin};
-use photocraft_doc::{Fill, LayerContent};
-use photocraft_io::*;
+use photostore_color::blend::BlendMode;
+use photostore_doc::vector::{FillRule, LineCap, LineJoin};
+use photostore_doc::{Fill, LayerContent};
+use photostore_io::*;
 
 const NS: &str = "xmlns=\"http://www.w3.org/2000/svg\"";
 
@@ -12,8 +12,8 @@ fn open(svg: &str) -> ImportResult {
     import("drawing.svg", svg.as_bytes()).unwrap_or_else(|e| panic!("{e}\n{svg}"))
 }
 
-fn px(doc: &photocraft_doc::Document, x: i32, y: i32) -> [f32; 4] {
-    photocraft_compose::flatten(doc).get(x, y)
+fn px(doc: &photostore_doc::Document, x: i32, y: i32) -> [f32; 4] {
+    photostore_compose::flatten(doc).get(x, y)
 }
 
 fn close(a: [f32; 4], b: [f32; 4]) -> bool {
@@ -34,7 +34,7 @@ fn basic_shapes_become_shape_layers_with_their_fills_and_strokes() {
     assert_eq!(d.layers[0].name, "box");
     assert_eq!(d.layers[1].name, "Shape 1", "unnamed shapes are numbered");
     let LayerContent::Shape(sh) = &d.layers[0].content else { panic!("not a shape") };
-    assert_eq!(sh.fill, Some(Fill::Solid(photocraft_color::Color::rgba(1.0, 0.0, 0.0, 1.0))));
+    assert_eq!(sh.fill, Some(Fill::Solid(photostore_color::Color::rgba(1.0, 0.0, 0.0, 1.0))));
     assert!(sh.stroke.is_none());
     assert_eq!(sh.path.subpaths.len(), 1);
     assert!(sh.path.subpaths[0].closed);
@@ -42,7 +42,7 @@ fn basic_shapes_become_shape_layers_with_their_fills_and_strokes() {
     let st = c.stroke.as_ref().expect("stroke");
     assert!((st.width - 4.0).abs() < 1e-3);
     assert_eq!((st.cap, st.join), (LineCap::Round, LineJoin::Bevel));
-    assert_eq!(st.paint, Fill::Solid(photocraft_color::Color::rgba(0.0, 0.0, 0.0, 1.0)));
+    assert_eq!(st.paint, Fill::Solid(photostore_color::Color::rgba(0.0, 0.0, 0.0, 1.0)));
     // The composite: red inside the box, blue inside the circle, black on its edge, nothing else.
     assert!(close(px(d, 20, 20), [1.0, 0.0, 0.0, 1.0]), "{:?}", px(d, 20, 20));
     assert!(close(px(d, 70, 30), [0.0, 0.0, 1.0, 1.0]), "{:?}", px(d, 70, 30));
@@ -171,8 +171,8 @@ fn clip_paths_masks_filters_patterns_and_images_are_rasterised() {
 
 /// A 2×2 PNG (red, green / blue, white) as a data URL, for `<image>`.
 fn png_data_url() -> String {
-    let img = photocraft_codecs::Image::from_u8(2, 2, photocraft_codecs::ChannelLayout::Rgb, vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255]).unwrap();
-    let bytes = photocraft_codecs::encode(&img, photocraft_codecs::Format::Png, &Default::default()).unwrap();
+    let img = photostore_codecs::Image::from_u8(2, 2, photostore_codecs::ChannelLayout::Rgb, vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255]).unwrap();
+    let bytes = photostore_codecs::encode(&img, photostore_codecs::Format::Png, &Default::default()).unwrap();
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::from("data:image/png;base64,");
     for chunk in bytes.chunks(3) {
@@ -348,8 +348,8 @@ fn image_hrefs_to_local_files_are_never_read() {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("svg-local-image");
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("secret.png");
-    let img = photocraft_codecs::Image::from_u8(2, 2, photocraft_codecs::ChannelLayout::Rgb, vec![255; 12]).unwrap();
-    std::fs::write(&file, photocraft_codecs::encode(&img, photocraft_codecs::Format::Png, &Default::default()).unwrap()).unwrap();
+    let img = photostore_codecs::Image::from_u8(2, 2, photostore_codecs::ChannelLayout::Rgb, vec![255; 12]).unwrap();
+    std::fs::write(&file, photostore_codecs::encode(&img, photostore_codecs::Format::Png, &Default::default()).unwrap()).unwrap();
     let path = file.to_string_lossy().into_owned();
     for href in [path.clone(), format!("file://{path}"), "secret.png".to_string()] {
         let r = open(&format!("<svg {NS} width=\"20\" height=\"20\"><image x=\"0\" y=\"0\" width=\"20\" height=\"20\" href=\"{href}\"/></svg>"));

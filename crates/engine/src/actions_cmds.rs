@@ -478,7 +478,7 @@ mod tests {
     fn translated_square(s: &mut Session, depth: u32) {
         s.execute("file.new", json!({"width": 20, "height": 8, "depth": depth, "background": "transparent"})).unwrap();
         s.edit("red square", |doc, _| {
-            doc.layers[0].surface_mut().unwrap().fill_rect(photocraft_geom::Rect::new(0, 2, 2, 4), &[1.0, 0.0, 0.0, 1.0]);
+            doc.layers[0].surface_mut().unwrap().fill_rect(photostore_geom::Rect::new(0, 2, 2, 4), &[1.0, 0.0, 0.0, 1.0]);
             Ok(())
         })
         .unwrap();

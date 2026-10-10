@@ -6,16 +6,16 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use serde_json::json;
 
-use crate::PhotocraftApp;
+use crate::PhotoStoreApp;
 use crate::theme::ThemeKind;
 
 use super::{TabStrip, pro_tab_title};
 
 /// A real app window with `docs` documents named "ch1-pNN.png".
-fn harness(docs: usize, theme: ThemeKind) -> Harness<'static, PhotocraftApp> {
+fn harness(docs: usize, theme: ThemeKind) -> Harness<'static, PhotoStoreApp> {
     let mut h = Harness::builder().with_size(vec2(1000.0, 700.0)).with_max_steps(64).build_eframe(move |cc| {
-        PhotocraftApp::setup_context(&cc.egui_ctx, theme);
-        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        PhotoStoreApp::setup_context(&cc.egui_ctx, theme);
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
         // The theme is an interface preference, applied on the first frame: set the preference.
         app.run("prefs.set", json!({"values": {"interface.theme": theme.id()}})).unwrap();
         for n in 1..=docs {
@@ -27,11 +27,11 @@ fn harness(docs: usize, theme: ThemeKind) -> Harness<'static, PhotocraftApp> {
     h
 }
 
-fn strip(h: &Harness<'_, PhotocraftApp>) -> TabStrip {
+fn strip(h: &Harness<'_, PhotoStoreApp>) -> TabStrip {
     h.state().tab_strip.clone().expect("the strip is drawn")
 }
 
-fn has_menu(h: &Harness<'_, PhotocraftApp>) -> bool {
+fn has_menu(h: &Harness<'_, PhotoStoreApp>) -> bool {
     h.query_by_label("More documents").is_some()
 }
 

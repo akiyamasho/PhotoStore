@@ -334,7 +334,7 @@ mod tests {
 
         // A layout that needs a served family the database lacks asks for it (and is drawn with
         // the fallback meanwhile).
-        let t = photocraft_doc::TextLayer { text: "Hi".into(), font_family: served.into(), size_pt: 12.0, ..Default::default() };
+        let t = photostore_doc::TextLayer { text: "Hi".into(), font_family: served.into(), size_pt: 12.0, ..Default::default() };
         let l = crate::TextEngine::new().layout(&t, 72.0);
         assert_eq!(l.glyphs.len(), 2);
         assert!(take_requests().iter().any(|f| f == served));
@@ -362,7 +362,7 @@ mod tests {
         request_for_languages(["en-US", "fr"]);
         assert!(!take_requests().iter().any(|f| f == hebrew));
         // A layout of Hebrew text in the default family asks for it too.
-        let t = photocraft_doc::TextLayer { text: "שלום".into(), size_pt: 12.0, ..Default::default() };
+        let t = photostore_doc::TextLayer { text: "שלום".into(), size_pt: 12.0, ..Default::default() };
         let _ = crate::TextEngine::new().layout(&t, 72.0);
         assert!(take_requests().iter().any(|f| f == hebrew), "layout asks for the script fallback");
     }

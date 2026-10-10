@@ -13,7 +13,7 @@
 //! both show, pick and organise presets the same way; each keeps its own view state.
 
 use egui::{Color32, RichText, Sense, Stroke, pos2, vec2};
-use photocraft_engine::paint::{BrushPreset, MAX_BRUSH_SIZE};
+use photostore_engine::paint::{BrushPreset, MAX_BRUSH_SIZE};
 use serde_json::json;
 
 use crate::brush_panel::{
@@ -21,7 +21,7 @@ use crate::brush_panel::{
 };
 use crate::brush_preview;
 use crate::theme::{self, Tokens};
-use crate::{PhotocraftApp, icons, widgets};
+use crate::{PhotoStoreApp, icons, widgets};
 
 /// What a drag in the Brushes tab carries.
 #[derive(Clone, Debug, PartialEq)]
@@ -97,7 +97,7 @@ pub fn group_key(presets: &[BrushPreset], label: &str) -> String {
 }
 
 /// Deepest nested folder the panel draws; deeper folders show at this depth.
-pub const MAX_VIEW_DEPTH: usize = photocraft_engine::brush_preset_cmds::MAX_FOLDER_DEPTH;
+pub const MAX_VIEW_DEPTH: usize = photostore_engine::brush_preset_cmds::MAX_FOLDER_DEPTH;
 
 /// The collapse key of a nested folder of the group shown as `label` (`label` itself for the
 /// group).
@@ -210,7 +210,7 @@ fn view_actions(st: &mut BrushesPanelState, acts: Vec<Action>) -> Vec<Action> {
 }
 
 /// Turn a preset list's actions into commands.
-pub fn apply(app: &mut PhotocraftApp, acts: Vec<Action>) {
+pub fn apply(app: &mut PhotoStoreApp, acts: Vec<Action>) {
     for a in acts {
         match a {
             Action::Select(name) => run_or_status(app, "tools.setBrush", json!({ "preset": name })),
@@ -867,7 +867,7 @@ pub fn preset_list(ui: &mut egui::Ui, presets: &[BrushPreset], current: Option<&
 }
 
 /// The Brushes tab.
-pub fn show(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+pub fn show(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     // Size of the current brush (Photoshop's Brushes panel slider).
     let before = app.session.tools.brush.clone();

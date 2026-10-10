@@ -1,5 +1,5 @@
 [package]
-name = "photocraft-ops"
+name = "photostore-ops"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,4 +8,4 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-photocraft-doc = { workspace = true }
+photostore-doc = { workspace = true }
