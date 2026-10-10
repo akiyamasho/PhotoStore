@@ -10,8 +10,8 @@ Updated 2026-10-11. This is an operational ledger for the independent PhotoStore
 - Milestone references: `photostore-foundation-2026-10-10` at `d83f8323`; `photostore-animation-smart-objects-2026-10-10` at `06e736db`; `photostore-animation-media-2026-10-11` at `4019c6ce28966236e070a3d894a56c2968643820`.
 - Icon direction: PhotoStore icon with the requested twist; keep the asset provenance row with the icon work.
 - README/AGENTS direction: keep badges, install, run, and contributor guidance lean and operational.
-- Branding pass: current product identity and documentation are being cleaned up for the personal PhotoStore fork; the planned release tag is `photostore-branding-2026-10-11`.
-- Audio work in progress is saved locally on `codex/timeline-backfill-wip` at `923ec540620331aa888987b94003505c01e6aac4`; restore it after the branding release and do not describe audio as implemented or included in this release.
+- Branding release completed: tag `photostore-branding-2026-10-11` points to `e3703d4be2ceba37e04b81b2761f7b3acc27235b`; the [PhotoStore 0.6.1 release](https://github.com/akiyamasho/PhotoStore/releases/tag/photostore-branding-2026-10-11) contains the Apple Silicon DMG, CLI ZIP, and `SHA256SUMS`.
+- Audio work in progress remains saved locally on `codex/timeline-backfill-wip` at `923ec540620331aa888987b94003505c01e6aac4`; it was not included in this release. Restore and rebase it onto the renamed identifiers before finishing shared-audio preview/export, clip retiming, the real UI clock, and compilation.
 - Photoshop-facing scope: timeline/frame animation and Smart Objects are first product priorities, while the inherited feature surface remains evidence to audit rather than a completeness claim.
 
 ## Evidence rules
@@ -32,8 +32,9 @@ Updated 2026-10-11. This is an operational ledger for the independent PhotoStore
 - These are compiler/function and targeted integration results. They do not establish visual UI QA, Photoshop behavior parity, or full PSD/external-format compatibility.
 - Release record: annotated tag `photostore-animation-media-2026-10-11` was pushed at `4019c6ce28966236e070a3d894a56c2968643820`.
 - Published prerelease: [PhotoStore 0.6.0 prerelease](https://github.com/akiyamasho/PhotoStore/releases/tag/photostore-animation-media-2026-10-11) includes the Apple Silicon DMG, CLI ZIP, and `SHA256SUMS`; artifacts are ad hoc signed and not notarized.
-- The existing `0.6.0` release record and tag `4019c6ce` remain historical. The current `0.6.1` branding release is planned under `photostore-branding-2026-10-11`, followed by reinstall before restoring the local audio WIP.
-- Local install record: `/Applications/PhotoStore.app` version 0.6.0, bundle `ai.photostore.app`, installed with the matching source SHA; strict signature validation passed and the executable remained running after the required startup confirmation.
+- The existing `0.6.0` release record and tag `4019c6ce` remain historical; the completed `0.6.1` branding release supersedes it for the current product identity.
+- Branding release integrity: the ARM64 build and package checks passed for bundle ID, version, baked SHA, icon, licenses, strict signatures, and checksums. The artifacts are ad hoc signed and not notarized; no broad visual QA or new feature tests were run.
+- Local install record: `/Applications/PhotoStore.app` version 0.6.1, bundle `ai.photostore.app`, installed with the matching source SHA; strict signature validation passed, startup was confirmed, and the app remains open as PID 54840. The previous app backup is preserved at `/private/tmp/photostore-reinstall-20261011.qcBCXU/previous-PhotoStore.app`.
 - This release record does not claim full visual or Photoshop acceptance; the remaining Photoshop scope and active goal are unfinished.
 
 ## Animation and timeline

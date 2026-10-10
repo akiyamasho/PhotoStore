@@ -42,8 +42,11 @@ Object, filtering/minimize/hide, and UI-only candidates were reported. This evid
 compiler and targeted function/integration behavior. It does not claim visual UI QA, Photoshop
 parity, or complete PSD/external-format compatibility.
 
-The next checkpoint tag, `photostore-animation-media-2026-10-11`, is planned but not published.
-Release, GitHub release, and local install remain pending release actions.
+The branding release is complete: `photostore-branding-2026-10-11` is published at commit
+`e3703d4be2ceba37e04b81b2761f7b3acc27235b`, and PhotoStore 0.6.1 is installed locally. The
+unfinished audio backfill remains on `codex/timeline-backfill-wip` at
+`923ec540620331aa888987b94003505c01e6aac4`; restore and rebase it before continuing audio and
+timeline work.
 
 ## CI and release follow-up
 
