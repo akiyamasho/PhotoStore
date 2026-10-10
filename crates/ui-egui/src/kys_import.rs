@@ -44,13 +44,20 @@ pub fn import_text(app: &mut PhotocraftApp, file_name: &str, text: &str) -> Resu
     };
     let f = &mut app.ui.dialog_mut(id).ok_or("the Keyboard Shortcuts dialog is gone")?.fields;
     let mut overrides: BTreeMap<String, String> = f.get("overrides").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+    let mut alternates: BTreeMap<String, Vec<String>> = f.get("alternates").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
     for (cmd, sc) in &plan.set {
+        // A later import owns each row it mentions. Clear old alternates first so a row
+        // reduced from two bindings to one cannot resurrect the stale key on Apply.
+        alternates.remove(cmd);
         let default = crate::shortcuts::default_shortcut(cmd).and_then(|d| photocraft_engine::prefs::normalize_shortcut(&d));
         if default.as_deref() == Some(sc.as_str()) {
             overrides.remove(cmd);
         } else {
             overrides.insert(cmd.clone(), sc.clone());
         }
+    }
+    for (cmd, keys) in &plan.alternates_for {
+        alternates.insert(cmd.clone(), keys.clone());
     }
     let shown = std::path::Path::new(file_name).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| file_name.to_string());
     let n = plan.set.len().to_string();
@@ -67,6 +74,7 @@ pub fn import_text(app: &mut PhotocraftApp, file_name: &str, text: &str) -> Resu
     }
     f.insert("tab".into(), json!(0));
     f.insert("overrides".into(), json!(overrides));
+    f.insert("alternates".into(), json!(alternates));
     f.insert("selected".into(), json!(""));
     f.insert("capture".into(), json!(false));
     f.insert("message".into(), json!(message));

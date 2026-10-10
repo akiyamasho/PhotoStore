@@ -8,7 +8,7 @@ Native, open-source image editing software written in Rust.
 
 ## Install
 
-Download a release package when available. For a local install, use Rust stable 1.95+:
+Download the macOS Apple Silicon package from the [PhotoStore releases](https://github.com/akiyamasho/PhotoStore/releases). For a local install, use Rust stable 1.95+:
 
 ```sh
 CARGO_BUILD_JOBS=1 cargo install --path apps/photocraft --bin photostore --locked
@@ -17,14 +17,13 @@ CARGO_BUILD_JOBS=1 cargo install --path apps/photocraft-cli --bin photostore-cli
 
 Linux native dependencies and optional fonts are documented in [`docs/development.md`](docs/development.md).
 
+Optional native movie import/export requires FFmpeg and FFprobe; install the Homebrew `ffmpeg-full` formula or set `PHOTOSTORE_FFMPEG` and `PHOTOSTORE_FFPROBE`.
+
 ## Build and run
 
 ```sh
 CARGO_BUILD_JOBS=1 cargo build --release -p photocraft -p photocraft-cli
 ./target/release/photostore
 ./target/release/photostore-cli --help
+open -a PhotoStore
 ```
-
-The web build uses Trunk; packaging scripts are under [`packaging/`](packaging/). The internal Cargo package names remain `photocraft` and `photocraft-cli` for compatibility, while the exposed executables are `photostore` and `photostore-cli`.
-
-PhotoStore is dual-licensed under MIT or Apache-2.0. See [`LICENSE-MIT`](LICENSE-MIT), [`LICENSE-APACHE`](LICENSE-APACHE), [`NOTICE`](NOTICE), and [`ATTRIBUTION.md`](ATTRIBUTION.md).

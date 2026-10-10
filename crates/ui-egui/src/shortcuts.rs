@@ -77,6 +77,11 @@ pub fn effective_shortcut(app: &PhotocraftApp, id: &str, default: Option<&str>) 
     app.session.prefs().shortcut(id, default).map(str::to_string)
 }
 
+/// All bindings in effect for a command, preserving the primary key first.
+pub fn effective_shortcuts(app: &PhotocraftApp, id: &str, default: Option<&str>) -> Vec<String> {
+    app.session.prefs().shortcuts_for(id, default)
+}
+
 /// Default (unmodified) shortcut of a command id.
 pub fn default_shortcut(id: &str) -> Option<String> {
     if let Some(tool) = crate::state::Tool::ALL.iter().find(|&&t| tool_id(t) == id) {

@@ -33,7 +33,26 @@ pub struct TimelineUi {
     pub thumb_last_history: Option<(usize, usize)>,
     #[serde(skip)]
     pub thumb_last_signature: Option<u64>,
+    #[serde(skip)]
+    pub thumb_page: usize,
+    #[serde(default)]
+    pub tween_from: String,
+    #[serde(default)]
+    pub tween_to: String,
+    #[serde(default = "default_tween_additions")]
+    pub tween_additions: u64,
+    #[serde(default = "default_true")]
+    pub tween_position: bool,
+    #[serde(default = "default_true")]
+    pub tween_opacity: bool,
+    #[serde(default)]
+    pub tween_effects: bool,
+    #[serde(default)]
+    pub tween_selected_layers: bool,
 }
+
+fn default_tween_additions() -> u64 { 1 }
+fn default_true() -> bool { true }
 
 impl std::fmt::Debug for TimelineUi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -44,12 +63,13 @@ impl std::fmt::Debug for TimelineUi {
             .field("play_direction", &self.play_direction)
             .field("frame_thumbs_len", &self.frame_thumbs.len())
             .field("thumb_generation", &self.thumb_generation)
+            .field("thumb_page", &self.thumb_page)
             .finish()
     }
 }
 
-fn frame_thumbnails(app: &mut PhotocraftApp, ctx: &egui::Context, tl: &photocraft_doc::Timeline) -> Vec<Option<egui::TextureId>> {
-    let Some(st) = app.session.active() else { return Vec::new() };
+fn frame_thumbnails(app: &mut PhotocraftApp, ctx: &egui::Context, tl: &photocraft_doc::Timeline) -> (usize, Vec<Option<egui::TextureId>>) {
+    let Some(st) = app.session.active() else { return (0, Vec::new()) };
     let video = st.active_layer.and_then(|id| st.doc.layer(id)).and_then(|layer| layer.video.as_ref());
     let history = (st.history.past_len(), st.history.future_len());
     let signature = {
@@ -73,10 +93,16 @@ fn frame_thumbnails(app: &mut PhotocraftApp, ctx: &egui::Context, tl: &photocraf
     app.ui.timeline.thumb_last_revision = Some(st.revision);
     let key_prefix = format!("{}:{}:{}", st.doc.id.0, app.ui.timeline.thumb_generation, video.map_or(tl.duration, |v| v.frames.len()));
     app.ui.timeline.frame_thumbs.retain(|(key, _)| key.starts_with(&key_prefix));
-    let frame_count = video.map_or(tl.duration, |v| v.frames.len()).min(240);
+    const PAGE: usize = 48;
+    let total = video.map_or(tl.duration, |v| v.frames.len());
+    let page = app.ui.timeline.thumb_page.min(total.saturating_sub(1) / PAGE);
+    app.ui.timeline.thumb_page = page;
+    let start = page * PAGE;
+    let frame_count = total.saturating_sub(start).min(PAGE);
     let mut ids = Vec::with_capacity(frame_count);
     let mut misses = 0usize;
-    for frame in 0..frame_count {
+    for local in 0..frame_count {
+        let frame = start + local;
         let key = format!("{key_prefix}:{frame}");
         if let Some((_, texture)) = app.ui.timeline.frame_thumbs.iter().find(|(k, _)| k == &key) { ids.push(Some(texture.id())); continue; }
         if misses >= 8 { ids.push(None); continue; }
@@ -96,7 +122,7 @@ fn frame_thumbnails(app: &mut PhotocraftApp, ctx: &egui::Context, tl: &photocraf
         app.ui.timeline.frame_thumbs.push((key, texture));
     }
     let _ = tl;
-    ids
+    (start, ids)
 }
 
 /// Menu checkmark for Window › Timeline.
@@ -129,10 +155,17 @@ pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
     let active_delay = app.session.active().and_then(|d| d.active_layer.and_then(|id| d.doc.layer(id))).and_then(|l| l.video.as_ref()).and_then(|v| v.frame_delays_ms.get(tl.as_ref().map_or(0, |t| t.current)).copied());
     let active_video_id = app.session.active().and_then(|d| d.active_layer).map(|id| id.0);
     let animation_delay = tl.as_ref().and_then(|t| t.frame_delays_ms.get(t.current).copied());
-    let frame_thumb_ids = tl.as_ref().map_or_else(Vec::new, |timeline| frame_thumbnails(app, ctx, timeline));
+    let (thumb_start, frame_thumb_ids) = tl.as_ref().map_or((0, Vec::new()), |timeline| frame_thumbnails(app, ctx, timeline));
     let mut act: Option<(&str, Value)> = None;
     let mut close = false;
     let mut toggle_play = false;
+    let mut tween_from = if app.ui.timeline.tween_from.is_empty() { "current".to_string() } else { app.ui.timeline.tween_from.clone() };
+    let mut tween_to = if app.ui.timeline.tween_to.is_empty() { "next".to_string() } else { app.ui.timeline.tween_to.clone() };
+    let mut tween_additions = app.ui.timeline.tween_additions.max(1);
+    let mut tween_position = app.ui.timeline.tween_position;
+    let mut tween_opacity = app.ui.timeline.tween_opacity;
+    let mut tween_effects = app.ui.timeline.tween_effects;
+    let mut tween_selected_layers = app.ui.timeline.tween_selected_layers;
     let playing = app.ui.timeline.playing;
     let t = Tokens::get(ctx);
 
@@ -261,14 +294,35 @@ pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
                         if crate::widgets::secondary_button(ui, "⧉", 28.0).clicked() { act = Some(("timeline.duplicateFrame", json!({}))); }
                         if crate::widgets::secondary_button(ui, "−", 28.0).clicked() { act = Some(("timeline.deleteFrame", json!({}))); }
                         ui.label(RichText::new(tl!("Frames")).color(t.text_dim));
+                        let total_pages = (tl.duration.max(1) + 47) / 48;
+                        if crate::icons::button(ui, "chevron-left", 20.0, app.ui.timeline.thumb_page > 0, tl!("Previous frame page")).clicked() { app.ui.timeline.thumb_page = app.ui.timeline.thumb_page.saturating_sub(1); }
+                        ui.label(format!("{}/{}", app.ui.timeline.thumb_page + 1, total_pages));
+                        if crate::icons::button(ui, "chevron-right", 20.0, app.ui.timeline.thumb_page + 1 < total_pages, tl!("Next frame page")).clicked() { app.ui.timeline.thumb_page = (app.ui.timeline.thumb_page + 1).min(total_pages.saturating_sub(1)); }
+                        ui.separator();
+                        ui.label(tl!("Tween"));
+                        egui::ComboBox::from_id_salt("tween-from").selected_text(&tween_from).show_ui(ui, |ui| {
+                            for option in ["previous", "current", "first", "selected"] { if ui.selectable_label(tween_from == option, option).clicked() { tween_from = option.into(); } }
+                        });
+                        egui::ComboBox::from_id_salt("tween-to").selected_text(&tween_to).show_ui(ui, |ui| {
+                            for option in ["next", "last", "selected"] { if ui.selectable_label(tween_to == option, option).clicked() { tween_to = option.into(); } }
+                        });
+                        ui.add(egui::DragValue::new(&mut tween_additions).range(1..=10_000).prefix("+").suffix(" frames"));
+                        ui.checkbox(&mut tween_position, tl!("Position"));
+                        ui.checkbox(&mut tween_opacity, tl!("Opacity"));
+                        ui.checkbox(&mut tween_effects, tl!("Effects"));
+                        ui.checkbox(&mut tween_selected_layers, tl!("Selected layers"));
+                        if crate::widgets::secondary_button(ui, tl!("Apply"), 54.0).clicked() {
+                            act = Some(("timeline.tweenFrames", json!({"from":tween_from,"to":tween_to,"framesToAdd":tween_additions,"position":tween_position,"opacity":tween_opacity,"effects":tween_effects,"layers":if tween_selected_layers { "selected" } else { "all" }})));
+                        }
                     });
                     egui::ScrollArea::horizontal().id_salt("timeline-frame-strip").show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            for frame in 0..tl.duration.min(240) {
+                            for local in 0..frame_thumb_ids.len() {
+                                let frame = thumb_start + local;
                                 let selected = frame == tl.current;
                                 let label = format!("{:02}", frame + 1);
                                 let response = ui.add_sized([52.0, 44.0], egui::Button::new(label).selected(selected));
-                                if let Some(Some(texture)) = frame_thumb_ids.get(frame) { ui.painter().image(*texture, response.rect.shrink(3.0), egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE); }
+                                if let Some(Some(texture)) = frame_thumb_ids.get(local) { ui.painter().image(*texture, response.rect.shrink(3.0), egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE); }
                                 if response.clicked() { act = Some(("timeline.setFrame", json!({"frame":frame}))); }
                             }
                         });
@@ -321,6 +375,13 @@ pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
         app.ui.timeline.open = false;
         app.ui.timeline.playing = false;
     }
+    app.ui.timeline.tween_from = tween_from;
+    app.ui.timeline.tween_to = tween_to;
+    app.ui.timeline.tween_additions = tween_additions;
+    app.ui.timeline.tween_position = tween_position;
+    app.ui.timeline.tween_opacity = tween_opacity;
+    app.ui.timeline.tween_effects = tween_effects;
+    app.ui.timeline.tween_selected_layers = tween_selected_layers;
     if toggle_play {
         app.ui.timeline.playing = !app.ui.timeline.playing;
         app.ui.timeline.last_time = ctx.input(|i| i.time);

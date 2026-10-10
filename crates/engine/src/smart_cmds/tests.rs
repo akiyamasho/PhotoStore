@@ -125,11 +125,31 @@ fn conversion_moves_single_root_frame_state_to_replacement_smart_layer() {
     let mut s = session(8);
     let id = s.active().unwrap().active_layer.unwrap();
     let mut timeline = Timeline::new(2, 24.0);
-    timeline.frame_states = vec![vec![FrameLayerState { layer: id, visible: true, opacity: 0.35 }], vec![FrameLayerState { layer: id, visible: false, opacity: 0.8 }]];
+    timeline.frame_states = vec![vec![FrameLayerState::legacy(id, true, 0.35)], vec![FrameLayerState::legacy(id, false, 0.8)]];
     set_timeline(&mut s, timeline);
     let new_id = convert(&mut s);
     let states = &s.active().unwrap().doc.timeline.as_ref().unwrap().frame_states;
     assert!(states.iter().flatten().all(|state| state.layer == LayerId(new_id)));
+}
+
+#[test]
+fn conversion_preserves_property_frames_in_child_and_remaps_parent() {
+    let mut s = session(8);
+    let id = s.active().unwrap().active_layer.unwrap();
+    let mut timeline = Timeline::new(2, 24.0);
+    let mut first = FrameLayerState::legacy(id, true, 0.5);
+    first.position = Some((7, 9));
+    timeline.property_frames = vec![vec![first], vec![FrameLayerState::legacy(id, false, 0.8)]];
+    set_timeline(&mut s, timeline);
+    let new_id = convert(&mut s);
+    let parent = &s.active().unwrap().doc.timeline.as_ref().unwrap().property_frames;
+    assert!(parent.iter().flatten().all(|state| state.layer == LayerId(new_id)));
+    assert_eq!(parent[0][0].position, Some((7, 9)));
+    let sm = active_smart(&s);
+    let SmartSource::Embedded { file_name, bytes } = sm.source else { panic!("expected embedded source") };
+    let child = decode_source(&file_name, &bytes).unwrap();
+    assert!(child.timeline.as_ref().unwrap().property_frames.iter().flatten().all(|state| state.layer == id));
+    assert_eq!(child.timeline.as_ref().unwrap().property_frames[0][0].position, None);
 }
 
 #[test]
@@ -193,6 +213,42 @@ fn video_keyframe_opacity_is_owned_by_child_after_conversion() {
     assert_eq!(max_diff(&flat(&s), &before), 0.0);
     let states = &s.active().unwrap().doc.timeline.as_ref().unwrap().frame_states;
     assert!(states.iter().flatten().all(|state| state.layer != LayerId(new_id) || state.opacity == 1.0));
+}
+
+#[test]
+fn conversion_keeps_fill_and_color_overlay_owned_by_child_once() {
+    let mut s = session(8);
+    paint(&mut s);
+    let id = s.active().unwrap().active_layer.unwrap();
+    s.edit("appearance", |doc, _| {
+        let l = doc.layer_mut(id).unwrap();
+        l.opacity = 0.5;
+        l.fill_opacity = 0.5;
+        l.blend = BlendMode::Multiply;
+        l.effects.items.push(photocraft_doc::Effect::ColorOverlay { common: photocraft_doc::FxCommon::new(BlendMode::Normal, 1.0), color: photocraft_color::Color::rgb(1.0, 0.0, 0.0) });
+        Ok(())
+    }).unwrap();
+    let effects = s.active().unwrap().doc.layer(id).unwrap().effects.clone();
+    let mut timeline = Timeline::new(2, 24.0);
+    let mut state = FrameLayerState::legacy(id, true, 0.5);
+    state.position = Some((4, 4));
+    state.blend = Some(BlendMode::Multiply);
+    state.fill_opacity = Some(0.5);
+    state.effects = Some(photocraft_doc::FrameEffectsState { enabled: effects.enabled, items: effects.items.clone(), reference: effects.reference });
+    timeline.property_frames = vec![vec![state], vec![FrameLayerState::legacy(id, true, 0.5)]];
+    set_timeline(&mut s, timeline);
+    sync_doc(&mut s);
+    let before = flat(&s);
+    let new_id = convert(&mut s);
+    assert_eq!(max_diff(&flat(&s), &before), 0.0);
+    let parent_state = &s.active().unwrap().doc.timeline.as_ref().unwrap().property_frames[0][0];
+    assert_eq!(parent_state.layer, LayerId(new_id));
+    assert_eq!(parent_state.fill_opacity, None);
+    assert_eq!(parent_state.effects, None);
+    let sm = active_smart(&s);
+    let SmartSource::Embedded { file_name, bytes } = sm.source else { panic!("expected embedded source") };
+    let child = decode_source(&file_name, &bytes).unwrap();
+    assert!(child.timeline.as_ref().unwrap().property_frames[0][0].effects.is_some());
 }
 
 fn active_smart(s: &Session) -> SmartObject {

@@ -60,6 +60,7 @@ pub mod layer_style;
 pub mod lens_cmds;
 pub mod magnetic_cmds;
 pub mod mask_view_cmds;
+pub mod media_backend;
 mod migrate_cmds;
 pub mod mode_cmds;
 pub mod multichannel_cmds;

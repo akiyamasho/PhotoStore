@@ -785,6 +785,7 @@ fn layer_to_smart_with_options(doc: &Document, l: &Layer, single_existing_root: 
     if background {
         inner.name = "Layer 0".into();
     }
+    let child_root_blend = inner.blend;
     let mut sub = Document::new(format!("{}.pcraft", l.name), doc.size, doc.mode, doc.depth);
     sub.resolution_dpi = doc.resolution_dpi;
     sub.icc_profile = doc.icc_profile.clone();
@@ -798,18 +799,36 @@ fn layer_to_smart_with_options(doc: &Document, l: &Layer, single_existing_root: 
     if let Some(mut timeline) = doc.timeline.clone() {
         let selected_ids: std::collections::HashSet<_> = l.children().map_or_else(|| vec![l.id], |children| children.iter().map(|c| c.id).collect()).into_iter().collect();
         timeline.frame_states.iter_mut().for_each(|states| states.retain(|s| selected_ids.contains(&s.layer) || any_layer(l, &|x| x.id == s.layer)));
+        timeline.property_frames.iter_mut().for_each(|states| states.retain(|s| selected_ids.contains(&s.layer) || any_layer(l, &|x| x.id == s.layer)));
         timeline.layer_ranges.retain(|r| selected_ids.contains(&r.layer) || any_layer(l, &|x| x.id == r.layer));
-        if single_existing_root && !video_owns_opacity {
+        if single_existing_root {
             for states in &mut timeline.frame_states {
                 if let Some(state) = states.iter_mut().find(|s| s.layer == l.id) {
-                    state.visible = true;
-                    state.opacity = 1.0;
+                    // The parent Smart Object owns frame-animation geometry/blend state; the
+                    // embedded root stays in source coordinates with its fill/effects contents
+                    // after the full-canvas conversion.
+                    state.position = None;
+                    state.blend = Some(child_root_blend);
+                    if !video_owns_opacity {
+                        state.visible = true;
+                        state.opacity = 1.0;
+                    }
                 }
             }
             for range in &mut timeline.layer_ranges {
                 if range.layer == l.id {
                     range.start = 0;
                     range.end = timeline.duration;
+                }
+            }
+            for states in &mut timeline.property_frames {
+                if let Some(state) = states.iter_mut().find(|s| s.layer == l.id) {
+                    state.position = None;
+                    state.blend = Some(child_root_blend);
+                    if !video_owns_opacity {
+                        state.visible = true;
+                        state.opacity = 1.0;
+                    }
                 }
             }
         }
@@ -892,12 +911,37 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
                 for states in &mut t.frame_states {
                     for state in states.iter_mut().filter(|state| state.layer == top) {
                         state.layer = new_id;
-                        if video_owns_opacity { state.opacity = 1.0; }
+                        if video_owns_opacity {
+                            state.opacity = 1.0;
+                            state.position = None;
+                        }
+                        state.fill_opacity = None;
+                        state.effects = None;
+                    }
+                }
+                for states in &mut t.property_frames {
+                    for state in states.iter_mut().filter(|state| state.layer == top) {
+                        state.layer = new_id;
+                        if video_owns_opacity {
+                            state.opacity = 1.0;
+                            state.position = None;
+                        }
+                        state.fill_opacity = None;
+                        state.effects = None;
                     }
                 }
                 for range in t.layer_ranges.iter_mut().filter(|range| range.layer == top) { range.layer = new_id; }
             } else {
-                t.frame_states.iter_mut().for_each(|states| states.retain(|state| !ids.contains(&state.layer)));
+                t.frame_states.iter_mut().for_each(|states| {
+                    let had_selected = states.iter().any(|state| ids.contains(&state.layer));
+                    states.retain(|state| !ids.contains(&state.layer));
+                    if had_selected { states.push(photocraft_doc::FrameLayerState::legacy(new_id, true, 1.0)); }
+                });
+                t.property_frames.iter_mut().for_each(|states| {
+                    let had_selected = states.iter().any(|state| ids.contains(&state.layer));
+                    states.retain(|state| !ids.contains(&state.layer));
+                    if had_selected { states.push(photocraft_doc::FrameLayerState::legacy(new_id, true, 1.0)); }
+                });
                 t.layer_ranges.retain(|range| !ids.contains(&range.layer));
             }
         }

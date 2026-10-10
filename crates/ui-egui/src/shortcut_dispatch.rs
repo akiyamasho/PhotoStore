@@ -89,10 +89,11 @@ pub fn bindings(app: &PhotocraftApp) -> Vec<(String, KeyboardShortcut)> {
         .map(|(id, sc)| (id.as_str(), Some(sc.as_str())));
     // Photoshop's second shortcuts, kept while the command's main one is the default.
     let secondary = SECONDARY.iter().filter(|(id, _)| !prefs.shortcuts.contains_key(*id)).map(|&(id, sc)| (id, Some(sc)));
+    let alternate_storage = prefs.shortcut_alternates.iter().flat_map(|(id, keys)| keys.iter().map(move |sc| (id.as_str(), Some(sc.as_str()))));
     // A key the user assigned in Edit › Keyboard Shortcuts belongs to that command, ahead of any
     // default that still names it (#1272): OK clears the old owner's row, but that row can be
     // another id for the same item, or a default the dialog doesn't list.
-    let mut candidates: Vec<(&str, Option<&str>)> = actions.chain(ui).chain(engine).chain(tools).chain(catalog).chain(overrides).chain(secondary).collect();
+    let mut candidates: Vec<(&str, Option<&str>)> = actions.chain(ui).chain(engine).chain(tools).chain(catalog).chain(overrides).chain(secondary).chain(alternate_storage).collect();
     candidates.sort_by_key(|(id, sc)| !(sc.is_some() && prefs.shortcuts.get(*id).map(String::as_str) == *sc));
     let mut all: Vec<(String, KeyboardShortcut)> = Vec::new();
     for (id, sc) in candidates {

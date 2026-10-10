@@ -1,0 +1,114 @@
+# PhotoStore goal ledger
+
+Updated 2026-10-11. This is an operational ledger for the independent PhotoStore fork. It records evidence and next actions; it does not convert inherited menu wiring into behavior parity or claim that the product is complete.
+
+## Product and provenance
+
+- Origin source: `git@github.com:storytold/photocraft.git`; original history, licenses, `NOTICE`, attribution records, and provenance are retained.
+- Product identity: PhotoStore, with the independent executable/configuration/package identity already established in the repository.
+- Intended GitHub repository: private `akiyamasho/PhotoStore`, with `origin` as the only remote.
+- Milestone references: `photostore-foundation-2026-10-10` at `d83f8323`; `photostore-animation-smart-objects-2026-10-10` at `06e736db`.
+- Icon direction: PhotoStore icon with the requested twist; keep the asset provenance row with the icon work.
+- README/AGENTS direction: keep badges, install, run, and contributor guidance lean and operational.
+- Photoshop-facing scope: timeline/frame animation and Smart Objects are first product priorities, while the inherited feature surface remains evidence to audit rather than a completeness claim.
+
+## Evidence rules
+
+- `docs/parity.md` currently reports 627/627 menu items live. This measures command dispatch only; it does not establish Photoshop behavior, interaction quality, file fidelity, or user readiness.
+- `docs/roadmap.md` records a historical caution that menu and feature-surface counts overstate behavior parity, and identifies AI, missing tools, professional workflow depth, and the plug-in ecosystem as major gaps. Do not carry its historical aggregate estimate forward as a current PhotoStore measurement.
+- `docs/scorecard.md` is inherited historical evidence and a useful signal for areas to revalidate; its PhotoCraft labels and measurements are not independent PhotoStore evidence. Revalidate each claim before treating it as current PhotoStore status.
+- `docs/animated-smart-objects.md` records implemented child-timeline persistence, playback synchronization, bounded caches, nested refresh limits, and transform reset; its stated gaps remain open.
+- A milestone is `implemented` only when the behavior and persistence path are present in the source of truth. `unverified` means code exists but acceptance evidence is missing. `pending` means the capability or integration is still absent.
+
+## Integration evidence (2026-10-11)
+
+- All-targets Cargo check passed after the source repairs, including compiler coverage for the documented timeline, Smart Object, KYS, and native media paths.
+- The exact external KYS API integration checks passed 3/3; the KYS library checks passed 4/4.
+- The 8×8 MP4/MOV/WebM media smoke passed 1/1 for colors, frame order, range selection, cancellation, and alpha handling.
+- The new Smart appearance regression passed 1/1, and the post-repair engine check passed.
+- The exact Photoshop fixture imported 152 primary rows, 3 alternates, and 51 nonempty tool keys. Unknown scripts, Bridge, Smart Object, filtering/minimize/hide, and UI-only candidates are reported rather than silently substituted.
+- These are compiler/function and targeted integration results. They do not establish visual UI QA, Photoshop behavior parity, or full PSD/external-format compatibility.
+- Planned next checkpoint tag: `photostore-animation-media-2026-10-11` (planned; publish only with the release checkpoint).
+- Pending release action: after documentation and source review, push the private repository, create the planned tag and GitHub release, then perform the local PhotoStore install and record the resulting artifact/version.
+
+## Animation and timeline
+
+### Implemented milestone
+
+- Persisted video timelines and frame animation state in `.pcraft`, including timing, playback state, layer states, frame stacks, and native UI/CLI command integration.
+- `FrameLayerState` now carries position, blend, fill opacity, and effects snapshots, while `Timeline.property_frames` preserves editable property tracks (`crates/doc/src/video.rs`, `crates/engine/src/video_cmds.rs`).
+- Parent playback advances animated Smart Object children with time conversion and explicit frame-delay handling.
+- Cumulative CFR time conversion and configurable tweening are wired through the timeline command/UI path (`crates/engine/src/video_cmds.rs`, `crates/engine/src/timeline_cmds.rs`, `crates/ui-egui/src/timeline_ui.rs`).
+- Smart conversion keeps property-track ownership explicit when animated layers become embedded Smart Objects (`crates/engine/src/smart_cmds.rs`, `crates/engine/src/video_cmds.rs`).
+- Optional Photoshop `.kys` import supports a primary set and alternates, stable command IDs including Japanese-labelled commands, and default preservation for unmapped or default-equivalent shortcuts (`crates/engine/src/kys.rs`, `crates/engine/src/prefs.rs`, `crates/ui-egui/src/kys_import.rs`).
+- Native FFmpeg movie probing, RGBA8 frame decode/export, async job handling, and movie/timeline UI integration are present (`crates/engine/src/media_backend.rs`, `crates/engine/src/video_cmds.rs`, `crates/ui-egui/src/movie_ui.rs`, `crates/ui-egui/src/timeline_ui.rs`).
+- Animated source conversion preserves the embedded child timeline, full document canvas, animated visibility/opacity ownership, and frame-qualified source caches.
+- Smart Object refresh is bounded to depth 16, releases locks before decode/refresh, and preserves the last valid cached appearance on nested decode failure.
+
+### Unverified or incomplete
+
+- Audio backend descriptors are detected, but persisted audio tracks, playback, and mix behavior are not implemented or accepted yet.
+- Transitions are not implemented or accepted.
+- Stopwatches, transform tracks, clip groups, split, speed, and slip workflows are still pending.
+- Complex tween interpolation is configurable and carries position/opacity/effects properties, but required acceptance evidence is pending.
+- Rational source rate is probed by the media backend but stored as `f32` in the existing document model (`crates/doc/src/video.rs`).
+- Eager decoded movie surfaces are capped at 512 MiB; the native import range is currently command parameters rather than a dedicated picker form.
+- Movie decode/export pixel transfer is RGBA8. Long-video lazy decode, sustained memory behavior, render work-area behavior, and source-rate fidelity need acceptance evidence.
+- Loop counts, onion skins, and advanced playback controls remain incomplete.
+- Photoshop Video Timeline and Frame Animation need broader interaction coverage beyond the current command-driven foundation.
+- Required integration checks passed: all-targets Cargo check, exact `.kys` API 3/3 plus library 4/4, 8×8 MP4/MOV/WebM smoke 1/1, Smart appearance regression 1/1, and the post-repair engine check. Broader tween, native UI, audio/timeline, and PSD acceptance remain unverified.
+
+### Exact next steps
+
+1. Complete acceptance of the native media boundary: verify decode ownership, cancellation, tiny MP4/MOV/WebM cases, range selection, fractional-FPS timestamps, and UI failure behavior. Record supported containers/codecs before calling import/export supported.
+2. Finish timeline semantics: audio tracks and mix, clip groups/split/speed/slip, transitions, loop counts, onion skins, work-area rendering, and long-video memory behavior.
+3. Add deterministic timing fixtures covering mismatched FPS, explicit frame delays, seek/playback boundaries, nested animated Smart Objects, and frame-animation export.
+4. Add interaction acceptance for the Photoshop Video Timeline and Frame Animation panels after the engine contracts are stable.
+5. Keep the alternate `.kys` mapping optional. If supplied at `/Users/computer/Desktop/dev/tools/Animation/photoshop_keys.kys`, use the primary/alternate API with stable Japanese IDs and preserve PhotoStore defaults for unmapped shortcuts.
+
+Official Photoshop references for future workflow comparison:
+
+- [Create timeline animations](https://helpx.adobe.com/photoshop/desktop/add-video-and-animation/use-keyframes/create-timeline-animation-workflow.html)
+- [Edit video clips and audio in the timeline](https://helpx.adobe.com/photoshop/desktop/add-video-and-animation/organize-and-manage-video-groups/edit-video-clips-and-audio-in-the-timeline.html)
+
+## Smart Objects
+
+### Implemented milestone
+
+- Embedded and linked source handling, persistent source identity, animated child timelines, source/cache invalidation, nested refresh limits, and undoable `Layer > Smart Objects > Reset Transform` exist in the native document model.
+- PSD mapping infrastructure preserves embedded Smart Objects and Smart Filters in the inherited compatibility path; the scorecard records embedded Smart Object export as done.
+
+### Unverified or incomplete
+
+- Contents editing and shared contents identity workflows need product-level acceptance.
+- Smart Filter rows now support collapse, context menu, move/reorder, blend options, and delete in the engine/UI path (`crates/engine/src/smart_cmds.rs`, `crates/ui-egui/src/smart_ui.rs`); direct mask painting and full acceptance remain open.
+- Smart Object corner skew and perspective/homography are present in the current model; transform reset clears warp/perspective while preserving source contents and identity. Their external-file fidelity remains unverified.
+- Linked-source workflows need explicit relink/update/missing-source behavior and acceptance.
+- PSD external acceptance remains incomplete: fidelity is masked by filter math, unsupported/unmapped Camera Raw settings, and other format-specific gaps. Do not describe Smart Object PSD parity as complete.
+
+### Exact next steps
+
+1. Define source identity and contents-editing UX for embedded, linked, and shared sources, including stale/missing source behavior.
+2. Add direct filter-mask painting, editable parameter round trips, source refresh invalidation, and broader Smart appearance/animation coverage now that the targeted regression has passed.
+3. Exercise the existing perspective/homography and transform-reset paths against source contents, masks, filters, identity, undo, and external-file round trips.
+4. Expand PSD acceptance fixtures for live Smart Objects, multiple instances, Smart Filters, masks, transforms, external sources, and Photoshop reopen/render checks.
+
+## Remaining Photoshop feature families
+
+The full Photoshop scope is tracked by family. Prioritize animation and Smart Objects first; use the historical scorecard as a signal source, then create PhotoStore-specific evidence for each family:
+
+- Color and document foundations: color management, profiles, depth, HDR, channels, print, metadata, and document setup.
+- Core editing: layers, groups, masks, selections, transforms, crop, canvas/view, undo/history, and layer comps/artboards.
+- Adjustments and filters: adjustment layers, destructive adjustments, Smart Filters, blur/sharpen, distortion, noise, stylize, and filter galleries.
+- Vectors and shapes: paths, pen tools, shape layers, fills/strokes, masks, and vector editing.
+- Retouch and measurement: healing, clone, patch, remove, content-aware operations, rulers, guides, notes, and sampling.
+- Brush dynamics and tablet behavior: pressure, tilt, rotation, smoothing, presets, deterministic replay, and native tablet edge cases.
+- Typography: type on path, RTL and complex-script shaping, OpenType controls, variable-font axes, kerning, and PSD round trips.
+- File formats and print workflows: PDF, RAW and XMP sidecars, spot plates, PSB/large documents, layered TIFF, and acceptance corpora.
+- Automation and ecosystem: document-independent Actions, `.atn` import, richer batch workflows, plug-in ABI/panels, and automation acceptance.
+- Native UI and preferences: floating/restored panels, scale and theme controls, remembered tool/preset settings, shortcut presentation, and elimination of unread preferences.
+- Packaging and reliability: fallible allocation, large-file progress, cancellation, memory budgets, signing, and repeatable release artifacts.
+
+## Ledger discipline
+
+For each future entry, record the capability, status (`implemented`, `unverified`, or `pending`), evidence path or fixture, known limitation, and the next concrete action. Keep inherited history and licensing intact. Update status only after the corresponding implementation or acceptance evidence exists; never use the 627/627 menu-liveness figure as a substitute for behavior parity.

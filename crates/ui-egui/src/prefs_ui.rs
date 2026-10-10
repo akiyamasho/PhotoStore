@@ -851,6 +851,7 @@ pub fn open_shortcuts(app: &mut PhotocraftApp, tab: u64) -> u64 {
         "tab": tab,
         "filter": "",
         "overrides": p.shortcuts,
+        "alternates": p.shortcut_alternates,
         "hidden": p.menus.hidden,
         "colors": p.menus.colors,
         "toolbarHidden": p.toolbar.hidden,
@@ -1400,10 +1401,12 @@ fn shortcuts_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String
     let parsed = f.get("overrides").map(|v| serde_json::from_value::<BTreeMap<String, String>>(v.clone()));
     let overrides_ok = parsed.as_ref().is_none_or(Result::is_ok);
     let mut overrides = parsed.and_then(Result::ok).unwrap_or_default();
+    let mut alternates: BTreeMap<String, Vec<String>> = f.get("alternates").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
     let mut hidden: Vec<String> = f.get("hidden").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
     let mut colors: BTreeMap<String, String> = f.get("colors").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
     let mut selected = f.get("selected").and_then(Value::as_str).unwrap_or("").to_string();
     let mut capture = f.get("capture").and_then(Value::as_bool).unwrap_or(false);
+    let mut capture_alternate = f.get("captureAlternate").and_then(Value::as_bool).unwrap_or(false);
     let mut message = f.get("message").and_then(Value::as_str).unwrap_or("").to_string();
     let items = shortcut_items(app);
     // Menu path and command label as shown in the menus, in the UI language.
@@ -1434,6 +1437,7 @@ fn shortcuts_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String
                 capture = false;
             } else if matches!(key, egui::Key::Backspace | egui::Key::Delete) && m.is_none() {
                 overrides.insert(selected.clone(), String::new());
+                alternates.remove(&selected);
                 capture = false;
                 message = tl!("Shortcut removed.").into();
             } else if let Some(sc) = shortcut_text(key, m) {
@@ -1445,13 +1449,24 @@ fn shortcuts_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String
                         format!("{} › {}", path.join(" › "), label.trim_end_matches('…'))
                     })
                     .collect();
-                overrides.insert(selected.clone(), sc.clone());
+                let mut clash = clash;
+                clash.extend(alternates.iter().filter(|(id, keys)| id.as_str() != selected.as_str() && keys.iter().any(|key| prefs::normalize_shortcut(key).as_deref() == Some(sc.as_str()))).map(|(id, _)| id.clone()));
+                // Primary capture always replaces the primary binding, including Shift based
+                // shortcuts. Alternate capture is an explicit editor mode.
+                if capture_alternate {
+                    let keys = alternates.entry(selected.clone()).or_default();
+                    keys.retain(|k| prefs::normalize_shortcut(k) != Some(sc.clone()));
+                    keys.push(sc.clone());
+                } else {
+                    overrides.insert(selected.clone(), sc.clone());
+                }
                 message = if clash.is_empty() {
                     format!("{} assigned.", crate::shortcuts::pretty(&sc))
                 } else {
                     format!("{} is already in use by {} and will be removed from it when you click OK.", crate::shortcuts::pretty(&sc), clash.join(", "))
                 };
                 capture = false;
+                capture_alternate = false;
             }
         }
     }
@@ -1487,7 +1502,11 @@ fn shortcuts_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String
                     selected = id.clone();
                 }
                 if tab == 0 {
-                    let text = if sel && capture { tl!("Press keys…").to_string() } else { cur.as_deref().map(crate::shortcuts::pretty).unwrap_or_default() };
+                    let text = if sel && capture { tl!("Press keys…").to_string() } else {
+                        let mut keys = vec![cur.clone().unwrap_or_default()];
+                        keys.extend(alternates.get(id).cloned().unwrap_or_default());
+                        keys.into_iter().filter(|s| !s.is_empty()).map(|s| crate::shortcuts::pretty(&s)).collect::<Vec<_>>().join(" / ")
+                    };
                     let changed = overrides.contains_key(id);
                     let r = ui.add(
                         egui::Button::new(RichText::new(tl!(&text)).size(12.0).color(if changed { t.accent_text } else { t.text })).min_size(vec2(120.0, 18.0)),
@@ -1530,10 +1549,24 @@ fn shortcuts_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String
             }
             if ui.add_enabled(has_sel, egui::Button::new(tl!("Delete Shortcut"))).clicked() {
                 overrides.insert(selected.clone(), String::new());
+                alternates.remove(&selected);
                 message = tl!("Shortcut removed.").into();
+            }
+            if ui.add_enabled(has_sel, egui::Button::new(tl!("Add Alternate"))).clicked() {
+                capture_alternate = true;
+                capture = true;
+                message = tl!("Press keys for an alternate binding…").into();
+            }
+            if ui.add_enabled(has_sel && alternates.get(&selected).is_some_and(|v| !v.is_empty()), egui::Button::new(tl!("Remove Alternate"))).clicked() {
+                if let Some(keys) = alternates.get_mut(&selected) {
+                    keys.pop();
+                    if keys.is_empty() { alternates.remove(&selected); }
+                }
+                message = tl!("Alternate shortcut removed.").into();
             }
             if ui.button(tl!("Reset All to Defaults")).clicked() {
                 overrides.clear();
+                alternates.clear();
                 message = tl!("All shortcuts reset to PhotoStore defaults.").into();
             }
             // A Photoshop set (`.kys`) fills the overrides; the file arrives after this frame
@@ -1554,10 +1587,12 @@ fn shortcuts_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String
     if overrides_ok {
         f.insert("overrides".into(), json!(overrides));
     }
+    f.insert("alternates".into(), json!(alternates));
     f.insert("hidden".into(), json!(hidden));
     f.insert("colors".into(), json!(colors));
     f.insert("selected".into(), json!(selected));
     f.insert("capture".into(), json!(capture));
+    f.insert("captureAlternate".into(), json!(capture_alternate));
     f.insert("message".into(), json!(message));
 }
 
@@ -1685,11 +1720,21 @@ pub fn confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value,
         }
         "shortcuts" => {
             let overrides = f.get("overrides").cloned().unwrap_or(json!({}));
+            let alternates = f.get("alternates").cloned().unwrap_or(json!({}));
             // Shortcuts moved to another command are taken from their old owner (shell
             // commands included, which the engine doesn't know).
             // The map replaces every stored override, so a malformed one is an error, not "none".
             let mut ov: BTreeMap<String, String> =
                 serde_json::from_value(overrides).map_err(|e| format!("overrides must map command IDs to shortcut strings: {e}"))?;
+            let mut alt: BTreeMap<String, Vec<String>> = serde_json::from_value(alternates).map_err(|e| format!("alternates must map command IDs to shortcut arrays: {e}"))?;
+            for keys in alt.values_mut() {
+                keys.retain(|key| prefs::normalize_shortcut(key).is_some());
+                for key in keys.iter_mut() {
+                    *key = prefs::normalize_shortcut(key).unwrap();
+                }
+                keys.sort();
+                keys.dedup();
+            }
             let items = shortcut_items(app);
             // Newly assigned shortcuts are checked first and take theirs from any holder, custom
             // overrides included; unchanged overrides only take theirs from defaults.
@@ -1713,10 +1758,31 @@ pub fn confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value,
                     }
                 }
             }
+            // Alternate bindings participate in the same ownership graph as primary keys.
+            // Applying this to the working maps before the engine call keeps the whole dialog
+            // atomic and removes conflicts against defaults, custom primaries, and other alts.
+            let alt_owners: Vec<(String, String)> = alt.iter().flat_map(|(id, keys)| keys.iter().map(move |key| (id.clone(), key.clone()))).collect();
+            for (owner, key) in alt_owners {
+                for (other, value) in ov.iter_mut() {
+                    if other != &owner && prefs::normalize_shortcut(value).as_deref() == Some(key.as_str()) {
+                        value.clear();
+                    }
+                }
+                for (other, _, _, def) in &items {
+                    if *other != owner && !ov.contains_key(other) && def.as_deref().and_then(prefs::normalize_shortcut).as_deref() == Some(key.as_str()) {
+                        ov.insert(other.to_string(), String::new());
+                    }
+                }
+                for (other, keys) in alt.iter_mut() {
+                    if other != &owner {
+                        keys.retain(|candidate| candidate != &key);
+                    }
+                }
+            }
             let hidden = f.get("hidden").cloned().unwrap_or(json!([]));
             let colors = f.get("colors").cloned().unwrap_or(json!({}));
             let toolbar = f.get("toolbarHidden").cloned().unwrap_or(json!([]));
-            app.run("edit.keyboardShortcuts", json!({"reset": true, "set": ov, "allowUnknown": true, "removeConflicts": false}))?;
+            app.run("edit.keyboardShortcuts", json!({"reset": true, "set": ov, "alternates": alt, "allowUnknown": true, "removeConflicts": false}))?;
             app.run("prefs.set", json!({"values": {"menus": {"hidden": hidden, "colors": colors}, "toolbar": {"hidden": toolbar}}}))
         }
         "presets" => Ok(Value::Null),

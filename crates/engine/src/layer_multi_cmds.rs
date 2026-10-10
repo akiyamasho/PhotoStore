@@ -325,7 +325,7 @@ pub(crate) fn shift_surface(s: &photocraft_raster::Surface, dx: i32, dy: i32) ->
 }
 
 /// [`crate::commands::translate_layer`] plus the vector side, without re-rendering anything.
-fn shift_shown(doc: &Document, l: &mut Layer, dx: i32, dy: i32) {
+pub(crate) fn shift_shown(doc: &Document, l: &mut Layer, dx: i32, dy: i32) {
     use self::shift_surface as translate_surface;
     let a = photocraft_geom::Affine::translate(f64::from(dx), f64::from(dy));
     if let Some(r) = &mut l.effects.reference {

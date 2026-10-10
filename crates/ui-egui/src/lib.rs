@@ -98,6 +98,7 @@ pub mod menu_catalog;
 pub mod menu_nav;
 pub mod menus;
 pub mod monitor_status;
+pub mod movie_ui;
 pub mod move_lock;
 pub mod move_mods;
 pub mod move_ui;

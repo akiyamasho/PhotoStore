@@ -3,7 +3,7 @@
 //! shared clock. Frame-animation and video-timeline modes both reduce to "which frame is current".
 
 use serde::{Deserialize, Serialize};
-use crate::LayerId;
+use crate::{BlendMode, Effect, LayerId};
 
 use photocraft_raster::Surface;
 
@@ -81,6 +81,31 @@ pub struct FrameLayerState {
     pub layer: LayerId,
     pub visible: bool,
     pub opacity: f32,
+    /// Top-left of the layer's stable content bounds. Missing in legacy files.
+    #[serde(default)]
+    pub position: Option<(i32, i32)>,
+    /// Appearance captured for this frame. These fields are optional so native files written
+    /// before frame-animation appearance snapshots were introduced remain readable.
+    #[serde(default)]
+    pub blend: Option<BlendMode>,
+    #[serde(default)]
+    pub fill_opacity: Option<f32>,
+    #[serde(default)]
+    pub effects: Option<FrameEffectsState>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FrameEffectsState {
+    pub enabled: bool,
+    pub items: Vec<Effect>,
+    #[serde(default)]
+    pub reference: Option<(f64, f64)>,
+}
+
+impl FrameLayerState {
+    pub fn legacy(layer: LayerId, visible: bool, opacity: f32) -> Self {
+        Self { layer, visible, opacity, position: None, blend: None, fill_opacity: None, effects: None }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -119,6 +144,10 @@ pub struct Timeline {
     /// Per-frame visibility/opacity snapshots used by Frame Animation mode.
     #[serde(default)]
     pub frame_states: Vec<Vec<FrameLayerState>>,
+    /// Property-only animation track used when converting between video and frame animation.
+    /// Keeping this separate from decoded video surfaces preserves editable layer structure.
+    #[serde(default)]
+    pub property_frames: Vec<Vec<FrameLayerState>>,
     #[serde(default)]
     pub frame_delays_ms: Vec<u32>,
     #[serde(default)]
@@ -128,7 +157,7 @@ pub struct Timeline {
 impl Timeline {
     pub fn new(duration: usize, fps: f32) -> Self {
         let d = duration.max(1);
-        Timeline { fps: valid_fps(fps), duration: d, current: 0, work_start: 0, work_end: d, mode: TimelineMode::Video, loop_mode: TimelineLoop::Loop, onion_skin: false, frame_states: Vec::new(), frame_delays_ms: vec![0; d.min(1_000_000)], layer_ranges: Vec::new() }
+        Timeline { fps: valid_fps(fps), duration: d, current: 0, work_start: 0, work_end: d, mode: TimelineMode::Video, loop_mode: TimelineLoop::Loop, onion_skin: false, frame_states: Vec::new(), property_frames: Vec::new(), frame_delays_ms: vec![0; d.min(1_000_000)], layer_ranges: Vec::new() }
     }
 
     /// Keep every index inside `0..duration` and the work area non-empty.
@@ -203,5 +232,15 @@ mod tests {
         let t = Timeline::new(48, 25.0);
         let j = serde_json::to_string(&t).unwrap();
         assert_eq!(serde_json::from_str::<Timeline>(&j).unwrap(), t);
+    }
+
+    #[test]
+    fn legacy_frame_state_defaults_new_properties() {
+        let old = r#"{"layer":7,"visible":true,"opacity":0.5}"#;
+        let state: FrameLayerState = serde_json::from_str(old).unwrap();
+        assert_eq!(state.layer, LayerId(7));
+        assert!(state.position.is_none() && state.blend.is_none() && state.effects.is_none());
+        let timeline: Timeline = serde_json::from_str(r#"{"fps":12,"duration":2,"current":0,"work_end":2}"#).unwrap();
+        assert!(timeline.property_frames.is_empty());
     }
 }

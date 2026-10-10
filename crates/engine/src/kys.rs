@@ -12,8 +12,8 @@
 //! one of the imported keys wins, then the one that has a default at all, then the first
 //! candidate (the app lists them in Photoshop's menu order). Ours are one per command, so a
 //! row's first shortcut is the one kept, unless one of its keys is already the command's
-//! default (Zoom In lists `Cmd++` before `Cmd+=`). Tool keys are not imported: the tool
-//! letters are fixed here.
+//! default (Zoom In lists `Cmd++` before `Cmd+=`). Supported tool keys and functional tool rows
+//! are imported; unsupported taskspaces and tool families are reported explicitly.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -105,6 +105,8 @@ pub fn parse(text: &str) -> Result<KysSet, String> {
 pub struct Plan {
     /// Command id → the normalised shortcut from the file, for every matched row.
     pub set: BTreeMap<String, String>,
+    /// Additional normalized bindings per command, retaining every supported Photoshop key.
+    pub alternates_for: BTreeMap<String, Vec<String>>,
     /// Photoshop names with no command here (scripts, Bridge, the macOS application menu…).
     pub unknown: Vec<String>,
     /// Rows whose shortcut could not be read (`unknown` does not list them).
@@ -126,21 +128,16 @@ pub struct Candidate {
 /// explicit: silently guessing an unrelated command is worse than reporting an unsupported row.
 pub fn stable_command_id(id: &str) -> Option<&'static str> {
     Some(match id {
-        "10" => "file.new", "20" => "file.open", "30" => "file.save", "31" => "file.close", "33" => "file.saveAs", "34" => "file.revert", "36" => "app.quit", "37" => "file.closeAll",
+        "10" => "file.new", "20" => "file.open", "30" => "file.save", "31" => "file.close", "33" => "file.saveACopy", "34" => "file.revert", "36" => "file.exit", "37" => "file.closeAll",
         "101" => "edit.undo", "103" => "edit.cut", "104" => "edit.copy", "105" => "edit.paste", "132" => "edit.redo", "133" => "edit.toggleLastState",
-        "1004" => "view.zoomIn", "1005" => "view.zoomOut", "1016" => "select.deselect", "1017" => "select.all", "1018" => "select.inverse", "1190" => "view.actualPixels", "1192" => "view.fitOnScreen",
-        "1042" => "edit.fill", "1044" => "crop", "1107" => "edit.copyMerged", "1135" => "layer.duplicate", "1166" => "layer.mergeLayers", "1801" => "image.adjustments.levels", "1802" => "image.adjustments.curves", "1805" => "image.adjustments.hueSaturation",
-        "2207" => "edit.transform.freeTransform", "2211" => "edit.transform.flipHorizontal", "2212" => "edit.transform.flipVertical", "2711" => "layer.arrange.bringToFront", "2712" => "layer.arrange.bringForward", "2713" => "layer.arrange.sendBackward", "2714" => "layer.arrange.sendToBack",
-        "2980" => "layer.smartObjects.convertToSmartObject",
-        "2981" => "layer.smartObjects.newSmartObjectViaCopy",
-        "6332" => "layer.smartObjects.editContents",
-        "6340" => "layer.smartObjects.relinkToFile",
-        "6342" => "layer.smartObjects.updateModifiedContent",
+        "177" => "file.print", "1004" => "view.zoomIn", "1005" => "view.zoomOut", "1007" => "image.mode.grayscale", "1016" => "select.deselect", "1017" => "select.all", "1018" => "select.inverse", "1019" => "filter.lastFilter", "1025" => "window.panel.brushSettings", "1030" => "image.imageSize", "1036" => "select.modify.feather", "1042" => "edit.fill", "1044" => "image.crop", "1046" => "window.panel.color", "1098" => "window.panel.layers", "1099" => "layer.new.layer", "1105" => "view.proofColors", "1107" => "edit.copyMerged", "1109" => "select.modify.expand", "1114" => "layer.hideLayers", "1135" => "layer.duplicate", "1137" => "file.fileInfo", "1152" => "select.colorRange", "1166" => "layer.mergeLayers", "1170" => "window.panel.actions", "1188" => "window.panel.timeline", "1190" => "view.actualPixels", "1192" => "view.fitOnScreen", "2962" => "select.allLayers", "2982" => "select.findLayers",
+        "1297" => "edit.pasteSpecial.pasteInPlace", "1314" => "layer.layerStyle.copyLayerStyle", "1315" => "layer.layerStyle.pasteLayerStyle", "1339" => "layer.layerStyle.clear", "1695" => "file.export.saveForWebLegacy", "1701" => "image.adjustments.invert", "1801" => "image.adjustments.levels", "1802" => "image.adjustments.curves", "1804" => "image.adjustments.colorBalance", "1805" => "image.adjustments.hueSaturation", "1808" => "image.autoTone", "1809" => "image.adjustments.desaturate", "1810" => "image.autoContrast", "1817" => "image.autoColor", "1824" => "image.adjustments.blackWhite",
+        "2101" => "file.print", "2202" => "filter.liquify", "2207" => "edit.freeTransform", "2211" => "edit.transform.flipHorizontal", "2212" => "edit.transform.flipVertical", "2711" => "layer.arrange.bringToFront", "2712" => "layer.arrange.bringForward", "2713" => "layer.arrange.sendBackward", "2714" => "layer.arrange.sendToBack",
+        "2219" => "edit.transform.warp", "2221" => "edit.puppetWarp", "2311" => "edit.preferences.general", "2715" => "layer.arrange.reverse", "2860" => "image.analysis.recordMeasurements", "2940" => "view.lockGuides", "2957" => "layer.lockLayers", "2958" => "layer.groupLayers", "2970" => "layer.new.layerViaCopy", "2971" => "layer.new.layerViaCut", "2976" => "layer.new.group", "2980" => "layer.smartObjects.convertToSmartObject", "2981" => "layer.smartObjects.newSmartObjectViaCopy", "2983" => "layer.renameLayer", "3090" => "file.placeLinked", "3444" => "file.export.quickExportAsPng", "3446" => "layer.quickExportAsPng", "3447" => "layer.exportAs", "3500" => "view.extras", "3502" => "view.show.targetPath", "3503" => "view.show.guides", "3504" => "view.show.grid", "3520" => "view.snap", "3547" => "view.show.layerEdges",
         "4418" => "timeline.nextFrame",
         "4419" => "timeline.previousFrame",
         "4412" => "timeline.toggleOnionSkin",
-        "4462" => "timeline.delete",
-        "4469" => "timeline.makeFramesFromLayers",
+        "4462" => "timeline.deleteFrame", "4469" => "timeline.makeFramesFromLayers", "5957" => "edit.search", "5980" => "edit.keyboardShortcuts", "5982" => "edit.menus", "6332" => "layer.smartObjects.editContents", "6340" => "layer.smartObjects.relinkToFile", "6342" => "layer.smartObjects.updateModifiedContent",
         _ => return None,
     })
 }
@@ -151,6 +148,7 @@ pub fn tool_command_id(kind: u32, key_id: Option<&str>) -> Option<&'static str> 
         (1, Some("1919380852")) => Some("tools.tool.rectMarquee"), (1, Some("1701604724")) => Some("tools.tool.ellipseMarquee"),
         (1, Some("1818325871")) => Some("tools.tool.lasso"), (1, Some("1885826926")) => Some("tools.tool.polygonLasso"), (1, Some("1835819379")) => Some("tools.tool.magneticLasso"),
         (1, Some("2002873956")) => Some("tools.tool.magicWand"),
+        (1, Some("1902867308")) => Some("tools.tool.quickSelection"), (1, Some("1835494497")) => Some("tools.tool.objectSelection"),
         (1, Some("1886286946")) => Some("tools.tool.brush"),
         (1, Some("1885695587")) => Some("tools.tool.pencil"),
         (1, Some("1701994867")) => Some("tools.tool.eraser"), (1, Some("1936028257")) => Some("tools.tool.backgroundEraser"), (1, Some("1835364961")) => Some("tools.tool.magicEraser"),
@@ -160,10 +158,10 @@ pub fn tool_command_id(kind: u32, key_id: Option<&str>) -> Option<&'static str> 
         (1, Some("1751215716")) => Some("tools.tool.hand"),
         (1, Some("1919906932")) => Some("tools.tool.rotateView"),
         (1, Some("2054123373")) => Some("tools.tool.zoom"),
-        (1, Some("1668444016")) => Some("tools.tool.crop"), (1, Some("1885565552")) => Some("tools.tool.crop"), (1, Some("1399612244")) => Some("tools.tool.slice"), (1, Some("1399608148")) => Some("tools.tool.sliceSelect"),
+        (1, Some("1668444016")) => Some("tools.tool.crop"), (1, Some("1399612244")) => Some("tools.tool.slice"), (1, Some("1399608148")) => Some("tools.tool.sliceSelect"),
         (1, Some("1702454628")) => Some("tools.tool.eyedropper"), (1, Some("1835360596")) => Some("tools.tool.ruler"), (1, Some("1417180225")) => Some("tools.tool.note"), (1, Some("1668248942")) => Some("tools.tool.count"),
         (1, Some("1667327604")) => Some("tools.tool.remove"), (1, Some("1936746562")) => Some("tools.tool.spotHealing"), (1, Some("1937010029")) => Some("tools.tool.healing"), (1, Some("1886675816")) => Some("tools.tool.patch"), (1, Some("1919118704")) => Some("tools.tool.contentAwareMove"), (1, Some("1919182201")) => Some("tools.tool.redEye"),
-        (1, Some("1937006957")) => Some("tools.tool.cloneStamp"), (1, Some("1937010032")) => Some("tools.tool.patternStamp"),
+        (1, Some("1937006957")) => Some("tools.tool.cloneStamp"), (1, Some("1937010032")) => Some("tools.tool.patternStamp"), (1, Some("1752396866")) => Some("tools.tool.historyBrush"), (1, Some("2003137634")) => Some("tools.tool.mixerBrush"),
         (1, Some("1651275122")) => Some("tools.tool.blur"),
         (1, Some("1936220530")) => Some("tools.tool.sharpen"),
         (1, Some("1936553316")) => Some("tools.tool.smudge"),
@@ -181,6 +179,12 @@ pub fn tool_command_id(kind: u32, key_id: Option<&str>) -> Option<&'static str> 
         (14, _) => Some("tools.lastBrush"),
         (2, _) => Some("tools.defaultColors"),
         (3, _) => Some("tools.swapColors"),
+        (4, _) => Some("tools.toggleQuickMask"),
+        (5, _) => Some("tools.toggleScreenMode"),
+        (6, _) => Some("tools.toggleTransparentPixels"),
+        (15, _) => Some("tools.colorPickerForeground"),
+        (16, _) => Some("tools.colorPickerBackground"),
+        (29, _) => Some("tools.togglePreviewMode"),
         _ => None,
     }
 }
@@ -197,12 +201,12 @@ fn key(label: &str) -> String {
 pub fn command_candidates() -> Vec<Candidate> {
     let mut out: Vec<Candidate> = crate::command_specs()
         .iter()
-        .filter(|c| !c.menu.is_empty() || c.id.starts_with("timeline.") || c.id.starts_with("layer.smartObjects."))
         .map(|c| Candidate { id: c.id.to_string(), label: c.label.to_string(), default: c.shortcut.map(str::to_string) })
         .collect();
     out.extend([("tools.previousBrush", "Previous Brush"), ("tools.nextBrush", "Next Brush"), ("tools.firstBrush", "First Brush"), ("tools.lastBrush", "Last Brush")].into_iter().map(|(id, label)| Candidate { id: id.into(), label: label.into(), default: None }));
+    out.push(Candidate { id: "edit.freeTransform".into(), label: "Free Transform".into(), default: Some("Cmd+T".into()) });
     for id in [
-        "tools.tool.move", "tools.tool.rectMarquee", "tools.tool.ellipseMarquee", "tools.tool.lasso", "tools.tool.polygonLasso", "tools.tool.magneticLasso", "tools.tool.magicWand", "tools.tool.brush", "tools.tool.pencil", "tools.tool.mixerBrush", "tools.tool.eraser", "tools.tool.backgroundEraser", "tools.tool.magicEraser", "tools.tool.gradient", "tools.tool.paintBucket", "tools.tool.type", "tools.tool.verticalType", "tools.tool.hand", "tools.tool.rotateView", "tools.tool.zoom", "tools.tool.eyedropper", "tools.tool.ruler", "tools.tool.note", "tools.tool.count", "tools.tool.crop", "tools.tool.slice", "tools.tool.sliceSelect", "tools.tool.pen", "tools.tool.pathSelection", "tools.tool.directSelection", "tools.tool.rectangle", "tools.tool.ellipseShape", "tools.tool.triangle", "tools.tool.polygon", "tools.tool.line", "tools.tool.customShape"
+        "tools.tool.move", "tools.tool.rectMarquee", "tools.tool.ellipseMarquee", "tools.tool.lasso", "tools.tool.polygonLasso", "tools.tool.magneticLasso", "tools.tool.magicWand", "tools.tool.quickSelection", "tools.tool.objectSelection", "tools.tool.brush", "tools.tool.pencil", "tools.tool.mixerBrush", "tools.tool.historyBrush", "tools.tool.eraser", "tools.tool.backgroundEraser", "tools.tool.magicEraser", "tools.tool.gradient", "tools.tool.paintBucket", "tools.tool.type", "tools.tool.verticalType", "tools.tool.hand", "tools.tool.rotateView", "tools.tool.zoom", "tools.tool.eyedropper", "tools.tool.ruler", "tools.tool.note", "tools.tool.count", "tools.tool.crop", "tools.tool.slice", "tools.tool.sliceSelect", "tools.tool.remove", "tools.tool.spotHealing", "tools.tool.healing", "tools.tool.patch", "tools.tool.contentAwareMove", "tools.tool.redEye", "tools.tool.cloneStamp", "tools.tool.patternStamp", "tools.tool.blur", "tools.tool.sharpen", "tools.tool.smudge", "tools.tool.dodge", "tools.tool.burn", "tools.tool.sponge", "tools.tool.pen", "tools.tool.pathSelection", "tools.tool.directSelection", "tools.tool.rectangle", "tools.tool.ellipseShape", "tools.tool.triangle", "tools.tool.polygon", "tools.tool.line", "tools.tool.customShape", "tools.decreaseBrushSize", "tools.increaseBrushSize", "tools.decreaseBrushHardness", "tools.increaseBrushHardness", "tools.refillMixerBrush", "tools.cleanMixerBrush", "tools.toggleMixerAutoFill", "tools.toggleMixerAutoClean", "tools.toggleMixerSampleAllLayers", "tools.sharpenErodibleTip", "tools.togglePathSelectionMode", "tools.toggleAirbrushMode", "tools.togglePressureSize", "tools.togglePressureOpacity", "tools.toggleSymmetryOffLast", "tools.toggleSymmetry", "tools.togglePreviewMode", "tools.brushSwitchErase"
     ] {
         if !out.iter().any(|c| c.id == id) { out.push(Candidate { id: id.into(), label: id.into(), default: None }); }
     }
@@ -233,12 +237,16 @@ pub fn plan(candidates: impl IntoIterator<Item = Candidate>, set: &KysSet) -> Pl
             plan.unknown.push(row.name.clone());
             continue;
         };
+        if row.shortcuts.is_empty() {
+            plan.set.insert(stable_candidate.map(|c| c.id.clone()).or_else(|| candidates.first().map(|c| c.0.clone())).unwrap_or_default(), String::new());
+            continue;
+        }
         let Some(sc) = row.shortcuts.first().and_then(|s| normalize_shortcut(s)) else {
             plan.unreadable.push(row.name.clone());
             continue;
         };
-        plan.alternates += row.shortcuts.len().saturating_sub(1);
         let imported: Vec<String> = row.shortcuts.iter().filter_map(|s| normalize_shortcut(s)).collect();
+        plan.alternates += imported.len().saturating_sub(1);
         let pick = candidates
             .iter()
             .find(|(_, d)| d.as_deref().and_then(normalize_shortcut).is_some_and(|d| imported.contains(&d)))
@@ -249,13 +257,15 @@ pub fn plan(candidates: impl IntoIterator<Item = Candidate>, set: &KysSet) -> Pl
             // (Zoom In is "Cmd++" then "Cmd+=" in Photoshop; ours is Cmd+=).
             let default = default.as_deref().and_then(normalize_shortcut);
             let sc = default.filter(|d| imported.contains(d)).unwrap_or(sc);
-            plan.set.insert(id.clone(), sc);
+            plan.set.insert(id.clone(), sc.clone());
+            let alts: Vec<String> = imported.into_iter().filter(|k| k != &sc).collect();
+            if !alts.is_empty() { plan.alternates_for.insert(id.clone(), alts); }
         }
     }
     for tool in &set.tools {
         let Some(id) = tool_command_id(tool.kind, tool.id.as_deref()) else {
             let taskspace = tool.name.to_ascii_lowercase().contains("3d") || tool.name.to_ascii_lowercase().contains("artboard") || tool.name.to_ascii_lowercase().contains("material");
-            if !taskspace { plan.unsupported.push(tool.name.clone()); }
+            if !taskspace && tool.id.is_some() { plan.unsupported.push(tool.name.clone()); }
             continue;
         };
         let Some(sc) = tool.shortcut.as_deref().and_then(normalize_shortcut) else {
@@ -280,7 +290,7 @@ mod tests {
 
     const SET: &str = "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <photoshop-keyboard-shortcuts version=\"4\" filename=\"$$$/FileName/Presets/KeyboardCustomization/texcuts=texcuts\">
-\t<command kind=\"static\" name=\"Levels...\" id=\"1801\"><shortcut>Cmd+L</shortcut></command>
+\t<command kind=\"static\" name=\"Levels...\"><shortcut>Cmd+L</shortcut></command>
 \t<command kind=\"static\" name=\"Undo\" id=\"101\"><shortcut>Cmd+Z</shortcut><shortcut>F1</shortcut></command>
 \t<command kind=\"static\" name=\"Hide Photoshop\" id=\"7001\"><shortcut>Cmd+H</shortcut></command>
 \t<command kind=\"static\" name=\"Odd\" id=\"1\"><shortcut>Cmd+Shift+Ctrl</shortcut></command>
@@ -339,5 +349,34 @@ mod tests {
         assert_eq!(p.set.get("timeline.nextFrame"), Some(&"F2".to_string()));
         assert_eq!(p.set.get("tools.tool.brush"), Some(&"A".to_string()));
         assert_eq!(p.set.get("tools.decreaseBrushSize"), Some(&"S".to_string()));
+    }
+
+    #[test]
+    fn supplied_fixture_keeps_alternates_and_reports_only_real_unmapped_rows() {
+        let Some(path) = std::env::var_os("PHOTOSTORE_KYS_FIXTURE") else { return };
+        let text = std::fs::read_to_string(path).expect("PHOTOSTORE_KYS_FIXTURE must be readable");
+        let set = parse(&text).unwrap();
+        let plan = plan(command_candidates(), &set);
+        assert_eq!(plan.set.get("edit.copy").map(String::as_str), Some("Cmd+C"));
+        assert_eq!(plan.set.get("edit.paste").map(String::as_str), Some("Cmd+V"));
+        assert_eq!(plan.set.get("edit.toggleLastState").map(String::as_str), Some("Cmd+Alt+Z"));
+        assert_eq!(plan.alternates_for.get("edit.copy").map(Vec::as_slice), Some(["F3".to_string()].as_slice()));
+        assert_eq!(plan.alternates_for.get("edit.paste").map(Vec::as_slice), Some(["F4".to_string()].as_slice()));
+        assert_eq!(plan.alternates_for.get("edit.toggleLastState").map(Vec::as_slice), Some(["F1".to_string()].as_slice()));
+        assert!(plan.set.contains_key("image.crop"));
+        assert!(plan.set.contains_key("edit.freeTransform"));
+        assert!(!plan.set.contains_key("tools.tool.perspectiveCrop"));
+        assert_eq!(plan.set.get("tools.decreaseBrushSize").map(String::as_str), Some("S"));
+        assert_eq!(plan.set.get("tools.increaseBrushSize").map(String::as_str), Some("D"));
+        assert_eq!(plan.set.get("tools.tool.cloneStamp").map(String::as_str), Some(""));
+        assert_eq!(plan.set.get("tools.tool.historyBrush").map(String::as_str), Some(""));
+        assert_eq!(plan.set.get("tools.tool.mixerBrush").map(String::as_str), Some(""));
+        assert!(plan.set.contains_key("timeline.nextFrame"));
+        assert!(plan.set.contains_key("timeline.previousFrame"));
+        assert!(plan.set.contains_key("timeline.toggleOnionSkin"));
+        assert!(plan.set.contains_key("layer.smartObjects.convertToSmartObject"));
+        assert!(plan.set.contains_key("layer.smartObjects.newSmartObjectViaCopy"));
+        assert!(plan.set.contains_key("layer.smartObjects.editContents"));
+        eprintln!("kys fixture unknown={:?} unsupported={:?}", plan.unknown, plan.unsupported);
     }
 }

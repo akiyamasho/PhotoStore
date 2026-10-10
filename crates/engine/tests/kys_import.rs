@@ -40,3 +40,29 @@ fn import_kys_keys_given_in_set_win_and_bad_input_is_an_error() {
     assert!(s.execute("edit.keyboardShortcuts", json!({"importKys": 7})).is_err());
     assert_eq!(s.prefs().shortcuts, before, "a refused set changes nothing");
 }
+
+#[test]
+fn optional_external_fixture_imports_without_preloading_defaults() {
+    let Some(path) = std::env::var_os("PHOTOSTORE_KYS_FIXTURE") else { return };
+    let text = std::fs::read_to_string(path).expect("PHOTOSTORE_KYS_FIXTURE must be readable");
+    let mut s = Session::new();
+    assert!(s.prefs().shortcuts.is_empty());
+    assert!(s.prefs().shortcut_alternates.is_empty());
+    let result = s.execute("edit.keyboardShortcuts", json!({"importKys": text})).unwrap();
+    assert!(result["import"]["unknown"].is_array());
+    eprintln!("kys fixture import imported={} alternates={} toolKeys={} unknown={:?} unsupported={:?} unreadable={:?}",
+        result["import"]["imported"], result["import"]["alternates"], result["import"]["toolKeys"],
+        result["import"]["unknown"], result["import"]["unsupported"], result["import"]["unreadable"]);
+    assert_eq!(s.prefs().shortcuts.get("tools.decreaseBrushSize").map(String::as_str), Some("S"));
+    assert_eq!(s.prefs().shortcuts.get("tools.increaseBrushSize").map(String::as_str), Some("D"));
+    assert_eq!(s.prefs().shortcuts.get("tools.tool.brush").map(String::as_str), Some("A"));
+    for id in [
+        "timeline.nextFrame", "timeline.previousFrame", "timeline.toggleOnionSkin",
+        "layer.smartObjects.convertToSmartObject", "layer.smartObjects.newSmartObjectViaCopy", "layer.smartObjects.editContents",
+    ] {
+        assert!(s.prefs().shortcuts.contains_key(id), "missing imported shortcut for {id}");
+    }
+    assert_eq!(s.prefs().shortcut_alternates.get("edit.copy").map(Vec::as_slice), Some(["F3".to_string()].as_slice()));
+    assert_eq!(s.prefs().shortcut_alternates.get("edit.paste").map(Vec::as_slice), Some(["F4".to_string()].as_slice()));
+    assert_eq!(s.prefs().shortcut_alternates.get("edit.toggleLastState").map(Vec::as_slice), Some(["F1".to_string()].as_slice()));
+}

@@ -21,6 +21,11 @@ fn smart_button(app: &mut PhotocraftApp, ui: &mut egui::Ui, layer: u64, label: &
         .then(|| run_status(app, id, json!({"layer": layer}))).is_some()
 }
 
+fn filter_enabled(app: &PhotocraftApp, id: &str, layer: u64) -> bool {
+    let params = json!({"layer": layer});
+    app.session.is_enabled_with(id, &params) || crate::menus::is_enabled(app, id)
+}
+
 /// Route Smart Object commands that require a path through the app's asynchronous picker.
 /// Returns `None` for commands that can be sent directly to the command registry.
 pub fn invoke_file_action(app: &mut PhotocraftApp, id: &str, layer: u64) -> Option<Result<Value, String>> {
@@ -143,46 +148,137 @@ pub fn filter_rows(app: &mut PhotocraftApp, ui: &mut egui::Ui, l: &Layer, depth:
     }
     let t = Tokens::get(ui.ctx());
     let indent = 30.0 + depth as f32 * 14.0 + 34.0;
-    let rows = std::iter::once(None).chain((0..sm.smart_filters.len()).rev().map(Some));
+    let document = app.session.active().map(|s| s.doc.id.0).unwrap_or_default();
+    let collapse_key = ui.id().with(("sf-collapsed", document, l.id.0));
+    let collapsed = ui.data(|d| d.get_temp::<bool>(collapse_key)).unwrap_or(false);
+    let (header, header_resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
+    if header_resp.hovered() {
+        ui.painter().rect_filled(header, 0.0, t.hover.gamma_multiply(0.35));
+    }
+    let chevron = if collapsed { "▸" } else { "▾" };
+    ui.painter().text(pos2(header.left() + 7.0, header.center().y), Align2::LEFT_CENTER, chevron, egui::FontId::proportional(14.0), t.icon);
+    ui.painter().text(pos2(header.left() + indent, header.center().y), Align2::LEFT_CENTER, "Smart Filters", egui::FontId::proportional(11.5), if sm.filters_enabled { t.text_dim } else { t.text_faint });
+    let mask_rect = Rect::from_center_size(pos2(header.left() + indent - 12.0, header.center().y), vec2(14.0, 10.0));
+    let mask_on = sm.filter_mask.as_ref().is_some_and(|m| m.enabled);
+    ui.painter().rect_filled(mask_rect, 1.0, if mask_on { Color32::from_gray(200) } else { Color32::WHITE });
+    ui.painter().rect_stroke(mask_rect, 1.0, Stroke::new(1.0, t.field_border), egui::StrokeKind::Inside);
+    let mask_resp = ui.interact(mask_rect, ui.id().with(("sf-mask", document, l.id.0)), Sense::click());
+    let header_eye = Rect::from_min_size(pos2(header.left() + 28.0, header.center().y - 9.0), vec2(18.0, 18.0));
+    let eye_resp = ui.interact(header_eye, ui.id().with(("sf-eye", l.id.0, "header")), Sense::click());
+    if sm.filters_enabled {
+        icons::paint(ui, header_eye, "eye", 12.0, t.icon);
+    }
+    if eye_resp.clicked() {
+        actions.push(("layer.smartFilter.disableSmartFilters".into(), json!({"layer": l.id.0})));
+    }
+    if header_resp.clicked() && !eye_resp.clicked() && !mask_resp.clicked() {
+        ui.data_mut(|d| d.insert_temp(collapse_key, !collapsed));
+    }
+    if mask_resp.clicked() && filter_enabled(app, "layer.smartFilter.disableFilterMask", l.id.0) {
+        actions.push(("layer.smartFilter.disableFilterMask".into(), json!({"layer": l.id.0})));
+    }
+    header_resp.context_menu(|ui| {
+        if ui.add_enabled(filter_enabled(app, "layer.smartFilter.disableSmartFilters", l.id.0), egui::Button::new(tl!("Enable All Smart Filters"))).clicked() {
+            actions.push(("layer.smartFilter.disableSmartFilters".into(), json!({"layer": l.id.0, "enabled": true})));
+            ui.close();
+        }
+        if ui.add_enabled(filter_enabled(app, "layer.smartFilter.disableSmartFilters", l.id.0), egui::Button::new(tl!("Disable All Smart Filters"))).clicked() {
+            actions.push(("layer.smartFilter.disableSmartFilters".into(), json!({"layer": l.id.0, "enabled": false})));
+            ui.close();
+        }
+        if ui.add_enabled(filter_enabled(app, "layer.smartFilter.clearSmartFilters", l.id.0), egui::Button::new(tl!("Clear Smart Filters"))).clicked() {
+            actions.push(("layer.smartFilter.clearSmartFilters".into(), json!({"layer": l.id.0})));
+            ui.close();
+        }
+        ui.separator();
+        if filter_enabled(app, "layer.smartFilter.disableFilterMask", l.id.0) && ui.button(tl!("Enable/Disable Filter Mask")).clicked() {
+            actions.push(("layer.smartFilter.disableFilterMask".into(), json!({"layer": l.id.0})));
+            ui.close();
+        }
+        if filter_enabled(app, "layer.smartFilter.deleteFilterMask", l.id.0) && ui.button(tl!("Delete Filter Mask")).clicked() {
+            actions.push(("layer.smartFilter.deleteFilterMask".into(), json!({"layer": l.id.0})));
+            ui.close();
+        }
+    });
+    if collapsed {
+        return;
+    }
+    let visual: Vec<usize> = (0..sm.smart_filters.len()).rev().collect();
+    let rows = visual.iter().copied();
     for index in rows {
-        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
+        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click_and_drag());
         if resp.hovered() {
             ui.painter().rect_filled(rect, 0.0, t.hover.gamma_multiply(0.35));
         }
         if t.pro {
             ui.painter().line_segment([pos2(rect.left() + 30.0, rect.top()), pos2(rect.left() + 30.0, rect.bottom())], Stroke::new(1.0, t.separator));
         }
-        let (name, on) = match index {
-            None => ("Smart Filters".to_string(), sm.filters_enabled),
-            Some(i) => (filter_label(&sm.smart_filters[i]), sm.smart_filters[i].visible && sm.filters_enabled),
-        };
+        let f = &sm.smart_filters[index];
+        let name = filter_label(f);
+        let on = f.visible && sm.filters_enabled;
         let eye = Rect::from_min_size(pos2(rect.left() + 6.0, rect.center().y - 9.0), vec2(18.0, 18.0));
         let eye_resp = ui.interact(eye, ui.id().with(("sf-eye", l.id.0, index)), Sense::click());
-        let shown = match index {
-            None => sm.filters_enabled,
-            Some(i) => sm.smart_filters[i].visible,
-        };
+        let shown = f.visible;
         if shown {
             icons::paint(ui, eye, "eye", 12.0, t.icon);
         }
         if eye_resp.clicked() {
-            actions.push(match index {
-                None => ("layer.smartFilter.disableSmartFilters".into(), json!({"layer": l.id.0})),
-                Some(i) => ("layer.smartFilter.setVisible".into(), json!({"layer": l.id.0, "index": i})),
-            });
+            actions.push(("layer.smartFilter.setVisible".into(), json!({"layer": l.id.0, "index": index})));
         }
-        let x = rect.left() + indent + if index.is_none() { 0.0 } else { 16.0 };
-        if index.is_none() {
-            let sw = Rect::from_center_size(pos2(x - 12.0, rect.center().y), vec2(14.0, 10.0));
-            ui.painter().rect_filled(sw, 1.0, if sm.filter_mask.as_ref().is_some_and(|m| m.enabled) { Color32::from_gray(200) } else { Color32::WHITE });
-            ui.painter().rect_stroke(sw, 1.0, Stroke::new(1.0, t.field_border), egui::StrokeKind::Inside);
-        }
+        let x = rect.left() + indent + 16.0;
         ui.painter().text(pos2(x, rect.center().y), Align2::LEFT_CENTER, name, egui::FontId::proportional(11.5), if on { t.text_dim } else { t.text_faint });
-        if let Some(i) = index
-            && resp.double_clicked()
-        {
-            open_editor(app, ui.ctx(), l.id.0, sm, i);
+        if resp.double_clicked() {
+            open_editor(app, ui.ctx(), l.id.0, sm, index);
         }
+        let drag_key = ui.id().with(("sf-drag", document, l.id.0));
+        if resp.drag_started() {
+            ui.data_mut(|d| d.insert_temp(drag_key, index));
+        }
+        if resp.drag_stopped()
+            && let Some(source) = ui.data(|d| d.get_temp::<usize>(drag_key))
+        {
+            ui.data_mut(|d| d.remove::<usize>(drag_key));
+            let pos = visual.iter().position(|&i| i == index).unwrap_or(0);
+            let source_pos = visual.iter().position(|&i| i == source).unwrap_or(pos);
+            let target_pos = ui.input(|i| i.pointer.interact_pos().map(|p| (((p.y - header.bottom()) / 22.0).floor().max(0.0) as usize).min(visual.len().saturating_sub(1))));
+            let target = target_pos.and_then(|target_pos| (source_pos != target_pos).then(|| visual[target_pos]));
+            if let Some(to) = target {
+                actions.push(("layer.smartFilter.move".into(), json!({"layer": l.id.0, "index": source, "to": to})));
+            }
+        }
+        resp.context_menu(|ui| {
+            if ui.button(tl!("Edit Smart Filter")).clicked() {
+                open_editor(app, ui.ctx(), l.id.0, sm, index);
+                ui.close();
+            }
+            ui.menu_button(tl!("Blending Options…"), |ui| {
+                let mut opacity = f.opacity * 100.0;
+                if ui.add(egui::Slider::new(&mut opacity, 0.0..=100.0).text(tl!("Opacity"))).changed() {
+                    actions.push(("layer.smartFilter.blendingOptions".into(), json!({"layer": l.id.0, "index": index, "opacity": opacity / 100.0})));
+                }
+                ui.menu_button(tl!("Blend Mode"), |ui| {
+                    for blend in photocraft_color::BlendMode::layer_modes() {
+                        if ui.button(tl!(blend.label())).clicked() {
+                            actions.push(("layer.smartFilter.blendingOptions".into(), json!({"layer": l.id.0, "index": index, "blend": blend.label()})));
+                            ui.close();
+                        }
+                    }
+                });
+            });
+            let pos = visual.iter().position(|&i| i == index).unwrap_or(0);
+            if pos > 0 && ui.button(tl!("Move Up")).clicked() {
+                actions.push(("layer.smartFilter.move".into(), json!({"layer": l.id.0, "index": index, "to": visual[pos - 1]})));
+                ui.close();
+            }
+            if pos + 1 < visual.len() && ui.button(tl!("Move Down")).clicked() {
+                actions.push(("layer.smartFilter.move".into(), json!({"layer": l.id.0, "index": index, "to": visual[pos + 1]})));
+                ui.close();
+            }
+            if ui.button(tl!("Delete Smart Filter")).clicked() {
+                actions.push(("layer.smartFilter.delete".into(), json!({"layer": l.id.0, "index": index})));
+                ui.close();
+            }
+        });
     }
 }
 
