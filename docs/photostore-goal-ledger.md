@@ -6,8 +6,8 @@ Updated 2026-10-11. This is an operational ledger for the independent PhotoStore
 
 - Origin source: `git@github.com:storytold/photocraft.git`; original history, licenses, `NOTICE`, attribution records, and provenance are retained.
 - Product identity: PhotoStore, with the independent executable/configuration/package identity already established in the repository.
-- Intended GitHub repository: private `akiyamasho/PhotoStore`, with `origin` as the only remote.
-- Milestone references: `photostore-foundation-2026-10-10` at `d83f8323`; `photostore-animation-smart-objects-2026-10-10` at `06e736db`.
+- Established GitHub repository: private `akiyamasho/PhotoStore`, with `origin` as the only remote.
+- Milestone references: `photostore-foundation-2026-10-10` at `d83f8323`; `photostore-animation-smart-objects-2026-10-10` at `06e736db`; `photostore-animation-media-2026-10-11` at `4019c6ce28966236e070a3d894a56c2968643820`.
 - Icon direction: PhotoStore icon with the requested twist; keep the asset provenance row with the icon work.
 - README/AGENTS direction: keep badges, install, run, and contributor guidance lean and operational.
 - Photoshop-facing scope: timeline/frame animation and Smart Objects are first product priorities, while the inherited feature surface remains evidence to audit rather than a completeness claim.
@@ -28,8 +28,10 @@ Updated 2026-10-11. This is an operational ledger for the independent PhotoStore
 - The new Smart appearance regression passed 1/1, and the post-repair engine check passed.
 - The exact Photoshop fixture imported 152 primary rows, 3 alternates, and 51 nonempty tool keys. Unknown scripts, Bridge, Smart Object, filtering/minimize/hide, and UI-only candidates are reported rather than silently substituted.
 - These are compiler/function and targeted integration results. They do not establish visual UI QA, Photoshop behavior parity, or full PSD/external-format compatibility.
-- Planned next checkpoint tag: `photostore-animation-media-2026-10-11` (planned; publish only with the release checkpoint).
-- Pending release action: after documentation and source review, push the private repository, create the planned tag and GitHub release, then perform the local PhotoStore install and record the resulting artifact/version.
+- Release record: annotated tag `photostore-animation-media-2026-10-11` was pushed at `4019c6ce28966236e070a3d894a56c2968643820`.
+- Published prerelease: [PhotoStore 0.6.0 prerelease](https://github.com/akiyamasho/PhotoStore/releases/tag/photostore-animation-media-2026-10-11) includes the Apple Silicon DMG, CLI ZIP, and `SHA256SUMS`; artifacts are ad hoc signed and not notarized.
+- Local install record: `/Applications/PhotoStore.app` version 0.6.0, bundle `ai.photostore.app`, installed with the matching source SHA; strict signature validation passed and the executable remained running after the required startup confirmation.
+- This release record does not claim full visual or Photoshop acceptance; the remaining Photoshop scope and active goal are unfinished.
 
 ## Animation and timeline
 
