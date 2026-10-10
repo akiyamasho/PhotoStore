@@ -351,6 +351,7 @@ pub static CATALOG: &[(&[&str], &str, Option<&str>, &str)] = &[
     (&["Layer", "Smart Objects"], "Convert to Linked…", None, "layer.smartObjects.convertToLinked"),
     (&["Layer", "Smart Objects"], "Convert to Embedded", None, "layer.smartObjects.convertToEmbedded"),
     (&["Layer", "Smart Objects"], "Convert to Layers", None, "layer.smartObjects.convertToLayers"),
+    (&["Layer", "Smart Objects"], "Reset Transform", None, "layer.smartObjects.resetTransform"),
     (&["Layer", "Smart Objects"], "---", None, "---"),
     (&["Layer", "Smart Objects", "Stack Mode"], "Entropy", None, "layer.smartObjects.stackMode.entropy"),
     (&["Layer", "Smart Objects", "Stack Mode"], "Kurtosis", None, "layer.smartObjects.stackMode.kurtosis"),

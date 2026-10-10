@@ -1,4 +1,5 @@
 use super::*;
+use photocraft_doc::{FrameLayerState, Timeline, VideoData};
 
 mod selection;
 
@@ -11,6 +12,38 @@ fn session(depth: u64) -> Session {
     s.execute("file.new", json!({"width": W, "height": H, "depth": depth})).unwrap();
     s.execute("layer.new.layer", json!({})).unwrap();
     s
+}
+
+fn set_timeline(s: &mut Session, timeline: Timeline) {
+    let st = s.active_mut().unwrap();
+    let mut doc = (*st.doc).clone();
+    doc.timeline = Some(timeline);
+    st.doc = std::sync::Arc::new(doc);
+}
+
+fn set_current(s: &mut Session, current: usize) {
+    let st = s.active_mut().unwrap();
+    let mut doc = (*st.doc).clone();
+    if let Some(timeline) = &mut doc.timeline { timeline.current = current; }
+    st.doc = std::sync::Arc::new(doc);
+}
+
+fn solid_pixels(fmt: &photocraft_color::PixelFormat, rgba: [f32; 4], count: usize) -> Vec<f32> {
+    (0..count).flat_map(|_| photocraft_raster::from_rgba(fmt, rgba)).collect()
+}
+
+fn set_video(s: &mut Session, id: LayerId, video: VideoData) {
+    let st = s.active_mut().unwrap();
+    let mut doc = (*st.doc).clone();
+    doc.layer_mut(id).unwrap().video = Some(video);
+    st.doc = std::sync::Arc::new(doc);
+}
+
+fn sync_doc(s: &mut Session) {
+    let st = s.active_mut().unwrap();
+    let mut doc = (*st.doc).clone();
+    crate::video_cmds::sync(&mut doc);
+    st.doc = std::sync::Arc::new(doc);
 }
 
 /// Paints a textured block on the active layer, partly outside the canvas (top-left), so
@@ -45,6 +78,121 @@ fn max_diff(a: &[[f32; 4]], b: &[[f32; 4]]) -> f32 {
 fn mean_diff(a: &[[f32; 4]], b: &[[f32; 4]]) -> f32 {
     let sum: f32 = a.iter().zip(b).map(|(p, q)| (0..4).map(|c| (p[c] - q[c]).abs()).sum::<f32>()).sum();
     sum / (a.len() * 4) as f32
+}
+
+#[test]
+fn animated_source_timing_uses_exact_fps_and_delays() {
+    let mut s = session(8);
+    set_timeline(&mut s, Timeline::new(24, 24.0));
+    let d = &s.active().unwrap().doc;
+    for frame in 0..24 {
+        assert_eq!(super::timeline_frame_at_time(d, frame as f64 / 24.0), frame);
+    }
+    assert_eq!(super::timeline_frame_at_time(d, 1.0 / 24.0), 1);
+    let mut delayed = Timeline::new(3, 24.0);
+    delayed.frame_delays_ms = vec![100, 0, 200];
+    set_timeline(&mut s, delayed);
+    let d = &s.active().unwrap().doc;
+    assert_eq!(super::timeline_frame_at_time(d, 0.1001), 1);
+    assert_eq!(super::timeline_frame_at_time(d, 0.3001), 2);
+}
+
+#[test]
+fn animated_source_timing_handles_fractional_fps_clock() {
+    let mut s = session(8);
+    set_timeline(&mut s, Timeline::new(120, 29.97));
+    let d = &s.active().unwrap().doc;
+    for frame in 0..120 {
+        assert_eq!(super::timeline_frame_at_time(d, frame as f64 / 29.97), frame);
+    }
+}
+
+#[test]
+fn animated_source_ping_pong_does_not_dwell_on_duplicate_endpoints() {
+    let mut s = session(8);
+    let mut t = Timeline::new(3, 10.0);
+    t.loop_mode = photocraft_doc::TimelineLoop::PingPong;
+    t.frame_delays_ms = vec![100, 100, 100];
+    set_timeline(&mut s, t);
+    let d = &s.active().unwrap().doc;
+    assert_eq!(super::timeline_frame_at_time(d, 0.0), 0);
+    assert_eq!(super::timeline_frame_at_time(d, 0.2), 2);
+    assert_eq!(super::timeline_frame_at_time(d, 0.3), 1);
+}
+
+#[test]
+fn conversion_moves_single_root_frame_state_to_replacement_smart_layer() {
+    let mut s = session(8);
+    let id = s.active().unwrap().active_layer.unwrap();
+    let mut timeline = Timeline::new(2, 24.0);
+    timeline.frame_states = vec![vec![FrameLayerState { layer: id, visible: true, opacity: 0.35 }], vec![FrameLayerState { layer: id, visible: false, opacity: 0.8 }]];
+    set_timeline(&mut s, timeline);
+    let new_id = convert(&mut s);
+    let states = &s.active().unwrap().doc.timeline.as_ref().unwrap().frame_states;
+    assert!(states.iter().flatten().all(|state| state.layer == LayerId(new_id)));
+}
+
+#[test]
+fn reset_transform_is_undoable_and_clears_projective_placement() {
+    let mut s = session(8);
+    paint(&mut s);
+    let id = convert(&mut s);
+    s.edit("distort", |doc, _| {
+        let sm = match &mut doc.layer_mut(LayerId(id)).unwrap().content { LayerContent::Smart(sm) => sm, _ => unreachable!() };
+        sm.transform = Affine::scale(2.0).mul(&Affine::translate(12.0, 8.0));
+        sm.perspective = Some([2.0, 0.1, 12.0, 0.0, 2.0, 8.0, 0.001, 0.0, 1.0]);
+        Ok(())
+    }).unwrap();
+    s.execute("layer.smartObjects.resetTransform", json!({"layer": id})).unwrap();
+    let sm = active_smart(&s);
+    assert!(sm.perspective.is_none());
+    assert_eq!(sm.transform.m[0], 1.0);
+    assert_eq!(sm.transform.m[3], 1.0);
+    s.undo();
+    assert!(active_smart(&s).perspective.is_some());
+}
+
+#[test]
+fn animated_conversion_keeps_full_canvas_for_later_video_frames() {
+    let mut s = session(8);
+    let fmt = s.active().unwrap().doc.pixel_format();
+    let mut left = Surface::new(fmt);
+    left.write_region(Rect::new(1, 1, 8, 8), &solid_pixels(&fmt, [1.0, 0.0, 0.0, 1.0], 49));
+    let mut right = Surface::new(fmt);
+    right.write_region(Rect::new(52, 1, 60, 8), &solid_pixels(&fmt, [0.0, 1.0, 0.0, 1.0], 64));
+    let id = s.active().unwrap().active_layer.unwrap();
+    set_video(&mut s, id, VideoData::new(vec![left, right], 24.0));
+    set_timeline(&mut s, Timeline::new(2, 24.0));
+    sync_doc(&mut s);
+    let new_id = convert(&mut s);
+    let sm = active_smart(&s);
+    let SmartSource::Embedded { file_name, bytes } = sm.source else { panic!("expected embedded source") };
+    let child = decode_source(&file_name, &bytes).unwrap();
+    assert_eq!(child.size, Size::new(W as u32, H as u32));
+    set_current(&mut s, 1);
+    sync_doc(&mut s);
+    assert!(s.active().unwrap().doc.layer(LayerId(new_id)).unwrap().surface().is_some());
+}
+
+#[test]
+fn video_keyframe_opacity_is_owned_by_child_after_conversion() {
+    let mut s = session(8);
+    let fmt = s.active().unwrap().doc.pixel_format();
+    let mut frame = Surface::new(fmt);
+    frame.write_region(Rect::new(4, 4, 20, 20), &solid_pixels(&fmt, [1.0, 0.0, 0.0, 1.0], 256));
+    let id = s.active().unwrap().active_layer.unwrap();
+    let mut video = VideoData::new(vec![frame.clone(), frame], 24.0);
+    video.keyframes = vec![photocraft_doc::VideoKeyframe { frame: 0, x: 0.0, y: 0.0, opacity: 0.5 }, photocraft_doc::VideoKeyframe { frame: 1, x: 0.0, y: 0.0, opacity: 0.8 }];
+    set_video(&mut s, id, video);
+    set_timeline(&mut s, Timeline::new(2, 24.0));
+    sync_doc(&mut s);
+    let before = flat(&s);
+    let new_id = convert(&mut s);
+    let layer = s.active().unwrap().doc.layer(LayerId(new_id)).unwrap();
+    assert_eq!(layer.opacity, 1.0);
+    assert_eq!(max_diff(&flat(&s), &before), 0.0);
+    let states = &s.active().unwrap().doc.timeline.as_ref().unwrap().frame_states;
+    assert!(states.iter().flatten().all(|state| state.layer != LayerId(new_id) || state.opacity == 1.0));
 }
 
 fn active_smart(s: &Session) -> SmartObject {

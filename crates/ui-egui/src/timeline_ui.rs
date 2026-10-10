@@ -48,14 +48,14 @@ impl std::fmt::Debug for TimelineUi {
     }
 }
 
-fn frame_thumbnails(app: &mut PhotocraftApp, ctx: &egui::Context, tl: &photocraft_doc::Timeline) -> Vec<egui::TextureId> {
+fn frame_thumbnails(app: &mut PhotocraftApp, ctx: &egui::Context, tl: &photocraft_doc::Timeline) -> Vec<Option<egui::TextureId>> {
     let Some(st) = app.session.active() else { return Vec::new() };
     let video = st.active_layer.and_then(|id| st.doc.layer(id)).and_then(|layer| layer.video.as_ref());
     let history = (st.history.past_len(), st.history.future_len());
     let signature = {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         st.doc.layers.iter().for_each(|layer| {
-            (layer.id, layer.video.as_ref().map(|v| v.frames.len()), layer.visible, layer.opacity.to_bits()).hash(&mut hasher);
+            (layer.id, layer.video.as_ref().map(|v| v.frames.len())).hash(&mut hasher);
         });
         (matches!(tl.mode, photocraft_doc::TimelineMode::FrameAnimation), tl.duration, tl.frame_states.len(), tl.layer_ranges.len(), tl.frame_delays_ms.len()).hash(&mut hasher);
         hasher.finish()
@@ -75,9 +75,12 @@ fn frame_thumbnails(app: &mut PhotocraftApp, ctx: &egui::Context, tl: &photocraf
     app.ui.timeline.frame_thumbs.retain(|(key, _)| key.starts_with(&key_prefix));
     let frame_count = video.map_or(tl.duration, |v| v.frames.len()).min(240);
     let mut ids = Vec::with_capacity(frame_count);
+    let mut misses = 0usize;
     for frame in 0..frame_count {
         let key = format!("{key_prefix}:{frame}");
-        if let Some((_, texture)) = app.ui.timeline.frame_thumbs.iter().find(|(k, _)| k == &key) { ids.push(texture.id()); continue; }
+        if let Some((_, texture)) = app.ui.timeline.frame_thumbs.iter().find(|(k, _)| k == &key) { ids.push(Some(texture.id())); continue; }
+        if misses >= 8 { ids.push(None); continue; }
+        misses += 1;
         let image = if let Some(surface) = video.and_then(|v| v.frames.get(frame)) {
             crate::transform_tex::read_surface(surface, None, st.doc.bounds(), 64).0
         } else {
@@ -89,7 +92,7 @@ fn frame_thumbnails(app: &mut PhotocraftApp, ctx: &egui::Context, tl: &photocraf
             egui::ColorImage::from_rgba_unmultiplied([reduced.rect.width() as usize, reduced.rect.height() as usize], &pixels)
         };
         let texture = ctx.load_texture(format!("timeline-frame-{key}"), image, egui::TextureOptions::LINEAR);
-        ids.push(texture.id());
+        ids.push(Some(texture.id()));
         app.ui.timeline.frame_thumbs.push((key, texture));
     }
     let _ = tl;
@@ -265,7 +268,7 @@ pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
                                 let selected = frame == tl.current;
                                 let label = format!("{:02}", frame + 1);
                                 let response = ui.add_sized([52.0, 44.0], egui::Button::new(label).selected(selected));
-                                if let Some(texture) = frame_thumb_ids.get(frame) { ui.painter().image(*texture, response.rect.shrink(3.0), egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE); }
+                                if let Some(Some(texture)) = frame_thumb_ids.get(frame) { ui.painter().image(*texture, response.rect.shrink(3.0), egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE); }
                                 if response.clicked() { act = Some(("timeline.setFrame", json!({"frame":frame}))); }
                             }
                         });

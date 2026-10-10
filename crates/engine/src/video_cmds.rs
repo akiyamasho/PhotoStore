@@ -13,6 +13,19 @@ use crate::{EngineError, Result, Session};
 
 /// Set every video layer's displayed content to its frame at the playhead.
 pub fn sync(doc: &mut Document) {
+    sync_plain(doc);
+    // Smart objects are rendered outside the ordinary layer sync because their source is a
+    // nested document. Refreshing here makes timeline seeks update an embedded animated source
+    // without adding a history entry for every playhead step.
+    let ids: Vec<_> = doc.walk().into_iter().filter_map(|(_, _, l)| matches!(l.content, LayerContent::Smart(_)).then_some(l.id)).collect();
+    for id in ids {
+        let _ = crate::smart_cmds::refresh_animated(doc, id);
+    }
+}
+
+/// Synchronize video layers and frame-animation state without traversing smart-object sources.
+/// Smart-object rendering calls this on decoded child documents to avoid recursive sync loops.
+pub fn sync_plain(doc: &mut Document) {
     let cur = doc.timeline.as_ref().map_or(0, |t| t.current);
     sync_layers(&mut doc.layers, cur);
     if let Some(t) = &doc.timeline

@@ -91,6 +91,7 @@ pub fn entries(l: &Layer, multi: bool, has_selection: bool) -> Vec<Entry> {
                     }
                 }
                 v.push(Some((tl!("Convert to Layers"), "layer.smartObjects.convertToLayers")));
+                v.push(Some((tl!("Reset Transform"), "layer.smartObjects.resetTransform")));
                 v.push(Some(("Rasterize Layer", "layer.rasterize.smartObject")));
             }
             LayerContent::Fill(_) => v.push(Some(("Rasterize Layer", "layer.rasterize.fillContent"))),

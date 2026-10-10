@@ -138,8 +138,55 @@ static SOURCE_CACHE: Mutex<Vec<CacheEntry>> = Mutex::new(Vec::new());
 const CACHE_ENTRIES: usize = 32;
 const CACHE_BYTES: usize = 1 << 30;
 
+struct DecodedEntry { key: [u8; 32], doc: Arc<Document>, bytes: usize }
+static DECODE_CACHE: Mutex<Vec<DecodedEntry>> = Mutex::new(Vec::new());
+const DECODE_ENTRIES: usize = 8;
+const DECODE_BYTES: usize = 512 << 20;
+
 fn cache_key(bytes: &[u8], fmt: PixelFormat) -> CacheKey {
     (*blake3::hash(bytes).as_bytes(), fmt)
+}
+
+fn decoded_size(doc: &Document, source_bytes: usize) -> usize {
+    let mut total = source_bytes;
+    for (_, _, layer) in doc.walk() {
+        if let Some(surface) = layer.surface() {
+            let b = surface.content_bounds();
+            total = total.saturating_add(b.width().max(0) as usize * b.height().max(0) as usize * surface.format().channels() * 4);
+        }
+        if let Some(video) = &layer.video {
+            total = total.saturating_add(video.frames.iter().map(|f| {
+                let b = f.content_bounds();
+                b.width().max(0) as usize * b.height().max(0) as usize * f.format().channels() * 4
+            }).sum());
+        }
+    }
+    total
+}
+
+fn decode_cached(file_name: &str, bytes: &[u8]) -> Result<Arc<Document>> {
+    let key = *blake3::hash(bytes).as_bytes();
+    if let Ok(mut c) = DECODE_CACHE.lock()
+        && let Some(i) = c.iter().position(|e| e.key == key)
+    {
+        let e = c.remove(i);
+        let doc = e.doc.clone();
+        c.push(e);
+        return Ok(doc);
+    }
+    let doc = decode_source(file_name, bytes)?;
+    if let Ok(mut c) = DECODE_CACHE.lock() {
+        c.retain(|e| e.key != key);
+        let size = decoded_size(&doc, bytes.len());
+        if size > DECODE_BYTES {
+            return Ok(Arc::new(doc));
+        }
+        let doc = Arc::new(doc);
+        c.push(DecodedEntry { key, doc: doc.clone(), bytes: size });
+        while c.len() > DECODE_ENTRIES || c.iter().map(|e| e.bytes).sum::<usize>() > DECODE_BYTES { c.remove(0); }
+        return Ok(doc);
+    }
+    Ok(Arc::new(doc))
 }
 
 fn cache_get(key: &CacheKey) -> Option<SourceImage> {
@@ -213,11 +260,115 @@ fn vector_scale(sm: &SmartObject) -> f64 {
 
 /// The composited source image of `bytes` in pixel format `fmt` (decoded once, then cached).
 pub fn source_image(file_name: &str, bytes: &[u8], fmt: PixelFormat) -> Result<SourceImage> {
-    let key = cache_key(bytes, fmt);
-    if let Some(img) = cache_get(&key) {
+    source_image_at_time(file_name, bytes, fmt, None)
+}
+
+fn timed_cache_key(bytes: &[u8], fmt: PixelFormat, frame: usize) -> CacheKey {
+    let base = cache_key(bytes, fmt);
+    let mut h = blake3::Hasher::new();
+    h.update(&base.0);
+    h.update(b"timeline-frame:");
+    h.update(&frame.to_le_bytes());
+    (*h.finalize().as_bytes(), fmt)
+}
+
+fn timeline_frame_at_time(doc: &Document, time: f64) -> usize {
+    let Some(t) = doc.timeline.as_ref() else { return 0 };
+    let duration = t.duration.clamp(1, 1_000_000);
+    let seconds = time.max(0.0) as f64;
+    let explicit = t.frame_delays_ms.iter().take(duration).any(|d| *d > 0);
+    if !explicit {
+        let frame = (seconds * t.fps.max(1e-3) as f64 + 1e-9).floor() as usize;
+        return match t.loop_mode {
+            photocraft_doc::TimelineLoop::Loop => frame % duration,
+            photocraft_doc::TimelineLoop::PingPong if duration > 1 => {
+                let span = duration.saturating_mul(2).saturating_sub(2).max(1);
+                let p = frame % span;
+                if p < duration { p } else { span - p }
+            }
+            _ => frame.min(duration - 1),
+        };
+    }
+    let fallback = 1000.0 / t.fps.max(1e-3) as f64;
+    let delay = |i: usize| t.frame_delays_ms.get(i).copied().filter(|d| *d > 0).map(f64::from).unwrap_or(fallback);
+    let total_ms = (0..duration).fold(0.0f64, |sum, i| (sum + delay(i)).min(f64::MAX / 2.0));
+    let mut at = seconds * 1000.0;
+    match t.loop_mode {
+        photocraft_doc::TimelineLoop::Loop => at %= total_ms.max(1.0),
+        _ => at = at.min((total_ms - f64::EPSILON).max(0.0)),
+    }
+    let mut frame = 0usize;
+    let mut acc = 0.0f64;
+    for i in 0..duration {
+        acc = (acc + delay(i)).min(f64::MAX / 2.0);
+        if at < acc + 1e-9 { frame = i; break; }
+    }
+    if t.loop_mode == photocraft_doc::TimelineLoop::PingPong && duration > 1 {
+        let span = (total_ms * 2.0 - delay(duration - 1) - delay(0)).max(1.0);
+        let mut p = (seconds * 1000.0) % span;
+        if p >= total_ms { p = (span - p - f64::EPSILON).max(0.0); }
+        acc = 0.0;
+        for i in 0..duration {
+            acc = (acc + delay(i)).min(f64::MAX / 2.0);
+            if p < acc { frame = i; break; }
+        }
+    }
+    frame
+}
+
+fn document_time(doc: &Document) -> Option<f64> {
+    let t = doc.timeline.as_ref()?;
+    let cur = t.current.min(t.duration.saturating_sub(1)).min(1_000_000);
+    if !t.frame_delays_ms.iter().take(cur.max(1)).any(|d| *d > 0) {
+        return Some(cur as f64 / f64::from(t.fps.max(1e-3)));
+    }
+    let fallback = 1000.0 / t.fps.max(1e-3) as f64;
+    let seconds = (0..cur).fold(0.0f64, |sum, i| {
+        let delay = t.frame_delays_ms.get(i).copied().filter(|d| *d > 0).map(f64::from).unwrap_or(fallback);
+        (sum + delay / 1000.0).min(f64::MAX / 2.0)
+    });
+    Some(seconds)
+}
+
+/// Decode and flatten an animated source at `time`. The decoded document is never modified on
+/// disk; only its in-memory playhead is advanced. The frame-qualified cache remains bounded by
+/// the same LRU limits as the static source cache.
+pub fn source_image_at_time(file_name: &str, bytes: &[u8], fmt: PixelFormat, time: Option<f64>) -> Result<SourceImage> {
+    source_image_at_time_inner(file_name, bytes, fmt, time, 0)
+}
+
+fn source_image_at_time_inner(file_name: &str, bytes: &[u8], fmt: PixelFormat, time: Option<f64>, depth: usize) -> Result<SourceImage> {
+    if time.is_none() {
+        let key = cache_key(bytes, fmt);
+        if let Some(img) = cache_get(&key) { return Ok(img); }
+        let doc = decode_cached(file_name, bytes)?;
+        let buf = photocraft_compose::flatten(&doc);
+        let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds: doc.bounds() };
+        cache_put(key, img.clone());
         return Ok(img);
     }
-    let doc = decode_source(file_name, bytes)?;
+    let cached_doc = decode_cached(file_name, bytes)?;
+    // A parent timeline does not make a static source animated. Reuse the ordinary static
+    // composite cache so such Smart Objects keep their fast path during playback.
+    if cached_doc.timeline.is_none() {
+        let key = cache_key(bytes, fmt);
+        if let Some(img) = cache_get(&key) { return Ok(img); }
+        let buf = photocraft_compose::flatten(&cached_doc);
+        let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds: cached_doc.bounds() };
+        cache_put(key, img.clone());
+        return Ok(img);
+    }
+    let Some(time) = time.filter(|t| t.is_finite() && *t >= 0.0) else {
+        return Err(other("animated smart object rendering requires a finite timeline time"));
+    };
+    let frame = timeline_frame_at_time(&cached_doc, time);
+    let key = timed_cache_key(bytes, fmt, frame);
+    if let Some(img) = cache_get(&key) { return Ok(img); }
+    let mut doc = (*cached_doc).clone();
+    if let Some(t) = &mut doc.timeline { t.current = frame; }
+    crate::video_cmds::sync_plain(&mut doc);
+    let local_time = document_time(&doc).unwrap_or(time);
+    refresh_document_animated(&mut doc, local_time, depth.saturating_add(1));
     let buf = photocraft_compose::flatten(&doc);
     let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds: doc.bounds() };
     cache_put(key, img.clone());
@@ -349,6 +500,14 @@ pub fn apply_smart_filters(placed: &Surface, sm: &SmartObject, canvas: Rect) -> 
 /// Renders a smart object from its source. `Ok(None)` when the source is unavailable (a missing
 /// linked file, or a PSD placed layer without embedded data): callers keep the existing cache.
 pub fn render(doc: &Document, sm: &SmartObject) -> Result<Option<Surface>> {
+    let time = document_time(doc);
+    render_at_time(doc, sm, time, 0)
+}
+
+fn render_at_time(doc: &Document, sm: &SmartObject, time: Option<f64>, depth: usize) -> Result<Option<Surface>> {
+    if depth >= 16 {
+        return Err(other("smart object nesting exceeds the safe render depth (16)"));
+    }
     let Some((name, bytes)) = source_bytes(&doc.metadata, &sm.source) else { return Ok(None) };
     // A vector source is rendered at the placement's scale, and the placement is divided by
     // that scale so the rendered pixels land where the source units would.
@@ -371,7 +530,7 @@ pub fn render(doc: &Document, sm: &SmartObject) -> Result<Option<Surface>> {
     }
     let img = match sm.stack_mode {
         Some(mode) => stack_image(&name, &bytes, doc.pixel_format(), mode)?,
-        None => source_image(&name, &bytes, doc.pixel_format())?,
+        None => source_image_at_time_inner(&name, &bytes, doc.pixel_format(), time, depth)?,
     };
     // Through the warp (source space) and the transform in one pass; whole-pixel moves are exact.
     let placed = match &sm.perspective {
@@ -394,13 +553,40 @@ pub fn render_below_filter(doc: &Document, sm: &SmartObject, index: usize) -> Re
 /// Re-renders smart layer `l` (which lives in `doc`) in place. Returns false if its source is
 /// unavailable (the cache is then left alone).
 pub fn refresh_layer(doc: &Document, l: &mut Layer) -> Result<bool> {
+    refresh_layer_at_time(doc, l, document_time(doc), 0)
+}
+
+fn refresh_layer_at_time(doc: &Document, l: &mut Layer, time: Option<f64>, depth: usize) -> Result<bool> {
     let LayerContent::Smart(sm) = &mut l.content else { return Ok(false) };
-    match render(doc, sm)? {
+    match render_at_time(doc, sm, time, depth)? {
         Some(px) => {
             sm.cache = Some(px);
             Ok(true)
         }
         None => Ok(false),
+    }
+}
+
+/// Refresh one animated smart object after a playhead seek. Failure leaves its previous cache
+/// intact so a malformed/missing nested source cannot blank the document.
+pub fn refresh_animated(doc: &mut Document, id: LayerId) -> Result<bool> {
+    let mut l = doc.layer(id).cloned().ok_or(EngineError::NoLayer(id))?;
+    if !matches!(l.content, LayerContent::Smart(_)) { return Ok(false); }
+    let time = document_time(doc);
+    let ok = refresh_layer_at_time(doc, &mut l, time, 0)?;
+    if ok && let Some(dst) = doc.layer_mut(id) { dst.content = l.content; }
+    Ok(ok)
+}
+
+fn refresh_document_animated(doc: &mut Document, time: f64, depth: usize) {
+    if depth >= 16 { return; }
+    let ids: Vec<_> = doc.walk().into_iter().filter_map(|(_, _, l)| matches!(l.content, LayerContent::Smart(_)).then_some(l.id)).collect();
+    for id in ids {
+        if let Some(mut l) = doc.layer(id).cloned() {
+            if refresh_layer_at_time(doc, &mut l, Some(time), depth).unwrap_or(false) {
+                if let Some(dst) = doc.layer_mut(id) { dst.content = l.content; }
+            }
+        }
     }
 }
 
@@ -581,7 +767,12 @@ fn any_layer(l: &Layer, f: &dyn Fn(&Layer) -> bool) -> bool {
 /// blend mode, clipping and label stay on the smart layer. The cache is the exact composite, so
 /// the document looks the same before and after.
 pub fn layer_to_smart(doc: &Document, l: &Layer) -> Result<Layer> {
+    layer_to_smart_with_options(doc, l, true)
+}
+
+fn layer_to_smart_with_options(doc: &Document, l: &Layer, single_existing_root: bool) -> Result<Layer> {
     let canvas = doc.bounds();
+    let video_owns_opacity = single_existing_root && l.video.as_ref().is_some_and(|v| !v.keyframes.is_empty());
     let background = l.name == "Background" && l.locks.position;
     let mut inner = l.clone();
     inner.visible = true;
@@ -601,11 +792,37 @@ pub fn layer_to_smart(doc: &Document, l: &Layer) -> Result<Layer> {
     // Pattern fills and pattern layer effects reference document-level patterns by ID.
     // Preserve those resources in the embedded document before rendering or saving it.
     sub.patterns = doc.patterns.clone();
+    // Keep the native timeline in the embedded bundle. Selected-layer snapshots remain child
+    // state; for a single selected root its visibility/opacity are moved to the replacement
+    // smart layer so normalisation above does not double-apply them.
+    if let Some(mut timeline) = doc.timeline.clone() {
+        let selected_ids: std::collections::HashSet<_> = l.children().map_or_else(|| vec![l.id], |children| children.iter().map(|c| c.id).collect()).into_iter().collect();
+        timeline.frame_states.iter_mut().for_each(|states| states.retain(|s| selected_ids.contains(&s.layer) || any_layer(l, &|x| x.id == s.layer)));
+        timeline.layer_ranges.retain(|r| selected_ids.contains(&r.layer) || any_layer(l, &|x| x.id == r.layer));
+        if single_existing_root && !video_owns_opacity {
+            for states in &mut timeline.frame_states {
+                if let Some(state) = states.iter_mut().find(|s| s.layer == l.id) {
+                    state.visible = true;
+                    state.opacity = 1.0;
+                }
+            }
+            for range in &mut timeline.layer_ranges {
+                if range.layer == l.id {
+                    range.start = 0;
+                    range.end = timeline.duration;
+                }
+            }
+        }
+        sub.timeline = Some(timeline);
+    }
     if any_layer(l, &|x| matches!(x.content, LayerContent::Smart(_))) {
         // Nested PSD placed layers find their embedded files here.
         sub.metadata.psd_global_blocks = doc.metadata.psd_global_blocks.clone();
     }
     sub.layers = vec![inner];
+    if sub.timeline.is_some() {
+        crate::video_cmds::sync_plain(&mut sub);
+    }
 
     let has_fx = any_layer(l, &|x| x.effects.enabled && !x.effects.items.is_empty());
     let region = subtree_bounds(l, canvas).union(&canvas).inflate(if has_fx { 256 } else { 0 });
@@ -618,8 +835,12 @@ pub fn layer_to_smart(doc: &Document, l: &Layer) -> Result<Layer> {
             b = b.union(&Rect::new(x, y, x + 1, y + 1));
         }
     }
-    if b.is_empty() {
-        return Err(other("the layer is empty, so there is nothing to convert"));
+    // Animated sources keep the complete canvas so later frames/keyframes cannot be clipped by
+    // the current rendered alpha bounds. Static sources retain the compact crop.
+    if sub.timeline.is_some() {
+        b = canvas;
+    } else if b.is_empty() {
+        b = canvas;
     }
     let fmt = doc.pixel_format();
     let mut cache = buffer_to_surface(&buf, fmt);
@@ -638,7 +859,7 @@ pub fn layer_to_smart(doc: &Document, l: &Layer) -> Result<Layer> {
         LayerContent::Smart(SmartObject::new(source, Affine::translate(b.x0 as f64, b.y0 as f64), Some(cache))),
     );
     out.visible = l.visible;
-    out.opacity = l.opacity;
+    out.opacity = if video_owns_opacity { 1.0 } else { l.opacity };
     out.blend = if l.blend == BlendMode::PassThrough { BlendMode::Normal } else { l.blend };
     out.clipped = l.clipped;
     out.label = l.label;
@@ -657,13 +878,29 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
         let ids = crate::layer_multi_cmds::top_level(doc, &ids);
         let top = *ids.last().ok_or_else(|| other("no layer selected"))?;
         let l = doc.layer(top).ok_or(EngineError::NoLayer(top))?;
-        let so = if ids.len() == 1 {
-            layer_to_smart(doc, l)?
+        let single_existing_root = ids.len() == 1;
+        let video_owns_opacity = l.video.as_ref().is_some_and(|v| !v.keyframes.is_empty());
+        let so = if single_existing_root {
+            layer_to_smart_with_options(doc, l, true)?
         } else {
             let children = ids.iter().map(|id| doc.layer(*id).cloned().ok_or(EngineError::NoLayer(*id))).collect::<Result<Vec<_>>>()?;
-            layer_to_smart(doc, &Layer::group(l.name.clone(), children))?
+            layer_to_smart_with_options(doc, &Layer::group(l.name.clone(), children), false)?
         };
         let new_id = so.id;
+        if let Some(t) = &mut doc.timeline {
+            if ids.len() == 1 {
+                for states in &mut t.frame_states {
+                    for state in states.iter_mut().filter(|state| state.layer == top) {
+                        state.layer = new_id;
+                        if video_owns_opacity { state.opacity = 1.0; }
+                    }
+                }
+                for range in t.layer_ranges.iter_mut().filter(|range| range.layer == top) { range.layer = new_id; }
+            } else {
+                t.frame_states.iter_mut().for_each(|states| states.retain(|state| !ids.contains(&state.layer)));
+                t.layer_ranges.retain(|range| !ids.contains(&range.layer));
+            }
+        }
         // As with Group Layers, place the result in the top selected root's parent. Insert
         // before removal so paths shifting in other parents cannot discard unselected content.
         doc.insert_above(Some(top), so);
@@ -943,6 +1180,47 @@ fn move_filter(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// Reset Smart Object transforms to the source's original scale/orientation while preserving
+/// the current visual centre. Perspective and warp data are cleared; filters, masks and source
+/// identity remain untouched. This intentionally does not unwrap or rewrite source contents.
+fn reset_transform(s: &mut Session, p: &Value) -> Result<Value> {
+    let id = layer_param(s, p)?;
+    s.edit("Reset Smart Object Transform", |doc, _| {
+        let (source_bounds, current_bounds) = {
+            let sm = smart(doc, id)?;
+            let source_bounds = source_bytes(&doc.metadata, &sm.source).and_then(|(name, bytes)| decode_source(&name, &bytes).ok().map(|d| d.bounds())).ok_or_else(|| other("the smart object's source is unavailable, so its transform can't be reset"))?;
+            let h = placement(sm);
+            let pts = [
+                h.apply(source_bounds.x0 as f64, source_bounds.y0 as f64),
+                h.apply(source_bounds.x1 as f64, source_bounds.y0 as f64),
+                h.apply(source_bounds.x0 as f64, source_bounds.y1 as f64),
+                h.apply(source_bounds.x1 as f64, source_bounds.y1 as f64),
+            ];
+            let min_x = pts.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+            let max_x = pts.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+            let min_y = pts.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+            let max_y = pts.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+            if !min_x.is_finite() || !max_x.is_finite() || !min_y.is_finite() || !max_y.is_finite() || max_x <= min_x || max_y <= min_y {
+                return Err(other("the smart object's placement is non-finite, so its transform can't be reset"));
+            }
+            (source_bounds, Rect::new(min_x.floor() as i32, min_y.floor() as i32, max_x.ceil() as i32, max_y.ceil() as i32))
+        };
+        let current_cx = (current_bounds.x0 + current_bounds.x1) as f64 / 2.0;
+        let current_cy = (current_bounds.y0 + current_bounds.y1) as f64 / 2.0;
+        let source_cx = (source_bounds.x0 + source_bounds.x1) as f64 / 2.0;
+        let source_cy = (source_bounds.y0 + source_bounds.y1) as f64 / 2.0;
+        let sm = smart_mut(doc, id)?;
+        if !current_cx.is_finite() || !current_cy.is_finite() || !source_cx.is_finite() || !source_cy.is_finite() {
+            return Err(other("the smart object's placement is non-finite, so its transform can't be reset"));
+        }
+        sm.transform = Affine::translate(current_cx - source_cx, current_cy - source_cy);
+        sm.perspective = None;
+        sm.warp = None;
+        refresh_or_fail(doc, id)?;
+        Ok(json!({"layer": id.0, "reset": true}))
+    })
+}
+
 // ---------- enablement ----------
 
 /// Whether smart-filter or contents command `spec` can run with `p`: its precondition is checked on an
@@ -1070,6 +1348,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(SmartSource::Embedded { file_name, bytes })
             })
         }),
+        spec!("layer.smartObjects.resetTransform", "Reset Transform", SO, r##"{"layer":id?} (restore source scale/orientation, preserve current centre)"##, has_smart, reset_transform),
         spec!(
             "layer.smartObjects.convertToLinked",
             "Convert to Linked…",

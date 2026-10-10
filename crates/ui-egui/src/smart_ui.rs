@@ -58,6 +58,7 @@ pub fn properties(app: &mut PhotocraftApp, ui: &mut egui::Ui, layer: &Layer) {
         if smart_button(app, ui, id, tl!("New Smart Object via Copy"), "layer.smartObjects.newSmartObjectViaCopy") {
             return;
         }
+        let _ = smart_button(app, ui, id, tl!("Reset Transform"), "layer.smartObjects.resetTransform");
     });
     ui.horizontal_wrapped(|ui| {
         if crate::menus::is_enabled(app, "layer.smartObjects.replaceContents")
