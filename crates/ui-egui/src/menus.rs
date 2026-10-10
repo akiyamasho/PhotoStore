@@ -17,7 +17,7 @@ pub(crate) fn modal_allows(app: &PhotoStoreApp, id: &str) -> bool {
 }
 
 /// Top-level menus in Photoshop order.
-pub const TOP_MENUS: [&str; 10] = ["File", "Edit", "Image", "Layer", "Type", "Select", "Filter", "View", "Window", "Help"];
+pub const TOP_MENUS: [&str; 11] = ["File", "Edit", "Image", "Layer", "Type", "Select", "Filter", "View", "Actions", "Window", "Help"];
 
 /// UI-level commands (handled by the shell rather than the engine): id, label, menu, shortcut.
 pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
@@ -79,6 +79,15 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("help.reportIssue", "Report an Issue…", &["Help"], None),
     ("help.systemInfo", "System Info…", &["Help"], None),
     ("help.about", "About PhotoStore", &["Help"], None),
+    // Procreate-style time-lapse controls live in Actions › Video. These are shell commands so
+    // the menu remains available while the engine owns recording state and export jobs.
+    ("recording.replay", "Time-lapse Replay", &["Actions", "Video"], None),
+    ("recording.toggle", "Time-lapse Recording", &["Actions", "Video"], None),
+    ("recording.export", "Export Time-lapse Video…", &["Actions", "Video"], None),
+    ("recording.settings", "Recording Settings…", &["Actions", "Video"], None),
+    ("recording.setPrivate", "Private Time-lapse Layer", &["Layer"], None),
+    ("recording.privateFile", "Insert Private File…", &["Actions", "Add"], None),
+    ("recording.privatePhoto", "Insert Private Photo…", &["Actions", "Add"], None),
 ];
 
 /// Photoshop's Window › <panel> ids for the panels the shell already has, as `window.toggle.*`.
@@ -138,6 +147,9 @@ pub fn invoke(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, params: Va
 
 /// [`invoke`] without the unsaved-changes prompt, for once the user has already answered it.
 pub(crate) fn invoke_unguarded(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, params: Value) -> Result<Value, String> {
+    if let Some(result) = crate::recording_ui::invoke(app, ctx, id, &params) {
+        return result;
+    }
     if let Some(result) = crate::movie_ui::invoke(app, ctx, id, &params) {
         return result;
     }
@@ -583,6 +595,11 @@ pub fn is_enabled(app: &PhotoStoreApp, id: &str) -> bool {
         return e;
     }
     match id {
+        "recording.replay" | "recording.export" => crate::recording_ui::has_frames(app),
+        "recording.settings" => app.session.active().is_some(),
+        "recording.toggle" => app.session.active().is_some(),
+        "recording.setPrivate" => app.session.active().and_then(|s| s.active_layer).is_some(),
+        "recording.privateFile" | "recording.privatePhoto" => app.session.active().is_some(),
         "file.open" | "file.exit" | "file.clearRecent" | "help.about" | "help.systemInfo" | "edit.search" => true,
         i if i.starts_with("file.openRecent.") => true,
         i if crate::links::url_for(i).is_some() => true,
@@ -697,6 +714,10 @@ fn checked(app: &PhotoStoreApp, id: &str) -> Option<bool> {
         "view.show.guides" => return Some(e.guides),
         "view.snap" => return Some(e.snap),
         "view.lockGuides" => return Some(e.lock_guides),
+        "recording.toggle" => return Some(crate::recording_ui::is_recording_enabled(app)),
+        "recording.setPrivate" => {
+            return Some(app.session.active().and_then(|s| s.active_layer.and_then(|id| s.doc.layer(id))).is_some_and(|l| l.private_recording));
+        }
         _ => {}
     }
     let p = &app.ui.panels;

@@ -1,8 +1,10 @@
 # Release playbook
 
-The release playbook shared by every crafting app lives in craftrules:
-[`../craftrules/release/playbook.md`](../../craftrules/release/playbook.md)
-(`storytold/craftrules`, a sibling checkout; the repository is not public). It is the canonical copy; don't duplicate it here.
+Use the repository's [release procedure](releasing.md) as the source of truth. Before a release,
+update the version with `cargo xtask version`, review the generated metadata and changelog, and
+build the packages described in `packaging/`. Verify package contents, checksums, signatures,
+bundle identifiers, and baked version/SHA values before publishing the GitHub release. Record the
+exact tag, commit, artifacts, and local install evidence in `docs/photostore-goal-ledger.md`.
 
-PhotoStore is its reference implementation (`.github/workflows/release.yml`, `packaging/`,
-`cargo xtask version`). PhotoStore-specific details are in [releasing.md](releasing.md).
+This repository owns its release procedure and does not depend on an external playbook or upstream
+community service.

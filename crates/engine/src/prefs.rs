@@ -877,6 +877,8 @@ pub struct ToolbarCustomization {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Preferences {
+    /// Disable action recording for existing and newly-created documents without erasing frames.
+    pub disable_recording: bool,
     pub general: General,
     pub interface: Interface,
     pub workspace: Workspace,
@@ -1601,6 +1603,7 @@ fn prefs_get(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn prefs_set(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "prefs.set";
+    let was_recording_disabled = s.prefs().disable_recording;
     let mut changes: Vec<(String, Value)> = Vec::new();
     if let Some(path) = p.get("path").and_then(Value::as_str) {
         changes.push((path.to_string(), p.get("value").cloned().ok_or_else(|| bad(cmd, "missing `value`"))?));
@@ -1623,12 +1626,16 @@ fn prefs_set(s: &mut Session, p: &Value) -> Result<Value> {
     // `colorSettings.blendTextGamma` lives in the compositor too, as `edit.colorSettings` sets it.
     photostore_compose::psblend::set_text_gamma(s.color.settings.blend_text_gamma);
     s.apply_prefs();
+    if s.prefs().disable_recording != was_recording_disabled {
+        for st in &mut s.docs { st.coalesce = None; }
+    }
     let view = s.prefs_view();
     let out: Map<String, Value> = changes.iter().map(|(k, _)| (k.clone(), get_path(&view, k).cloned().unwrap_or(Value::Null))).collect();
     Ok(Value::Object(out))
 }
 
 fn prefs_reset(s: &mut Session, p: &Value) -> Result<Value> {
+    let was_recording_disabled = s.prefs().disable_recording;
     let path = p.get("path").or_else(|| p.get("section")).and_then(Value::as_str);
     match path {
         Some("colorSettings") => s.color.settings = Default::default(),
@@ -1651,6 +1658,9 @@ fn prefs_reset(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     s.prefs.edit(|_| ());
+    if s.prefs().disable_recording != was_recording_disabled {
+        for st in &mut s.docs { st.coalesce = None; }
+    }
     photostore_compose::psblend::set_text_gamma(s.color.settings.blend_text_gamma);
     s.apply_prefs();
     if path.is_some_and(|path| keyed(path).is_some()) {

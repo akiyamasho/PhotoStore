@@ -393,6 +393,10 @@ pub const PLACE_EMBEDDED: &str = "Place Embedded";
 /// scaled down to fit, like Photoshop's Place with "Resize Image During Place". `linked` makes it
 /// a linked smart object that refers to that path instead of embedding the bytes.
 pub fn place_bytes(s: &mut Session, name: &str, bytes: Vec<u8>, linked: Option<String>, p: &Value) -> Result<Value> {
+    let private_recording = match p.get("private") {
+        None => false,
+        Some(v) => v.as_bool().ok_or_else(|| EngineError::BadParams { cmd: "file.placeEmbedded".into(), msg: "`private` must be boolean".into() })?,
+    };
     let d = s.active().ok_or(EngineError::NoDocument)?;
     let (cw, ch) = (d.doc.size.width as f64, d.doc.size.height as f64);
     let fmt = d.doc.pixel_format();
@@ -433,7 +437,9 @@ pub fn place_bytes(s: &mut Session, name: &str, bytes: Vec<u8>, linked: Option<S
     let layer_name = stem(name);
     let label = if matches!(so.source, SmartSource::Linked { .. }) { "Place Linked" } else { PLACE_EMBEDDED };
     let id = s.edit(label, |doc, active| {
-        let id = doc.insert_above(*active, Layer::new(layer_name, LayerContent::Smart(so)));
+        let mut layer = Layer::new(layer_name, LayerContent::Smart(so));
+        layer.private_recording = private_recording;
+        let id = doc.insert_above(*active, layer);
         *active = Some(id);
         Ok(id)
     })?;
@@ -1274,11 +1280,11 @@ pub fn specs() -> Vec<CommandSpec> {
             "Place Embedded…",
             &["File"],
             None,
-            r##"{"path":str,"scale":%? (default: fit when larger than the canvas),"fit":bool=true,"center":[x,y]?}"##,
+            r##"{"path":str,"scale":%? (default: fit when larger than the canvas),"fit":bool=true,"center":[x,y]? ,"private":bool=false (exclude from action recording)}"##,
             native_doc,
             |s, p| place(s, p, false)
         ),
-        spec!("file.placeLinked", "Place Linked…", &["File"], None, r##"{"path":str,"scale":%?,"fit":bool=true,"center":[x,y]?}"##, native_doc, |s, p| place(
+        spec!("file.placeLinked", "Place Linked…", &["File"], None, r##"{"path":str,"scale":%?,"fit":bool=true,"center":[x,y]? ,"private":bool=false (exclude from action recording)}"##, native_doc, |s, p| place(
             s, p, true
         )),
         spec!(

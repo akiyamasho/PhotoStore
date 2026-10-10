@@ -11,7 +11,7 @@ Updated 2026-10-11. This is an operational ledger for the independent PhotoStore
 - Icon direction: PhotoStore icon with the requested twist; keep the asset provenance row with the icon work.
 - README/AGENTS direction: keep badges, install, run, and contributor guidance lean and operational.
 - Branding release completed: tag `photostore-branding-2026-10-11` points to `e3703d4be2ceba37e04b81b2761f7b3acc27235b`; the [PhotoStore 0.6.1 release](https://github.com/akiyamasho/PhotoStore/releases/tag/photostore-branding-2026-10-11) contains the Apple Silicon DMG, CLI ZIP, and `SHA256SUMS`.
-- Audio work in progress remains saved locally on `codex/timeline-backfill-wip` at `923ec540620331aa888987b94003505c01e6aac4`; it was not included in this release. Restore and rebase it onto the renamed identifiers before finishing shared-audio preview/export, clip retiming, the real UI clock, and compilation.
+- Audio work in progress remains saved locally on `codex/animation-audio-backfill-wip` at `287f7c94c065d37d3bdc177c3e44f28719490e84`; it was not included in this release. Restore and rebase it onto the renamed identifiers before finishing shared-audio preview/export, clip retiming, the real UI clock, and compilation.
 - Photoshop-facing scope: timeline/frame animation and Smart Objects are first product priorities, while the inherited feature surface remains evidence to audit rather than a completeness claim.
 
 ## Evidence rules
@@ -36,6 +36,17 @@ Updated 2026-10-11. This is an operational ledger for the independent PhotoStore
 - Branding release integrity: the ARM64 build and package checks passed for bundle ID, version, baked SHA, icon, licenses, strict signatures, and checksums. The artifacts are ad hoc signed and not notarized; no broad visual QA or new feature tests were run.
 - Local install record: `/Applications/PhotoStore.app` version 0.6.1, bundle `ai.photostore.app`, installed with the matching source SHA; strict signature validation passed, startup was confirmed, and the app remains open as PID 54840. The previous app backup is preserved at `/private/tmp/photostore-reinstall-20261011.qcBCXU/previous-PhotoStore.app`.
 - This release record does not claim full visual or Photoshop acceptance; the remaining Photoshop scope and active goal are unfinished.
+
+## Next priority: action recording
+
+Action recording is the current 0.7.0 milestone, ahead of further animation backfill. Its scope and
+constraints are documented in [action-recording.md](action-recording.md). Compiler verification
+passed with the locked offline native targets; broad UI acceptance, parity, release, and install
+remain pending. The planned tag is `photostore-action-recording-2026-10-11`. The full Photoshop
+scope remains active and unfinished.
+
+The compiler check passed with `cargo check --locked --offline -j1 -p photostore -p photostore-cli
+--features heif`; the result was recorded in `/private/tmp/photostore-recording-check-20261011-rerun3.log`.
 
 ## Animation and timeline
 

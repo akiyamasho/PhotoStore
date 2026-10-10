@@ -195,6 +195,7 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
                 DialogKind::Command if crate::variables_ui::owns(&fields) => crate::variables_ui::body(app, ui, &mut fields),
                 DialogKind::Command if crate::file_ui::owns(&fields) => crate::file_ui::body(app, ui, &mut fields),
                 DialogKind::Command if crate::movie_ui::owns(&fields) => crate::movie_ui::body(ui, &mut fields),
+                DialogKind::Command if crate::recording_ui::owns(&fields) => crate::recording_ui::body(app, ui, &mut fields),
                 DialogKind::Command if crate::color_picker_ui::owns(&fields) => {
                     outcome = crate::color_picker_ui::body(ui, &mut fields);
                     crate::color_picker_ui::take_add_swatch(app, &mut fields);
@@ -245,7 +246,9 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
                             outcome = Some(false);
                         }
                     } else {
-                        let ok_label = if d.kind == DialogKind::NewDocument {
+                        let ok_label = if crate::recording_ui::is_purge_dialog(&d.fields) {
+                            "Purge"
+                        } else if d.kind == DialogKind::NewDocument {
                             tl!("Create")
                         } else if crate::delete_layer_prompt::owns(&d.fields) {
                             tl!("Delete")
@@ -259,6 +262,8 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
                         let reset = ui.input(|i| i.modifiers.alt) && crate::adjust_dialog::resets(&fields);
                         let cancel_label = if reset {
                             tl!("Reset")
+                        } else if crate::recording_ui::is_purge_dialog(&d.fields) {
+                            "Don't Purge"
                         } else if d.kind == DialogKind::NewDocument {
                             tl!("Close")
                         } else {
@@ -414,6 +419,7 @@ pub fn confirm(app: &mut PhotoStoreApp, id: u64) -> Result<Value, String> {
         DialogKind::Command if crate::variables_ui::owns(&d.fields) => crate::variables_ui::confirm(app, &d.fields),
         DialogKind::Command if crate::file_ui::owns(&d.fields) => crate::file_ui::confirm(app, &d.fields),
         DialogKind::Command if crate::movie_ui::owns(&d.fields) => crate::movie_ui::confirm(app, &d.fields),
+        DialogKind::Command if crate::recording_ui::owns(&d.fields) => crate::recording_ui::confirm(app, &d.fields),
         DialogKind::Command if crate::color_picker_ui::owns(&d.fields) => crate::color_picker_ui::confirm(app, &d.fields),
         DialogKind::Command if crate::color_range_ui::owns(&d.fields) => crate::color_range_ui::confirm(app, &d.fields),
         DialogKind::Command if crate::prefs_ui::owns(&d.fields) => crate::prefs_ui::confirm(app, &d.fields),
@@ -450,7 +456,10 @@ pub fn confirm(app: &mut PhotoStoreApp, id: u64) -> Result<Value, String> {
 
 /// Cancel a dialog and its dependent Layer Style picker, without applying edits.
 pub fn cancel(app: &mut PhotoStoreApp, id: u64) -> Result<Value, String> {
-    app.ui.close_dialog(id).ok_or_else(|| format!("no dialog {id}"))?;
+    let dialog = app.ui.close_dialog(id).ok_or_else(|| format!("no dialog {id}"))?;
+    // Turning recording off first pauses capture while the irreversible purge prompt is open;
+    // choosing “Don't Purge” keeps that paused state.
+    if dialog.kind == DialogKind::Command { crate::recording_ui::cancel_purge(app, &dialog.fields); }
     app.ui.dialogs.retain(|d| !crate::layer_style::color_picker::child_of(&d.fields, id));
     app.filter_preview = None;
     app.color_range = None;

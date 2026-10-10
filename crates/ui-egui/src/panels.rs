@@ -2255,7 +2255,8 @@ fn layer_row(
     let italic = !t.pro && l.name == "Background" && l.locks.transparency;
     // Photoshop rows show only the name; the kind sub-label is a Studio-theme addition.
     let is_pixel = t.pro || matches!(l.content, LayerContent::Raster(_));
-    let name_rect = crate::layer_row_ui::truncated(&painter, &l.name, font, name_color, italic, name_right - x).map(|galley| {
+    let display_name = if l.private_recording { format!("{}  · Private", l.name) } else { l.name.clone() };
+    let name_rect = crate::layer_row_ui::truncated(&painter, &display_name, font, name_color, italic, name_right - x).map(|galley| {
         let text_pos = pos2(x, rect.center().y - galley.size().y / 2.0 - if is_pixel { 0.0 } else { 7.0 });
         let r = Rect::from_min_size(text_pos, galley.size());
         painter.galley(text_pos, galley, name_color);

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use photostore_color::{PixelFormat, SampleType};
 use photostore_doc::{
     AlphaChannel, CompAppearance, CompLayerState, DocId, Document, Effects, FillCache, Group, Layer, LayerComp, LayerContent, LayerId, LayerMask, Metadata,
-    NamedPath, Pattern, ShapeLayer, SmartContentsId, SmartObject, SmartSource, TextLayer,
+    NamedPath, Pattern, Recording, RecordingFrame, ShapeLayer, SmartContentsId, SmartObject, SmartSource, TextLayer,
 };
 use photostore_geom::{TILE_SIZE, TileCoord};
 use photostore_raster::{Surface, Tile, decode_pixel, encode_pixel};
@@ -20,6 +20,117 @@ pub use photostore_doc::MAX_GROUP_DEPTH;
 
 fn too_deep() -> FormatError {
     FormatError::LimitExceeded(format!("layer groups nested deeper than {MAX_GROUP_DEPTH}"))
+}
+
+fn validate_recording_settings(settings: &photostore_doc::RecordingSettings) -> Result<()> {
+    let (width, height) = settings.resolution.dimensions();
+    if width == 0 || height == 0 {
+        return Err(FormatError::corrupt("recording has invalid dimensions"));
+    }
+    Ok(())
+}
+
+const MAX_RECORDING_TEXT: usize = 4096;
+
+fn recording_dimensions(bytes: &[u8], format: photostore_codecs::Format) -> Result<(u32, u32)> {
+    match format {
+        photostore_codecs::Format::Png => {
+            // PNG requires the signature followed immediately by a 13-byte IHDR chunk.
+            if bytes.len() < 33 || bytes.get(..8) != Some(b"\x89PNG\r\n\x1a\n") || bytes.get(12..16) != Some(b"IHDR") {
+                return Err(FormatError::corrupt("recording PNG has a truncated or malformed IHDR"));
+            }
+            let chunk_len = u32::from_be_bytes(bytes[8..12].try_into().map_err(|_| FormatError::corrupt("recording PNG has a malformed IHDR"))?);
+            if chunk_len != 13 {
+                return Err(FormatError::corrupt("recording PNG has an invalid IHDR length"));
+            }
+            let width = u32::from_be_bytes(bytes[16..20].try_into().map_err(|_| FormatError::corrupt("recording PNG has a malformed width"))?);
+            let height = u32::from_be_bytes(bytes[20..24].try_into().map_err(|_| FormatError::corrupt("recording PNG has a malformed height"))?);
+            if width == 0 || height == 0 {
+                return Err(FormatError::corrupt("recording PNG has zero dimensions"));
+            }
+            Ok((width, height))
+        }
+        photostore_codecs::Format::Jpeg => {
+            if bytes.len() < 4 || bytes[0..2] != [0xff, 0xd8] {
+                return Err(FormatError::corrupt("recording JPEG has a truncated SOI"));
+            }
+            let mut i = 2usize;
+            while i < bytes.len() {
+                while i < bytes.len() && bytes[i] != 0xff {
+                    i += 1;
+                }
+                while i < bytes.len() && bytes[i] == 0xff {
+                    i += 1;
+                }
+                let marker = *bytes.get(i).ok_or_else(|| FormatError::corrupt("recording JPEG has a truncated marker"))?;
+                i += 1;
+                if marker == 0xd9 || marker == 0xda {
+                    break;
+                }
+                if marker == 0xd8 || (0xd0..=0xd7).contains(&marker) || marker == 0x01 {
+                    continue;
+                }
+                let len = u16::from_be_bytes(bytes.get(i..i + 2).ok_or_else(|| FormatError::corrupt("recording JPEG has a truncated segment length"))?.try_into().map_err(|_| FormatError::corrupt("recording JPEG has a malformed segment length"))?) as usize;
+                if len < 2 || i.checked_add(len).is_none_or(|end| end > bytes.len()) {
+                    return Err(FormatError::corrupt("recording JPEG has a truncated segment"));
+                }
+                if matches!(marker, 0xc0..=0xcf) && !matches!(marker, 0xc4 | 0xc8 | 0xcc) {
+                    if len < 7 {
+                        return Err(FormatError::corrupt("recording JPEG has a malformed frame header"));
+                    }
+                    let seg = &bytes[i + 2..i + len];
+                    let height = u16::from_be_bytes([seg[1], seg[2]]) as u32;
+                    let width = u16::from_be_bytes([seg[3], seg[4]]) as u32;
+                    if width == 0 || height == 0 {
+                        return Err(FormatError::corrupt("recording JPEG has zero dimensions"));
+                    }
+                    return Ok((width, height));
+                }
+                i += len;
+            }
+            Err(FormatError::corrupt("recording JPEG has no frame header"))
+        }
+        _ => Err(FormatError::corrupt("recording frame must be PNG or JPEG")),
+    }
+}
+
+fn validate_recording_frame(bytes: &[u8], settings: &photostore_doc::RecordingSettings) -> Result<()> {
+    if bytes.len() > 64 << 20 {
+        return Err(FormatError::LimitExceeded("recording frame exceeds 64 MiB".into()));
+    }
+    let format = photostore_codecs::detect(bytes).ok_or_else(|| FormatError::corrupt("recording frame is not a recognized image"))?;
+    if !matches!(format, photostore_codecs::Format::Png | photostore_codecs::Format::Jpeg) {
+        return Err(FormatError::corrupt("recording frame must be PNG or JPEG"));
+    }
+    let (actual_width, actual_height) = recording_dimensions(bytes, format)?;
+    let (width, height) = settings.resolution.dimensions();
+    if actual_width != width || actual_height != height {
+        return Err(FormatError::corrupt(format!("recording frame dimensions {actual_width}x{actual_height} do not match {width}x{height}")));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_recording(r: &Recording) -> Result<()> {
+    validate_recording_settings(&r.settings)?;
+    if r.error.as_ref().is_some_and(|e| e.len() > MAX_RECORDING_TEXT) {
+        return Err(FormatError::LimitExceeded("recording error exceeds 4096 bytes".into()));
+    }
+    if r.frames.len() > 100_000 {
+        return Err(FormatError::LimitExceeded("recording contains more than 100000 frames".into()));
+    }
+    let mut total = 0u64;
+    for frame in r.frames.iter() {
+        if frame.action.len() > MAX_RECORDING_TEXT {
+            return Err(FormatError::LimitExceeded("recording action label exceeds 4096 bytes".into()));
+        }
+        let frame_len = frame.image.len() as u64;
+        total = total.saturating_add(frame_len);
+        if total > 256 << 20 {
+            return Err(FormatError::LimitExceeded("recording exceeds 256 MiB".into()));
+        }
+        validate_recording_frame(&frame.image, &r.settings)?;
+    }
+    Ok(())
 }
 
 /// Refuses to save a document the loader would reject for its group nesting.
@@ -210,6 +321,16 @@ fn layer_m(l: &Layer, sink: &mut dyn Sink) -> LayerM {
         blend_if: l.blend_if.clone(),
         advanced: l.advanced,
         video: l.video.as_ref().map(|v| video_m(v, sink)),
+        private_recording: l.private_recording,
+    }
+}
+
+fn recording_m(r: &Recording, sink: &mut dyn Sink) -> RecordingM {
+    RecordingM {
+        settings: r.settings.clone(),
+        enabled: r.enabled,
+        frames: r.frames.iter().map(|f| RecordingFrameM { image: sink.blob(&f.image), action: f.action.clone() }).collect(),
+        error: r.error.clone(),
     }
 }
 
@@ -260,6 +381,7 @@ pub(crate) fn doc_m(d: &Document, sink: &mut dyn Sink) -> DocM {
         notes: d.notes.clone(),
         text_styles: d.text_styles.clone(),
         slices: d.slices.clone(),
+        recording: d.recording.as_ref().map(|r| recording_m(r, sink)),
     }
 }
 
@@ -522,7 +644,36 @@ impl Loader<'_> {
             blend_if: m.blend_if.clone(),
             advanced: m.advanced,
             video: m.video.as_ref().map(|v| self.video(v)).transpose()?,
+            private_recording: m.private_recording,
         })
+    }
+
+    fn recording(&mut self, m: &RecordingM) -> Result<Option<Recording>> {
+        validate_recording_settings(&m.settings)?;
+        if m.error.as_ref().is_some_and(|e| e.len() > MAX_RECORDING_TEXT) {
+            return Err(FormatError::LimitExceeded("recording error exceeds 4096 bytes".into()));
+        }
+        if m.frames.len() > 100_000 {
+            return Err(FormatError::LimitExceeded("recording contains more than 100000 frames".into()));
+        }
+        let mut total = 0u64;
+        let mut frames = Vec::with_capacity(m.frames.len());
+        for f in &m.frames {
+            if f.action.len() > MAX_RECORDING_TEXT {
+                return Err(FormatError::LimitExceeded("recording action label exceeds 4096 bytes".into()));
+            }
+            let image = self.fetch.blob(&f.image)?;
+            if image.len() > 64 << 20 {
+                return Err(FormatError::LimitExceeded("recording frame exceeds 64 MiB".into()));
+            }
+            total = total.saturating_add(image.len() as u64);
+            if total > 256 << 20 {
+                return Err(FormatError::LimitExceeded("recording exceeds 256 MiB".into()));
+            }
+            validate_recording_frame(&image, &m.settings)?;
+            frames.push(RecordingFrame { image, action: f.action.clone() });
+        }
+        Ok(Some(Recording { settings: m.settings.clone(), enabled: m.enabled, frames: Arc::new(frames), error: m.error.clone() }))
     }
 
     pub(crate) fn document(&mut self, m: &DocM) -> Result<Document> {
@@ -618,6 +769,7 @@ impl Loader<'_> {
             notes: m.notes.clone(),
             text_styles: m.text_styles.clone(),
             slices,
+            recording: m.recording.as_ref().map(|r| self.recording(r)).transpose()?.flatten(),
         })
     }
 

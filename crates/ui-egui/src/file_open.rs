@@ -208,7 +208,16 @@ impl PhotoStoreApp {
     /// Place a file's bytes as a smart object layer (File › Place; `linked`: Place Linked, to that
     /// path), for files that weren't read from a path the command can read.
     pub(crate) fn place_bytes(&mut self, name: &str, bytes: Vec<u8>, linked: Option<String>) -> Result<serde_json::Value, String> {
-        let r = photostore_engine::file_cmds::place_bytes(&mut self.session, name, bytes, linked, &serde_json::json!({})).map_err(|e| e.to_string());
+        self.place_bytes_with_params(name, bytes, linked, serde_json::json!({}))
+    }
+
+    /// Place imported bytes while marking the layer private before the capture hook observes it.
+    pub(crate) fn place_bytes_private(&mut self, name: &str, bytes: Vec<u8>, linked: Option<String>) -> Result<serde_json::Value, String> {
+        self.place_bytes_with_params(name, bytes, linked, serde_json::json!({"private": true}))
+    }
+
+    fn place_bytes_with_params(&mut self, name: &str, bytes: Vec<u8>, linked: Option<String>, params: serde_json::Value) -> Result<serde_json::Value, String> {
+        let r = photostore_engine::file_cmds::place_bytes(&mut self.session, name, bytes, linked, &params).map_err(|e| e.to_string());
         self.sync_views();
         r
     }

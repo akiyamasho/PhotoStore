@@ -80,6 +80,8 @@ pub mod print_cmds;
 pub mod proof_sim;
 pub mod redeye_cmds;
 pub mod render_cmds;
+pub mod recording;
+pub mod recording_export;
 pub mod retouch_cmds;
 pub mod sample_cmds;
 pub mod select_extra_cmds;
@@ -496,6 +498,7 @@ impl Session {
     /// Apply an undoable edit to the active document.
     pub fn edit<R>(&mut self, label: &str, f: impl FnOnce(&mut Document, &mut Option<LayerId>) -> Result<R>) -> Result<R> {
         let restrict = self.color_restrict;
+        let recording_allowed = !self.prefs().disable_recording;
         let st = self.active_mut().ok_or(EngineError::NoDocument)?;
         let before = st.doc.clone();
         // Selecting layers is not a step, so the state this edit leaves behind targets what was
@@ -507,7 +510,13 @@ impl Session {
         if let (Some(k), Some(id)) = (restrict, active) {
             channel_cmds::restrict_to_color(&before, &mut doc, id, k);
         }
+        // Recording is session/document state rather than an undoable canvas property.  Keep
+        // the latest stream attached while the cloned document enters history.
+        let previous_recording = before.recording.clone();
         st.doc = Arc::new(doc);
+        if let Some(current) = Arc::get_mut(&mut st.doc) {
+            current.recording = previous_recording;
+        }
         st.active_layer = active;
         fix_selection(st);
         channel_cmds::fix_view(st);
@@ -518,10 +527,16 @@ impl Session {
         let unchanged = layer_multi_cmds::same_pixels(&before, &st.doc);
         let key = self.coalesce_request.clone();
         let st = self.active_mut().ok_or(EngineError::NoDocument)?;
+        let same_coalesce = key.is_some() && st.coalesce == key && st.history.can_undo();
+        if let Some(current) = Arc::get_mut(&mut st.doc) {
+            recording::capture_edit(current, &before, label, !unchanged, same_coalesce, recording_allowed);
+        }
         let layers = st.layer_target();
         if key.is_none() || st.coalesce != key || !st.history.can_undo() {
             st.history.set_current_layers(prior);
-            st.history.record(label, before, layers);
+            let mut history_before = (*before).clone();
+            history_before.recording = None;
+            st.history.record(label, Arc::new(history_before), layers);
             st.history.trim(&st.doc);
         } else {
             st.history.set_current_layers(layers);
@@ -600,8 +615,11 @@ impl Session {
         }
         let Some(st) = self.active_mut() else { return false };
         st.coalesce = None;
-        match st.history.undo(st.doc.clone()) {
+        let mut history_current = (*st.doc).clone();
+        history_current.recording = None;
+        match st.history.undo(Arc::new(history_current)) {
             Some((mut d, layers)) => {
+                let recording = st.doc.recording.clone();
                 // Save As changes file identity outside history, just like the saved path.
                 if d.name != st.doc.name {
                     Arc::make_mut(&mut d).name.clone_from(&st.doc.name);
@@ -610,6 +628,7 @@ impl Session {
                 // (it recomposited everything before).
                 let damage = layer_multi_cmds::step_damage(&d, &st.doc);
                 st.doc = d;
+                Arc::make_mut(&mut st.doc).recording = recording;
                 restore_target(st, layers);
                 st.revision += 1;
                 st.last_damage = damage;
@@ -625,13 +644,17 @@ impl Session {
         }
         let Some(st) = self.active_mut() else { return false };
         st.coalesce = None;
-        match st.history.redo(st.doc.clone()) {
+        let mut history_current = (*st.doc).clone();
+        history_current.recording = None;
+        match st.history.redo(Arc::new(history_current)) {
             Some((mut d, layers)) => {
+                let recording = st.doc.recording.clone();
                 if d.name != st.doc.name {
                     Arc::make_mut(&mut d).name.clone_from(&st.doc.name);
                 }
                 let damage = layer_multi_cmds::step_damage(&st.doc, &d);
                 st.doc = d;
+                Arc::make_mut(&mut st.doc).recording = recording;
                 restore_target(st, layers);
                 st.revision += 1;
                 st.last_damage = damage;

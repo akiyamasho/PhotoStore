@@ -98,6 +98,7 @@ pub mod menu_catalog;
 pub mod menu_nav;
 pub mod menus;
 pub mod monitor_status;
+pub mod recording_ui;
 pub mod movie_ui;
 pub mod move_lock;
 pub mod move_mods;
@@ -1378,6 +1379,7 @@ impl eframe::App for PhotoStoreApp {
         workspace_ui::windows(self, &ctx);
         palette::show(self, &ctx);
         dialogs::show(self, &ctx);
+        recording_ui::windows(self, &ctx);
         jobs_ui::dialog(self, &ctx);
         discard_ui::show(self, &ctx);
         tiff_options_ui::show(self, &ctx);
@@ -1760,9 +1762,9 @@ const ADDS_LAYER_MASK: [&str; 5] = [
 /// The New Document dialog's key in the preferences' `dialogs` map.
 const NEW_DOCUMENT: &str = "file.new";
 
-/// New Document fields its OK remembers (#1810): the size, resolution, mode, depth, background and
-/// display units. Not the name, the preset or the clipboard size.
-const NEW_DOCUMENT_REMEMBERED: [&str; 8] = ["width", "height", "resolution", "mode", "depth", "background", "__unit", "__resUnit"];
+/// New Document fields its OK remembers (#1810): the size, resolution, mode, depth, background,
+/// display units and recording settings. Not the name, the preset or the clipboard size.
+const NEW_DOCUMENT_REMEMBERED: [&str; 9] = ["width", "height", "resolution", "mode", "depth", "background", "__unit", "__resUnit", "recording"];
 
 /// A remembered value the dialog can show (a corrupt preference is ignored).
 fn remembered_new_document_value(key: &str, v: &serde_json::Value) -> bool {
@@ -1770,6 +1772,14 @@ fn remembered_new_document_value(key: &str, v: &serde_json::Value) -> bool {
         "width" | "height" => v.as_u64().is_some_and(|n| (1..=300_000).contains(&n)),
         "resolution" => v.as_f64().is_some_and(|r| r.is_finite() && r > 0.0 && r <= 30_000.0),
         "depth" => v.as_u64().is_some_and(|d| matches!(d, 1 | 8 | 16 | 32)),
+        "recording" => {
+            let Some(recording) = v.as_object() else { return false };
+            recording.len() == 4
+                && recording.get("resolution").and_then(serde_json::Value::as_str).is_some_and(|s| matches!(s, "hd1080" | "qhd2k" | "uhd4k"))
+                && recording.get("quality").and_then(serde_json::Value::as_str).is_some_and(|s| matches!(s, "low" | "good" | "studio" | "lossless"))
+                && recording.get("hevc").and_then(serde_json::Value::as_bool).is_some()
+                && recording.get("enabled").and_then(serde_json::Value::as_bool).is_some()
+        }
         _ => v.as_str().is_some_and(|s| !s.is_empty() && s.len() <= 64),
     }
 }

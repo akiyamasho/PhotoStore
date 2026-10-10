@@ -16,6 +16,7 @@ pub mod comps;
 pub mod effects;
 pub mod mode;
 pub mod pattern;
+pub mod recording;
 pub mod slices;
 pub mod text;
 pub mod text_styles;
@@ -37,6 +38,7 @@ pub use effects::{
 };
 pub use mode::{ColorTable, Duotone, DuotoneInk, StackMode};
 pub use pattern::Pattern;
+pub use recording::{Recording, RecordingFrame, RecordingQuality, RecordingResolution, RecordingSettings};
 pub use photostore_color::{BlendMode, Color, ColorMode, PixelFormat, SampleType};
 pub use photostore_geom::{Affine, Rect, Size};
 pub use photostore_raster::Surface;
@@ -625,6 +627,8 @@ pub struct Layer {
     pub advanced: AdvancedBlending,
     /// Layer › Video Layers frame stack (None for a normal layer).
     pub video: Option<VideoData>,
+    /// Excluded from native recording/export while remaining visible on the canvas.
+    pub private_recording: bool,
 }
 
 impl Layer {
@@ -651,6 +655,7 @@ impl Layer {
             blend_if: BlendIf::default(),
             advanced: AdvancedBlending::default(),
             video: None,
+            private_recording: false,
         }
     }
     pub fn raster(name: impl Into<String>, format: PixelFormat) -> Self {
@@ -825,6 +830,8 @@ pub struct Document {
     pub variables: Variables,
     /// Window › Timeline (None until a video timeline is created).
     pub timeline: Option<Timeline>,
+    /// Action-driven native recording state. New documents leave recording disabled until the engine opts in.
+    pub recording: Option<Recording>,
 }
 
 /// Where a layer lives in the tree: indices from the root down.
@@ -862,6 +869,7 @@ impl Document {
             slices: Slices::default(),
             variables: Variables::default(),
             timeline: None,
+            recording: None,
         }
     }
 

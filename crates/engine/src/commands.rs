@@ -376,6 +376,7 @@ fn build() -> Vec<CommandSpec> {
                     }
                 };
                 doc.resolution_dpi = res;
+                crate::recording::initialize_new_document(s, &mut doc, p)?;
                 let i = s.add_document(doc, None);
                 Ok(json!({ "document": i }))
             }
@@ -1189,6 +1190,7 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::trap_cmds::specs());
     v.extend(crate::timeline_cmds::specs());
     v.extend(crate::video_cmds::specs());
+    v.extend(crate::recording::specs());
     v.extend(crate::jobs::specs());
     v.extend(crate::wia_cmds::specs());
     v.extend(crate::variables_cmds::specs());

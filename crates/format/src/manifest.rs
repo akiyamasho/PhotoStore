@@ -93,6 +93,30 @@ pub struct DocM {
     /// Web slices (user and layer-based; layer ids are remapped on load).
     #[serde(default, skip_serializing_if = "photostore_doc::Slices::is_empty")]
     pub slices: photostore_doc::Slices,
+    #[serde(default)]
+    pub recording: Option<RecordingM>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecordingM {
+    #[serde(default)]
+    pub settings: photostore_doc::RecordingSettings,
+    #[serde(default = "recording_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub frames: Vec<RecordingFrameM>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecordingFrameM {
+    pub image: Hash,
+    pub action: String,
+}
+
+fn recording_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -233,6 +257,8 @@ pub struct LayerM {
     pub advanced: photostore_doc::AdvancedBlending,
     #[serde(default)]
     pub video: Option<VideoDataM>,
+    #[serde(default)]
+    pub private_recording: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

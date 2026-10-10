@@ -67,6 +67,20 @@ pub struct VideoWriterConfig {
     pub overwrite: bool,
 }
 
+/// Configuration for native action-recording movies.  This stays separate from the existing
+/// timeline writer because recording has its own codec/quality contract and must not change the
+/// meaning of existing `VideoWriterConfig` literals.
+#[derive(Clone, Debug)]
+pub(crate) struct RecordingWriterConfig {
+    pub width: u32,
+    pub height: u32,
+    pub fps: Rational,
+    pub quality: photostore_doc::RecordingQuality,
+    pub hevc: bool,
+    pub overwrite: bool,
+    pub duration_frames: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct AudioMixClip {
     pub input_path: PathBuf,
@@ -273,6 +287,119 @@ where F: FnMut(u64) -> Result<Rgba8Image> {
     if let Err(e) = write_result { let _ = fs::remove_file(&tmp); return Err(e); }
     if !status.success() { let _ = fs::remove_file(&tmp); return Err(command_error(status, &stderr, "ffmpeg")); }
     if let Err(e) = fs::rename(&tmp, output) { return Err(e.into()); }
+    temp_guard.disarm();
+    Ok(())
+}
+
+/// Stream action-recording frames to one native ffmpeg process.  The caller supplies already
+/// decoded RGBA8 frames; only one frame is resident in the caller's decoder at a time.  The
+/// temporary output is renamed only after ffmpeg succeeds, so cancellation and codec failures
+/// leave an existing destination untouched.
+pub(crate) fn write_recording_from_frames<F>(output: impl AsRef<Path>, cfg: &RecordingWriterConfig, mut frame: F, mut progress: Option<&mut ProgressFn<'_>>) -> Result<()>
+where F: FnMut(u64) -> Result<Rgba8Image> {
+    if cfg.width == 0 || cfg.height == 0 || cfg.width > MAX_DIMENSION || cfg.height > MAX_DIMENSION || !cfg.fps.valid() {
+        return Err(MediaBackendError::InvalidInput("invalid recording dimensions or frame rate".into()));
+    }
+    let output = output.as_ref();
+    let mux = match output.extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase()).as_deref() {
+        Some("mp4") => "mp4",
+        Some("mov") => "mov",
+        Some(ext) => return Err(MediaBackendError::InvalidInput(format!("recording output must use .mp4 or .mov (got .{ext})"))),
+        None => return Err(MediaBackendError::InvalidInput("recording output must have a .mp4 or .mov extension".into())),
+    };
+    let total = Some(cfg.duration_frames);
+    if cfg.duration_frames == 0 { return Err(MediaBackendError::InvalidInput("recording has no frames".into())); }
+    let parent = output.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    if !cfg.overwrite && output.exists() { return Err(MediaBackendError::InvalidInput(format!("output already exists: {}", output.display()))); }
+    let stem = output.file_name().and_then(|x| x.to_str()).unwrap_or("recording");
+    let mut tmp = parent.join(format!(".{stem}.photostore-{}.tmp", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos()));
+    let mut made = false;
+    for n in 0..100u32 {
+        match fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
+            Ok(_) => { made = true; break; },
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                tmp = parent.join(format!(".{stem}.photostore-{}-{n}.tmp", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos()));
+            },
+            Err(e) => return Err(e.into()),
+        }
+    }
+    if !made { return Err(MediaBackendError::Process("could not create unique temporary output".into())); }
+    let mut temp_guard = TempGuard::new(tmp.clone());
+    let exe = resolve_binary("PHOTOSTORE_FFMPEG", "ffmpeg").ok_or(MediaBackendError::Unsupported)?;
+    let mut cmd = Command::new(exe);
+    cmd.args(["-v", "error", "-threads", "1", "-filter_threads", "1", "-filter_complex_threads", "1", "-protocol_whitelist", "file,pipe", "-f", "rawvideo", "-pix_fmt", "rgba", "-s"])
+        .arg(format!("{}x{}", cfg.width, cfg.height))
+        .args(["-r", &format!("{}/{}", cfg.fps.num, cfg.fps.den), "-i", "pipe:0", "-an"]);
+    let lossless = matches!(cfg.quality, photostore_doc::RecordingQuality::Lossless);
+    let crf = match cfg.quality {
+        photostore_doc::RecordingQuality::Low => "28",
+        photostore_doc::RecordingQuality::Good => "21",
+        photostore_doc::RecordingQuality::Studio => "16",
+        photostore_doc::RecordingQuality::Lossless => "0",
+    };
+    if cfg.hevc {
+        if lossless {
+            // This ffmpeg build advertises gbrp for libx265. Keep the packed RGB input in a
+            // planar RGB format and ask x265 for its actual lossless mode; no RGB→YUV transform
+            // is introduced before encoding.
+            cmd.args(["-vf", "format=gbrp", "-c:v", "libx265", "-tag:v", "hvc1", "-preset", "medium", "-pix_fmt", "gbrp"]);
+        } else {
+            cmd.args(["-c:v", "libx265", "-tag:v", "hvc1", "-crf", crf, "-preset", "medium", "-pix_fmt", "yuv420p"]);
+        }
+    } else {
+        if lossless {
+            // libx264rgb avoids the RGB→YUV conversion that would make CRF 0 merely codec
+            // lossless rather than pixel lossless.
+            cmd.args(["-vf", "format=rgb24", "-c:v", "libx264rgb", "-crf", "0", "-preset", "medium", "-pix_fmt", "rgb24"]);
+        } else {
+            cmd.args(["-c:v", "libx264", "-crf", crf, "-preset", "medium", "-pix_fmt", "yuv420p"]);
+        }
+    }
+    cmd.args(["-threads:v", "1"]);
+    if cfg.hevc { cmd.args(["-x265-params", if lossless { "lossless=1:pools=none:frame-threads=1" } else { "pools=none:frame-threads=1" }]); }
+    if mux == "mp4" { cmd.args(["-movflags", "+faststart"]); }
+    cmd.args(["-f", mux, "-y"]).arg(&tmp);
+    let child = cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn()?;
+    let mut guard = ChildGuard::new(child);
+    let err_rx = stderr_drain(guard.child_mut().ok_or_else(|| MediaBackendError::Process("ffmpeg child unavailable".into()))?);
+    let mut input = guard.child_mut().and_then(|c| c.stdin.take()).ok_or_else(|| MediaBackendError::Process("ffmpeg stdin unavailable".into()))?;
+    let write_result: Result<()> = (|| {
+        let mut i = 0u64;
+        loop {
+            let Some(limit) = total else { break };
+            if i >= limit { break; }
+            let img = frame(i)?;
+            if img.width != cfg.width || img.height != cfg.height || img.pixels.len() != cfg.width as usize * cfg.height as usize * 4 {
+                return Err(MediaBackendError::InvalidInput(format!("recording frame {i} has wrong RGBA8 dimensions")));
+            }
+            input.write_all(&img.pixels)?;
+            i += 1;
+            if let Some(cb) = progress.as_deref_mut() && !cb(i, total) { return Err(MediaBackendError::Cancelled); }
+        }
+        input.flush()?;
+        Ok(())
+    })();
+    drop(input);
+    if write_result.is_err() { guard.terminate(); }
+    let status = guard.finish()?;
+    let stderr = err_rx.recv().unwrap_or_default();
+    if let Err(e) = write_result { return Err(e); }
+    if !status.success() { return Err(command_error(status, &stderr, "ffmpeg")); }
+    if cfg.overwrite {
+        fs::rename(&tmp, output)?;
+    } else {
+        // hard_link is an atomic create-new publication on the same filesystem.  Unlike a
+        // second exists check followed by rename, it cannot replace a destination that appears
+        // after the check.
+        match fs::hard_link(&tmp, output) {
+            Ok(()) => fs::remove_file(&tmp)?,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                return Err(MediaBackendError::InvalidInput(format!("output appeared during export: {}", output.display())));
+            },
+            Err(e) => return Err(e.into()),
+        }
+    }
     temp_guard.disarm();
     Ok(())
 }

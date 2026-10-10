@@ -504,6 +504,30 @@ pub fn body(app: &mut crate::PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<Strin
                 // saved preset instead restores the colour captured when it was saved.
                 f.remove("backgroundColor");
             }
+            // Time-lapse settings are fixed when the canvas is created. Existing canvases expose
+            // their captured settings read-only elsewhere; changing this form only changes the
+            // pending `file.new` payload.
+            ui.add_space(8.0);
+            small_label(ui, "Time-lapse Recording");
+            let remembered = f.get("recording").and_then(Value::as_object).filter(|recording| {
+                recording.len() == 4
+                    && recording.get("resolution").and_then(Value::as_str).is_some_and(|s| matches!(s, "hd1080" | "qhd2k" | "uhd4k"))
+                    && recording.get("quality").and_then(Value::as_str).is_some_and(|s| matches!(s, "low" | "good" | "studio" | "lossless"))
+                    && recording.get("hevc").and_then(Value::as_bool).is_some()
+                    && recording.get("enabled").and_then(Value::as_bool).is_some()
+            });
+            let mut resolution = remembered.and_then(|r| r.get("resolution")).and_then(Value::as_str).or_else(|| f.get("__recordingResolution").and_then(Value::as_str)).unwrap_or("hd1080").to_string();
+            let mut quality = remembered.and_then(|r| r.get("quality")).and_then(Value::as_str).or_else(|| f.get("__recordingQuality").and_then(Value::as_str)).unwrap_or("good").to_string();
+            let mut hevc = remembered.and_then(|r| r.get("hevc")).and_then(Value::as_bool).or_else(|| f.get("__recordingHevc").and_then(Value::as_bool)).unwrap_or(false);
+            ui.horizontal(|ui| {
+                widgets::dropdown(ui, "nd-recording-resolution", &mut resolution, &[("hd1080".into(), "HD 1080p"), ("qhd2k".into(), "2K"), ("uhd4k".into(), "4K")], 115.0);
+                widgets::dropdown(ui, "nd-recording-quality", &mut quality, &[("low".into(), "Low"), ("good".into(), "Good"), ("studio".into(), "Studio"), ("lossless".into(), "Lossless")], 100.0);
+            });
+            ui.checkbox(&mut hevc, "HEVC");
+            f.insert("__recordingResolution".into(), json!(resolution.clone()));
+            f.insert("__recordingQuality".into(), json!(quality.clone()));
+            f.insert("__recordingHevc".into(), json!(hevc));
+            f.insert("recording".into(), json!({"resolution": resolution, "quality": quality, "hevc": hevc, "enabled": true}));
             save_preset(app, ui, f);
         });
     });

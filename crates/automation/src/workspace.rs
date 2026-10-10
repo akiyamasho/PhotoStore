@@ -219,6 +219,9 @@ pub fn authorize_engine_command(id: &str, params: &Value) -> Result<(), Automati
                 | "layer.videoLayers.newVideoLayerFromFile"
                 | "layer.videoLayers.replaceFootage"
                 | "layer.videoLayers.reloadFrame"
+                | "recording.export"
+                | "recording.privateFile"
+                | "recording.privatePhoto"
         )
         || command_uses_ambient_path(id, params)
         || profile_command_may_read_ambient(id, params)
