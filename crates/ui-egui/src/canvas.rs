@@ -2741,12 +2741,13 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
             crate::canvas_tool_menu::open_transform(app, [p.x, p.y]);
         }
         let lasso_retracted = response.secondary_clicked()
+            && app.ui.transform.is_none()
             && match tool {
                 Tool::Lasso => crate::lasso_ui::undo_last_vertex(app),
                 Tool::PolygonLasso => polygon_retract(app),
                 _ => false,
             };
-        if tool == Tool::Lasso {
+        if tool == Tool::Lasso && app.ui.transform.is_none() {
             crate::lasso_ui::canvas_input(app, &ctx, &xf, &response);
             (buttons.started, buttons.dragged, buttons.stopped, buttons.clicked) = (false, false, false, false);
         }

@@ -249,3 +249,10 @@ tag. Use Cargo opt level 2, LTO disabled, one Cargo job, and offline dependency 
 single required production package uses the existing local dependency cache and limits resource
 pressure. The ad hoc macOS package is not notarized. Preview-build and screenshot receipts remain
 separate from final source/package identity and publication evidence.
+
+## 2026-10-11: 0.16.1 Free Transform pointer scaling
+
+Free Transform corner and edge drags resize freely by default; Shift constrains proportions for
+both handle types. The legacy scaling preference remains stored for compatibility but no longer
+changes the visible pointer gesture. Lasso selection state continues to receive transform pointer
+movement through drag and release.

@@ -1,8 +1,8 @@
 //! Free Transform (⌘T): bounding box with handles over the canvas, live preview, commit via the
 //! engine's `edit.transform` (one quad for scale/rotate/skew/distort/perspective).
 //!
-//! Gestures follow Photoshop CC: corner and edge drags scale proportionally (⇧ for free: an edge
-//! then stretches its one axis), ⌥ scales about the reference point, ⌘-drag a corner distorts
+//! Corner and edge drags scale freely by default; ⇧ constrains their proportions. ⌥ scales about
+//! the reference point, ⌘-drag a corner distorts
 //! (⌘⌥⇧: perspective), ⌘-drag an edge skews (⇧ along the edge), drag outside rotates (⇧ snaps to
 //! 15°), drag inside moves (⇧ locks to 8 directions), the reference point can be dragged and
 //! ⌥-click puts it under the pointer. Arrow keys nudge the box (move_mods.rs). ↩ commits, Esc
@@ -862,25 +862,20 @@ pub fn pointer(app: &mut PhotoStoreApp, ev: ToolEvent, mods: egui::Modifiers) ->
             if matches!(ev, ToolEvent::Up { .. }) {
                 pv.gesture = None;
             }
-            let legacy = app.session.prefs().general.use_legacy_free_transform;
             if let (Some(g), Some(s)) = (g, app.ui.transform.as_mut()) {
-                apply_drag(s, g, [x, y], mode_mods(t.mode, g.hit, legacy_mods(legacy, g.hit, mods)));
+                let mods = mode_mods(t.mode, g.hit, mods);
+                apply_drag(s, g, [x, y], pointer_scaling_mods(g.hit, mods));
             }
         }
     }
     true
 }
 
-/// Preferences › General › Use Legacy Free Transform, Photoshop's scaling before CC 2019: corner
-/// drags stretch freely and ⇧ keeps the proportions, edge drags stretch their one axis whatever
-/// the keys. The default is proportional for both, with ⇧ freeing them.
-fn legacy_mods(legacy: bool, hit: Hit, mut mods: egui::Modifiers) -> egui::Modifiers {
-    if legacy && !mods.command {
-        match hit {
-            Hit::Corner(_) => mods.shift = !mods.shift,
-            Hit::Edge(_) => mods.shift = true,
-            _ => {}
-        }
+/// `apply_drag` uses Shift for free scaling, while the Free Transform pointer gesture uses Shift
+/// to constrain proportions. Keep this adapter local so Type Transform can retain its own keys.
+fn pointer_scaling_mods(hit: Hit, mut mods: egui::Modifiers) -> egui::Modifiers {
+    if !mods.command && matches!(hit, Hit::Corner(_) | Hit::Edge(_)) {
+        mods.shift = !mods.shift;
     }
     mods
 }
@@ -1069,8 +1064,8 @@ pub(crate) fn apply_drag(s: &mut TransformSession, g: Gesture, p: [f64; 2], mods
                     r[1] = 2.0 * pv - r[3];
                 }
             }
-            // Corners and edges scale proportionally by default; ⇧ frees them (the legacy
-            // preference swaps the two for corners and always stretches edges, `legacy_mods`).
+            // `apply_drag` uses Shift to select free scaling; the pointer adapter maps the visible
+            // Free Transform gesture (⇧ constrains) to that shared convention.
             let corner = matches!(g.hit, Hit::Corner(_));
             if !corner && !mods.shift {
                 // An edge sets the scale of its own axis, and the other axis follows by the same
@@ -1091,7 +1086,9 @@ pub(crate) fn apply_drag(s: &mut TransformSession, g: Gesture, p: [f64; 2], mods
             }
             if corner && !mods.shift {
                 let (sx, sy) = (r[2] - r[0], r[3] - r[1]);
-                let k = if sx.abs() > sy.abs() { sx.abs() } else { sy.abs() };
+                // Choose the axis that moved furthest from its original unit scale. Choosing the
+                // larger absolute scale gets stuck at 1 when the other axis has not moved inward.
+                let k = if (sx.abs() - 1.0).abs() >= (sy.abs() - 1.0).abs() { sx.abs() } else { sy.abs() };
                 let (nx, ny) = (k * sx.signum(), k * sy.signum());
                 let (ax, ay) = if mods.alt { (pu, pv) } else { (if mu.0 { r[2] } else { r[0] }, if mv.0 { r[3] } else { r[1] }) };
                 let fx = if mods.alt {
@@ -2222,6 +2219,10 @@ mod tests {
         let mut s = session();
         drag(&mut s, [100.0, 50.0], [200.0, 60.0], egui::Modifiers::NONE);
         assert!(close(s.quad, corners([0.0, 0.0, 200.0, 100.0])), "{:?}", s.quad);
+        // Inward on one axis must use that axis as the scale driver; the stationary axis is 1.
+        let mut s = session();
+        drag(&mut s, [100.0, 50.0], [50.0, 50.0], egui::Modifiers::NONE);
+        assert!(close(s.quad, corners([0.0, 0.0, 50.0, 25.0])), "inward proportional scale: {:?}", s.quad);
         let mut s = session();
         drag(&mut s, [100.0, 50.0], [200.0, 60.0], egui::Modifiers::SHIFT);
         assert!(close(s.quad, corners([0.0, 0.0, 200.0, 60.0])), "shift = free: {:?}", s.quad);
@@ -2713,23 +2714,18 @@ mod tests {
     }
 
     #[test]
-    fn the_legacy_preference_swaps_corner_proportions_and_stretches_edges() {
+    fn free_transform_pointer_uses_shift_to_constrain_for_corners_and_edges() {
         let none = egui::Modifiers::NONE;
         let corner = Hit::Corner(1);
         let edge = Hit::Edge(1);
-        // Default: proportional (⇧ frees), so the drag keeps its keys.
-        assert!(!legacy_mods(false, corner, none).shift);
-        assert!(!legacy_mods(false, edge, none).shift);
-        // Legacy: corners free by default, ⇧ keeps proportions; edges always stretch one axis;
-        // ⌘ gestures are left alone.
-        assert!(legacy_mods(true, corner, none).shift);
-        assert!(!legacy_mods(true, corner, egui::Modifiers::SHIFT).shift);
-        assert!(legacy_mods(true, edge, none).shift);
-        assert!(legacy_mods(true, edge, egui::Modifiers::SHIFT).shift);
-        assert!(!legacy_mods(true, corner, egui::Modifiers::COMMAND).shift);
-        assert!(!legacy_mods(true, edge, egui::Modifiers::COMMAND).shift);
-        // Through the box: a plain corner drag, then a plain right-edge drag, on a 16×16 square.
-        for (legacy, proportional) in [(false, true), (true, false)] {
+        assert!(pointer_scaling_mods(corner, none).shift);
+        assert!(pointer_scaling_mods(edge, none).shift);
+        assert!(!pointer_scaling_mods(corner, egui::Modifiers::SHIFT).shift);
+        assert!(!pointer_scaling_mods(edge, egui::Modifiers::SHIFT).shift);
+        assert!(!pointer_scaling_mods(corner, egui::Modifiers::COMMAND).shift);
+        assert!(!pointer_scaling_mods(edge, egui::Modifiers::COMMAND).shift);
+        // The legacy preference no longer changes the visible gesture, for either handle kind.
+        for legacy in [false, true] {
             for at_edge in [false, true] {
                 let mut app = app_with_square(64, photostore_geom::Rect::new(8, 8, 24, 24));
                 app.ui.extras.snap = false;
@@ -2740,7 +2736,13 @@ mod tests {
                 press_drag(&mut app, from, [from[0] + 16.0, from[1]], none);
                 let q = app.ui.transform.as_ref().unwrap().quad;
                 let (w, h) = (q[2][0] - q[0][0], q[2][1] - q[0][1]);
-                assert_eq!((w - h).abs() < 1e-6, proportional, "legacy {legacy}, edge {at_edge}: {w} × {h}");
+                assert!((w - h).abs() > 1e-6, "unconstrained legacy {legacy}, edge {at_edge}: {w} × {h}");
+                let ratio = w / h;
+                let from = if at_edge { [q[1][0], (q[1][1] + q[2][1]) / 2.0] } else { q[2] };
+                press_drag(&mut app, from, [from[0] + 16.0, from[1]], egui::Modifiers::SHIFT);
+                let q = app.ui.transform.as_ref().unwrap().quad;
+                let (w, h) = (q[2][0] - q[0][0], q[2][1] - q[0][1]);
+                assert!((w / h - ratio).abs() < 1e-6, "constrained legacy {legacy}, edge {at_edge}: {w} × {h}, ratio {ratio}");
             }
         }
     }
