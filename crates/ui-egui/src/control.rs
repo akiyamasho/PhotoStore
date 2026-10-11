@@ -963,7 +963,16 @@ fn dev_reload_blocker(app: &PhotoStoreApp) -> Option<&'static str> {
     if !app.jobs.saves.is_empty() {
         return Some("dev reload deferred while documents are saving");
     }
-    if !app.ui.dialogs.is_empty() || app.ui.shell.dialog.is_some() || app.camera_raw.is_some() || app.distort.active() || app.distort.gallery.is_some() {
+    if !app.jobs.opens.is_empty() {
+        return Some("dev reload deferred while documents are opening");
+    }
+    if !app.ui.dialogs.is_empty()
+        || app.ui.shell.dialog.is_some()
+        || app.camera_raw.is_some()
+        || app.distort.active()
+        || app.distort.gallery.is_some()
+        || app.discard.is_some()
+    {
         return Some("dev reload deferred while a dialog or modal editing session is open");
     }
     None

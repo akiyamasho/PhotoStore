@@ -29,6 +29,7 @@ PENDING = STATE / "pending.json"
 BACKGROUND_BUNDLE = RUNTIME / "PhotoStore-dev.app"
 EXCLUDED = {".git", "target", "node_modules", "docs", ".codex", "dev-runtime", "screenshots"}
 SUFFIXES = {".rs", ".toml", ".lock", ".json", ".ron", ".wgsl", ".glsl", ".metal", ".plist", ".sh", ".py", ".svg", ".icns", ".ttf", ".otf", ".png"}
+LAST_DEFERRED = ""
 
 
 def log(message: str) -> None:
@@ -70,7 +71,10 @@ def source_files() -> list[Path]:
 def fingerprint() -> str:
     digest = hashlib.sha256()
     for path in source_files():
-        stat = path.stat()
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
         digest.update(str(path.relative_to(ROOT)).encode())
         digest.update(f"{stat.st_mtime_ns}:{stat.st_size}".encode())
     return digest.hexdigest()
@@ -134,6 +138,11 @@ def build() -> tuple[Path, str, str] | None:
         shutil.copy2(source, temp)
         os.chmod(temp, 0o755)
         os.replace(temp, frozen)
+        copied_marker = subprocess.run([str(frozen), "--version"], check=True, text=True, capture_output=True, timeout=5).stdout
+        if "PhotoStore-dev build" not in copied_marker or commit[:9] not in copied_marker:
+            frozen.unlink(missing_ok=True)
+            log("[build] copied frozen binary failed provenance validation")
+            return None
     return frozen, name, before
 
 
@@ -144,18 +153,27 @@ def choose_port() -> int:
 
 
 class OwnedProcess:
-    def __init__(self, pid: int, process: subprocess.Popen[bytes] | None = None) -> None:
+    def __init__(self, pid: int, process: subprocess.Popen[bytes] | None = None, binary: Path | None = None, port: int = 0) -> None:
         self.pid = pid
         self.process = process
+        self.binary = str(binary) if binary else None
+        self.port = port
 
     def poll(self) -> int | None:
         if self.process is not None:
             return self.process.poll()
-        try:
-            os.kill(self.pid, 0)
-        except OSError:
+        command = ps_command(self.pid)
+        if command is None or (self.binary and not command.startswith(self.binary)) or (self.port and f"--control {self.port}" not in command) or (self.binary and str(TOKEN) not in command):
             return 1
         return None
+
+
+def ps_command(pid: int) -> str | None:
+    for line in subprocess.run(["/bin/ps", "-axo", "pid=,command="], text=True, capture_output=True, check=True).stdout.splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) == 2 and fields[0].isdigit() and int(fields[0]) == pid:
+            return fields[1]
+    return None
 
 
 def background_bundle(binary: Path) -> None:
@@ -181,26 +199,28 @@ def start(binary: Path, name: str) -> tuple[OwnedProcess, int]:
     args = [str(binary), "--control", str(port), "--control-token-file", str(TOKEN), "--automation-read-root", str(ROOT), "--automation-write-root", str(ROOT)]
     if env.get("PHOTOSTORE_DEV_BACKGROUND") == "1" and sys.platform == "darwin":
         background_bundle(binary)
-        subprocess.run(["open", "-g", "-j", str(BACKGROUND_BUNDLE), "--args", *args], cwd=ROOT, env=env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["open", "-n", "-g", "-j", str(BACKGROUND_BUNDLE), "--args", *args[1:]], cwd=ROOT, env=env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         pid = None
         for _ in range(50):
             lines = subprocess.run(["/bin/ps", "-axo", "pid=,command="], text=True, capture_output=True, check=True).stdout.splitlines()
-            matches = [int(line.split(None, 1)[0]) for line in lines if str(binary) in line]
+            matches = [int(line.split(None, 1)[0]) for line in lines if len(line.split(None, 1)) == 2 and line.split(None, 1)[1].startswith(str(binary))]
             if matches:
                 pid = matches[-1]
                 break
             time.sleep(0.1)
         if pid is None:
             raise RuntimeError("background PhotoStore child did not appear")
-        child = OwnedProcess(pid)
+        child = OwnedProcess(pid, binary=binary, port=port)
     else:
-        child = OwnedProcess(subprocess.Popen(args, cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).pid)
+        process = subprocess.Popen(args, cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        child = OwnedProcess(process.pid, process, binary, port)
     atomic_write(STATE / "child.json", json.dumps({"pid": child.pid, "binary": str(binary), "runtime": name, "port": port}).encode())
     log(f"[app] started pid={child.pid} runtime={name}")
     return child, port
 
 
 def request_reload(child: OwnedProcess, port: int) -> bool:
+    global LAST_DEFERRED
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=1.0) as conn:
             reader = conn.makefile("rb")
@@ -211,7 +231,10 @@ def request_reload(child: OwnedProcess, port: int) -> bool:
             reply = json.loads(reader.readline())
             if reply.get("ok"):
                 return True
-            log(f"[reload] deferred: {reply.get('error', 'unknown reason')}")
+            reason = reply.get("error", "unknown reason")
+            if reason != LAST_DEFERRED:
+                log(f"[reload] deferred: {reason}")
+                LAST_DEFERRED = reason
             return False
     except (OSError, ValueError, json.JSONDecodeError):
         return child.poll() is not None
@@ -238,7 +261,8 @@ def child_lease_live() -> bool:
         if not isinstance(pid, int) or not isinstance(binary, str):
             return False
         os.kill(pid, 0)
-        return any(str(pid) in line and binary in line for line in subprocess.run(["/bin/ps", "-axo", "pid=,command="], text=True, capture_output=True, check=True).stdout.splitlines())
+        command = ps_command(pid)
+        return command is not None and command.startswith(binary) and Path(binary).is_relative_to(RUNTIME)
     except (OSError, ValueError, json.JSONDecodeError):
         return False
 
@@ -310,7 +334,7 @@ def run(once: bool) -> int:
                         if child.poll() is not None:
                             child = None
                             write_lease(None, None)
-                    elif pending is not None and pending.get("source") == current:
+                    elif pending is not None and pending.get("source") == current and time.monotonic() >= retry_at:
                         retry_at = time.monotonic() + 2.0
                 if once:
                     return 0
