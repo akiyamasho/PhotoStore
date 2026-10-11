@@ -337,7 +337,11 @@ impl LiveRetouch {
     /// Start a live stroke of `cmd` (`paint.cloneStamp`, `paint.healingBrush` or
     /// `paint.historyBrush`) from its params; their `points` are rendered.
     pub fn begin(s: &Session, cmd: &str, p: &Value) -> Result<Self> {
-        has_pixel_layer(s).map_err(EngineError::Other)?;
+        let params = crate::channel_cmds::inject_target(s, cmd, p.clone());
+        if let Some(reason) = s.disabled_reason_with(cmd, &params) {
+            return Err(EngineError::Disabled(cmd.into(), reason));
+        }
+        let p = &params;
         let (stroke, id) = parse_brush(s, p, cmd)?;
         let mode = blend_param(p, cmd)?;
         let paint = match cmd {
@@ -918,7 +922,11 @@ pub struct LiveDab {
 impl LiveDab {
     /// Start a live stroke of `cmd` from its params; their `points` are rendered.
     pub fn begin(s: &Session, cmd: &str, p: &Value) -> Result<Self> {
-        has_pixel_layer(s).map_err(EngineError::Other)?;
+        let params = crate::channel_cmds::inject_target(s, cmd, p.clone());
+        if let Some(reason) = s.disabled_reason_with(cmd, &params) {
+            return Err(EngineError::Disabled(cmd.into(), reason));
+        }
+        let p = &params;
         if sample_all_layers(p) {
             return Err(bad(cmd, "Sample All Layers strokes aren't previewed live"));
         }

@@ -67,10 +67,10 @@ The upcoming release combines Audio, Smart Filter Masks, and the New Document Fi
 4. Smart Filter mask engine — implemented and compiler-verified.
 5. Smart Filter mask UI — implemented and compiler-verified.
 6. Movie reload/audio reprobe and split-envelope fixes — implemented and compiler-verified; arbitrary split-segment replacement remains open.
-7. Native compiler gate — complete; exit 0 in 30.41 seconds, log `/private/tmp/photostore-smart-mask-newdoc-check-20261011-rerun.log`.
+7. Native compiler gate — complete; the earlier gate exited 0 in 30.41 seconds, and the final live-mask/target-aware gate exited 0 in 4.27 seconds. Final log: `/private/tmp/photostore-smart-mask-newdoc-check-20261011-final.log`.
 8. Documentation and version update — complete; 0.8.0 version/docs preparation is ready.
-9. Commit and push — pending.
-10. Tag — pending.
+9. Commit and push — initial source commit `d50d5cd4b08f48b1093b1e52f08eb349601058f1` is pushed; the final live-mask correction commit is pending.
+10. Tag — held pending the final live-mask correction; no 0.8.0 release exists yet.
 11. Build and publish release — pending.
 12. Reinstall and confirm New Document creation — pending. The installed 0.7.0 app visibly confirmed the prior `file.new` invalid-parameter error (`recording` unknown) through read-only accessibility inspection; that specific cause is fixed, and confirmation is planned after the 0.8.0 reinstall.
 

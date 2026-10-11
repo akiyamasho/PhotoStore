@@ -377,7 +377,13 @@ impl LiveStroke {
     /// Start a live stroke of `cmd`: `paint.stroke` (the Brush and Eraser) or `paint.pencil`.
     /// Committing `cmd` with the same params and `"seed": live.seed` gives the same pixels.
     pub fn begin_with(s: &Session, cmd: &str, p: &Value) -> Result<Self> {
-        has_paintable(s).map_err(EngineError::Other)?;
+        // Resolve the Channels/mask view target before checking the paintable precondition.
+        // Smart Filter mask view can be painted even when the layer has no ordinary mask.
+        let params = crate::channel_cmds::inject_target(s, cmd, p.clone());
+        if let Some(reason) = s.disabled_reason_with(cmd, &params) {
+            return Err(EngineError::Disabled(cmd.into(), reason));
+        }
+        let p = &params;
         let pts = parse_points(p, cmd)?;
         let pencil = match cmd {
             "paint.stroke" => false,
