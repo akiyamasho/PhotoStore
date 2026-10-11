@@ -15,7 +15,7 @@ This is the working roadmap for the independent PhotoStore product. It records t
 
 ## Priorities
 
-1. Complete the current 0.14.0 close-safety and timeline-persistence development pass. Version/docs, the 33.04-second compiler gate, the 5m32s preview build marked `preview-0.14.0-timeline-safety`, and targeted screenshots are complete. The separate PhotoStore-dev identity/configuration is implemented; development packaging, exact-SHA package delivery, and background installation remain pending. No production tag or release is planned. Stopwatches and full Photoshop parity remain future work.
+1. Complete the current 0.14.0 close-safety and timeline-persistence development pass. Version/docs, the 33.04-second compiler gate, the 5m32s preview build marked `preview-0.14.0-timeline-safety`, targeted screenshots, PhotoStore-dev isolation, and the isolated development compiler gate are complete. Development commit/push, exact-SHA package delivery, and background installation remain pending. No production tag or release is planned. Stopwatches and full Photoshop parity remain future work.
 2. Deepen Smart Objects with contents editing, shared contents identity, smart-filter editing, linked-source workflows, and faithful PSD acceptance.
 3. Improve brush behavior and interaction: pressure/tilt/rotation dynamics, smoothing, presets, tablet edge cases, deterministic replay, and responsive large-document painting.
 4. Harden PSD and command coverage around the workflows PhotoStore promises. Add focused fixtures and measurements when a feature is implemented; avoid claiming parity before it is measured.

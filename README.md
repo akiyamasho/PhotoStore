@@ -30,13 +30,8 @@ open -a PhotoStore
 
 ## Latest screenshots
 
-The 0.14.0 development capture records the close guard retaining its document after Escape and a
-reopened timeline/video thumbnail. The canvas is clipped in the timeline capture; it does not claim
-that a full painted stroke is visible.
+0.14.0 development preview — [capture evidence](docs/screenshots/0.14.0/evidence.md).
 
-![Close guard modal retaining the document after Escape](docs/screenshots/0.14.0/unsaved-quit-cancel.webp)
+![Unsaved-change guard](docs/screenshots/0.14.0/unsaved-quit-cancel.webp)
 
-![Reopened timeline and video thumbnail with painted frame data](docs/screenshots/0.14.0/timeline-saved-reopened.webp)
-
-See the [0.14.0 screenshot evidence and gallery](docs/screenshots/0.14.0/evidence.md) for capture
-scope, demo-document details, and known limits.
+![Reopened video timeline](docs/screenshots/0.14.0/timeline-saved-reopened.webp)

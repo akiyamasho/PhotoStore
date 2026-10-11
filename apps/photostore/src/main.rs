@@ -50,6 +50,9 @@ mod ui_state;
 use photostore_engine::Session;
 use photostore_ui_egui::PhotoStoreApp;
 
+fn build_variant() -> &'static str {
+    if photostore_engine::build_info::is_dev_build() { "PhotoStore-dev build" } else { "PhotoStore production build" }
+}
 /// Windows and Linux: no OS title bar; the app's top bar is the title bar, with its own caption
 /// buttons and edge resizing (`photostore_ui_egui::titlebar`), as Photoshop does on Windows. macOS
 /// keeps its traffic lights over the integrated title strip.
@@ -175,7 +178,7 @@ fn main() -> eframe::Result {
             Some("--safe-gpu") => safe_gpu = true,
             Some("--in-window-menus") => in_window_menus = true,
             Some("--version") => {
-                println!("photostore {}", photostore_engine::build_info::long_version());
+                println!("photostore {} ({})", photostore_engine::build_info::long_version(), build_variant());
                 return Ok(());
             }
             // Old macOS passes a process serial number when launched from Finder.

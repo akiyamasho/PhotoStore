@@ -301,7 +301,7 @@ fn preference_uses_ambient_filesystem(path: &str) -> bool {
     // The engine skips empty segments (`.scriptEvents.enabled` sets `scriptEvents.enabled`), so
     // judge the first non-empty one; no segment at all is the whole-preferences update.
     let Some(section) = path.split('.').find(|segment| !segment.is_empty()) else { return true };
-    matches!(section, "colorSettings" | "scriptEvents" | "historyLog" | "plugIns" | "scratchDisks")
+    matches!(section, "colorSettings" | "scriptEvents" | "historyLog" | "plugIns" | "scratchDisks" | "shortcutFile")
 }
 
 fn command_uses_ambient_path(id: &str, params: &Value) -> bool {
@@ -674,6 +674,7 @@ mod tests {
             ".historyLog.filePath",
             "plugIns.additionalPluginsFolder",
             "scratchDisks.disks",
+            "shortcutFile",
             ".",
             "..historyLog.filePath",
         ] {

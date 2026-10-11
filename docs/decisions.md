@@ -61,10 +61,12 @@ KYS import remains supported; KYS export is not claimed.
 
 The 0.14.0 pass removes the application-quit bypass, resets close intent on Cancel, and targets
 selective same-playhead post-edit video-surface and dense-property persistence before history/save.
-The 33.04-second compiler gate, 5m32s preview build, native 8,314-byte demo proof, and targeted
-captures are complete. Dense-property runtime behavior remains unverified. This is a development
+The 33.04-second compiler gate, 5m32s preview build, native 8,314-byte demo proof, targeted
+captures, and isolated development compiler gate are complete. The latter exited 0; its log is
+`/private/tmp/photostore-0.14.0-dev-check-20261011.log`. Dense-property runtime behavior remains unverified. This is a development
 branch milestone using the separate PhotoStore-dev identity/configuration and hidden background
-launches; no production tag or release is planned. The behavior remains bounded and evidence-gated;
+launches; development commit/push, exact-SHA package, and installation remain pending. No production
+tag or release is planned. The behavior remains bounded and evidence-gated;
 no complete timeline persistence or Photoshop parity claim is made.
 
 ## 2026-10-10: Smart Object contents identity (#2163)
@@ -72,3 +74,14 @@ no complete timeline persistence or Photoshop parity claim is made.
 Smart Object instances carry a document-scoped contents ID separately from their layer ID. Normal duplicates preserve it; New Smart Object via Copy creates a new one. Contents edits update the matching instances together, retaining their individual placement and filters. Copies into another document remap contents IDs as a batch, preserving sharing within the copied layers without joining existing destination objects.
 
 Native files persist this ID. Legacy embedded objects without an ID remain independent: identical file bytes do not prove that two objects were intended to share edits. Legacy nonempty linked paths and PSD source identifiers retain their explicit sharing relationship. PSD export keys embedded sources by contents identity as well as bytes, so independent equal-content objects stay independent.
+
+## 2026-10-11: Native shortcut-file autosave (#4)
+
+`shortcutFile` is an optional stored preference (serialized as `shortcutFile`) with an empty
+default. The engine validates the path but performs no filesystem I/O; the native shell writes the
+existing version-1 `photostore-shortcuts` JSON only after accepted shortcut changes are saved. The
+native target must be absolute, end in `.json`, and use an existing parent directory. Export errors
+remain pending for the bounded preferences retry and report that preferences themselves were saved;
+the last successful `(path, encoded shortcuts)` snapshot is retained to avoid rewriting it for
+unrelated preference changes. Existing preference files remain compatible because the field is
+optional, and web shells leave the control unavailable when native persistence is unsupported.

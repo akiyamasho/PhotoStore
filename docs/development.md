@@ -52,7 +52,7 @@ The script sets the compile-time development identity, builds with HEIF support,
 signed PhotoStore-dev.app to dist/release/dev/PhotoStore-dev-<commit>.app. It uses the shared
 Cargo target directory and leaves the unique assembly directory in /tmp for inspection. Use
 --skip-build only with an already-built arm64 binary whose --version output contains the workspace
-version, commit short SHA, and [dev] marker. The resulting plist uses ai.photostore.dev,
+version, commit short SHA, and [dev] marker. The resulting plist uses ai.photostore.app.dev,
 PhotoStore-dev, and the full commit SHA, and omits document type and UTI declarations; manual
 File > Open still works.
 

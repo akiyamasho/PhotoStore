@@ -39,12 +39,15 @@ if [ "$SKIP_BUILD" = 0 ]; then
   (
     cd "$ROOT"
     CARGO_BUILD_JOBS=1 \
+    RAYON_NUM_THREADS=1 \
+    CARGO_NET_OFFLINE=true \
     CARGO_PROFILE_RELEASE_OPT_LEVEL=2 \
     CARGO_PROFILE_RELEASE_LTO=false \
     CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+    CARGO_PROFILE_RELEASE_DEBUG=0 \
     PHOTOSTORE_BUILD_SHA="$FULL_SHA" \
     PHOTOSTORE_DEV_BUILD=1 \
-      nice -n 10 cargo build --release --locked -p photostore --features heif --target "$TARGET"
+      nice -n 10 cargo build --release --locked --offline -p photostore --features heif,dev-install --target "$TARGET"
   )
 else
   echo "==> using existing arm64 binary (--skip-build)"
@@ -76,11 +79,12 @@ cp "$HERE/Info.plist.in" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName PhotoStore-dev" \
   -c "Set :CFBundleName PhotoStore-dev" \
   -c "Set :CFBundleExecutable PhotoStore-dev" \
-  -c "Set :CFBundleIdentifier ai.photostore.dev" \
+  -c "Set :CFBundleIdentifier ai.photostore.app.dev" \
   -c "Set :CFBundleShortVersionString $SHORT_VERSION" \
-  -c "Set :CFBundleVersion $FULL_SHA" \
+  -c "Set :CFBundleVersion $SHORT_VERSION" \
   -c "Set :PhotoStoreVersion $VERSION [dev]" \
   -c "Set :PhotoStoreBuildCommit $FULL_SHA" \
+  -c "Add :PhotoStoreBuildVariant string PhotoStore-dev" \
   -c "Delete :CFBundleDocumentTypes" \
   -c "Delete :UTExportedTypeDeclarations" \
   -c "Delete :UTImportedTypeDeclarations" \

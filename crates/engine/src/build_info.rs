@@ -18,7 +18,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The selector is deliberately compile time only. A running binary cannot be switched between
 /// production and development identities by changing its shell environment.
 pub fn is_dev_build() -> bool {
-    option_env!("PHOTOSTORE_DEV_BUILD") == Some("1")
+    option_env!("PHOTOSTORE_DEV_BUILD") == Some("1") || cfg!(feature = "dev-install")
 }
 
 /// The user-facing application name for this binary.
@@ -28,7 +28,7 @@ pub fn app_name() -> &'static str {
 
 /// The native application identifier for this binary.
 pub fn app_id() -> &'static str {
-    if is_dev_build() { "ai.photostore.dev" } else { "ai.photostore.app" }
+    if is_dev_build() { "ai.photostore.app.dev" } else { "ai.photostore.app" }
 }
 
 /// The full git commit this build was made from, when the build environment recorded it.

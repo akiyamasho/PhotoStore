@@ -8,6 +8,7 @@ license.workspace = true
 workspace = true
 
 [features]
+dev-install = []
 # Real-file corpus tests (opt-in; `cargo xtask test-corpus`). Fail when the corpus is missing.
 corpus = []
 
