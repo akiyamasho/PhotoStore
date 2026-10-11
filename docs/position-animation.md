@@ -1,8 +1,8 @@
 # Position animation development
 
 This document describes the current PhotoStore development version, kept at 0.16.0, for independent
-layer Position animation. It is a development design and implementation record; compiler,
-package, source-commit, install, runtime, and visual evidence are still pending.
+layer Position animation. It is a development design and implementation record. Local
+compile/package/install/native-runtime evidence passed; visual acceptance remains pending.
 
 ## Product boundary
 
@@ -12,9 +12,10 @@ configuration are separate from production and from the other goal applications.
 file associations. Production and consolidated goal applications remain untouched. Version remains
 0.16.0 for this development pass; no whole-workspace version rebuild is part of this pass.
 
-The source commit SHA is pending the root delivery record and must be filled from the actual source
-commit. The base planning reference is exactly `fd414d2ed15c27ff323b19fcf6ae84351b3a4557`; it is
-not the candidate source SHA.
+The baked source commit SHA is `a4c52a3f2ec39e122ab5d145b6dd8b6b398b4316`, read from
+`/Applications/PhotoStore-dev-position-animation.app/Contents/Info.plist` as `PhotoStoreBuildCommit`.
+The base planning reference is exactly `fd414d2ed15c27ff323b19fcf6ae84351b3a4557`; it is not the
+candidate source SHA.
 
 ## Contract
 
@@ -29,9 +30,12 @@ full Smart affine transform remain future scope. Existing legacy video XY and in
 behavior remain supported unchanged.
 
 The engine exposes `set/togglePositionAnimation`, `set/deletePositionKeyframe`, and
-`timeline.setPosition`. Move, nudge, align, distribute, linked, group, and descendant operations
-key at the playhead by applying the actual movement. Generic bounding-box painting does not create
-keys. First enable migrates legacy dense Position snapshots to bounded Hold keys and reconciles the
+`timeline.setPosition`. Movement updates the first owned Position ancestor, adding or updating a key
+when enabled and changing static Position when disabled; unowned groups recurse, and a direct child
+move keys that child. This prevents a parent wrapper and child curve from receiving the same movement
+twice. Generic
+bounding-box painting does not create keys. First enable migrates legacy dense Position snapshots to
+bounded Hold keys and reconciles the
 baseline with the current pose; future keys are retained. Enabling an already-enabled track is a
 no-op. Disabling or deleting the last key freezes the playhead pose and clears owned keys; a later
 enable starts a fresh static point.
@@ -58,16 +62,19 @@ pose and clear tracks.
 
 ## Current development status
 
-The current bounded pass has three milestones: engine (2 steps), UI (2 steps), and delivery (4
-steps). The source is frozen, implemented, and root-reviewed; engine and UI are complete, while
-delivery remains pending. Its four delivery steps are the source checkpoint, mandatory
-`package-dev.sh` compile/package gate, own install, and the focused background test plus receipt and
-private branch push. Standalone checks did not compile the candidate: the earlier check ended after
-405.76 seconds on a foreign lock, and the final queued check was stopped with SIGTERM exit 143
-without diagnostics. The required package-driven compile has not passed. Package, install, runtime,
-and UI visual evidence remain pending; no screenshot or release is claimed. The inspector exposes
-numeric `document.id` and `session.documents[].id`; document selectors use the documented index
-versus timeline `actualDocId` distinction in `control-protocol`. Native PSD temporal and
-full-source-transform acceptance is not part of this development pass.
+The source is frozen, implemented, root-reviewed, compiled, packaged, installed, and runtime-tested
+for this local delivery. Version is 0.16.0 development at `/Applications/PhotoStore-dev-position-animation.app`,
+bundle `ai.photostore.app.dev.position-animation`, baked source
+`a4c52a3f2ec39e122ab5d145b6dd8b6b398b4316`, and binary SHA-256
+`6e9238d8d04954b4a1b611ebae16f711ceae74c47d719aa2df223cd218112b1d`. The final compiler/package
+passed in 216.29 seconds; log: `/private/tmp/photostore-position-animation-package-hierarchy-final-20261011.log`.
+The runtime receipt recorded 69 requests, 69 responses, and 0 failures from
+`/private/tmp/photostore-position-runtime-20261011-evidence/runtime.jsonl`; launch was
+hidden/inactive/non-frontmost after helper-confirmed finished launching, and cleanup closed the
+listener. Seek/reopen preserved painted 8×8 bounds at [12,12], [20,16], and [28,20]; disable froze
+[20,16] with zero keys; Video↔Frame conversion preserved geometry and cleared owned Position;
+recording was off. The Smart hierarchy source fix compiled but was not runtime-tested. Development
+branch checkpoint: `codex/position-stopwatch`. No screenshot/UI-pixel, Smart visual, external PSD,
+or full-affine acceptance is claimed. Native PSD temporal acceptance remains outside this pass.
 
 The public workflow reference is [Adobe's overview of animating layer properties](https://helpx.adobe.com/uk/photoshop/desktop/add-video-and-animation/use-keyframes/overview-of-animating-layer-properties.html).

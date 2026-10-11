@@ -126,8 +126,11 @@ interpolation. Position has independent limits of 100,000 total keys and 256 tra
 Shape, and Smart layers are authorable; independent video Position and full Smart affine transforms
 remain future work. Legacy video XY and independent Opacity behavior remain unchanged.
 
-Actual movement operations key at the playhead, while generic bounding-box painting does not
-auto-key. First enable migrates legacy dense Position snapshots to bounded Hold keys and reconciles
+Movement updates the first owned Position ancestor, adding or updating a key when enabled and
+changing static Position when disabled; unowned groups recurse, and a direct child move keys that
+child. This prevents duplicate parent-wrapper and child-curve movement. Generic bounding-box
+painting does not auto-key. First enable migrates legacy dense Position snapshots to bounded Hold
+keys and reconciles
 the baseline/current pose; re-enabling an existing track is a no-op. Disable or delete-last-key
 freezes the playhead pose and clears owned keys. Smart conversion, Video-to-Frame, Frame-to-Video,
 and destructive timeline operations preserve or clear ownership according to
@@ -136,18 +139,23 @@ clipped positional geometry.
 
 The candidate uses the separate `PhotoStore-dev-position-animation` executable, settings, recovery
 process, and bundle ID `ai.photostore.app.dev.position-animation`, with no registered file
-associations. Development version remains 0.16.0. The source SHA is pending the root delivery
-record; `fd414d2ed15c27ff323b19fcf6ae84351b3a4557` is exactly the base planning reference. The pass
+associations. Development version remains 0.16.0. The baked source SHA is
+`a4c52a3f2ec39e122ab5d145b6dd8b6b398b4316`, read from
+`/Applications/PhotoStore-dev-position-animation.app/Contents/Info.plist` as `PhotoStoreBuildCommit`;
+`fd414d2ed15c27ff323b19fcf6ae84351b3a4557` is exactly the base planning reference. The pass
 has engine (2 steps), UI (2 steps), and delivery (4 steps) milestones. The source is frozen,
-implemented, and root-reviewed; engine and UI are complete, while delivery remains pending. Its four
-delivery steps are commit, mandatory `package-dev.sh` compile/package gate, own install, and focused
-background runtime plus receipt and private branch push. Standalone checks did not compile the
-candidate: the earlier check ended after 405.76 seconds on a foreign lock, and the final queued
-check was stopped with SIGTERM exit 143 without diagnostics. The required package-driven compile has
-not passed. No package, source-SHA, install, runtime, or visual claim is made; no screenshot or
-release is claimed. The inspector exposes numeric `document.id` and `session.documents[].id`;
-document selectors use the documented index versus timeline `actualDocId` distinction in
-`control-protocol`.
+implemented, root-reviewed, compiled, packaged, installed, and runtime-tested for this local
+delivery. Version is 0.16.0 development at `/Applications/PhotoStore-dev-position-animation.app`,
+bundle `ai.photostore.app.dev.position-animation`, baked source
+`a4c52a3f2ec39e122ab5d145b6dd8b6b398b4316`, and binary SHA-256
+`6e9238d8d04954b4a1b611ebae16f711ceae74c47d719aa2df223cd218112b1d`. The final compiler/package
+passed in 216.29 seconds; log `/private/tmp/photostore-position-animation-package-hierarchy-final-20261011.log`.
+The runtime receipt recorded 69 requests, 69 responses, and 0 failures in
+`/private/tmp/photostore-position-runtime-20261011-evidence/runtime.jsonl`; launch was
+hidden/inactive/non-frontmost after helper-confirmed finished launching, and cleanup closed the
+listener. Development branch checkpoint: `codex/position-stopwatch`. No screenshot/UI-pixel, Smart visual, external
+PSD, or full-affine acceptance is claimed; the hierarchy source fix compiled but was not runtime-
+tested for Smart hierarchy behavior.
 
 ## 2026-10-11: 0.16.0 independent video-opacity migration
 

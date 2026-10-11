@@ -346,30 +346,38 @@ The current candidate is documented in [position-animation.md](position-animatio
 the separate `PhotoStore-dev-position-animation` identity with bundle ID
 `ai.photostore.app.dev.position-animation`, its own executable/settings/recovery process, and no
 registered file associations. Production and consolidated goal applications remain untouched.
-Development version remains 0.16.0. The source commit SHA is pending the root delivery record; the
-base planning reference is exactly `fd414d2ed15c27ff323b19fcf6ae84351b3a4557` and is not the
+Development version remains 0.16.0. The baked source commit SHA is
+`a4c52a3f2ec39e122ab5d145b6dd8b6b398b4316`, read from
+`/Applications/PhotoStore-dev-position-animation.app/Contents/Info.plist` as `PhotoStoreBuildCommit`;
+the base planning reference is exactly `fd414d2ed15c27ff323b19fcf6ae84351b3a4557` and is not the
 candidate SHA.
 
 The implementation covers native `Layer.PositionAnimation` with backward-compatible missing data,
 applied Position anchors, signed whole-pixel XY keys through frame 999,999 with bounds of
 ±1,000,000, Linear/Hold modes,
 100,000 total Position keys and 256 Position tracks, typed key commands, timeline guards, and
-actual-movement keying for layer operations. It includes first-enable migration, disable/delete
-freeze behavior, Smart Object curve ownership, Video-to-Frame and Frame-to-Video conversion rules,
+actual-movement keying for layer operations: movement updates the first owned Position ancestor,
+adding or updating a key when enabled and changing static Position when disabled; unowned groups
+recurse, and a direct child move keys that child. This prevents duplicate parent-wrapper and
+child-curve movement. It includes
+first-enable migration, disable/delete freeze behavior, Smart Object curve ownership, Video-to-Frame
+and Frame-to-Video conversion rules,
 and atomic rejection for unrepresentable empty or clipped positional geometry. Independent video
 Position and full Smart affine transforms remain future work; legacy video XY and independent
 Opacity remain unchanged. See the design record for the complete contract and limits.
 
-The bounded pass has engine (2 steps), UI (2 steps), and delivery (4 steps) milestones. The source
-is frozen, implemented, and root-reviewed; engine and UI are complete, while delivery remains
-pending. Its four delivery steps are commit, mandatory `package-dev.sh` compile/package gate, own
-install, and focused background runtime plus receipt and private branch push. Standalone checks did
-not compile the candidate: the earlier check ended after 405.76 seconds on a foreign lock, and the
-final queued check was stopped with SIGTERM exit 143 without diagnostics. The required package-driven
-compile has not passed. Package, install, runtime, and UI visual evidence remain pending; no
-screenshot or release is claimed. The inspector exposes numeric `document.id` and
-`session.documents[].id`; document selectors use the documented index versus timeline `actualDocId`
-distinction in `control-protocol`.
+The source is frozen, implemented, root-reviewed, compiled, packaged, installed, and runtime-tested
+for this local delivery. Version is 0.16.0 development at `/Applications/PhotoStore-dev-position-animation.app`,
+bundle `ai.photostore.app.dev.position-animation`, baked source
+`a4c52a3f2ec39e122ab5d145b6dd8b6b398b4316`, and binary SHA-256
+`6e9238d8d04954b4a1b611ebae16f711ceae74c47d719aa2df223cd218112b1d`. The final compiler/package
+passed in 216.29 seconds; log `/private/tmp/photostore-position-animation-package-hierarchy-final-20261011.log`.
+The runtime receipt recorded 69 requests, 69 responses, and 0 failures in
+`/private/tmp/photostore-position-runtime-20261011-evidence/runtime.jsonl`; launch was
+hidden/inactive/non-frontmost after helper-confirmed finished launching, and cleanup closed the
+listener. Development branch checkpoint: `codex/position-stopwatch`. No screenshot/UI-pixel, Smart visual, external
+PSD, or full-affine acceptance is claimed; the hierarchy source fix compiled but was not runtime-
+tested for Smart hierarchy behavior.
 
 ## Animation and timeline
 
