@@ -16,6 +16,7 @@ use crate::commands::CommandSpec;
 use crate::{DocState, EngineError, Result, Session};
 
 pub const ID: &str = "view.layerMask";
+pub const FILTER_ID: &str = "view.smartFilterMask";
 
 /// `\` (#1765): show or hide the active layer's mask as a rubylith, Photoshop's key for it.
 pub const OVERLAY_ID: &str = "layer.toggleMaskOverlay";
@@ -52,11 +53,22 @@ pub fn current(st: &DocState) -> Option<LayerMaskView> {
     live.then_some(v)
 }
 
+/// The live view of the active smart object's filter mask.
+pub fn current_filter(st: &DocState) -> Option<LayerMaskView> {
+    let v = st.channel_view.filter_mask?;
+    let live = st.active_layer == Some(v.layer)
+        && st.doc.layer(v.layer).is_some_and(|l| matches!(&l.content, photostore_doc::LayerContent::Smart(sm) if sm.filter_mask.is_some()));
+    live.then_some(v)
+}
+
 /// Drop a mask view that no longer applies (another layer became active, the layer or its mask
 /// was deleted, undo).
 pub(crate) fn fix(st: &mut DocState) {
     if st.channel_view.layer_mask.is_some() && current(st).is_none() {
         st.channel_view.layer_mask = None;
+    }
+    if st.channel_view.filter_mask.is_some() && current_filter(st).is_none() {
+        st.channel_view.filter_mask = None;
     }
 }
 
@@ -112,6 +124,7 @@ fn set_view(s: &mut Session, p: &Value) -> Result<Value> {
     let applies = next.is_some() || st.channel_view.layer_mask.is_some_and(|v| v.layer == layer);
     if applies && st.channel_view.layer_mask != next {
         st.channel_view.layer_mask = next;
+        if next.is_some() { st.channel_view.filter_mask = None; }
         // A view change: redraw without recompositing, and keep a clean document clean.
         let clean = st.saved_revision == st.revision;
         st.revision += 1;
@@ -121,6 +134,45 @@ fn set_view(s: &mut Session, p: &Value) -> Result<Value> {
         st.last_damage = Some(photostore_geom::Rect::EMPTY);
     }
     let v = current(st);
+    Ok(json!({"layer": layer.0, "mode": mode_name(v.filter(|v| v.layer == layer))}))
+}
+
+fn set_filter_view(s: &mut Session, p: &Value) -> Result<Value> {
+    let mode = match p.get("mode") {
+        None | Some(Value::Null) => "toggleGray",
+        Some(v) => v.as_str().ok_or_else(|| EngineError::BadParams { cmd: FILTER_ID.into(), msg: "`mode` must be a string".into() })?,
+    };
+    let st = s.active().ok_or(EngineError::NoDocument)?;
+    let layer = match p.get("layer") {
+        None | Some(Value::Null) => st.active_layer.ok_or_else(|| bad("no layer given and no active layer"))?,
+        Some(v) => LayerId(v.as_u64().ok_or_else(|| bad("`layer` must be a layer id"))?),
+    };
+    let l = st.doc.layer(layer).ok_or(EngineError::NoLayer(layer))?;
+    let has_mask = matches!(&l.content, photostore_doc::LayerContent::Smart(sm) if sm.filter_mask.is_some());
+    let name = l.name.clone();
+    let shown = current_filter(st).filter(|v| v.layer == layer).map(|v| v.mode);
+    let want = match mode {
+        "off" => None,
+        "gray" => Some(MaskViewMode::Gray),
+        "overlay" => Some(MaskViewMode::Overlay),
+        "toggleGray" => (shown != Some(MaskViewMode::Gray)).then_some(MaskViewMode::Gray),
+        "toggleOverlay" => (shown != Some(MaskViewMode::Overlay)).then_some(MaskViewMode::Overlay),
+        other => return Err(bad(format!("unknown mode `{other}` (off|gray|overlay|toggleGray|toggleOverlay)"))),
+    };
+    if want.is_some() && !has_mask { return Err(bad(format!("layer \"{name}\" has no smart filter mask"))); }
+    if want.is_some() && s.active().and_then(|x| x.active_layer) != Some(layer) { s.select_layer(layer)?; }
+    let st = s.active_mut().ok_or(EngineError::NoDocument)?;
+    let next = want.map(|mode| LayerMaskView { layer, mode });
+    let applies = next.is_some() || st.channel_view.filter_mask.is_some_and(|v| v.layer == layer);
+    if applies && st.channel_view.filter_mask != next {
+        st.channel_view.filter_mask = next;
+        if next.is_some() { st.channel_view.layer_mask = None; }
+        let clean = st.saved_revision == st.revision;
+        st.revision += 1;
+        if clean { st.saved_revision = st.revision; }
+        st.last_damage = Some(photostore_geom::Rect::EMPTY);
+    }
+    let v = current_filter(st);
     Ok(json!({"layer": layer.0, "mode": mode_name(v.filter(|v| v.layer == layer))}))
 }
 
@@ -152,6 +204,13 @@ pub fn specs() -> Vec<CommandSpec> {
             enabled: has_doc,
             run: set_view,
             journal: false,
+        },
+        CommandSpec {
+            id: FILTER_ID,
+            label: "View Smart Filter Mask",
+            menu: &[], shortcut: None,
+            params: r##"{"layer":id?,"mode":"off"|"gray"|"overlay"|"toggleGray"|"toggleOverlay"="toggleGray"} (view state, not an undo step; painting while shown paints the filter mask)"##,
+            enabled: has_doc, run: set_filter_view, journal: false,
         },
         CommandSpec {
             id: OVERLAY_ID,

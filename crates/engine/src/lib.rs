@@ -494,7 +494,9 @@ impl Session {
 
     /// The command's own precondition for a call with `params` (their target filled in).
     fn precondition(&self, spec: &commands::CommandSpec, params: &Value) -> std::result::Result<(), String> {
-        channel_cmds::mask_target_enabled(self, spec.id, params).unwrap_or_else(|| (spec.enabled)(self))
+        channel_cmds::filter_mask_target_enabled(self, spec.id, params)
+            .or_else(|| channel_cmds::mask_target_enabled(self, spec.id, params))
+            .unwrap_or_else(|| (spec.enabled)(self))
     }
 
     /// Apply an undoable edit to the active document.
@@ -509,6 +511,11 @@ impl Session {
         let mut doc = (*before).clone();
         let mut active = st.active_layer;
         let r = f(&mut doc, &mut active)?;
+        // Painting or adjusting a smart filter mask changes the rendered layer cache. Refresh
+        // inside this transaction so an unavailable linked source aborts the edit atomically.
+        if smart_cmds::filter_mask_changed(&before, &doc) {
+            smart_cmds::refresh_changed_filter_masks(&mut doc, &before)?;
+        }
         if let (Some(k), Some(id)) = (restrict, active) {
             channel_cmds::restrict_to_color(&before, &mut doc, id, k);
         }
@@ -558,6 +565,7 @@ impl Session {
         st.active_layer = Some(id);
         st.selected_layers = vec![id];
         st.layer_anchor = Some(id);
+        channel_cmds::fix_view(st);
         // Selecting a layer is not an edit: keep a clean document clean.
         let clean = st.saved_revision == st.revision;
         st.revision += 1;

@@ -661,17 +661,122 @@ fn reload_frame(s: &mut Session, _p: &Value) -> Result<Value> {
     if is_movie_path(&path) {
         return crate::jobs::edit_job(s, "Reload Movie Footage", move |doc, active, ctx| {
             let id = active.ok_or(EngineError::NoDocument)?;
-            let (frames, source_fps) = decode_movie_frames(&path, fmt, None, None, None, ctx)?;
-            let duration = doc.timeline.as_ref().map(|t| media_duration_in_timeline_frames(frames.len(), source_fps, t.fps));
+            // Materialize the displayed frame into the snapshot before replacing its source so
+            // the job observes the same frame state as an ordinary edit. All validation and
+            // probing remains before the snapshot is committed by edit_job.
+            store(doc);
+            let old_video = doc.layer(id).and_then(|l| l.video.as_ref()).cloned().ok_or_else(|| EngineError::Other("active layer is not a video layer".into()))?;
+            let interpreted_fps = f64::from(old_video.fps);
+            if !interpreted_fps.is_finite() || interpreted_fps <= 0.0 || interpreted_fps > 1000.0 {
+                return Err(EngineError::BadParams { cmd: "layer.videoLayers.reloadFrame".into(), msg: "stored interpreted FPS is invalid".into() });
+            }
+            let playback_speed = old_video.playback.speed;
+            let source_in = old_video.playback.source_in_seconds;
+            if !source_in.is_finite() || source_in < 0.0 || !playback_speed.is_finite() || !(0.01..=100.0).contains(&playback_speed) {
+                return Err(EngineError::BadParams { cmd: "layer.videoLayers.reloadFrame".into(), msg: "stored video playback range is invalid".into() });
+            }
+            let info = crate::media_backend::probe(&path).map_err(media_error)?;
+            let native_fps = movie_fps(&info, None)? as f64;
+            let canonical_path = std::fs::canonicalize(&path).map_err(|e| EngineError::Other(format!("movie path is not readable: {e}")))?.to_string_lossy().into_owned();
+            let interpreted_to_native = interpreted_fps / native_fps;
+            let audio_speed = interpreted_to_native * playback_speed;
+            if !audio_speed.is_finite() || !(0.01..=100.0).contains(&audio_speed) {
+                return Err(EngineError::BadParams { cmd: "layer.videoLayers.reloadFrame".into(), msg: "reload would produce unsupported linked audio speed".into() });
+            }
+            let audio_info = if info.has_audio { Some(crate::media_backend::probe_audio(&canonical_path).map_err(media_error)?) } else { None };
+            let (frames, _) = decode_movie_frames(&canonical_path, fmt, None, None, Some(interpreted_fps), ctx)?;
+            let source_duration = frames.len() as f64 / interpreted_fps;
+            if !source_duration.is_finite() || source_duration <= source_in {
+                return Err(EngineError::BadParams { cmd: "layer.videoLayers.reloadFrame".into(), msg: "reload source ends before the stored source-in point".into() });
+            }
+            let output_duration = (source_duration - source_in) / playback_speed;
+            let timeline_fps = f64::from(doc.timeline.as_ref().map_or(30.0, |t| t.fps));
+            if !timeline_fps.is_finite() || !(0.001..=1000.0).contains(&timeline_fps) {
+                return Err(EngineError::BadParams { cmd: "layer.videoLayers.reloadFrame".into(), msg: "timeline FPS is invalid".into() });
+            }
+            let available_frames = ((output_duration * timeline_fps) - 1e-9).ceil().max(1.0) as usize;
+            if available_frames > MAX_EXPORT_FRAMES {
+                return Err(EngineError::BadParams { cmd: "layer.videoLayers.reloadFrame".into(), msg: "reload source duration exceeds the timeline frame limit".into() });
+            }
+            let old_range = doc.timeline.as_ref().and_then(|t| t.layer_ranges.iter().find(|r| r.layer == id).cloned());
+            if let Some(range) = &old_range {
+                if range.start >= range.end || range.end > MAX_EXPORT_FRAMES {
+                    return Err(EngineError::BadParams { cmd: "layer.videoLayers.reloadFrame".into(), msg: "stored video layer range is invalid".into() });
+                }
+                range.start.checked_add(available_frames).filter(|end| *end <= MAX_EXPORT_FRAMES).ok_or_else(|| EngineError::BadParams { cmd: "layer.videoLayers.reloadFrame".into(), msg: "reload video range exceeds the timeline frame limit".into() })?;
+            }
             let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
             let length = {
                 let v = l.video.as_mut().ok_or_else(|| EngineError::Other("active layer is not a video layer".into()))?;
                 v.frames = frames;
-                v.fps = source_fps;
+                v.frame_delays_ms = vec![0; v.frames.len()];
+                v.source = photostore_doc::VideoSource::File { path: canonical_path.clone() };
+                // Keep authored interpretation and playback controls. The decoded stack uses
+                // that interpretation, while native FPS only retimes linked source audio.
                 v.frames.len()
             };
-            if let (Some(t), Some(duration)) = (&mut doc.timeline, duration) {
-                t.duration = t.duration.max(duration);
+            if let Some(t) = &mut doc.timeline {
+                if let Some(range) = t.layer_ranges.iter_mut().find(|r| r.layer == id) {
+                    let end = range.start.checked_add(available_frames).ok_or_else(|| EngineError::BadParams { cmd: "layer.videoLayers.reloadFrame".into(), msg: "reload video range is too large".into() })?;
+                    range.end = range.end.min(end);
+                    if range.end <= range.start { return Err(EngineError::BadParams { cmd: "layer.videoLayers.reloadFrame".into(), msg: "reload source cannot cover the stored video range".into() }); }
+                    t.duration = t.duration.max(range.end);
+                } else {
+                    t.duration = t.duration.max(available_frames);
+                    t.work_end = t.work_end.max(available_frames);
+                }
+                let layer_start_seconds = old_range.as_ref().map_or(0.0, |r| r.start as f64 / timeline_fps);
+                for track in &mut t.audio_tracks {
+                    track.clips.retain_mut(|clip| {
+                        if clip.linked_video != Some(id) { return true; }
+                        let Some(audio) = &audio_info else { return false; };
+                        if !audio.duration_seconds.is_finite() || audio.duration_seconds <= 0.0 { return false; }
+                        let old_trim_in = clip.trim_in_seconds;
+                        let old_source_duration = clip.source_duration_seconds;
+                        let old_speed = clip.speed;
+                        let old_envelope_offset = clip.envelope_offset_seconds;
+                        let old_envelope_duration = clip.envelope_duration_seconds;
+                        let clip_offset = (clip.start_seconds - layer_start_seconds).max(0.0);
+                        let trim_in = (source_in + clip_offset * playback_speed) * interpreted_to_native;
+                        let source_remaining = (audio.duration_seconds - trim_in).max(0.0) / audio_speed;
+                        let video_remaining = output_duration - clip_offset;
+                        let duration = clip.duration_seconds.min(source_remaining).min(video_remaining);
+                        if !trim_in.is_finite() || trim_in < 0.0 || !duration.is_finite() || duration <= 1e-9 { return false; }
+                        clip.path = canonical_path.clone();
+                        clip.source_duration_seconds = audio.duration_seconds;
+                        clip.trim_in_seconds = trim_in;
+                        clip.speed = audio_speed;
+                        clip.duration_seconds = duration;
+                        // Keep authored split envelopes when they remain valid. A malformed or
+                        // now-too-short envelope is rebuilt around the surviving clip duration.
+                        let envelope = old_envelope_duration;
+                        let old_original_trim = old_trim_in - old_envelope_offset * old_speed;
+                        let valid_envelope = envelope.is_some_and(|env| {
+                            env.is_finite() && env > 0.0
+                                && old_envelope_offset.is_finite() && old_envelope_offset >= 0.0 && old_envelope_offset < env
+                                && old_trim_in.is_finite() && old_speed.is_finite() && old_speed > 0.0
+                                && old_original_trim >= -1e-9
+                                && old_original_trim + env * old_speed <= old_source_duration + 1e-9
+                                && trim_in - old_envelope_offset * audio_speed >= -1e-9
+                                && trim_in - old_envelope_offset * audio_speed + env * audio_speed <= audio.duration_seconds + 1e-9
+                        });
+                        if valid_envelope {
+                            let env = envelope.unwrap();
+                            clip.envelope_offset_seconds = old_envelope_offset;
+                            clip.envelope_duration_seconds = Some(env);
+                            clip.duration_seconds = clip.duration_seconds.min((env - old_envelope_offset).max(0.0));
+                            clip.fade_in_seconds = clip.fade_in_seconds.min(env);
+                            clip.fade_out_seconds = clip.fade_out_seconds.min(env);
+                        } else {
+                            clip.envelope_offset_seconds = 0.0;
+                            clip.envelope_duration_seconds = Some(clip.duration_seconds);
+                            clip.fade_in_seconds = clip.fade_in_seconds.min(clip.duration_seconds);
+                            clip.fade_out_seconds = clip.fade_out_seconds.min(clip.duration_seconds);
+                        }
+                        if clip.duration_seconds <= 1e-9 { return false; }
+                        true
+                    });
+                }
                 t.clamp();
             }
             sync(doc);
@@ -684,10 +789,19 @@ fn reload_frame(s: &mut Session, _p: &Value) -> Result<Value> {
         let ctx = crate::jobs::JobCtx::new();
         decode_movie_frames(&path, fmt, Some(0), Some(count), None, &ctx)?.0
     } else { load_frames(&path, fmt)? };
-    edit_video(s, "Reload Frame", move |v, _| {
+    let id = s.edit("Reload Frame", move |doc, active| {
+        store(doc);
+        let id = active.ok_or(EngineError::NoDocument)?;
+        let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
+        let v = l.video.as_mut().ok_or_else(|| EngineError::BadParams { cmd: "layer.videoLayers.reloadFrame".into(), msg: "the active layer is not a video layer".into() })?;
         v.frames = frames;
-        Ok(())
-    })
+        v.frame_delays_ms.resize(v.frames.len(), 0);
+        v.frame_delays_ms.truncate(v.frames.len());
+        if let Some(t) = &mut doc.timeline { for track in &mut t.audio_tracks { track.clips.retain(|clip| clip.linked_video != Some(id)); } }
+        sync(doc);
+        Ok(id)
+    })?;
+    Ok(json!({"layer": id.0}))
 }
 
 /// Import › Video Frames to Layers: load frames from a file/sequence and add each as its own layer.

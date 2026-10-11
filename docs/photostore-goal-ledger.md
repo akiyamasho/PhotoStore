@@ -11,7 +11,7 @@ Updated 2026-10-11. This is an operational ledger for the independent PhotoStore
 - Icon direction: PhotoStore icon with the requested twist; keep the asset provenance row with the icon work.
 - README/AGENTS direction: keep badges, install, run, and contributor guidance lean and operational.
 - Branding release completed: tag `photostore-branding-2026-10-11` points to `e3703d4be2ceba37e04b81b2761f7b3acc27235b`; the [PhotoStore 0.6.1 release](https://github.com/akiyamasho/PhotoStore/releases/tag/photostore-branding-2026-10-11) contains the Apple Silicon DMG, CLI ZIP, and `SHA256SUMS`.
-- Audio/video work in progress remains saved locally on `codex/animation-audio-backfill-wip` at `287f7c94c065d37d3bdc177c3e44f28719490e84`; the integrated audio/clip milestone is documented in [audio-timeline.md](audio-timeline.md). It is compiler-verified but not packaged or installed.
+- Audio/video source commit `405d102f1ddc8f13ed7ae8b6ce8779db0c0f28ec` is pushed on `origin/main`; the earlier `287f7c94c065d37d3bdc177c3e44f28719490e84` is archived WIP. The integrated audio/clip milestone is documented in [audio-timeline.md](audio-timeline.md); it is compiler-verified but not packaged or installed.
 - Photoshop-facing scope: timeline/frame animation and Smart Objects are first product priorities, while the inherited feature surface remains evidence to audit rather than a completeness claim.
 
 ## Evidence rules
@@ -57,6 +57,27 @@ Installation record: canonical `/Applications/PhotoStore.app` is version 0.7.0, 
 
 The prior 0.6.1 process (PID 57432) remained alive with its artwork untouched after a native save stalled in the final directory. The attempted target `/Users/computer/Desktop/dev/PhotoStore/recovered-artwork/Untitled-1-before-0.7.0-20261011-110908.pcraft` has not appeared, so no artwork recovery or backup is claimed. The sample log is `/private/tmp/photostore-save-stall-20261011.sample.txt`; it shows the save blocked in `photostore-job-1 save_file → atomic_write_with → sync_dir → File.open → open`, with no TCC prompt.
 
+## Current 0.8.0 release pass
+
+The upcoming release combines Audio, Smart Filter Masks, and the New Document Fix. Status is explicit:
+
+1. Recording release installed — complete (`0.7.0`, current installed release).
+2. Audio source integrated and pushed — complete (`405d102f1ddc8f13ed7ae8b6ce8779db0c0f28ec`).
+3. New Document Fix — implemented and compiler-verified.
+4. Smart Filter mask engine — implemented and compiler-verified.
+5. Smart Filter mask UI — implemented and compiler-verified.
+6. Movie reload/audio reprobe and split-envelope fixes — implemented and compiler-verified; arbitrary split-segment replacement remains open.
+7. Native compiler gate — complete; exit 0 in 30.41 seconds, log `/private/tmp/photostore-smart-mask-newdoc-check-20261011-rerun.log`.
+8. Documentation and version update — complete; 0.8.0 version/docs preparation is ready.
+9. Commit and push — pending.
+10. Tag — pending.
+11. Build and publish release — pending.
+12. Reinstall and confirm New Document creation — pending. The installed 0.7.0 app visibly confirmed the prior `file.new` invalid-parameter error (`recording` unknown) through read-only accessibility inspection; that specific cause is fixed, and confirmation is planned after the 0.8.0 reinstall.
+
+Further Photoshop backfill is the next pass and is outside this twelve-step count. Exact UI parity,
+mask copy/move/channel selection, unknown PSD filters, audio latency/master-clock behavior, and
+broader acceptance remain unverified.
+
 ## Animation and timeline
 
 ### Implemented milestone
@@ -75,7 +96,7 @@ The prior 0.6.1 process (PID 57432) remained alive with its artwork untouched af
 
 - Persisted audio tracks/clips, linked movie audio, editing commands, shared FFmpeg preview/export, and streamed playback are present in source. The locked offline native app/CLI HEIF compiler check passed in 7.88 seconds; its log is `/private/tmp/photostore-audio-clip-check-20261011-rerun2.log`. Full UI/audio acceptance remains unverified.
 - Transitions are not implemented or accepted.
-- Stopwatches, transform tracks, clip groups, transitions, reload-footage behavior, arbitrary split-segment replacement envelopes, and full Photoshop timeline/group/filter-mask scope remain pending.
+- Stopwatches, transform tracks, clip groups, transitions, arbitrary split-segment replacement envelopes, and full Photoshop timeline/group/filter-mask scope remain pending.
 - Complex tween interpolation is configurable and carries position/opacity/effects properties, but required acceptance evidence is pending.
 - Rational source rate is probed by the media backend but stored as `f32` in the existing document model (`crates/doc/src/video.rs`).
 - Eager decoded movie surfaces are capped at 512 MiB; the native import range is currently command parameters rather than a dedicated picker form.

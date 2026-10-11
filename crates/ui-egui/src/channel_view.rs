@@ -75,7 +75,9 @@ pub fn render(doc: &Document, v: &ChannelView, r: Rect, factor: u32, in_color: b
     // ⌥-click mask view (#196): the layer mask alone, in grayscale (white reveals); ⇧⌥ with
     // nothing else shown: just the rubylith. Both straight from the mask, in parallel rows, so
     // switching the view on a 24 MP document takes one frame.
-    let only_mask = ChannelView { layer_mask: None, ..v.clone() }.is_plain(doc);
+    // Clear both mask sources for the overlay fast path: a Smart Filter mask is independent
+    // state even though both views render through the same grayscale branch.
+    let only_mask = ChannelView { layer_mask: None, filter_mask: None, ..v.clone() }.is_plain(doc);
     match layer_mask {
         Some((m, MaskViewMode::Gray)) => return Some(mask_px(&m.surface, r, factor, |g| Color32::from_gray(q(g)))),
         Some((m, MaskViewMode::Overlay)) if only_mask => {

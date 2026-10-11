@@ -1894,7 +1894,9 @@ fn layers(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
     }
     widgets::panel_footer(ui, |ui| {
         let active_layer = active.and_then(|id| doc.layer(id));
-        let (delete, label) = if app.ui.vector_mask_target && active_layer.is_some_and(|l| l.vector_mask.is_some()) {
+        let (delete, label) = if app.filter_mask_targeted() {
+            ("layer.smartFilter.deleteFilterMask", "Delete Filter Mask")
+        } else if app.ui.vector_mask_target && active_layer.is_some_and(|l| l.vector_mask.is_some()) {
             ("layer.vectorMask.delete", "Delete Vector Mask")
         } else if app.ui.mask_target && active_layer.is_some_and(|l| l.mask.is_some()) {
             ("layer.layerMask.delete", "Delete Layer Mask")
@@ -1976,14 +1978,36 @@ fn layers(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
     });
     for (id, p) in actions {
         if id == "ui.maskTarget" {
+            if app.session.active().is_some_and(|st| photostore_engine::mask_view_cmds::current_filter(st).is_some()) {
+                let _ = app.run(photostore_engine::mask_view_cmds::FILTER_ID, json!({"mode":"off"}));
+            }
             app.ui.mask_target = p.as_bool().unwrap_or(false);
             app.ui.vector_mask_target = false;
+            app.ui.filter_mask_target = None;
             continue;
         }
         if id == "ui.vectorMaskTarget" {
+            if app.session.active().is_some_and(|st| photostore_engine::mask_view_cmds::current_filter(st).is_some()) {
+                let _ = app.run(photostore_engine::mask_view_cmds::FILTER_ID, json!({"mode":"off"}));
+            }
             app.ui.vector_mask_target = p.as_bool().unwrap_or(false);
             app.ui.mask_target = false;
+            app.ui.filter_mask_target = None;
             continue;
+        }
+        if id == "ui.filterMaskTarget" {
+            app.ui.filter_mask_target = (p.get("target").and_then(Value::as_bool) == Some(true)).then(|| {
+                Some((p.get("document")?.as_u64()?, p.get("layer")?.as_u64()?))
+            }).flatten();
+            app.ui.mask_target = false;
+            app.ui.vector_mask_target = false;
+            continue;
+        }
+        if id == "layer.select" {
+            if app.session.active().is_some_and(|st| photostore_engine::mask_view_cmds::current_filter(st).is_some()) {
+                let _ = app.run(photostore_engine::mask_view_cmds::FILTER_ID, json!({"mode":"off"}));
+            }
+            app.ui.filter_mask_target = None;
         }
         if p.is_null() {
             // Context-menu items behave like their menu-bar twins (dialogs included).
@@ -2227,7 +2251,7 @@ fn layer_row(
     let vector_rect = masks.thumb(crate::mask_thumbs_ui::MaskKind::Vector);
     // Photoshop frames the targeted thumbnail (pixels, mask or vector mask) of the active layer
     // with corner brackets.
-    if row.primary {
+    if row.primary && !app.filter_mask_targeted() {
         let target = if app.ui.vector_mask_target && vector_rect.is_some() {
             vector_rect
         } else if app.ui.mask_target {

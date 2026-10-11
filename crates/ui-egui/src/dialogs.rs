@@ -399,18 +399,30 @@ pub fn confirm(app: &mut PhotoStoreApp, id: u64) -> Result<Value, String> {
     if crate::layer_style::color_picker::has_child(app, id) {
         return Err("confirm or cancel the Layer Style color picker first".into());
     }
+    if app.ui.dialogs.iter().find(|d| d.id == id).is_some_and(|d| d.kind == DialogKind::NewDocument) {
+        let fields = app.ui.dialogs.iter().find(|d| d.id == id).map(|d| d.fields.clone()).ok_or_else(|| format!("no dialog {id}"))?;
+        return match app.run("file.new", crate::new_doc_ui::command_params(&fields)) {
+            Ok(value) => {
+                let _ = app.ui.close_dialog(id);
+                if let Some(i) = app.session.active_index() {
+                    app.ui.views[i].fit_pending = true;
+                }
+                crate::remember_new_document(app, &fields);
+                Ok(value)
+            }
+            Err(error) => {
+                app.ui.status = error.clone();
+                app.ui.status_error = true;
+                if let Some(dialog) = app.ui.dialog_mut(id) {
+                    dialog.fields.insert("__error".into(), json!(error));
+                }
+                Err(error)
+            }
+        }
+    }
     let d = app.ui.close_dialog(id).ok_or_else(|| format!("no dialog {id}"))?;
     match d.kind {
-        DialogKind::NewDocument => {
-            let r = app.run("file.new", crate::new_doc_ui::command_params(&d.fields));
-            if let Some(i) = app.session.active_index() {
-                app.ui.views[i].fit_pending = true;
-            }
-            if r.is_ok() {
-                crate::remember_new_document(app, &d.fields);
-            }
-            r
-        }
+        DialogKind::NewDocument => Err("New Document dialog was unavailable for confirmation".into()),
         DialogKind::Command if crate::fill_ui::owns(&d.fields) => crate::fill_ui::confirm(app, &d.fields),
         DialogKind::Command if crate::stroke_ui::owns(&d.fields) => crate::stroke_ui::confirm(app, &d.fields),
         DialogKind::Command if crate::shape_dialog::owns(&d.fields) => crate::shape_dialog::confirm(app, &d.fields),

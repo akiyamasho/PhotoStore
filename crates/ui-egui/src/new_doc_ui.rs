@@ -328,6 +328,10 @@ fn save_preset(app: &mut crate::PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<St
 
 pub fn body(app: &mut crate::PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     let t = Tokens::get(ui.ctx());
+    if let Some(error) = f.get("__error").and_then(Value::as_str) {
+        ui.colored_label(t.danger, error);
+        ui.add_space(4.0);
+    }
     let cat = get_s(f, "__category", "Recent");
     // Category tabs.
     ui.horizontal(|ui| {
@@ -527,7 +531,8 @@ pub fn body(app: &mut crate::PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<Strin
             f.insert("__recordingResolution".into(), json!(resolution.clone()));
             f.insert("__recordingQuality".into(), json!(quality.clone()));
             f.insert("__recordingHevc".into(), json!(hevc));
-            f.insert("recording".into(), json!({"resolution": resolution, "quality": quality, "hevc": hevc, "enabled": true}));
+            let enabled = f.get("recording").and_then(Value::as_object).and_then(|r| r.get("enabled")).and_then(Value::as_bool).unwrap_or(true);
+            f.insert("recording".into(), json!({"resolution": resolution, "quality": quality, "hevc": hevc, "enabled": enabled}));
             save_preset(app, ui, f);
         });
     });

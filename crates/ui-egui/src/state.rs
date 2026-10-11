@@ -876,6 +876,9 @@ pub struct UiState {
     /// tools edit it (#196). Never set together with `mask_target`.
     #[serde(default)]
     pub vector_mask_target: bool,
+    /// The shared Smart Filter mask targeted for painting and adjustments, scoped to document/layer.
+    #[serde(default, skip)]
+    pub filter_mask_target: Option<(u64, u64)>,
     /// Brush Preset picker opened by a right-click on the canvas or the options-bar brush chip:
     /// its screen position (points).
     #[serde(default)]
@@ -1027,6 +1030,7 @@ impl Default for UiState {
             symmetry_transform: None,
             mask_target: false,
             vector_mask_target: false,
+            filter_mask_target: None,
             brush_picker: None,
             brush_picker_list: crate::brush_picker::list_state(),
             brush_picker_size: None,

@@ -67,12 +67,21 @@ pub(crate) fn has_paintable(s: &Session) -> std::result::Result<(), String> {
 
 /// Surface a paint command writes to: the layer's pixels, or its mask with `"target":"mask"`.
 pub(crate) fn paint_surface<'a>(doc: &'a mut Document, id: LayerId, p: &Value) -> Result<&'a mut photostore_raster::Surface> {
+    if p.get("target").and_then(Value::as_str) == Some("filterMask") && doc.effective_locks(id).all {
+        return Err(EngineError::Other("the layer is locked".into()));
+    }
     if !is_mask_target(p) {
         check_pixels_unlocked(doc, id)?;
     }
     let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
     if is_mask_target(p) {
-        l.mask.as_mut().map(|m| &mut m.surface).ok_or_else(|| EngineError::Other("layer has no mask".into()))
+        match p.get("target").and_then(Value::as_str) {
+            Some("filterMask") => match &mut l.content {
+                LayerContent::Smart(sm) => sm.filter_mask.as_mut().map(|m| &mut m.surface).ok_or_else(|| EngineError::Other("smart object has no filter mask".into())),
+                _ => Err(EngineError::Other("layer is not a smart object".into())),
+            },
+            _ => l.mask.as_mut().map(|m| &mut m.surface).ok_or_else(|| EngineError::Other("layer has no mask".into())),
+        }
     } else {
         l.surface_mut().ok_or_else(|| EngineError::Other("not a pixel layer".into()))
     }
@@ -89,7 +98,7 @@ pub(crate) fn check_pixels_unlocked(doc: &Document, id: LayerId) -> Result<()> {
 }
 
 pub(crate) fn is_mask_target(p: &Value) -> bool {
-    p.get("target").and_then(Value::as_str) == Some("mask")
+    matches!(p.get("target").and_then(Value::as_str), Some("mask" | "filterMask"))
 }
 
 fn can_undo(s: &Session) -> std::result::Result<(), String> {
@@ -340,7 +349,7 @@ fn build() -> Vec<CommandSpec> {
             "New…",
             ["File"],
             Some("Cmd+N"),
-            r##"{"width":1..300000=1920,"height":1..300000=1080 (pixel counts are rounded),"mode":"rgb|gray|grayscale|cmyk|lab"="rgb","depth":8|16|32=8,"background":"white|black|backgroundColor|transparent|#rrggbb"="white","backgroundColor":[r,g,b]? (0..1; defaults to toolbox colour),"resolution":1..30000=72 (ppi),"name":str}"##,
+            r##"{"width":1..300000=1920,"height":1..300000=1080 (pixel counts are rounded),"mode":"rgb|gray|grayscale|cmyk|lab"="rgb","depth":8|16|32=8,"background":"white|black|backgroundColor|transparent|#rrggbb"="white","backgroundColor":[r,g,b]? (0..1; defaults to toolbox colour),"resolution":1..30000=72 (ppi),"name":str,"recording":{...}?}"##,
             always,
             |s, p| {
                 use crate::document_preset_cmds::{MAX_DIMENSION, MAX_RESOLUTION, background_color, color_mode, sample_type};

@@ -73,6 +73,10 @@ pub(crate) fn validate_new_params(s: &Session, p: &Value) -> Result<()> {
                 continue;
             }
             "name" => (value.is_string(), "a string".into()),
+            "recording" => {
+                crate::recording::settings_from_new_params(p, cmd)?;
+                continue;
+            }
             _ => return Err(bad(cmd, format!("unknown parameter `{key}`"))),
         };
         if !valid {

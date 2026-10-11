@@ -625,29 +625,75 @@ fn mask_from_selection(sel: &Surface) -> LayerMask {
     LayerMask { surface: sel.clone(), enabled: true, linked: true, density: 1.0, feather: 0.0 }
 }
 
+fn white_mask(doc: &Document) -> LayerMask {
+    let mut m = LayerMask::reveal_all();
+    let r = doc.bounds();
+    if !r.is_empty() { let v = m.surface.read_region(r); m.surface.write_region(r, &v); m.surface.prune(); }
+    m
+}
+
+fn surfaces_same(a: &Surface, b: &Surface) -> bool {
+    a.format() == b.format() && a.default_pixel() == b.default_pixel() && a.tile_count() == b.tile_count()
+        && a.tiles().zip(b.tiles()).all(|((ca, ta), (cb, tb))| ca == cb && std::sync::Arc::ptr_eq(ta, tb))
+}
+
+fn masks_same(a: &Option<LayerMask>, b: &Option<LayerMask>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => a.enabled == b.enabled && a.linked == b.linked && a.density == b.density && a.feather == b.feather && surfaces_same(&a.surface, &b.surface),
+        _ => false,
+    }
+}
+
+fn caches_same(a: &Option<Surface>, b: &Option<Surface>) -> bool {
+    match (a, b) { (None, None) => true, (Some(a), Some(b)) => surfaces_same(a, b), _ => false }
+}
+
+pub(crate) fn filter_mask_changed(before: &Document, after: &Document) -> bool {
+    before.walk().into_iter().any(|(_, _, l)| {
+        let LayerContent::Smart(a) = &l.content else { return false };
+        if a.smart_filters.is_empty() { return false; }
+        let Some(n) = after.layer(l.id) else { return false };
+        match (&l.content, &n.content) {
+            (LayerContent::Smart(a), LayerContent::Smart(b)) => a.smart_filters == b.smart_filters && caches_same(&a.cache, &b.cache) && !masks_same(&a.filter_mask, &b.filter_mask),
+            _ => false,
+        }
+    })
+}
+
+pub(crate) fn refresh_changed_filter_masks(doc: &mut Document, before: &Document) -> Result<()> {
+    let ids: Vec<_> = before.walk().into_iter().filter_map(|(_, _, l)| {
+        let LayerContent::Smart(a) = &l.content else { return None };
+        if a.smart_filters.is_empty() { return None; }
+        let n = doc.layer(l.id)?;
+        match (&l.content, &n.content) {
+            (LayerContent::Smart(a), LayerContent::Smart(b)) if a.smart_filters == b.smart_filters && caches_same(&a.cache, &b.cache) && !masks_same(&a.filter_mask, &b.filter_mask) => Some(l.id),
+            _ => None,
+        }
+    }).collect();
+    for id in ids {
+        refresh_or_fail(doc, id)?;
+    }
+    Ok(())
+}
+
 /// Appends a smart filter (from a `filter.*` command) and re-renders. A selection becomes the
 /// filter mask, as in Photoshop. Without a renderable source the filter is applied to the cached
 /// pixels (and still recorded).
 pub(crate) fn add_smart_filter(doc: &mut Document, id: LayerId, sf: photostore_doc::SmartFilter, selection: Option<&Surface>) -> Result<()> {
-    let canvas = doc.bounds();
     let renderable = source_bytes(&doc.metadata, &smart(doc, id)?.source).is_some();
+    let initial_mask = if renderable && smart(doc, id)?.filter_mask.is_none() {
+        Some(selection.map(mask_from_selection).unwrap_or_else(|| white_mask(doc)))
+    } else {
+        None
+    };
     let sm = smart_mut(doc, id)?;
     if renderable {
-        if let Some(sel) = selection
-            && sm.filter_mask.is_none()
-        {
-            sm.filter_mask = Some(mask_from_selection(sel));
-        }
+        if let Some(mask) = initial_mask { sm.filter_mask = Some(mask); }
         sm.smart_filters.push(sf);
         return refresh_or_fail(doc, id);
     }
-    let bounds = selection.map(Surface::content_bounds).filter(|b| !b.is_empty()).unwrap_or(canvas);
-    let cache = sm.cache.as_ref().ok_or_else(|| other("smart object has no pixels"))?;
-    let out = crate::filters::apply_filter_to_surface(&sf.command, &sf.params, cache, bounds, selection, canvas)
-        .ok_or_else(|| other(format!("unknown filter {}", sf.command)))?;
-    sm.cache = Some(out);
-    sm.smart_filters.push(sf);
-    Ok(())
+    Err(other("the smart object's contents are unavailable (missing linked file?), so the smart filter can't be rendered"))
 }
 
 /// Rounds float noise off a composed transform (scale 0.1 then 10 should be exactly 1), so
@@ -1308,6 +1354,65 @@ fn has_smart_filters(s: &Session) -> std::result::Result<(), String> {
 fn has_filter_mask(s: &Session) -> std::result::Result<(), String> {
     active_smart(s)?.filter_mask.as_ref().map(|_| ()).ok_or_else(|| "the smart object has no filter mask".into())
 }
+
+fn add_filter_mask(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "layer.smartFilter.addFilterMask";
+    if !p.is_object() { return Err(bad(CMD, "params must be an object")); }
+    if let Some(document) = p.get("document") {
+        let st = s.active().ok_or(EngineError::NoDocument)?;
+        if document.as_u64() != Some(st.doc.id.0) { return Err(bad(CMD, "the target document is no longer active")); }
+    }
+    let source = match p.get("source") { None => "white", Some(Value::String(s)) => s.as_str(), Some(_) => return Err(bad(CMD, "`source` must be `white` or `selection`")) };
+    if !matches!(source, "white" | "selection") { return Err(bad(CMD, "`source` must be `white` or `selection`")); }
+    let id = layer_param(s, p)?;
+    let selection = s.active().and_then(|d| d.doc.selection.clone());
+    s.edit("Add Smart Filter Mask", |doc, _| {
+        let mask = if source == "selection" {
+            selection.clone().map(|s| mask_from_selection(&s)).ok_or_else(|| bad(CMD, "no selection"))?
+        } else { white_mask(doc) };
+        let sm = smart_mut(doc, id)?;
+        if sm.filter_mask.is_some() { return Err(bad(CMD, "the smart object already has a filter mask")); }
+        sm.filter_mask = Some(mask);
+        Ok(json!({"layer": id.0, "source": source}))
+    })
+}
+
+fn edit_filter_mask(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "layer.smartFilter.editFilterMask";
+    if !p.is_object() { return Err(bad(CMD, "params must be an object")); }
+    let density = p.get("density").map(|v| v.as_f64().filter(|x| x.is_finite() && (0.0..=100.0).contains(x)).map(|x| x as f32 / 100.0).ok_or_else(|| bad(CMD, "`density` must be a finite number within 0..100"))).transpose()?;
+    let feather = p.get("feather").map(|v| v.as_f64().filter(|x| x.is_finite() && (0.0..=1000.0).contains(x)).map(|x| x as f32).ok_or_else(|| bad(CMD, "`feather` must be a finite number within 0..1000"))).transpose()?;
+    if density.is_none() && feather.is_none() { return Err(bad(CMD, "density or feather is required")); }
+    let st = s.active().ok_or(EngineError::NoDocument)?;
+    if let Some(document) = p.get("document") && document.as_u64() != Some(st.doc.id.0) { return Err(bad(CMD, "the target document is no longer active")); }
+    let id = layer_param(s, p)?;
+    let old = match &st.doc.layer(id).ok_or(EngineError::NoLayer(id))?.content { LayerContent::Smart(sm) => sm.filter_mask.as_ref().ok_or_else(|| bad(CMD, "the smart object has no filter mask"))?, _ => return Err(other("the layer is not a smart object")) };
+    let next = (density.unwrap_or(old.density), feather.unwrap_or(old.feather));
+    if (old.density, old.feather) != next {
+        s.edit("Edit Smart Filter Mask", |doc, _| {
+            let m = smart_mut(doc, id)?.filter_mask.as_mut().ok_or_else(|| bad(CMD, "the smart object has no filter mask"))?;
+            (m.density, m.feather) = next;
+            Ok(())
+        })?;
+    }
+    Ok(json!({"layer": id.0, "density": next.0 * 100.0, "feather": next.1}))
+}
+
+fn invert_filter_mask(s: &mut Session, p: &Value) -> Result<Value> {
+    if !p.is_object() { return Err(bad("layer.smartFilter.invertFilterMask", "params must be an object")); }
+    if let Some(document) = p.get("document") {
+        let st = s.active().ok_or(EngineError::NoDocument)?;
+        if document.as_u64() != Some(st.doc.id.0) { return Err(bad("layer.smartFilter.invertFilterMask", "the target document is no longer active")); }
+    }
+    let id = layer_param(s, p)?;
+    s.edit("Invert Smart Filter Mask", |doc, _| {
+        let r = doc.bounds();
+        let m = smart_mut(doc, id)?.filter_mask.as_mut().ok_or_else(|| other("the smart object has no filter mask"))?;
+        let mut v = m.surface.read_region(r);
+        for x in &mut v { *x = 1.0 - *x; }
+        m.surface.write_region(r, &v); m.surface.prune(); Ok(json!({"layer": id.0}))
+    })
+}
 fn convertible(s: &Session) -> std::result::Result<(), String> {
     let d = s.active().ok_or("no document open")?;
     let id = d.active_layer.ok_or("no active layer")?;
@@ -1428,6 +1533,9 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(())
             })
         }),
+        spec!("layer.smartFilter.addFilterMask", "Add Filter Mask", SF, r##"{"layer":id?,"document":id?,"source":"white"|"selection"="white"}"##, has_smart, add_filter_mask),
+        spec!("layer.smartFilter.editFilterMask", "Edit Smart Filter Mask", SF, r##"{"layer":id?,"document":id?,"density":0..100?,"feather":0..1000?}"##, has_filter_mask, edit_filter_mask),
+        spec!("layer.smartFilter.invertFilterMask", "Invert Smart Filter Mask", SF, r##"{"layer":id?,"document":id?}"##, has_filter_mask, invert_filter_mask),
         spec!(
             "layer.smartFilter.disableFilterMask",
             "Disable Filter Mask",

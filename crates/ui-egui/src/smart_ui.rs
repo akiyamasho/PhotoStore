@@ -50,6 +50,10 @@ pub fn properties(app: &mut PhotoStoreApp, ui: &mut egui::Ui, layer: &Layer) {
         return;
     }
     let id = layer.id.0;
+    if app.filter_mask_targeted() {
+        filter_mask_properties(app, ui, layer, sm);
+        ui.add_space(8.0);
+    }
     let source = match &sm.source {
         SmartSource::Embedded { file_name, .. } => format!("{} · Embedded", file_name),
         SmartSource::Linked { path } => format!("{} · Linked", std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(path)),
@@ -115,6 +119,41 @@ pub fn properties(app: &mut PhotoStoreApp, ui: &mut egui::Ui, layer: &Layer) {
     }
 }
 
+fn filter_mask_properties(app: &mut PhotoStoreApp, ui: &mut egui::Ui, layer: &Layer, sm: &SmartObject) {
+    let Some(mask) = &sm.filter_mask else { return };
+    if !crate::props_layout::section(ui, "smart-filter-mask", tl!("Smart Filter Mask")) { return; }
+    let document = app.session.active().map(|s| s.doc.id.0).unwrap_or_default();
+    let key = ui.id().with((document, layer.id.0, "filter-mask-values"));
+    let source = (mask.density * 100.0, mask.feather);
+    let (mut density, mut feather) = ui.ctx().data(|d| d.get_temp::<(f32, f32, f32, f32)>(key))
+        .filter(|(_, _, d, f)| (*d - source.0).abs() < f32::EPSILON && (*f - source.1).abs() < f32::EPSILON)
+        .map(|(d, f, _, _)| (d, f)).unwrap_or(source);
+    let rd = crate::widgets::slider_row(ui, tl!("Density"), &mut density, 0.0..=100.0, "%", None);
+    let rf = crate::widgets::slider_row(ui, tl!("Feather"), &mut feather, 0.0..=1000.0, "px", None);
+    if rd.changed() || rf.changed() {
+        ui.ctx().data_mut(|d| d.insert_temp(key, (density, feather, source.0, source.1)));
+    }
+    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+    if rd.drag_stopped() || rf.drag_stopped() || rd.lost_focus() || rf.lost_focus() || enter {
+        let params = json!({"document": document, "layer": layer.id.0, "density": density, "feather": feather});
+        if let Err(error) = app.run("layer.smartFilter.editFilterMask", params) {
+            app.ui.status = error;
+            app.ui.status_error = true;
+        }
+    }
+    ui.horizontal_wrapped(|ui| {
+        if ui.button(tl!("Enable/Disable")).clicked() {
+            let _ = app.run("layer.smartFilter.disableFilterMask", json!({"layer": layer.id.0}));
+        }
+        if ui.button(tl!("Invert")).clicked() {
+            let _ = app.run("layer.smartFilter.invertFilterMask", json!({"layer": layer.id.0}));
+        }
+        if ui.button(tl!("Delete")).clicked() {
+            let _ = app.run("layer.smartFilter.deleteFilterMask", json!({"layer": layer.id.0}));
+        }
+    });
+}
+
 /// Smart-object badge in the bottom-right corner of a layer thumbnail.
 pub fn thumb_badge(ui: &egui::Ui, l: &Layer, thumb: Rect) {
     if !matches!(l.content, LayerContent::Smart(_)) {
@@ -159,9 +198,22 @@ pub fn filter_rows(app: &mut PhotoStoreApp, ui: &mut egui::Ui, l: &Layer, depth:
     ui.painter().text(pos2(header.left() + 7.0, header.center().y), Align2::LEFT_CENTER, chevron, egui::FontId::proportional(14.0), t.icon);
     ui.painter().text(pos2(header.left() + indent, header.center().y), Align2::LEFT_CENTER, "Smart Filters", egui::FontId::proportional(11.5), if sm.filters_enabled { t.text_dim } else { t.text_faint });
     let mask_rect = Rect::from_center_size(pos2(header.left() + indent - 12.0, header.center().y), vec2(14.0, 10.0));
-    let mask_on = sm.filter_mask.as_ref().is_some_and(|m| m.enabled);
-    ui.painter().rect_filled(mask_rect, 1.0, if mask_on { Color32::from_gray(200) } else { Color32::WHITE });
+    if let Some(mask) = &sm.filter_mask {
+        let tex = filter_mask_thumb(app, ui.ctx(), document, l.id, mask);
+        ui.painter().image(tex, mask_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+    } else {
+        ui.painter().rect_filled(mask_rect, 1.0, Color32::WHITE);
+    }
     ui.painter().rect_stroke(mask_rect, 1.0, Stroke::new(1.0, t.field_border), egui::StrokeKind::Inside);
+    if sm.filter_mask.as_ref().is_some_and(|m| !m.enabled) {
+        let k = mask_rect.shrink(1.0);
+        let st = Stroke::new(1.5, t.danger);
+        ui.painter().line_segment([k.left_top(), k.right_bottom()], st);
+        ui.painter().line_segment([k.right_top(), k.left_bottom()], st);
+    }
+    if app.filter_mask_targeted() && app.ui.filter_mask_target == Some((document, l.id.0)) {
+        crate::mask_thumbs_ui::paint_brackets(ui.painter(), mask_rect, t.text);
+    }
     let mask_resp = ui.interact(mask_rect, ui.id().with(("sf-mask", document, l.id.0)), Sense::click());
     let header_eye = Rect::from_min_size(pos2(header.left() + 28.0, header.center().y - 9.0), vec2(18.0, 18.0));
     let eye_resp = ui.interact(header_eye, ui.id().with(("sf-eye", l.id.0, "header")), Sense::click());
@@ -174,8 +226,18 @@ pub fn filter_rows(app: &mut PhotoStoreApp, ui: &mut egui::Ui, l: &Layer, depth:
     if header_resp.clicked() && !eye_resp.clicked() && !mask_resp.clicked() {
         ui.data_mut(|d| d.insert_temp(collapse_key, !collapsed));
     }
-    if mask_resp.clicked() && filter_enabled(app, "layer.smartFilter.disableFilterMask", l.id.0) {
-        actions.push(("layer.smartFilter.disableFilterMask".into(), json!({"layer": l.id.0})));
+    if mask_resp.clicked() {
+        let m = ui.input(|i| i.modifiers);
+        if sm.filter_mask.is_some() {
+            if m.alt {
+                actions.push((photostore_engine::mask_view_cmds::FILTER_ID.into(), json!({"layer": l.id.0, "mode": if m.shift { "toggleOverlay" } else { "toggleGray" }})));
+            } else if m.shift && filter_enabled(app, "layer.smartFilter.disableFilterMask", l.id.0) {
+                actions.push(("layer.smartFilter.disableFilterMask".into(), json!({"layer": l.id.0})));
+            } else if !m.command {
+                actions.push(("layer.select".into(), json!({"layer": l.id.0, "mode": "replace"})));
+                actions.push(("ui.filterMaskTarget".into(), json!({"target": true, "document": document, "layer": l.id.0})));
+            }
+        }
     }
     header_resp.context_menu(|ui| {
         if ui.add_enabled(filter_enabled(app, "layer.smartFilter.disableSmartFilters", l.id.0), egui::Button::new(tl!("Enable All Smart Filters"))).clicked() {
@@ -194,6 +256,30 @@ pub fn filter_rows(app: &mut PhotoStoreApp, ui: &mut egui::Ui, l: &Layer, depth:
         if filter_enabled(app, "layer.smartFilter.disableFilterMask", l.id.0) && ui.button(tl!("Enable/Disable Filter Mask")).clicked() {
             actions.push(("layer.smartFilter.disableFilterMask".into(), json!({"layer": l.id.0})));
             ui.close();
+        }
+        if filter_enabled(app, "layer.smartFilter.addFilterMask", l.id.0) {
+            if ui.button(tl!("Add White Filter Mask")).clicked() {
+                actions.push(("layer.smartFilter.addFilterMask".into(), json!({"layer": l.id.0, "source": "white"})));
+                ui.close();
+            }
+            if ui.button(tl!("Add Filter Mask from Selection")).clicked() {
+                actions.push(("layer.smartFilter.addFilterMask".into(), json!({"layer": l.id.0, "source": "selection"})));
+                ui.close();
+            }
+        }
+        if filter_enabled(app, "layer.smartFilter.invertFilterMask", l.id.0) && ui.button(tl!("Invert Filter Mask")).clicked() {
+            actions.push(("layer.smartFilter.invertFilterMask".into(), json!({"layer": l.id.0})));
+            ui.close();
+        }
+        if sm.filter_mask.is_some() {
+            if ui.button(tl!("Show Filter Mask")).clicked() {
+                actions.push((photostore_engine::mask_view_cmds::FILTER_ID.into(), json!({"layer": l.id.0, "mode": "toggleGray"})));
+                ui.close();
+            }
+            if ui.button(tl!("Show Filter Mask Overlay")).clicked() {
+                actions.push((photostore_engine::mask_view_cmds::FILTER_ID.into(), json!({"layer": l.id.0, "mode": "toggleOverlay"})));
+                ui.close();
+            }
         }
         if filter_enabled(app, "layer.smartFilter.deleteFilterMask", l.id.0) && ui.button(tl!("Delete Filter Mask")).clicked() {
             actions.push(("layer.smartFilter.deleteFilterMask".into(), json!({"layer": l.id.0})));
@@ -280,6 +366,31 @@ pub fn filter_rows(app: &mut PhotoStoreApp, ui: &mut egui::Ui, l: &Layer, depth:
             }
         });
     }
+}
+
+const THUMB_FILTER: u8 = 3;
+
+fn filter_mask_thumb(app: &mut PhotoStoreApp, ctx: &egui::Context, document: u64, id: photostore_doc::LayerId, mask: &photostore_doc::LayerMask) -> egui::TextureId {
+    let rev = crate::surface_fingerprint(&mask.surface) ^ document.rotate_left(17);
+    let key = (id, THUMB_FILTER);
+    if let Some((old, tex)) = app.thumbs.get(&key) && *old == rev {
+        return tex.id();
+    }
+    let side = 32usize;
+    let mut px = vec![Color32::WHITE; side * side];
+    let mut v = [0.0f32; 1];
+    let (w, h) = app.session.active().map(|s| (s.doc.size.width.max(1), s.doc.size.height.max(1))).unwrap_or((1, 1));
+    for y in 0..side {
+        for x in 0..side {
+            mask.surface.read_pixel((x as u32 * w / side as u32) as i32, (y as u32 * h / side as u32) as i32, &mut v);
+            px[y * side + x] = Color32::from_gray((v[0].clamp(0.0, 1.0) * 255.0) as u8);
+        }
+    }
+    let image = egui::ColorImage::new([side, side], px);
+    let tex = ctx.load_texture(format!("sf-mask-{}", id.0), image, egui::TextureOptions::LINEAR);
+    let out = tex.id();
+    app.thumbs.insert(key, (rev, tex));
+    out
 }
 
 /// Re-opens a smart filter's dialog with its recorded parameters; OK runs

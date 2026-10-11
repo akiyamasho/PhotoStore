@@ -1798,7 +1798,8 @@ fn pro_tab_title(app: &PhotoStoreApp, i: usize) -> String {
     let zoom = app.ui.views.get(i).map_or(100.0, |v| v.zoom * 100.0);
     let active_layer = st.active_layer.and_then(|id| st.doc.layer(id)).filter(|l| !(l.name == "Background" && l.locks.transparency));
     let mask = app.session.active_index() == Some(i) && app.ui.mask_target && active_layer.is_some_and(|l| l.mask.is_some());
-    let model = if mask { tl!("Layer Mask").to_string() } else { mode_label(&st.doc).to_string() };
+    let filter_mask = app.session.active_index() == Some(i) && app.filter_mask_targeted();
+    let model = if filter_mask { tl!("Filter Mask").to_string() } else if mask { tl!("Layer Mask").to_string() } else { mode_label(&st.doc).to_string() };
     let layer = active_layer.map(|l| format!("{}, ", l.name)).unwrap_or_default();
     format!("{} @ {}% ({layer}{model}/{}){}", st.doc.name, fmt_zoom(zoom), st.doc.depth.bits(), if st.is_dirty() { "*" } else { "" })
 }
@@ -4334,7 +4335,7 @@ pub fn paint_target(app: &PhotoStoreApp) -> serde_json::Value {
     let has_mask = st.active_layer.and_then(|id| st.doc.layer(id)).is_some_and(|l| l.mask.is_some());
     // Viewing the mask (⌥-click its thumbnail, #196) paints the mask.
     let viewing = photostore_engine::mask_view_cmds::current(st).is_some();
-    json!(if (app.ui.mask_target || viewing) && has_mask { "mask" } else { "pixels" })
+    json!(if app.filter_mask_targeted() { "filterMask" } else if (app.ui.mask_target || viewing) && has_mask { "mask" } else { "pixels" })
 }
 
 #[cfg(test)]

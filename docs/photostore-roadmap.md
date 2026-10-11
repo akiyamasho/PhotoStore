@@ -15,15 +15,18 @@ This is the working roadmap for the independent PhotoStore product. It records t
 
 ## Priorities
 
-1. Continue the integrated audio/clip milestone described in [audio-timeline.md](audio-timeline.md): finish body/trim commit controls, reload-footage and split-segment replacement behavior, and exact audio latency/shared-clock acceptance. The work remains on `codex/animation-audio-backfill-wip` at `287f7c94c065d37d3bdc177c3e44f28719490e84`; compiler verification passed, but packaging and local install are pending.
+1. Complete the remaining 0.8.0 release steps for Audio, Smart Filter Masks, and the New Document Fix. Source commit `405d102f1ddc8f13ed7ae8b6ce8779db0c0f28ec` is pushed and the native compiler gate passed; package, tag, publish, reinstall, and New Document confirmation remain pending. Track the twelve steps in the goal ledger.
 2. Deepen Smart Objects with contents editing, shared contents identity, smart-filter editing, linked-source workflows, and faithful PSD acceptance.
 3. Improve brush behavior and interaction: pressure/tilt/rotation dynamics, smoothing, presets, tablet edge cases, deterministic replay, and responsive large-document painting.
 4. Harden PSD and command coverage around the workflows PhotoStore promises. Add focused fixtures and measurements when a feature is implemented; avoid claiming parity before it is measured.
 
 The animation and Smart Object pass now preserves embedded child timelines, advances animated
 sources during parent playback, bounds decoded and flattened source caches, and exposes an
-undoable Smart Object transform reset. Audio descriptors are detected but are not persisted
-tracks or playback; transitions, stopwatches, transform tracks, clip groups, speed/slip, and
+undoable Smart Object transform reset. Persisted audio tracks and clips, linked movie audio,
+mute/volume/fades, clip timing edits, shared preview/export, and streamed playback are now present
+in the pushed source. Remaining audio gaps include sparse-track handling, exact output latency and
+master-clock synchronization, and arbitrary split-segment replacement envelopes;
+transitions, stopwatches, transform tracks, clip groups, and
 full external-format export fidelity remain open. Eager decoded movie surfaces are capped at
 512 MiB, native range selection is currently command-parameter based, source rates are stored as
 `f32`, and movie decode/export transfers RGBA8 pixels.
@@ -47,8 +50,13 @@ and PhotoStore 0.7.0 is installed locally. Broad native visual QA and UI parity 
 The old-workspace native-save issue remains a secondary reliability gap; the old process and artwork
 were preserved, but the attempted recovery target did not appear.
 
-The audio/clip source milestone is not yet compiled, published, or installed. Its remaining
-integration status is tracked in [audio-timeline.md](audio-timeline.md); no acceptance claim is made.
+The audio/clip source milestone is pushed and compiler-verified, but is not packaged or locally
+installed. Its remaining integration status is tracked in [audio-timeline.md](audio-timeline.md);
+no broad UI or acceptance claim is made. The current installed release remains the 0.7.0
+action-recording release at source `56aede3295b1e344b709c79043ef608a1b21e855`.
+
+Smart Filter Masks and the New Document Fix are implemented and compiler-verified in the current
+source, but are not yet packaged or installed. See [smart-filter-masks.md](smart-filter-masks.md).
 
 ## CI and release follow-up
 

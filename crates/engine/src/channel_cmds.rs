@@ -54,6 +54,8 @@ pub struct ChannelView {
     pub quick_mask_hidden: bool,
     /// ⌥-click view of the active layer's mask (#196); see [`crate::mask_view_cmds`].
     pub layer_mask: Option<crate::mask_view_cmds::LayerMaskView>,
+    /// ⌥-click view of the active smart object's filter mask.
+    pub filter_mask: Option<crate::mask_view_cmds::LayerMaskView>,
 }
 
 impl ChannelView {
@@ -89,6 +91,12 @@ impl ChannelView {
     }
     /// The layer mask shown on the canvas (#196) and how, if its layer still has a mask.
     pub fn shown_layer_mask<'a>(&self, doc: &'a Document) -> Option<(&'a photostore_doc::LayerMask, crate::mask_view_cmds::MaskViewMode)> {
+        if let Some(v) = self.filter_mask {
+            return Some((match &doc.layer(v.layer)?.content {
+                LayerContent::Smart(sm) => sm.filter_mask.as_ref()?,
+                _ => return None,
+            }, v.mode));
+        }
         let v = self.layer_mask?;
         Some((doc.layer(v.layer)?.mask.as_ref()?, v.mode))
     }
@@ -483,6 +491,7 @@ fn mask_plane(s: &Session, p: &Value, cmd: &str) -> Result<Option<Vec<f32>>> {
 pub(crate) enum Target {
     Pixels,
     Mask,
+    FilterMask,
     Alpha(usize),
     QuickMask,
 }
@@ -491,6 +500,7 @@ pub(crate) fn target_of(p: &Value) -> Target {
     match p.get("target") {
         Some(Value::String(s)) => match s.as_str() {
             "mask" => Target::Mask,
+            "filterMask" => Target::FilterMask,
             "quickMask" => Target::QuickMask,
             _ => Target::Pixels,
         },
@@ -512,7 +522,7 @@ pub(crate) fn target_surface<'a>(doc: &'a mut Document, layer: Option<LayerId>, 
             doc.channels.get_mut(i).map(|c| (&mut c.surface, false)).ok_or_else(|| EngineError::Other(format!("no alpha channel {i} (document has {n})")))
         }
         Target::QuickMask => doc.quick_mask.as_mut().map(|c| (&mut c.surface, false)).ok_or_else(|| EngineError::Other("not in Quick Mask mode".into())),
-        t => {
+        t @ (Target::FilterMask | Target::Mask | Target::Pixels) => {
             let id = layer.ok_or_else(|| EngineError::Other("no active layer".into()))?;
             let lock = doc.effective_locks(id).transparency && t == Target::Pixels;
             Ok((crate::commands::paint_surface(doc, id, p)?, lock))
@@ -548,6 +558,25 @@ pub(crate) fn mask_target_enabled(s: &Session, id: &str, p: &Value) -> Option<st
         return None;
     }
     Some(crate::active_layer_of(s).and_then(|l| if l.mask.is_some() { Ok(()) } else { Err("the active layer has no layer mask".into()) }))
+}
+
+pub(crate) fn filter_mask_target_enabled(s: &Session, id: &str, p: &Value) -> Option<std::result::Result<(), String>> {
+    if target_of(p) != Target::FilterMask || !crate::commands::is_mask_target(p) {
+        return None;
+    }
+    let supported = (id.starts_with("filter.") && crate::filters::params_for(id, &Value::Null).is_some())
+        || (id.strip_prefix("image.adjustments.").is_some_and(|k| crate::adjust_params::default_for(k, ColorMode::Rgb).is_ok()))
+        || matches!(id, "edit.fill" | "paint.stroke" | "paint.pencil" | "paint.bucket" | "paint.gradient" | "paint.mixerBrush")
+        || id.starts_with("paint.") && matches!(id, "paint.cloneStamp" | "paint.patternStamp" | "paint.healingBrush" | "paint.spotHealing" | "paint.dodge" | "paint.burn" | "paint.sponge" | "paint.blur" | "paint.sharpen" | "paint.smudge" | "paint.historyBrush" | "paint.redEye" | "paint.remove");
+    if !supported {
+        return None;
+    }
+    Some(crate::active_layer_of(s).and_then(|l| match &l.content {
+        LayerContent::Smart(sm) if sm.filter_mask.is_some() && !s.active().is_some_and(|d| d.doc.effective_locks(l.id).all) => Ok(()),
+        LayerContent::Smart(_) if s.active().is_some_and(|d| d.doc.effective_locks(l.id).all) => Err("the layer is locked".into()),
+        LayerContent::Smart(_) => Err("the smart object has no filter mask".into()),
+        _ => Err("the active layer is not a smart object".into()),
+    }))
 }
 
 /// Whether command `id` edits the targeted channel or mask when its params name no `"target"`
@@ -593,6 +622,7 @@ pub(crate) fn inject_target(s: &Session, id: &str, params: Value) -> Value {
         ChannelTarget::Alpha(i) if i < st.doc.channels.len() => json!({ "channel": i }),
         ChannelTarget::Composite if st.doc.quick_mask.is_some() => json!("quickMask"),
         // Viewing the active layer's mask (⌥-click): pixel commands edit the mask.
+        ChannelTarget::Composite if crate::mask_view_cmds::current_filter(st).is_some() => json!("filterMask"),
         ChannelTarget::Composite if crate::mask_view_cmds::current(st).is_some() => json!("mask"),
         _ => return params,
     };

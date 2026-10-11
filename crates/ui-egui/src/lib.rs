@@ -816,6 +816,9 @@ impl PhotoStoreApp {
             self.ui.mask_target = true;
             self.ui.vector_mask_target = false;
         }
+        if r.is_ok() && matches!(id, "layer.smartFilter.deleteFilterMask" | "layer.smartFilter.clearSmartFilters" | "layer.smartObjects.rasterize") {
+            self.ui.filter_mask_target = None;
+        }
         if r.is_ok() && id == "select.toWorkPath" {
             // Make Work Path selects the new work path in the Paths panel, as in Photoshop.
             self.ui.selected_path = Some("work".into());
@@ -826,6 +829,9 @@ impl PhotoStoreApp {
             self.ui.selected_path = Some("layer".into());
         }
         if r.is_ok() && creates_active_mask {
+            if self.session.active().is_some_and(|st| photostore_engine::mask_view_cmds::current_filter(st).is_some()) {
+                let _ = self.run(photostore_engine::mask_view_cmds::FILTER_ID, serde_json::json!({"mode":"off"}));
+            }
             // Adding a mask selects its thumbnail: the next brush or footer Delete targets it.
             self.ui.mask_target = true;
             self.ui.vector_mask_target = false;
@@ -1445,9 +1451,21 @@ impl PhotoStoreApp {
     /// ⌘I then inverts the mask, as in Photoshop (#780). A targeted alpha channel or Quick Mask
     /// mode wins, as the engine routes those itself.
     pub fn with_mask_target(&self, id: &str, params: Value) -> Value {
-        if !photostore_engine::channel_cmds::follows_target(id) || params.get("target").is_some() || !self.layer_mask_targeted() {
+        if !photostore_engine::channel_cmds::follows_target(id) || params.get("target").is_some() {
             return params;
         }
+        if self.filter_mask_targeted() {
+            let Some((document, layer)) = self.ui.filter_mask_target else { return params };
+            let mut out = match params { Value::Object(m) => m, _ => serde_json::Map::new() };
+            if out.get("layer").and_then(Value::as_u64).is_some_and(|explicit| explicit != layer) {
+                return Value::Object(out);
+            }
+            out.insert("target".into(), Value::from("filterMask"));
+            out.entry("document").or_insert_with(|| Value::from(document));
+            out.entry("layer").or_insert_with(|| Value::from(layer));
+            return Value::Object(out);
+        }
+        if !self.layer_mask_targeted() { return params; }
         match params {
             Value::Object(mut m) => {
                 m.insert("target".into(), Value::from("mask"));
@@ -1465,6 +1483,21 @@ impl PhotoStoreApp {
         composite && st.active_layer.and_then(|id| st.doc.layer(id)).is_some_and(|l| l.mask.is_some())
     }
 
+    /// The shared Smart Filter mask is targeted only while its originating document and layer
+    /// are still active. Alpha channels and Quick Mask take precedence over it.
+    pub fn filter_mask_targeted(&self) -> bool {
+        let Some((document, layer)) = self.ui.filter_mask_target else { return false };
+        let Some(st) = self.session.active() else { return false };
+        st.doc.id.0 == document
+            && st.channel_view.target == photostore_engine::channel_cmds::ChannelTarget::Composite
+            && st.doc.quick_mask.is_none()
+            && st.active_layer == Some(photostore_doc::LayerId(layer))
+            && st.doc.layer(photostore_doc::LayerId(layer)).and_then(|l| match &l.content {
+                photostore_doc::LayerContent::Smart(sm) => sm.filter_mask.as_ref(),
+                _ => None,
+            }).is_some()
+    }
+
     /// Viewing a layer mask (#196) targets it; a vector-mask target needs a vector mask on the
     /// active layer (a shape layer's path is its content, not a mask). Targeting a mask or the
     /// pixels brings back that target's foreground/background pair, as in Photoshop (#2166).
@@ -1473,6 +1506,12 @@ impl PhotoStoreApp {
             if photostore_engine::mask_view_cmds::current(st).is_some() {
                 self.ui.mask_target = true;
                 self.ui.vector_mask_target = false;
+                self.ui.filter_mask_target = None;
+            }
+            if let Some(v) = photostore_engine::mask_view_cmds::current_filter(st) {
+                self.ui.filter_mask_target = Some((st.doc.id.0, v.layer.0));
+                self.ui.mask_target = false;
+                self.ui.vector_mask_target = false;
             }
             if self.ui.vector_mask_target && !mask_thumbs_ui::has_vector_mask(st) {
                 self.ui.vector_mask_target = false;
@@ -1480,8 +1519,11 @@ impl PhotoStoreApp {
             if self.ui.mask_target && !st.active_layer.and_then(|id| st.doc.layer(id)).is_some_and(|l| l.mask.is_some()) {
                 self.ui.mask_target = false;
             }
+            if self.ui.filter_mask_target.is_some() && !self.filter_mask_targeted() {
+                self.ui.filter_mask_target = None;
+            }
         }
-        let mask = self.layer_mask_targeted();
+        let mask = self.layer_mask_targeted() || self.filter_mask_targeted();
         self.session.tools.target_mask(mask);
     }
 
