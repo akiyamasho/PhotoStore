@@ -633,7 +633,6 @@ pub struct Layer {
     /// Layer › Video Layers frame stack (None for a normal layer).
     pub video: Option<VideoData>,
     pub opacity_animation: Option<OpacityAnimation>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position_animation: Option<PositionAnimation>,
     /// Excluded from native recording/export while remaining visible on the canvas.
     pub private_recording: bool,
