@@ -257,8 +257,8 @@ def read_pending() -> dict | None:
 def child_lease_live() -> bool:
     try:
         lease = json.loads(LEASE.read_text(encoding="utf-8"))
-        pid, binary = lease.get("child_pid"), lease.get("binary")
-        if not isinstance(pid, int) or not isinstance(binary, str):
+        pid, binary, uid = lease.get("child_pid"), lease.get("binary"), lease.get("uid")
+        if uid != os.getuid() or not isinstance(pid, int) or not isinstance(binary, str):
             return False
         os.kill(pid, 0)
         command = ps_command(pid)

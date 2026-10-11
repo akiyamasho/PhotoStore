@@ -8,7 +8,7 @@ for p in (HOME / ".cargo/bin", Path("/opt/homebrew/bin"), Path("/usr/local/bin")
     if str(p) not in os.environ.get("PATH", "").split(":"): os.environ["PATH"] = f"{p}:{os.environ.get('PATH','')}"
 ROOT = Path(os.environ.get("PHOTOSTORE_LOCAL_CI_ROOT", HOME / "Library/Application Support/PhotoStore/local-ci")); STATE=ROOT/"state"; CHECKOUTS=ROOT/"checkouts"; STAGE=ROOT/"staged"
 LOG=ROOT/"local-ci.log"; LOCK=ROOT/"poll.lock"; TARGET=Path("/Users/computer/Desktop/dev/PhotoStore/target")
-DEV_WATCH_LEASE=ROOT/"dev-watch.lease"
+DEV_WATCH_LEASE=ROOT/"dev-watch.lease"; DEV_WATCH_STATE=HOME/"Library/Application Support/PhotoStore/dev-watch"; DEV_WATCH_BINARIES=DEV_WATCH_STATE/"binaries"
 PROD=Path("/Applications/PhotoStore.app"); DEV=Path("/Applications/PhotoStore-dev.app"); REPO="akiyamasho/PhotoStore"; DEV_KEYS=Path("/Users/computer/Desktop/dev/tools/Animation/photostore_keys.dev.json")
 SHA_RE=re.compile(r"^[0-9a-fA-F]{40}$"); TAG_RE=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
 
@@ -59,15 +59,23 @@ def checkout(name,s):
     if not (p/".git").exists(): run([tool("git"),"clone","--no-checkout",f"https://github.com/{REPO}.git",str(p)],timeout=90)
     run([tool("git"),"-C",str(p),"fetch","--no-tags","origin",s],timeout=90); run([tool("git"),"-C",str(p),"checkout","--detach","--force",s],timeout=90); return p
 def procs(): return subprocess.run(["/bin/ps","-axo","pid=,command="],text=True,capture_output=True,check=True).stdout.splitlines()
+def proc_command(pid):
+    for line in procs():
+        fields=line.strip().split(None,1)
+        if len(fields)==2 and fields[0].isdigit() and int(fields[0])==pid: return fields[1]
+    return None
 def running():
     p=re.compile(r"^/Applications/PhotoStore(?:-[0-9][^/]*)?\.app/Contents/MacOS/PhotoStore(?:\s|$)"); return any(len(x.split(None,1))==2 and p.match(x.split(None,1)[1]) for x in procs())
 def running_dev(): return any("/Applications/PhotoStore-dev.app/Contents/MacOS/PhotoStore-dev" in x for x in procs())
 def dev_watch_active():
-    d=jread(DEV_WATCH_LEASE,{}) or {}; uid=d.get("uid"); watcher=d.get("watcher_pid"); child=d.get("child_pid"); binary=d.get("binary")
-    if uid!=os.getuid(): return False
+    d=jread(DEV_WATCH_LEASE,{}) or {}; uid=d.get("uid"); state=d.get("state"); watcher=d.get("watcher_pid"); pid=d.get("child_pid"); binary=d.get("binary"); child=jread(DEV_WATCH_STATE/"child.json",{}) or {}
+    if uid!=os.getuid() or state!=str(DEV_WATCH_STATE): return False
     lines=procs()
     watcher_alive=isinstance(watcher,int) and any(line.split(None,2)[0]==str(watcher) and "photostore-dev.py" in line for line in lines if len(line.split(None,2))==3)
-    child_alive=isinstance(child,int) and isinstance(binary,str) and any(line.split(None,2)[0]==str(child) and binary in line for line in lines if len(line.split(None,2))==3)
+    try: managed=Path(binary).resolve().is_relative_to(DEV_WATCH_BINARIES.resolve()) if isinstance(binary,str) else False
+    except (OSError,RuntimeError): managed=False
+    port=child.get("port"); token=str(DEV_WATCH_STATE/"control.token"); command=proc_command(pid) if isinstance(pid,int) else None
+    child_alive=managed and command is not None and command.startswith(binary) and isinstance(port,int) and f"--control {port}" in command and token in command
     if not watcher_alive and not child_alive: DEV_WATCH_LEASE.unlink(missing_ok=True)
     return watcher_alive or child_alive
 def provenance(binary,s,dev=False):
@@ -121,7 +129,7 @@ def build_main(s):
     f=STAGE/f"photostore-dev-{s}"; shutil.copy2(TARGET/"debug/photostore",f); provenance(f,s,True); a=bundle(p,f,s,True); pending={"sha":s,"app":str(a)}
     ajson(STATE/"dev.pending.json",pending)
     if running_dev() or dev_watch_active(): return
-    if install(a,DEV,running_dev): seed_dev_preferences(); atext(STATE/"main.sha",s); (STATE/"dev.pending.json").unlink(missing_ok=True); (STATE/"main.failed").unlink(missing_ok=True)
+    if install(a,DEV,lambda: running_dev() or dev_watch_active()): seed_dev_preferences(); atext(STATE/"main.sha",s); (STATE/"dev.pending.json").unlink(missing_ok=True); (STATE/"main.failed").unlink(missing_ok=True)
 def build_release(rel,s):
     p=checkout("release",s); font_manifest(); e={"PHOTOSTORE_BUILD_SHA":s,"PHOTOSTORE_BUILD_DATE":datetime.date.today().isoformat(),"CARGO_TARGET_DIR":str(TARGET),"CARGO_BUILD_JOBS":"1","RAYON_NUM_THREADS":"1","CRAFT_FONTS_REQUIRED":"1","CRAFT_FONTS_DIR":os.environ["CRAFT_FONTS_DIR"]}; run(["nice","-n","10",tool("cargo"),"build","--release","--locked","-p","photostore","--features","heif"],cwd=p,env=e,timeout=None)
     f=STAGE/f"photostore-release-{s}"; shutil.copy2(TARGET/"release/photostore",f); provenance(f,s,False); a=bundle(p,f,s,False); ajson(STATE/"release.pending.json",{"id":rel["id"],"tag":rel["tag_name"],"sha":s,"app":str(a)})
@@ -133,7 +141,7 @@ def discard(p,d):
 def finish_pending(m,rel):
     p=STATE/"dev.pending.json"; d=jread(p)
     if d and d.get("sha")!=m: discard(p,d); d=None
-    if d and not dev_watch_active() and Path(d.get("app","")).exists() and install(Path(d["app"]),DEV,running_dev): seed_dev_preferences(); atext(STATE/"main.sha",d["sha"]); p.unlink(missing_ok=True)
+    if d and not dev_watch_active() and Path(d.get("app","")).exists() and install(Path(d["app"]),DEV,lambda: running_dev() or dev_watch_active()): seed_dev_preferences(); atext(STATE/"main.sha",d["sha"]); p.unlink(missing_ok=True)
     p=STATE/"release.pending.json"; d=jread(p); ident=((rel or {}).get("id"),(rel or {}).get("tag"),(rel or {}).get("sha"))
     if d and (d.get("id"),d.get("tag"),d.get("sha"))!=ident: discard(p,d); d=None
     if d and not running() and Path(d.get("app","")).exists() and install(Path(d["app"]),PROD,running): ajson(STATE/"release.json",d); p.unlink(missing_ok=True)
