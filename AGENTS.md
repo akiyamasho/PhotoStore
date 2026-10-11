@@ -60,8 +60,8 @@ background jobs or dialogs. Any open tab, including a saved tab, defers the queu
 close every tab to let it apply automatically. It never closes an unrelated owner process and never
 touches `/Applications/PhotoStore.app`. Source preferences and configuration are preserved. The
 loop is a safe process restart, not in-process hot module replacement. When launched by an agent,
-use background mode so the user's active UI is not blocked; background mode must not focus or raise
-the app window.
+use background mode so the app opens behind the user's active UI without blocking, focusing, or
+raising that window.
 
 ## Local CI and release watcher
 

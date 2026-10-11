@@ -199,7 +199,7 @@ def start(binary: Path, name: str) -> tuple[OwnedProcess, int]:
     args = [str(binary), "--control", str(port), "--control-token-file", str(TOKEN), "--automation-read-root", str(ROOT), "--automation-write-root", str(ROOT)]
     if env.get("PHOTOSTORE_DEV_BACKGROUND") == "1" and sys.platform == "darwin":
         background_bundle(binary)
-        subprocess.run(["open", "-n", "-g", "-j", str(BACKGROUND_BUNDLE), "--args", *args[1:]], cwd=ROOT, env=env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["open", "-n", "-g", str(BACKGROUND_BUNDLE), "--args", *args[1:]], cwd=ROOT, env=env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         pid = None
         for _ in range(50):
             lines = subprocess.run(["/bin/ps", "-axo", "pid=,command="], text=True, capture_output=True, check=True).stdout.splitlines()

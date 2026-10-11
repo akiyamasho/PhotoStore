@@ -10,8 +10,8 @@ The installer copies the shared icon and licence records, removes all document a
 from the dev `Info.plist`, signs the bundle ad hoc, and installs atomically at the selected
 `/Applications/PhotoStore-dev*.app`. It never modifies or removes `/Applications/PhotoStore.app`,
 does not claim file associations, and refuses to replace a running dev process. Launching is
-opt-in; `--launch-background` uses macOS background/hidden opening so an agent does not take over
-the user's UI.
+opt-in; `--launch-background` uses macOS background opening behind the active window so an agent
+does not take over the user's UI.
 
 From the repository root, the normal consolidated install command is:
 

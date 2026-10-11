@@ -12,7 +12,8 @@ From the repository root, the supported commands are:
 ./dev --status        # print watcher state and owned child metadata
 ```
 
-`--background` is for agent-driven work that must leave the user's foreground application alone.
+`--background` is for agent-driven work that opens the dev app behind the user's active window and
+leaves the user's foreground application alone.
 The watcher is a process restart with a guarded control request, not in-process hot module
 replacement.
 
