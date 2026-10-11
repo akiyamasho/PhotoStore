@@ -230,3 +230,22 @@ including an empty frame, painted placement, opacity samples 1.0/0.4/0.5, save/r
 Video↔Frame conversion, alpha preservation, recording-off state, and disabled Position freeze at
 [10,6] with zero keys. No screenshot, Smart visual, animated-parent, PSD, full-affine, release, or
 full-product parity claim is made.
+
+## 2026-10-11: 0.16.0 production release evidence boundary
+
+The production candidate may combine independently documented earlier milestones, but evidence keeps
+its capture version and source provenance. Historical 0.13.1 and 0.14.0 images are linked as such;
+they do not substitute for 0.16.0 screenshots. Raster Position and video Position/Opacity captures
+must be real, legible PhotoStore captures from disposable demo documents before the docs checkpoint
+and immutable release tag. The 0.16.0 preview build is not a final production package and cannot
+establish publication or production installation. Status labels remain separate for source
+implementation, preview compilation, screenshot verification, and publication. Full Photoshop,
+Smart Object, PSD, affine, and audio parity are not claimed by this release.
+
+## 2026-10-11: 0.16.0 production build profile
+
+Reserve the final production build for after the reviewed documentation commit and immutable source
+tag. Use Cargo opt level 2, LTO disabled, one Cargo job, and offline dependency resolution so the
+single required production package uses the existing local dependency cache and limits resource
+pressure. The ad hoc macOS package is not notarized. Preview-build and screenshot receipts remain
+separate from final source/package identity and publication evidence.

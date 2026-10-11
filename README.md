@@ -1,6 +1,6 @@
 # PhotoStore
 
-Native, open-source image editing software written in Rust.
+PhotoStore is a Rust-native image editor maintained as a personal fork of PhotoCraft. It is an independent project; no upstream sync relationship is configured.
 
 ![Rust 1.95+](https://img.shields.io/badge/Rust-1.95%2B-b7410e?style=flat-square&logo=rust)
 ![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-2f7bf5?style=flat-square)
@@ -8,16 +8,12 @@ Native, open-source image editing software written in Rust.
 
 ## Install
 
-Download the macOS Apple Silicon package from the [PhotoStore releases](https://github.com/akiyamasho/PhotoStore/releases). For a local install, use Rust stable 1.95+:
+Download the macOS Apple Silicon package from [PhotoStore releases](https://github.com/akiyamasho/PhotoStore/releases). For a local install, use Rust stable 1.95+:
 
 ```sh
 CARGO_BUILD_JOBS=1 cargo install --path apps/photostore --bin photostore --locked
 CARGO_BUILD_JOBS=1 cargo install --path apps/photostore-cli --bin photostore-cli --locked
 ```
-
-Linux native dependencies and optional fonts are documented in [`docs/development.md`](docs/development.md).
-
-Optional native movie import/export requires FFmpeg and FFprobe; install the Homebrew `ffmpeg-full` formula or set `PHOTOSTORE_FFMPEG` and `PHOTOSTORE_FFPROBE`.
 
 ## Build and run
 
@@ -25,19 +21,14 @@ Optional native movie import/export requires FFmpeg and FFprobe; install the Hom
 CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 ./target/release/photostore
 ./target/release/photostore-cli --help
-open -a PhotoStore
 ```
 
-## Latest screenshots
+## Latest preview screenshots
 
-0.14.0 development preview — [capture evidence](docs/screenshots/0.14.0/evidence.md).
+These 0.16.0 development-preview captures show raster and video Position/Opacity tracks. See the [capture evidence](docs/screenshots/0.16.0/evidence.md) and [v0.16.0 release](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.16.0).
 
-![Unsaved-change guard](docs/screenshots/0.14.0/unsaved-quit-cancel.webp)
+![Raster Position and Opacity tracks](docs/screenshots/0.16.0/raster-position-opacity.webp)
 
-![Reopened video timeline](docs/screenshots/0.14.0/timeline-saved-reopened.webp)
+![Video Position and Opacity tracks](docs/screenshots/0.16.0/video-position-opacity.webp)
 
-Current development status — [PhotoStore goal ledger](docs/photostore-goal-ledger.md).
-
-Current capture coverage shows the 0.14.0 close and timeline-persistence preview. Screenshot capture
-for the 0.15.0 and 0.16.0 candidate features remains pending; see the [0.16.0 candidate status](docs/releases/0.16.0.md).
-
+Historical captures remain linked with their original provenance: [0.14.0 close and timeline evidence](docs/screenshots/0.14.0/evidence.md) and [0.13.1 toolbar/shortcut evidence](docs/screenshots/0.13.1/evidence.md).

@@ -1,17 +1,43 @@
-# PhotoStore 0.16.0 video-opacity delivery evidence
+# PhotoStore 0.16.0 screenshot evidence
+
+Status: provisional-preview captures are present and root-reviewed for legibility and demo content. These images document the isolated `0.16.0dev` preview, not a final production build or a published release. Both demo documents were saved disposable fixtures; recording was disabled, a fresh configuration had zero documents before capture, and the owned preview process was inactive and non-frontmost before and after each screenshot. The screenshots contain no private artwork.
+
+The native CUA screenshot API returned JPEG bytes. The committed lossless WebP files are pixel-identical to the decoded JPEG captures; they are not described as lossless camera captures. The preview source was `8b07e3bfd067f27c396e5475646d33b0c58e2e59`, built as `/private/tmp/photostore-production-preview-0.16.0-20261011/PhotoStore-dev-release-0-16.app`, bundle `ai.photostore.app.dev.release-0-16`, binary SHA-256 `75e54f59bf87f1fc73fbba40055af2e97b65e80e7a70b9d930e2084b3e1b200b`.
+
+## raster-position-opacity.webp
+
+- Feature: ordinary raster-layer Position and Opacity animation controls, with typed XY values and visible track/key controls.
+- Demo: saved disposable `release-evidence/raster-motion.pcraft`; document 1, layer 3 (`Raster Motion`), displayed frame 2 of 3 (zero-based index 1).
+- Visible values: opacity 72.5%, Position (115, 85), Linear interpolation, two keys.
+- Capture: 1440×900, 158,848 bytes; SHA-256 `20d18a9d2f5c0faa9597c531e66734f0e66855f21a5fa923f7a46bd72c25d86a`.
+- Known limits: preview UI evidence for this raster track only; it does not establish broad interaction acceptance or external-format parity.
+
+## video-position-opacity.webp
+
+- Feature: independent video Position and Opacity tracks; Linear/Hold selectors, legacy-keyframe ownership text, and visible source content.
+- Demo: saved disposable `release-evidence/video-motion.pcraft`; document 4, layer 6; displayed frame 2 of 3 (zero-based capture index 1). Source frames 0 and 1 are painted; frame 2 is empty.
+- Visible values: opacity 75%, Position (6, 4), three migrated Position keys with Hold active, and Linear Opacity interpolation.
+- Capture: 2880×1800, 338,704 bytes; SHA-256 `8b4bde0632205a136c774577a8c2e48b3a64c53c898a2c7568550778f9a918c0`.
+- Known limits: the screenshot documents this candidate UI state and visible track ownership only. It does not establish full timeline, Smart Object, PSD, audio, or Photoshop parity.
+
+The preview bundle was PID 51523 and remained inactive/non-frontmost before and after capture; the app was quit after the captures. Recording was checked off for the fresh configuration and the demo documents. No production package, publication, or production installation is evidenced here.
+
+Historical captures keep their original source and capture facts: [0.14.0 close-guard and timeline evidence](../0.14.0/evidence.md), and [0.13.1 toolbar/shortcut-autosave evidence](../0.13.1/evidence.md). They are not represented as 0.16.0 captures.
+
+## Historical video-opacity development receipt
 
 This is a local development delivery receipt for the independent video-opacity pass. It records the
 compiler, package, install, and focused native runtime facts. Visual interaction acceptance remains
 open, and the development branch checkpoint is prepared on `codex/video-opacity`.
 
-## Source and compiler
+### Source and compiler
 
 - Baked source: `d66ddbcbed3989f66cb568b1f6d8f7f30fc9d464`.
 - Combined compiler: passed in 45.07 seconds with exit 0.
 - Compiler log: `/private/tmp/photostore-video-opacity-check-20261011.log`.
 - Compiler output: 7 engine warnings and 1 existing UI warning, with no errors.
 
-## Package and install
+### Package and install
 
 - Development package: completed in 6m13s.
 - Package log: `/private/tmp/photostore-video-opacity-rc-build-20261011.log`.
@@ -23,7 +49,7 @@ open, and the development branch checkpoint is prepared on `codex/video-opacity`
   touched. The installed hash and bundle identity were independently read by root. No standalone
   installer log was retained.
 
-## Focused runtime and screenshots
+### Focused runtime and screenshots
 
 The focused native runtime receipt passed in the fresh, distinct working directory
 `/private/tmp/photostore-video-opacity-runtime-20261011-evidence`. The blank native document was

@@ -73,3 +73,12 @@ The inherited workflow recipes are retained for reference but are manual `workfl
 ## Working constraints
 
 Keep the engine headless, the UI thin, and the document format explicit. Preserve MIT/Apache licensing and asset provenance. Use one Cargo build worker and the shared target directory on development machines. Heavy builds and discretionary QA require an explicit user request.
+
+## Current production candidate — 0.16.0 (2026-10-11)
+
+The integrated candidate combines the historical 0.14.0 close/timeline work, 0.15.0 ordinary opacity
+animation, 0.16.0 raster Position and video Position/Opacity tracks, shortcut-file autosave, and the
+consolidated `./dev` workflow. The preview was built from source
+`8b07e3bfd067f27c396e5475646d33b0c58e2e59` as an isolated thin ARM64 bundle; the exact preview receipt
+and known limits are recorded in [the release notes](releases/0.16.0.md). Reviewed 0.16.0 preview captures now document raster Position/Opacity and video Position/Opacity; historical 0.13.1 and 0.14.0 captures keep their original version provenance. Status is source implemented, preview compiled, and screenshots legibility-reviewed; docs commit, immutable tag, final production build, publication, and production installation are pending. Smart Object animation/depth is the next product priority, and the full backfill remains
+unfinished with no completion percentage asserted. The planned final production pass uses Cargo opt level 2, LTO off, one job, and offline dependency resolution; the ad hoc macOS package will not be notarized.

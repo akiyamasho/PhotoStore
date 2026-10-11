@@ -500,3 +500,18 @@ Video↔Frame conversion, alpha preservation, recording off, and disabled Positi
 with zero keys. Runtime cleanup confirmed the candidate process absent and listener closed. No
 screenshot/UI-pixel, Smart visual, animated-parent, PSD, full-affine, release, or full-product
 parity acceptance is claimed.
+
+## 0.16.0 production release candidate (2026-10-11)
+
+The current release candidate integrates the 0.14.0 close guard and timeline persistence, 0.15.0
+ordinary opacity animation, 0.16.0 raster and video Position animation, and independent video Opacity,
+with shortcut-file autosave and the consolidated development workflow already present in the source
+history. Historical captures retain their 0.13.1 and 0.14.0 provenance; they are not presented as
+0.16.0 UI evidence. Reviewed 0.16.0 preview screenshots now document raster Position/Opacity and video Position/Opacity; their exact capture provenance and known limits are recorded in [0.16.0 evidence](screenshots/0.16.0/evidence.md). The 0.15.0 hidden capture attempt produced no image and is not reused.
+
+The combined candidate source is `8b07e3bfd067f27c396e5475646d33b0c58e2e59`. Its thin ARM64 preview
+bundle is `/private/tmp/photostore-production-preview-0.16.0-20261011/PhotoStore-dev-release-0-16.app`,
+bundle ID `ai.photostore.app.dev.release-0-16`, executable SHA-256
+`75e54f59bf87f1fc73fbba40055af2e97b65e80e7a70b9d930e2084b3e1b200b`. The preview build completed in
+13m14s; log: `/private/tmp/photostore-production-preview-build-20261011.log`. This is preview evidence
+only. Source behavior is implemented, the preview compiled, and the two required screenshots are captured and legibility-reviewed. The docs commit, tag, final production package, publication, and production installation remain pending. The production pass is planned with Cargo opt level 2, LTO off, one job, and offline dependency resolution to preserve system resources; the resulting ad hoc macOS package will not be notarized. The broader PhotoStore backfill is unfinished, with Smart Object depth and animation behavior the next product priority. No full-product completion percentage is claimed.
