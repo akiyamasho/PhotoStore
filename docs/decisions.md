@@ -71,12 +71,16 @@ source is `08e285ea80ea160af9661596ceee9449b4122f8f`; its 5m22s development pack
 at `/Applications/PhotoStore-dev-timeline-safety.app` with binary SHA-256
 `5d677b261e2ddf7c281fbcf11fb4fd0458a3d5682db4cd4b219cabb439720168`. Focused runtime evidence is
 `/private/tmp/photostore-dev-timeline-safety-repair-20261011/runtime-evidence.json`. Eight of nine
-steps are complete: 1–6, 8, and 9; push remains pending explicit approval. The RC
+steps are complete: 1–6, 7, 8, and 9; the private branch push is complete at remote SHA
+`3d6c3bada5f8455b0b9c21cf1aa9b7e5297c3489`. The RC
 uses `PhotoStore-dev-timeline-safety`,
 bundle ID `ai.photostore.app.dev.timeline-safety`, and default macOS configuration
 `~/Library/Application Support/PhotoStore-dev-timeline-safety`; production remains untouched.
 No production tag, release, publication, or production reinstall is claimed. The allocation-free
-sampler uses O(n) sortedness validation plus lower-bound lookup. The behavior remains bounded and evidence-gated;
+sampler uses O(n) sortedness validation plus lower-bound lookup. The bounded pass is complete; the
+overall Photoshop backfill remains active. The next bounded pass is ordinary-layer and Smart opacity
+stopwatches on `/private/tmp/PhotoStore-opacity-animation-20261011`, branch `codex/opacity-stopwatch`,
+in progress. The behavior remains bounded and evidence-gated;
 no complete timeline persistence or Photoshop parity claim is made.
 
 ## 2026-10-10: Smart Object contents identity (#2163)

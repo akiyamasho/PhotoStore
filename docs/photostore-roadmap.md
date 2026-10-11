@@ -15,7 +15,7 @@ This is the working roadmap for the independent PhotoStore product. It records t
 
 ## Priorities
 
-1. Complete the current 0.14.0 close-safety and timeline-persistence development RC. The prior 33.04-second compiler gate, 5m32s preview build marked `preview-0.14.0-timeline-safety`, and targeted screenshots remain factual. The goal-specific compiler exited 0, three standard-only namespace tests passed with zero failures, and the local RC package/runtime evidence completed steps 1–6, 8, and 9 of 9. Push remains pending explicit approval; no production tag, release, publication, or production reinstall is claimed. Dense properties, complete closing, and full Photoshop parity remain unverified.
+1. The bounded 0.14.0 close-safety and timeline-persistence RC is complete locally and pushed to the private branch at remote SHA `3d6c3bada5f8455b0b9c21cf1aa9b7e5297c3489`; all 9 delivery steps are complete. No production tag, release, publication, or production reinstall is claimed. Dense properties, complete closing, and full Photoshop parity remain unverified. The next bounded pass is ordinary-layer and Smart opacity stopwatches on `/private/tmp/PhotoStore-opacity-animation-20261011`, branch `codex/opacity-stopwatch`, in progress.
 2. Deepen Smart Objects with contents editing, shared contents identity, smart-filter editing, linked-source workflows, and faithful PSD acceptance.
 3. Improve brush behavior and interaction: pressure/tilt/rotation dynamics, smoothing, presets, tablet edge cases, deterministic replay, and responsive large-document painting.
 4. Harden PSD and command coverage around the workflows PhotoStore promises. Add focused fixtures and measurements when a feature is implemented; avoid claiming parity before it is measured.
