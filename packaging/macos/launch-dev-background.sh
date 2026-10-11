@@ -58,7 +58,8 @@ function run(argv) {
     const pid = Number(app.processIdentifier);
     if (path === executable && id === bundleID) {
       rows.push([pid, path, id, app.isActive ? 'true' : 'false',
-        app.isHidden ? 'true' : 'false', pid === frontmostPID ? 'true' : 'false'].join('\t'));
+        app.isHidden ? 'true' : 'false', pid === frontmostPID ? 'true' : 'false',
+        app.isFinishedLaunching ? 'true' : 'false'].join('\t'));
     }
   }
   return rows.join('\n');
@@ -82,7 +83,7 @@ fi
 /usr/bin/open -g -j -n -a "${OPEN_ARGS[@]}"
 
 PID=""
-DEADLINE=$((SECONDS + 15))
+DEADLINE=$((SECONDS + 30))
 while [ "$SECONDS" -lt "$DEADLINE" ]; do
   ROW="$(running_rows)"
   if [ -n "$ROW" ]; then
@@ -91,12 +92,15 @@ while [ "$SECONDS" -lt "$DEADLINE" ]; do
       echo "error: found $ROW_COUNT matching development processes after launch" >&2
       exit 1
     fi
-    IFS=$'\t' read -r PID _ _ _ _ _ <<< "$ROW"
-    break
+    IFS=$'\t' read -r ROW_PID _ _ _ _ _ FINISHED_LAUNCHING <<< "$ROW"
+    if [ "$FINISHED_LAUNCHING" = "true" ]; then
+      PID="$ROW_PID"
+      break
+    fi
   fi
   sleep 0.2
 done
-[ -n "$PID" ] || { echo "error: development app did not start within 15 seconds" >&2; exit 1; }
+[ -n "$PID" ] || { echo "error: development app did not start within 30 seconds" >&2; exit 1; }
 
 # Hide only the newly launched exact process. This uses AppKit directly and
 # never activates, closes, or restores any other application.
@@ -122,6 +126,7 @@ function run(argv) {
 JXA
 
 CHECK_DEADLINE=$((SECONDS + 3))
+STABLE_CHECKS=0
 while [ "$SECONDS" -lt "$CHECK_DEADLINE" ]; do
   ROW="$(running_rows)"
   if [ -n "$ROW" ]; then
@@ -129,10 +134,36 @@ while [ "$SECONDS" -lt "$CHECK_DEADLINE" ]; do
     ACTIVE="$(printf '%s' "$ROW" | awk -F '\t' '{print $4}')"
     HIDDEN="$(printf '%s' "$ROW" | awk -F '\t' '{print $5}')"
     FRONTMOST="$(printf '%s' "$ROW" | awk -F '\t' '{print $6}')"
-    if [ "$ROW_PID" = "$PID" ] && [ "$ACTIVE" = "false" ] && [ "$HIDDEN" = "true" ] && [ "$FRONTMOST" = "false" ]; then
-      echo "launched hidden development app (pid=$PID, bundle=$BUNDLE_ID)"
-      exit 0
+    if [ "$ROW_PID" = "$PID" ] && [ "$FRONTMOST" = "true" ]; then
+      /usr/bin/osascript -l JavaScript - "$PID" "$EXEC" "$BUNDLE_ID" <<'JXA'
+ObjC.import('AppKit');
+function run(argv) {
+  const pid = Number(argv[0]);
+  const executable = argv[1];
+  const bundleID = argv[2];
+  const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
+  if (!app || !app.executableURL || app.executableURL.path.js !== executable ||
+      !app.bundleIdentifier || app.bundleIdentifier.js !== bundleID) {
+    throw new Error('new process identity changed after hide');
+  }
+  app.performSelector($.NSSelectorFromString('hide'));
+  return 'hidden';
+}
+JXA
+      echo "error: development app became frontmost after hide" >&2
+      exit 1
     fi
+    if [ "$ROW_PID" = "$PID" ] && [ "$ACTIVE" = "false" ] && [ "$HIDDEN" = "true" ] && [ "$FRONTMOST" = "false" ]; then
+      STABLE_CHECKS=$((STABLE_CHECKS + 1))
+      if [ "$STABLE_CHECKS" -ge 3 ]; then
+        echo "launched hidden development app (pid=$PID, bundle=$BUNDLE_ID)"
+        exit 0
+      fi
+    else
+      STABLE_CHECKS=0
+    fi
+  else
+    STABLE_CHECKS=0
   fi
   sleep 0.2
 done

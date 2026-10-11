@@ -306,13 +306,23 @@ unverified.
 
 ## Current 0.16.0 independent video-opacity pass
 
-Version 0.16.0 is prepared as development scaffolding on isolated branch `codex/video-opacity`.
-The engine and timeline UI source work is implemented. The combined compiler passed in 45.07 seconds
-with exit 0; log `/private/tmp/photostore-video-opacity-check-20261011.log` records 7 engine
-warnings and 1 existing UI warning with no errors. This completes the compiler step (milestone 2/3,
-67%); development delivery is at step 1/4 (25%), with package, install, runtime receipt, and source
-commit still pending. No source SHA, screenshot, release, publication, promotion, or production
-install is claimed.
+Version 0.16.0 is prepared as a local development candidate on isolated branch `codex/video-opacity`.
+The engine and timeline UI source work is implemented. The baked source is
+`d66ddbcbed3989f66cb568b1f6d8f7f30fc9d464`. The combined compiler passed in 45.07 seconds with exit
+0; log `/private/tmp/photostore-video-opacity-check-20261011.log` records 7 engine warnings and 1
+existing UI warning with no errors. This completes the compiler step (milestone 2/3, 67%); package
+and source commit work are complete, and development delivery is at step 4/4 (100%). The package
+completed in 6m13s and the candidate is installed at `/Applications/PhotoStore-dev-video-opacity.app`
+with bundle ID `ai.photostore.app.dev.video-opacity` and executable SHA-256
+`597d2e4da6e32cbaf12f0bcfb6db592ac70dc5dfbcdd9670f82250d0bcad89c6`. Installer verification
+matched the hash and confirmed signature, ARM64 architecture, no document association, no goal
+process, no default configuration, and no other applications touched. The focused native runtime
+receipt passed on the installed candidate: a fresh hidden launch reported PID 61599, the gate enforced
+finished launching, hidden, inactive, and non-frontmost state, and the final flow produced 42 RPC
+responses, including one expected rejection (`id18`, `timeline.addKeyframe` with owned opacity) and
+41 successful responses before a clean quit with the listener closed. Screenshot, release, publication,
+promotion, and production install remain pending. The development branch checkpoint is prepared on
+`codex/video-opacity`.
 
 The pass adds an independent owned video-opacity track while preserving the coupled legacy XY/opacity
 behavior untouched; the ignored-alpha editor is hidden whenever an owned track exists.

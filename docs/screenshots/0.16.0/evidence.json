@@ -1,0 +1,55 @@
+{
+  "source_commit": "d66ddbcbed3989f66cb568b1f6d8f7f30fc9d464",
+  "app": "/Applications/PhotoStore-dev-video-opacity.app",
+  "bundle": "ai.photostore.app.dev.video-opacity",
+  "binary_sha256": "597d2e4da6e32cbaf12f0bcfb6db592ac70dc5dfbcdd9670f82250d0bcad89c6",
+  "runtime_root": "/private/tmp/photostore-video-opacity-runtime-20261011-evidence",
+  "launcher": {
+    "pid": 61599,
+    "gate": ["finished launching", "hidden", "inactive", "non-frontmost"],
+    "fresh_launch_log_retained": false,
+    "stable_checks_reset": {"source_reviewed": true, "rerun": false, "baked_app_changed": false}
+  },
+  "document": {
+    "width": 64,
+    "height": 64,
+    "video_frames": 3,
+    "fps": 3.0,
+    "recording_enabled": false,
+    "blank_video_document": true
+  },
+  "legacy_opacity": {"frame_0": 1.0, "frame_2": 0.25},
+  "owned_opacity": {
+    "first_enable_frame_1": 0.625,
+    "layer_set_props_frame_2": 0.5,
+    "xy_only_frame_2": {"x": 20.0, "y": 6.0, "alpha_preserved": 0.25},
+    "rejected_legacy_alpha": {
+      "command": "timeline.addKeyframe",
+      "value": 0.9,
+      "accepted": false,
+      "reason": "OWNED OPACITY"
+    },
+    "sample_frame_1": 0.75
+  },
+  "animated_artifact": {
+    "path": "/private/tmp/photostore-video-opacity-runtime-20261011-evidence/work/ANIMATED.pcraft",
+    "sha256": "34ba47c274dc2ddead5e88140641e55d5d09ad6018009ce46579ffcd5274bf3d",
+    "format_generator": "photostore-format 0.16.0",
+    "reopened_frames": {"frame_0": 1.0, "frame_1": 0.75, "frame_2": 0.5}
+  },
+  "disabled_artifact": {
+    "path": "/private/tmp/photostore-video-opacity-runtime-20261011-evidence/work/DISABLED.pcraft",
+    "format_generator": "photostore-format 0.16.0",
+    "static_opacity": 0.75,
+    "key_count": 0,
+    "frozen_frames": {"frame_0": 0.75, "frame_2": 0.75}
+  },
+  "rpc": {
+    "final_responses": 42,
+    "successful_responses": 41,
+    "expected_rejections": 1,
+    "expected_rejection": {"id": 18, "command": "timeline.addKeyframe", "reason": "OWNED OPACITY"}
+  },
+  "cleanup": {"app_quit": true, "listener_closed": true},
+  "visual_acceptance": {"screenshot": false, "ui_canvas_pixels": false}
+}

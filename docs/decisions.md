@@ -126,7 +126,19 @@ raw interpolation before integer clamping. Migration is atomic and bounded at 1,
 100,000 owned keys, and 256 tracks, with non-finite or invalid input rejected. Sparse unique unit
 keys retain future keys through Linear migration. After the dense extent, migration restores the
 legacy/static value at frame extent when the extent is at most 999,999. The engine/UI implementation
-is complete for this source pass. The combined compiler passed in 45.07 seconds with exit 0; log
+is complete for this source pass. The baked source is `d66ddbcbed3989f66cb568b1f6d8f7f30fc9d464`.
+The combined compiler passed in 45.07 seconds with exit 0; log
 `/private/tmp/photostore-video-opacity-check-20261011.log` records 7 engine warnings and 1 existing
-UI warning with no errors. Package, install, runtime, screenshot, and release evidence remain
-pending.
+UI warning with no errors. The development package completed in 6m13s; build log
+`/private/tmp/photostore-video-opacity-rc-build-20261011.log`. The installed candidate is
+`/Applications/PhotoStore-dev-video-opacity.app` (`ai.photostore.app.dev.video-opacity`) with
+executable SHA-256 `597d2e4da6e32cbaf12f0bcfb6db592ac70dc5dfbcdd9670f82250d0bcad89c6`. Installer
+verification matched the hash and confirmed signature, ARM64 architecture, no document association,
+no goal process, no default configuration, and no other applications touched. These installer results
+were reported by root; the installed hash and bundle identity were independently read by root. No
+standalone installer log was retained. The focused native runtime receipt passed on the installed
+candidate: a fresh hidden launch reported PID 61599, the gate enforced finished launching, hidden,
+inactive, and non-frontmost state, and the final flow produced 42 RPC responses, including one
+expected rejection (`id18`, `timeline.addKeyframe` with owned opacity) and 41 successful responses,
+before a clean quit with the listener closed. Screenshot and release evidence remain pending; the
+development branch checkpoint is prepared on `codex/video-opacity`.
