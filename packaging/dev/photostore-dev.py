@@ -179,6 +179,10 @@ def read_pending() -> dict | None:
         return None
 
 
+def write_lease(child_pid: int | None, binary: Path | None) -> None:
+    atomic_write(LEASE, json.dumps({"watcher_pid": os.getpid(), "child_pid": child_pid, "binary": str(binary) if binary else None, "uid": os.getuid(), "state": str(STATE)}).encode())
+
+
 def run(once: bool) -> int:
     ensure_state()
     with OWNER_LOCK.open("a+") as owner:
@@ -187,7 +191,7 @@ def run(once: bool) -> int:
         except BlockingIOError:
             raise SystemExit("photostore-dev: another watcher already owns this runtime")
         PID_FILE.write_text(str(os.getpid()), encoding="ascii")
-        atomic_write(LEASE, json.dumps({"watcher_pid": os.getpid(), "uid": os.getuid(), "state": str(STATE)}).encode())
+        write_lease(None, None)
         child: subprocess.Popen[bytes] | None = None
         port = 0
         applied = ""
@@ -199,6 +203,7 @@ def run(once: bool) -> int:
                 if child is None or child.poll() is not None:
                     if pending and Path(pending["binary"]).is_file():
                         child, port = start(Path(pending["binary"]), pending["runtime"])
+                        write_lease(child.pid, Path(pending["binary"]))
                         applied = pending["source"]
                         pending = None
                         PENDING.unlink(missing_ok=True)
@@ -208,6 +213,7 @@ def run(once: bool) -> int:
                             failed = current
                         else:
                             child, port = start(result[0], result[1])
+                            write_lease(child.pid, result[0])
                             applied, failed = result[2], ""
                 current = fingerprint()
                 if child is not None and child.poll() is None and current != applied and current != failed:
@@ -220,6 +226,7 @@ def run(once: bool) -> int:
                                 time.sleep(0.1)
                             if child.poll() is not None:
                                 child = None
+                                write_lease(None, None)
                 if once:
                     return 0
                 time.sleep(0.5)

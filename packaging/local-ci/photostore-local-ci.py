@@ -63,11 +63,13 @@ def running():
     p=re.compile(r"^/Applications/PhotoStore(?:-[0-9][^/]*)?\.app/Contents/MacOS/PhotoStore(?:\s|$)"); return any(len(x.split(None,1))==2 and p.match(x.split(None,1)[1]) for x in procs())
 def running_dev(): return any("/Applications/PhotoStore-dev.app/Contents/MacOS/PhotoStore-dev" in x for x in procs())
 def dev_watch_active():
-    d=jread(DEV_WATCH_LEASE,{}) or {}; pid=d.get("watcher_pid"); uid=d.get("uid")
-    if not isinstance(pid,int) or pid<=0 or uid!=os.getuid(): return False
-    try: os.kill(pid,0)
-    except OSError: return False
-    return any(line.split(None,2)[0]==str(pid) and "photostore-dev.py" in line for line in procs() if len(line.split(None,2))==3)
+    d=jread(DEV_WATCH_LEASE,{}) or {}; uid=d.get("uid"); watcher=d.get("watcher_pid"); child=d.get("child_pid"); binary=d.get("binary")
+    if uid!=os.getuid(): return False
+    lines=procs()
+    watcher_alive=isinstance(watcher,int) and any(line.split(None,2)[0]==str(watcher) and "photostore-dev.py" in line for line in lines if len(line.split(None,2))==3)
+    child_alive=isinstance(child,int) and isinstance(binary,str) and any(line.split(None,2)[0]==str(child) and binary in line for line in lines if len(line.split(None,2))==3)
+    if not watcher_alive and not child_alive: DEV_WATCH_LEASE.unlink(missing_ok=True)
+    return watcher_alive or child_alive
 def provenance(binary,s,dev=False):
     t=run([str(binary),"--version"],capture=True,timeout=15).stdout
     if s[:8].lower() not in t.lower(): raise RuntimeError("binary provenance mismatch")
