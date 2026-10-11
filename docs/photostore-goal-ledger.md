@@ -261,8 +261,9 @@ source is `08e285ea80ea160af9661596ceee9449b4122f8f`; its 5m22s development pack
 at `/Applications/PhotoStore-dev-timeline-safety.app` with binary SHA-256
 `5d677b261e2ddf7c281fbcf11fb4fd0458a3d5682db4cd4b219cabb439720168`. Focused runtime evidence is
 `/private/tmp/photostore-dev-timeline-safety-repair-20261011/runtime-evidence.json`. Eight of nine
-RC steps are complete: 1–6, 8, and 9; push remains pending explicit approval.
-There is no production tag, release, publication, or production reinstall. The RC namespace is `PhotoStore-dev-timeline-safety`, bundle ID
+RC steps are complete: 1–6, 7, 8, and 9; the private branch push is complete at remote SHA
+`3d6c3bada5f8455b0b9c21cf1aa9b7e5297c3489`. There is no production tag, release, publication, or
+production reinstall. The RC namespace is `PhotoStore-dev-timeline-safety`, bundle ID
 `ai.photostore.app.dev.timeline-safety`, default macOS configuration
 `~/Library/Application Support/PhotoStore-dev-timeline-safety`. No production tag or release is
 planned.
@@ -270,8 +271,8 @@ planned.
 Milestones: close safeguards and timeline persistence are implemented for this checkpoint, with
 prior compiler/evidence recorded above. RC delivery has 9 steps: version/docs, preview, actual
 screenshots/docs, development namespace authoring, goal-specific compiler/tests, local commit,
-push, exact-SHA package and local installation, and focused background runtime test; steps 1–6, 8,
-and 9 are complete, with push pending explicit approval.
+push, exact-SHA package and local installation, and focused background runtime test; all 9 steps are
+complete for this bounded pass.
 Stopwatches and full Photoshop parity remain future work.
 
 ## Animation and timeline
