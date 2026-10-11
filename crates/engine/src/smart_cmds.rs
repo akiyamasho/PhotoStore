@@ -840,10 +840,17 @@ pub fn layer_to_smart(doc: &Document, l: &Layer) -> Result<Layer> {
 fn layer_to_smart_with_options(doc: &Document, l: &Layer, single_existing_root: bool) -> Result<Layer> {
     let canvas = doc.bounds();
     let video_owns_opacity = single_existing_root && l.video.as_ref().is_some_and(|v| !v.keyframes.is_empty());
+    let owned_opacity = single_existing_root.then(|| l.opacity_animation.clone()).flatten();
     let background = l.name == "Background" && l.locks.position;
     let mut inner = l.clone();
     inner.visible = true;
     inner.opacity = 1.0;
+    if single_existing_root { inner.opacity_animation = None; }
+    if owned_opacity.is_some() {
+        if let Some(video) = inner.video.as_mut() {
+            for key in &mut video.keyframes { key.opacity = 1.0; }
+        }
+    }
     inner.clipped = false;
     inner.locks = Default::default();
     if !(inner.is_group() && inner.blend == BlendMode::PassThrough) {
@@ -874,9 +881,9 @@ fn layer_to_smart_with_options(doc: &Document, l: &Layer, single_existing_root: 
                     // The parent Smart Object owns frame-animation geometry/blend state; the
                     // embedded root stays in source coordinates with its fill/effects contents
                     // after the full-canvas conversion.
-                    state.position = None;
+                    if !video_owns_opacity { state.position = None; }
                     state.blend = Some(child_root_blend);
-                    if !video_owns_opacity {
+                    if owned_opacity.is_some() || !video_owns_opacity {
                         state.visible = true;
                         state.opacity = 1.0;
                     }
@@ -890,9 +897,9 @@ fn layer_to_smart_with_options(doc: &Document, l: &Layer, single_existing_root: 
             }
             for states in &mut timeline.property_frames {
                 if let Some(state) = states.iter_mut().find(|s| s.layer == l.id) {
-                    state.position = None;
+                    if !video_owns_opacity { state.position = None; }
                     state.blend = Some(child_root_blend);
-                    if !video_owns_opacity {
+                    if owned_opacity.is_some() || !video_owns_opacity {
                         state.visible = true;
                         state.opacity = 1.0;
                     }
@@ -945,7 +952,8 @@ fn layer_to_smart_with_options(doc: &Document, l: &Layer, single_existing_root: 
         LayerContent::Smart(SmartObject::new(source, Affine::translate(b.x0 as f64, b.y0 as f64), Some(cache))),
     );
     out.visible = l.visible;
-    out.opacity = if video_owns_opacity { 1.0 } else { l.opacity };
+    out.opacity = if video_owns_opacity && owned_opacity.is_none() { 1.0 } else { l.opacity };
+    out.opacity_animation = owned_opacity;
     out.blend = if l.blend == BlendMode::PassThrough { BlendMode::Normal } else { l.blend };
     out.clipped = l.clipped;
     out.label = l.label;
@@ -966,6 +974,7 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
         let l = doc.layer(top).ok_or(EngineError::NoLayer(top))?;
         let single_existing_root = ids.len() == 1;
         let video_owns_opacity = l.video.as_ref().is_some_and(|v| !v.keyframes.is_empty());
+        let owned_owns_opacity = single_existing_root && l.opacity_animation.is_some();
         let so = if single_existing_root {
             layer_to_smart_with_options(doc, l, true)?
         } else {
@@ -978,7 +987,7 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
                 for states in &mut t.frame_states {
                     for state in states.iter_mut().filter(|state| state.layer == top) {
                         state.layer = new_id;
-                        if video_owns_opacity {
+                        if video_owns_opacity || owned_owns_opacity {
                             state.opacity = 1.0;
                             state.position = None;
                         }
@@ -989,7 +998,7 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
                 for states in &mut t.property_frames {
                     for state in states.iter_mut().filter(|state| state.layer == top) {
                         state.layer = new_id;
-                        if video_owns_opacity {
+                        if video_owns_opacity || owned_owns_opacity {
                             state.opacity = 1.0;
                             state.position = None;
                         }

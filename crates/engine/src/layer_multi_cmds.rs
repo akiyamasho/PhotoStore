@@ -510,6 +510,7 @@ fn layer_pixels_equal(a: &Layer, b: &Layer) -> bool {
         blend_if,
         advanced,
         video: _,
+        opacity_animation: _,
         private_recording: _,
     } = a;
     *id == b.id

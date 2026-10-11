@@ -66,6 +66,7 @@ mod migrate_cmds;
 pub mod mode_cmds;
 pub mod multichannel_cmds;
 pub mod notes_cmds;
+mod opacity_cmds;
 pub mod paint_cmds;
 mod path_edit_cmds;
 pub mod pattern_cmds;
@@ -509,6 +510,7 @@ impl Session {
         channel_cmds::filter_mask_target_enabled(self, spec.id, params)
             .or_else(|| channel_cmds::mask_target_enabled(self, spec.id, params))
             .or_else(|| video_cmds::keyframe_target_enabled(self, spec.id, params))
+            .or_else(|| opacity_cmds::target_enabled(self, spec.id, params))
             .unwrap_or_else(|| (spec.enabled)(self))
     }
 
@@ -532,6 +534,7 @@ impl Session {
         if let (Some(k), Some(id)) = (restrict, active) {
             channel_cmds::restrict_to_color(&before, &mut doc, id, k);
         }
+        video_cmds::canonicalize_authored_opacity(&before, &mut doc)?;
         video_cmds::canonicalize_edited_timeline(&before, &mut doc);
         // Recording is session/document state rather than an undoable canvas property.  Keep
         // the latest stream attached while the cloned document enters history.

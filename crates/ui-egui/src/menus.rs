@@ -92,6 +92,9 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     // real runtime. Defaults are intentionally unassigned.
     ("timeline.playPause", "Play/Pause Timeline", &["Actions", "Video"], None),
     ("timeline.stop", "Stop Timeline", &["Actions", "Video"], None),
+    ("timeline.toggleOpacityAnimation", "Toggle Opacity Stopwatch", &["Actions", "Video"], None),
+    ("timeline.setOpacityKeyframe", "Set Opacity Keyframe", &["Actions", "Video"], None),
+    ("timeline.deleteOpacityKeyframe", "Delete Opacity Keyframe", &["Actions", "Video"], None),
 ];
 
 /// Photoshop's Window › <panel> ids for the panels the shell already has, as `window.toggle.*`.

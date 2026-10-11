@@ -139,6 +139,7 @@ pub(crate) fn read_manifest(src: &dyn Source, opts: &LoadOptions) -> Result<Mani
     let layers = take_array(&mut v, "/document/layers");
     let mut m: Manifest = serde_json::from_value(v)?;
     m.document.layers = layers_from_json(layers)?;
+    crate::convert::validate_opacity_manifest_layers(&m.document.layers)?;
     Ok(m)
 }
 
@@ -503,6 +504,7 @@ impl PcraftWriter {
     fn prepare(&mut self, doc: &Document, opts: &SaveOptions) -> Result<Prepared> {
         self.hash_cache.retain(|_, (w, _)| w.strong_count() > 0);
         convert::check_nesting(&doc.layers)?;
+        convert::validate_opacity_document_layers(&doc.layers)?;
         if let Some(recording) = &doc.recording {
             convert::validate_recording(recording)?;
         }

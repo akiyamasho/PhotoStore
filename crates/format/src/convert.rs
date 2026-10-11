@@ -18,6 +18,41 @@ use crate::{FormatError, Result};
 /// tree shares; see [`photostore_doc::MAX_GROUP_DEPTH`].
 pub use photostore_doc::MAX_GROUP_DEPTH;
 
+fn validate_opacity_animation(a: &photostore_doc::OpacityAnimation) -> Result<()> {
+    a.validate().map_err(FormatError::corrupt)
+}
+
+pub(crate) fn validate_opacity_manifest_layers(layers: &[LayerM]) -> Result<()> {
+    fn visit(layers: &[LayerM], tracks: &mut usize, keys: &mut usize) -> Result<()> {
+        for layer in layers {
+            if let Some(animation) = &layer.opacity_animation {
+                *tracks = tracks.saturating_add(1); *keys = keys.saturating_add(animation.keys.len());
+                if *tracks > photostore_doc::MAX_OPACITY_ANIMATION_TRACKS { return Err(FormatError::LimitExceeded(format!("document contains more than {} opacity animation tracks", photostore_doc::MAX_OPACITY_ANIMATION_TRACKS))); }
+                if *keys > photostore_doc::MAX_OPACITY_ANIMATION_KEYS { return Err(FormatError::LimitExceeded(format!("document contains more than {} opacity animation keyframes", photostore_doc::MAX_OPACITY_ANIMATION_KEYS))); }
+                validate_opacity_animation(animation)?;
+            }
+            if let ContentM::Group { children, .. } = &layer.content { visit(children, tracks, keys)?; }
+        }
+        Ok(())
+    }
+    visit(layers, &mut 0, &mut 0)
+}
+
+pub(crate) fn validate_opacity_document_layers(layers: &[Layer]) -> Result<()> {
+    fn visit(layers: &[Layer], tracks: &mut usize, keys: &mut usize) -> Result<()> {
+        for layer in layers {
+            if let Some(animation) = &layer.opacity_animation {
+                *tracks = tracks.saturating_add(1); *keys = keys.saturating_add(animation.keys.len());
+                if *tracks > photostore_doc::MAX_OPACITY_ANIMATION_TRACKS || *keys > photostore_doc::MAX_OPACITY_ANIMATION_KEYS { return Err(FormatError::LimitExceeded("document opacity animation limits exceeded".into())); }
+                validate_opacity_animation(animation)?;
+            }
+            if let LayerContent::Group(group) = &layer.content { visit(&group.children, tracks, keys)?; }
+        }
+        Ok(())
+    }
+    visit(layers, &mut 0, &mut 0)
+}
+
 fn too_deep() -> FormatError {
     FormatError::LimitExceeded(format!("layer groups nested deeper than {MAX_GROUP_DEPTH}"))
 }
@@ -322,6 +357,7 @@ fn layer_m(l: &Layer, sink: &mut dyn Sink) -> LayerM {
         blend_if: l.blend_if.clone(),
         advanced: l.advanced,
         video: l.video.as_ref().map(|v| video_m(v, sink)),
+        opacity_animation: l.opacity_animation.clone(),
         private_recording: l.private_recording,
     }
 }
@@ -645,6 +681,7 @@ impl Loader<'_> {
             blend_if: m.blend_if.clone(),
             advanced: m.advanced,
             video: m.video.as_ref().map(|v| self.video(v)).transpose()?,
+            opacity_animation: m.opacity_animation.clone(),
             private_recording: m.private_recording,
         })
     }

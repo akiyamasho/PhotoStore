@@ -127,6 +127,8 @@ fn released(l: &mut Layer, f: impl FnOnce(&mut Layer) -> Result<()>) -> Result<(
 /// beneath it (alone in the smart object, it lands on transparency).
 fn foldable(so: &Layer, c: &Layer) -> bool {
     so.mask.is_none()
+        && so.opacity_animation.is_none()
+        && c.opacity_animation.is_none()
         && so.vector_mask.is_none()
         && (!so.effects.enabled || so.effects.items.is_empty())
         && so.fill_opacity >= 1.0

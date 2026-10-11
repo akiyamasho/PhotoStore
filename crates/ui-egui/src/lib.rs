@@ -108,6 +108,7 @@ pub mod new_doc_ui;
 pub mod notices;
 mod numeric_expression;
 mod opacity_keys;
+mod opacity_ui;
 pub mod outline;
 pub mod paint_mouse;
 pub mod palette;
@@ -1378,6 +1379,18 @@ impl eframe::App for PhotoStoreApp {
         // The Timeline is a true bottom dock, so it reserves canvas space before the central area
         // is laid out. Other windows remain overlays below.
         timeline_ui::windows(self, ui);
+        if let Some((cmd, params)) = opacity_ui::confirmation(self, &ctx) {
+            match self.run(cmd, params) {
+                Ok(_) => {
+                    self.ui.timeline.opacity.pending_disable = None;
+                    self.ui.timeline.opacity.confirmation_focus = None;
+                    self.ui.timeline.opacity.error.clear();
+                }
+                Err(error) => {
+                    self.ui.timeline.opacity.error = error;
+                }
+            }
+        }
         let t = theme::Tokens::get(&ctx);
         let backdrop = if chrome { prefs_ui::pasteboard_color(self).unwrap_or(t.canvas) } else { egui::Color32::BLACK };
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(backdrop)).show(ui, |ui| {

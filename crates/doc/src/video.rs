@@ -7,6 +7,60 @@ use crate::{BlendMode, Effect, LayerId};
 
 use photostore_raster::Surface;
 
+pub const MAX_OPACITY_ANIMATION_KEYS: usize = 100_000;
+pub const MAX_OPACITY_ANIMATION_TRACKS: usize = 256;
+pub const MAX_OPACITY_ANIMATION_FRAME: usize = 999_999;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OpacityInterpolation { Linear, Hold }
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OpacityKeyframe { pub frame: usize, pub value: f32, pub interpolation: OpacityInterpolation }
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OpacityAnimation {
+    pub enabled: bool,
+    pub static_value: f32,
+    pub keys: std::sync::Arc<Vec<OpacityKeyframe>>,
+}
+
+impl OpacityAnimation {
+    pub fn sampled_value(&self, frame: usize) -> f32 {
+        let fallback = if self.static_value.is_finite() { self.static_value.clamp(0.0, 1.0) } else { 0.0 };
+        if !self.enabled || self.keys.is_empty() { return fallback; }
+        let keys = self.keys.as_slice();
+        let value = |v: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
+        if frame <= keys[0].frame { return value(keys[0].value); }
+        let last = &keys[keys.len() - 1];
+        if frame >= last.frame { return value(last.value); }
+        let upper = keys.partition_point(|k| k.frame < frame);
+        if keys[upper].frame == frame { return value(keys[upper].value); }
+        let a = &keys[upper - 1];
+        let b = &keys[upper];
+        let av = value(a.value);
+        if matches!(a.interpolation, OpacityInterpolation::Hold) { return av; }
+        let span = b.frame.saturating_sub(a.frame) as f32;
+        let elapsed = frame.saturating_sub(a.frame) as f32;
+        if span <= 0.0 { av } else { (av + (value(b.value) - av) * (elapsed / span)).clamp(0.0, 1.0) }
+    }
+
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if !self.static_value.is_finite() || !(0.0..=1.0).contains(&self.static_value) { return Err("opacity animation static_value must be finite and between 0 and 1".into()); }
+        if self.keys.len() > MAX_OPACITY_ANIMATION_KEYS { return Err(format!("opacity animation contains more than {MAX_OPACITY_ANIMATION_KEYS} keyframes")); }
+        if !self.enabled && !self.keys.is_empty() { return Err("disabled opacity animation must not contain keyframes".into()); }
+        if self.enabled && self.keys.is_empty() { return Err("enabled opacity animation must contain at least one keyframe".into()); }
+        let mut previous = None;
+        for key in self.keys.iter() {
+            if key.frame > MAX_OPACITY_ANIMATION_FRAME { return Err(format!("opacity animation keyframe frame exceeds {MAX_OPACITY_ANIMATION_FRAME}")); }
+            if previous.is_some_and(|frame| frame >= key.frame) { return Err("opacity animation keyframes must be strictly ascending and unique".into()); }
+            if !key.value.is_finite() || !(0.0..=1.0).contains(&key.value) { return Err("opacity animation keyframe values must be finite and between 0 and 1".into()); }
+            previous = Some(key.frame);
+        }
+        Ok(())
+    }
+}
+
 /// Where a video layer's footage came from.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum VideoSource {

@@ -275,6 +275,27 @@ push, exact-SHA package and local installation, and focused background runtime t
 complete for this bounded pass.
 Stopwatches and full Photoshop parity remain future work.
 
+## Current 0.15.0 opacity stopwatch pass
+
+Version 0.15.0 is prepared on isolated branch `codex/opacity-stopwatch`; 0.14.0 remains the latest
+bounded close/timeline milestone. Engine/native opacity stopwatches and timeline-UI controls are
+implemented; the goal-specific compiler passed, while screenshots, runtime, package, installation,
+and release evidence are pending. Engine steps 1–5 of 5 and UI controls/wiring steps 1–3 are
+complete; two of three feature milestones are complete (67%). Development delivery has four steps:
+docs/source commit, exact-source package, goal install, and delivery record; all four remain pending.
+Compiler log: `/private/tmp/photostore-opacity-app-check-20261011.log`. No production tag, release,
+publication, or install is claimed.
+
+The pass covers ordinary-layer and Smart opacity with sparse copy-on-write keys, Linear/Hold modes,
+typed-property auto-key, UI static-disable confirmation (explicit direct API false deletes without
+prompt), previous/next markers, editable default-unassigned shortcuts, and native backward-compatible
+persistence. Limits are 256 owned tracks, 100,000 keys total per document, maximum frame index 999,999
+(timeline capacity 1,000,000 frames), and a 64 MiB estimated property-snapshot limit; Smart root
+curves preserve parent state through unpack/group. Coupled video XY/opacity behavior is implemented
+and unchanged. Only independent video-opacity stopwatch UI/migration, dense acceptance, PSD temporal export, audio acceptance, and full Photoshop
+parity remain future work. Candidate dev identity is `PhotoStore-dev-opacity-animation` with bundle
+ID `ai.photostore.app.dev.opacity-animation`.
+
 ## Animation and timeline
 
 ### Implemented milestone

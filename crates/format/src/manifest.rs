@@ -259,6 +259,8 @@ pub struct LayerM {
     pub advanced: photostore_doc::AdvancedBlending,
     #[serde(default)]
     pub video: Option<VideoDataM>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity_animation: Option<photostore_doc::OpacityAnimation>,
     #[serde(default)]
     pub private_recording: bool,
 }

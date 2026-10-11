@@ -83,6 +83,21 @@ stopwatches on `/private/tmp/PhotoStore-opacity-animation-20261011`, branch `cod
 in progress. The behavior remains bounded and evidence-gated;
 no complete timeline persistence or Photoshop parity claim is made.
 
+## 2026-10-11: 0.15.0 opacity stopwatch scope
+
+The 0.15.0 pass uses sparse copy-on-write opacity keys with Linear/Hold interpolation, typed-property
+auto-key, previous/next markers, UI static-disable confirmation (explicit direct API false deletes
+without prompt), editable default-unassigned shortcuts, and native backward-compatible persistence.
+It caps native state at 256 owned tracks, 100,000 keys total per document, maximum frame index 999,999
+(timeline capacity 1,000,000 frames), and a 64 MiB estimated property-snapshot limit; Smart root
+curves preserve parent state through unpack/group. Existing coupled video XY/opacity behavior is
+implemented and unchanged. Only independent video-opacity stopwatch UI/migration, PSD temporal export,
+audio acceptance, and full Photoshop parity remain future work. Engine/native and timeline-UI source
+steps are implemented; the required compiler passed, log
+`/private/tmp/photostore-opacity-app-check-20261011.log`. Screenshots, runtime, package, installation,
+and release evidence remain pending. Candidate isolated identity is `PhotoStore-dev-opacity-animation` with bundle ID
+`ai.photostore.app.dev.opacity-animation`; production remains untouched.
+
 ## 2026-10-10: Smart Object contents identity (#2163)
 
 Smart Object instances carry a document-scoped contents ID separately from their layer ID. Normal duplicates preserve it; New Smart Object via Copy creates a new one. Contents edits update the matching instances together, retaining their individual placement and filters. Copies into another document remap contents IDs as a batch, preserving sharing within the copied layers without joining existing destination objects.

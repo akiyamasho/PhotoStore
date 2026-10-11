@@ -95,6 +95,21 @@ pub fn sync_plain(doc: &mut Document) {
         apply_states(&geometry, &mut doc.layers, states);
     }
     if let Some(t) = &doc.timeline { apply_ranges(&mut doc.layers, cur, &t.layer_ranges, t.frame_states.get(cur).or_else(|| t.property_frames.get(cur))); }
+    // Authored opacity stopwatches are evaluated after legacy video keyframes and dense
+    // property snapshots. In video mode they own the displayed opacity for every layer that
+    // carries a track, including video layers copied or converted from ordinary layers.
+    if doc.timeline.as_ref().is_some_and(|t| matches!(t.mode, photostore_doc::TimelineMode::Video)) {
+        apply_owned_opacity(&mut doc.layers, cur);
+    }
+}
+
+fn apply_owned_opacity(layers: &mut [Layer], frame: usize) {
+    for layer in layers {
+        if let Some(track) = layer.opacity_animation.as_ref() {
+            layer.opacity = track.sampled_value(frame).clamp(0.0, 1.0);
+        }
+        if let Some(children) = layer.children_mut() { apply_owned_opacity(children, frame); }
+    }
 }
 
 fn apply_ranges(layers: &mut [Layer], frame: usize, ranges: &[photostore_doc::LayerTimelineRange], states: Option<&Vec<FrameLayerState>>) {
@@ -269,6 +284,55 @@ pub fn canonicalize_edited_timeline(before: &Document, after: &mut Document) {
     let fps = f64::from(at.fps.max(0.001));
     canonicalize_layers(&before.layers, after, current, fps, &bt.layer_ranges);
     canonicalize_states(before, after, current);
+}
+
+/// Capture a direct layer-opacity edit in an authored opacity stopwatch. This runs before the
+/// legacy raster/video canonicalizer so a slider edit at the playhead updates the owned track
+/// rather than being mistaken for a video-frame edit. Structural and timeline edits change one
+/// of the identity fields below and are deliberately ignored.
+pub fn canonicalize_authored_opacity(before: &Document, after: &mut Document) -> Result<()> {
+    let (Some(bt), Some(at)) = (&before.timeline, &after.timeline) else { return Ok(()) };
+    if at.mode != photostore_doc::TimelineMode::Video || bt.current != at.current || bt.mode != at.mode || bt.fps != at.fps || bt.duration != at.duration || bt.layer_ranges != at.layer_ranges { return Ok(()); }
+    let frame = at.current;
+    fn count_keys(layers: &[Layer]) -> usize { layers.iter().map(|l| l.opacity_animation.as_ref().map_or(0, |t| t.keys.len()) + l.children().map_or(0, count_keys)).sum() }
+    fn walk(before: &[Layer], after: &mut Document, frame: usize, key_total: &mut Option<usize>) -> Result<()> {
+        for old in before {
+            let needs_insert = old.opacity_animation.as_ref().is_some_and(|old_track| old_track.enabled)
+                && after.layer(old.id).and_then(|l| l.opacity_animation.as_ref()).is_some_and(|track| track.keys.binary_search_by_key(&frame, |k| k.frame).is_err())
+                && old.opacity.to_bits() != after.layer(old.id).map_or(0.0, |l| l.opacity).to_bits();
+            if needs_insert && key_total.is_none() { *key_total = Some(count_keys(&after.layers)); }
+            if let Some(old_track) = old.opacity_animation.as_ref()
+                && let Some(new) = after.layer_mut(old.id)
+            {
+                let stable = new.opacity_animation.as_ref().is_some_and(|track| track.enabled == old_track.enabled && track.static_value.to_bits() == old_track.static_value.to_bits() && std::sync::Arc::ptr_eq(&track.keys, &old_track.keys));
+                if stable && old.opacity.to_bits() != new.opacity.to_bits() {
+                    if !new.opacity.is_finite() || !(0.0..=1.0).contains(&new.opacity) { return Err(EngineError::BadParams { cmd: "layer.setProps".into(), msg: "opacity must be finite and between 0 and 1".into() }); }
+                    let value = new.opacity;
+                    let track = new.opacity_animation.as_ref().cloned().ok_or_else(|| EngineError::Other("opacity track disappeared during edit".into()))?;
+                    if track.enabled {
+                        let mut keys = track.keys.as_ref().clone();
+                        match keys.binary_search_by_key(&frame, |k| k.frame) {
+                            Ok(index) => keys[index].value = value,
+                            Err(index) => {
+                                let total = key_total.as_mut().ok_or_else(|| EngineError::Other("opacity key count unavailable".into()))?;
+                                if *total >= photostore_doc::MAX_OPACITY_ANIMATION_KEYS { return Err(EngineError::Other("opacity animation key limit exceeded".into())); }
+                                *total += 1;
+                                let interpolation = index.checked_sub(1).and_then(|n| keys.get(n).map(|k| k.interpolation)).unwrap_or(photostore_doc::OpacityInterpolation::Linear);
+                                keys.insert(index, photostore_doc::OpacityKeyframe { frame, value, interpolation });
+                            }
+                        }
+                        new.opacity_animation = Some(photostore_doc::OpacityAnimation { enabled: true, static_value: track.static_value, keys: std::sync::Arc::new(keys) });
+                    } else {
+                        new.opacity_animation = Some(photostore_doc::OpacityAnimation { enabled: false, static_value: value, keys: track.keys });
+                    }
+                }
+            }
+            if let Some(children) = old.children() { walk(children, after, frame, key_total)?; }
+        }
+        Ok(())
+    }
+    let mut key_total = None;
+    walk(&before.layers, after, frame, &mut key_total)
 }
 
 fn shallow_surface_eq(a: &Surface, b: &Surface) -> bool {

@@ -64,6 +64,8 @@ pub struct TimelineUi {
     #[serde(skip)]
     onion_error: String,
     #[serde(skip)]
+    pub(crate) opacity: crate::opacity_ui::State,
+    #[serde(skip)]
     loop_error: String,
 }
 
@@ -105,6 +107,7 @@ impl std::fmt::Debug for TimelineUi {
             .field("pending_keyframe", &self.pending_keyframe.is_some())
             .field("loop_editor_open", &self.loop_editor_open)
             .field("onion_editor_open", &self.onion_editor_open)
+            .field("opacity_pending_disable", &self.opacity.pending_disable.is_some())
             .finish()
     }
 }
@@ -173,7 +176,7 @@ pub fn checked(app: &PhotoStoreApp, id: &str) -> Option<bool> {
 
 /// Ids this module owns (for parity / enablement).
 pub fn handles(id: &str) -> bool {
-    matches!(id, "window.panel.timeline" | "timeline.playPause" | "timeline.stop" | "timeline.setLoop" | "timeline.setOnionSkinSettings")
+    matches!(id, "window.panel.timeline" | "timeline.playPause" | "timeline.stop" | "timeline.setLoop" | "timeline.setOnionSkinSettings" | "timeline.toggleOpacityAnimation" | "timeline.setOpacityKeyframe" | "timeline.deleteOpacityKeyframe")
 }
 
 pub(crate) fn open_loop_editor(app: &mut PhotoStoreApp) -> Result<(), String> {
@@ -206,6 +209,28 @@ pub fn menu(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, params: &Val
     }
     if id == "timeline.setOnionSkinSettings" && empty_params {
         return Some(open_onion_editor(app).map(|_| Value::Null));
+    }
+    if id == "timeline.toggleOpacityAnimation" && empty_params {
+        let Some((doc_id, layer_id, keyed)) = app.session.active().and_then(|st| {
+            let layer_id = st.active_layer?;
+            let layer = st.doc.layer(layer_id)?;
+            Some((st.doc.id, layer_id, layer.opacity_animation.as_ref().is_some_and(|a| a.enabled && !a.keys.is_empty())))
+        }) else { return Some(Err("Select a layer before toggling opacity animation".into())); };
+        let target = json!({"document": doc_id.0, "layer": layer_id.0});
+        if let Some(reason) = app.session.disabled_reason_with("timeline.toggleOpacityAnimation", &target) {
+            return Some(Err(reason));
+        }
+        if keyed {
+            app.ui.timeline.opacity.pending_disable = Some((doc_id, layer_id));
+            return Some(Ok(Value::Null));
+        }
+        return Some(app.run("timeline.toggleOpacityAnimation", target));
+    }
+    if matches!(id, "timeline.setOpacityKeyframe" | "timeline.deleteOpacityKeyframe") && empty_params {
+        let Some((doc_id, layer_id, frame)) = app.session.active().and_then(|st| Some((st.doc.id, st.active_layer?, st.doc.timeline.as_ref()?.current))) else {
+            return Some(Err("Select a layer in a timeline before editing an opacity keyframe".into()));
+        };
+        return Some(app.run(id, json!({"document": doc_id.0, "layer": layer_id.0, "frame": frame})));
     }
     if id == "window.panel.timeline" {
         app.ui.timeline.open = !app.ui.timeline.open;
@@ -443,18 +468,30 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                     if matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation) && crate::widgets::secondary_button(ui, tl!("Make Frames From Layers"), 180.0).clicked() { act = Some(("timeline.makeFramesFromLayers", json!({}))); }
                 });
                 egui::ScrollArea::vertical().max_height(130.0).show(ui, |ui| {
-                    for (layer_id, name, video) in &layer_rows {
-                        if *video { continue; }
-                        ui.horizontal(|ui| {
-                            ui.label("□");
-                            ui.label(RichText::new(name).color(t.text));
-                            let width = ui.available_width().max(80.0);
-                            let (bar, _) = ui.allocate_exact_size(vec2(width, 18.0), egui::Sense::hover());
-                            let p = ui.painter_at(bar);
-                            p.rect_filled(bar, 2.0, t.field);
-                        });
+                    if matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation) {
+                        for (layer_id, name, video) in &layer_rows {
+                            if *video { continue; }
+                            ui.horizontal(|ui| {
+                                ui.label("□");
+                                ui.label(RichText::new(name).color(t.text));
+                                let width = ui.available_width().max(80.0);
+                                let (bar, _) = ui.allocate_exact_size(vec2(width, 18.0), egui::Sense::hover());
+                                ui.painter_at(bar).rect_filled(bar, 2.0, t.field);
+                                let _ = layer_id;
+                            });
+                        }
                     }
                 });
+                if matches!(tl.mode, photostore_doc::TimelineMode::Video) {
+                    egui::ScrollArea::vertical().max_height(250.0).show(ui, |ui| {
+                        if let Some((doc, _)) = doc_snapshot.as_ref() {
+                            for (_, _, layer) in doc.walk() {
+                                if layer.video.is_some() || (layer.name == "Background" && layer.locks.position) { continue; }
+                                if let Some(next) = crate::opacity_ui::row(app, ui, doc, layer, tl.current, tl.work_start, tl.work_end, !doc.effective_locks(layer.id).all) { act = Some(next); }
+                            }
+                        }
+                    });
+                }
                 if matches!(tl.mode, photostore_doc::TimelineMode::Video) {
                     crate::video_clip_ui::show(app, ui, tl);
                     if let (Some(active_id), Some((doc, _))) = (active_video_id, doc_snapshot.as_ref()) {
@@ -577,7 +614,11 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
         app.timeline_playback = runtime;
     }
     if let Some((cmd, p)) = act {
-        if let Err(error) = app.run(cmd, p) {
+        let stale_target = cmd == "layer.setProps" && p.get("document").and_then(Value::as_u64).is_some_and(|doc| {
+            app.session.active().is_none_or(|st| st.doc.id.0 != doc || p.get("layer").and_then(Value::as_u64).is_none_or(|layer| st.doc.layer(photostore_doc::LayerId(layer)).is_none()))
+        });
+        let result = if stale_target { Err("The document or layer changed; opacity edit was cancelled".to_string()) } else { app.run(cmd, p) };
+        if let Err(error) = result {
             app.ui.status = error.clone();
             app.ui.status_error = true;
             if cmd == "timeline.setLoop" { app.ui.timeline.loop_editor_open = true; app.ui.timeline.loop_error = error; }

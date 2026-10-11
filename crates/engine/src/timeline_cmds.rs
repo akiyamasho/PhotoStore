@@ -138,6 +138,55 @@ fn collect_layer_states(layers: &[photostore_doc::Layer], out: &mut Vec<FrameLay
     }
 }
 
+fn bake_owned_opacity(states: &mut [Vec<FrameLayerState>], layers: &[photostore_doc::Layer]) {
+    let tracks = layers.iter().flat_map(|l| {
+        let mut found = Vec::new();
+        fn collect(l: &photostore_doc::Layer, out: &mut Vec<(LayerId, photostore_doc::OpacityAnimation, FrameLayerState)>) {
+            if let Some(track) = &l.opacity_animation {
+                out.push((l.id, track.clone(), FrameLayerState {
+                    layer: l.id, visible: l.visible, opacity: l.opacity,
+                    position: photostore_doc::comps::layer_position(l), blend: Some(l.blend), fill_opacity: Some(l.fill_opacity),
+                    effects: Some(photostore_doc::FrameEffectsState { enabled: l.effects.enabled, items: l.effects.items.clone(), reference: l.effects.reference }),
+                }));
+            }
+            if let Some(children) = l.children() { for child in children { collect(child, out); } }
+        }
+        collect(l, &mut found);
+        found
+    }).collect::<Vec<_>>();
+    for (frame, row) in states.iter_mut().enumerate() {
+        for state in row.iter_mut() {
+            if let Some((_, track, _)) = tracks.iter().find(|(id, _, _)| *id == state.layer) {
+                state.opacity = track.sampled_value(frame);
+            }
+        }
+        for (id, track, template) in &tracks {
+            if !row.iter().any(|state| state.layer == *id) {
+                let mut state = template.clone();
+                state.opacity = track.sampled_value(frame);
+                row.push(state);
+            }
+        }
+    }
+}
+
+fn clear_owned_opacity(layers: &mut [photostore_doc::Layer]) {
+    for layer in layers {
+        layer.opacity_animation = None;
+        if let Some(children) = layer.children_mut() { clear_owned_opacity(children); }
+    }
+}
+
+fn freeze_and_clear_owned_opacity(layers: &mut [photostore_doc::Layer], frame: usize) {
+    for layer in layers {
+        if let Some(track) = layer.opacity_animation.as_ref() {
+            if track.enabled { layer.opacity = track.sampled_value(frame); }
+            layer.opacity_animation = None;
+        }
+        if let Some(children) = layer.children_mut() { freeze_and_clear_owned_opacity(children, frame); }
+    }
+}
+
 fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
     let mode = match p.get("mode").and_then(Value::as_str) {
         Some("video") => TimelineMode::Video,
@@ -154,6 +203,28 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
         let out = s.edit("Convert to Frame Animation", |doc, _| {
             crate::video_cmds::store(doc);
             let duration = doc.timeline.as_ref().map_or(1, |t| t.duration).min(MAX_DURATION);
+            let owned_tracks = doc.walk().iter().filter(|(_, _, l)| l.opacity_animation.is_some()).count();
+            if owned_tracks > 0 {
+                let dense_complete = doc.timeline.as_ref().is_some_and(|t| t.property_frames.len() >= duration);
+                let mut estimated = 0usize;
+                if dense_complete {
+                    if let Some(t) = doc.timeline.as_ref() {
+                    for row in t.property_frames.iter().take(duration) {
+                        estimated = estimated.saturating_add(row.iter().map(|state| std::mem::size_of::<FrameLayerState>() + state.effects.as_ref().map_or(0, |fx| fx.items.len().saturating_mul(512))).sum::<usize>());
+                    }
+                    }
+                } else {
+                    let per_snapshot = doc.walk().iter().map(|(_, _, l)| std::mem::size_of::<FrameLayerState>() + l.effects.items.len().saturating_mul(512)).sum::<usize>();
+                    estimated = duration.saturating_mul(per_snapshot);
+                }
+                let owned_ids: std::collections::HashSet<_> = doc.walk().iter().filter_map(|(_, _, l)| l.opacity_animation.as_ref().map(|_| l.id)).collect();
+                let missing = if let Some(t) = doc.timeline.as_ref() {
+                    t.property_frames.iter().take(duration).map(|row| owned_ids.iter().filter(|id| !row.iter().any(|state| state.layer == **id)).count()).sum::<usize>()
+                } else { duration.saturating_mul(owned_ids.len()) };
+                let per_missing = doc.walk().iter().filter(|(_, _, l)| l.opacity_animation.is_some()).map(|(_, _, l)| std::mem::size_of::<FrameLayerState>() + l.effects.items.len().saturating_mul(512)).max().unwrap_or(0);
+                estimated = estimated.saturating_add(missing.saturating_mul(per_missing));
+                if estimated > 64 * 1024 * 1024 { return Err(bad("timeline.setMode", "opacity frame conversion exceeds 64 MiB property-track limit".into())); }
+            }
             let original = doc.timeline.as_ref().map_or(0, |t| t.current);
             let states = if doc.timeline.as_ref().is_some_and(|t| t.property_frames.len() >= duration) {
                 doc.timeline.as_ref().map(|t| t.property_frames[..duration].to_vec()).unwrap_or_default()
@@ -169,11 +240,14 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
                 }
                 states
             };
+            let mut states = states;
+            bake_owned_opacity(&mut states, &doc.layers);
             if let Some(t) = &mut doc.timeline {
                 t.mode = mode;
                 t.frame_states = states;
                 t.current = original.min(t.duration.saturating_sub(1));
             }
+            clear_owned_opacity(&mut doc.layers);
             crate::video_cmds::sync(doc);
             Ok(())
         })?;
@@ -321,6 +395,9 @@ fn make_frames_from_layers(s: &mut Session) -> Result<Value> {
 
 fn delete(s: &mut Session) -> Result<Value> {
     s.edit("Delete Timeline", |doc, _| {
+        let current = doc.timeline.as_ref().map_or(0, |t| t.current);
+        crate::video_cmds::sync_plain(doc);
+        freeze_and_clear_owned_opacity(&mut doc.layers, current);
         crate::video_cmds::store(doc);
         doc.timeline = None;
         Ok(())
@@ -765,7 +842,7 @@ macro_rules! spec {
 }
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![
+    let mut specs = vec![
         spec!("timeline.create", "Create Video Timeline", r#"{duration?:30, fps?:30, mode?:video|frameAnimation} → {timeline}"#, has_doc, |s, p| create(s, p)),
         spec!("timeline.createFrameAnimation", "Create Frame Animation", r#"{duration?:30, fps?:30} → {timeline}"#, has_doc, |s, p| create_frame_animation(s, p)),
         spec!("timeline.delete", "Delete Timeline", "{} → {timeline:null}", has_timeline, |s, _| delete(s)),
@@ -787,7 +864,9 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("timeline.setAnimationFrameDelay", "Set Animation Frame Delay", "{frame?,delayMs} → {timeline}", has_timeline, |s, p| set_animation_delay(s, p)),
         spec!("timeline.tweenFrames", "Tween Animation Frames", "{from?,to?,framesToAdd,position?,opacity?,effects?,layers?:all|selected} → {framesAdded}", has_timeline, |s, p| tween_frames(s, p)),
         spec!("timeline.info", "Timeline Info", "{} → {timeline}", has_doc, |s, _| info(s)),
-    ]
+    ];
+    specs.extend(crate::opacity_cmds::specs());
+    specs
 }
 
 #[cfg(test)]
