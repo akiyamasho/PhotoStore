@@ -25,6 +25,15 @@ pub const PORTABLE_DATA_DIR: &str = "PhotoStoreDevData";
 #[cfg(not(feature = "dev-install"))]
 pub const PORTABLE_DATA_DIR: &str = "PhotoStoreData";
 
+/// A goal slug supplied by an isolated dev bundle. Invalid input is ignored so production and the
+/// consolidated dev app never inherit an arbitrary process environment value.
+#[cfg(feature = "dev-install")]
+pub fn dev_goal() -> Option<String> {
+    let value = std::env::var("PHOTOSTORE_DEV_GOAL").ok()?;
+    let valid = !value.is_empty() && value.len() <= 64 && value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    valid.then_some(value)
+}
+
 /// How [`DataDir::dir`] was chosen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -92,19 +101,25 @@ pub fn platform_dir(env: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> 
     let home = env("HOME").filter(|h| !h.is_empty()).map(PathBuf::from);
     if cfg!(target_os = "macos") {
         #[cfg(feature = "dev-install")]
-        return home.map(|h| h.join("Library/Application Support/PhotoStore-dev"));
+        return home.map(|h| {
+            let name = dev_goal().map_or_else(|| "PhotoStore-dev".to_string(), |goal| format!("PhotoStore-dev-{goal}"));
+            h.join("Library/Application Support").join(name)
+        });
         #[cfg(not(feature = "dev-install"))]
         return home.map(|h| h.join("Library/Application Support/PhotoStore"));
     }
     if cfg!(windows) {
         #[cfg(feature = "dev-install")]
-        return env("APPDATA").filter(|a| !a.is_empty()).map(|a| PathBuf::from(a).join("PhotoStore-dev"));
+        return env("APPDATA").filter(|a| !a.is_empty()).map(|a| {
+            let name = dev_goal().map_or_else(|| "PhotoStore-dev".to_string(), |goal| format!("PhotoStore-dev-{goal}"));
+            PathBuf::from(a).join(name)
+        });
         #[cfg(not(feature = "dev-install"))]
         return env("APPDATA").filter(|a| !a.is_empty()).map(|a| PathBuf::from(a).join("PhotoStore"));
     }
     env("XDG_CONFIG_HOME").filter(|x| !x.is_empty()).map(PathBuf::from).or_else(|| home.map(|h| h.join(".config"))).map(|c| {
         #[cfg(feature = "dev-install")]
-        return c.join("photostore-dev");
+        return c.join(dev_goal().map_or_else(|| "photostore-dev".to_string(), |goal| format!("photostore-dev-{goal}")));
         #[cfg(not(feature = "dev-install"))]
         return c.join("photostore");
     })

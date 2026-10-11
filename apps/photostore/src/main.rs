@@ -52,13 +52,17 @@ use photostore_ui_egui::PhotoStoreApp;
 
 /// Matches the `.desktop` file and hicolor icon name, so Wayland docks pick up the icon.
 #[cfg(feature = "dev-install")]
-const APP_ID: &str = "ai.photostore.app.dev";
+fn app_id() -> String {
+    crate::app_dirs::dev_goal().map_or_else(|| "ai.photostore.app.dev".to_string(), |goal| format!("ai.photostore.app.dev.{goal}"))
+}
 #[cfg(not(feature = "dev-install"))]
-const APP_ID: &str = "ai.photostore.app";
+fn app_id() -> String { "ai.photostore.app".to_string() }
 #[cfg(feature = "dev-install")]
-const APP_NAME: &str = "PhotoStore-dev";
+fn app_name() -> String {
+    crate::app_dirs::dev_goal().map_or_else(|| "PhotoStore-dev".to_string(), |goal| format!("PhotoStore-dev-{goal}"))
+}
 #[cfg(not(feature = "dev-install"))]
-const APP_NAME: &str = "PhotoStore";
+fn app_name() -> String { "PhotoStore".to_string() }
 #[cfg(feature = "dev-install")]
 const BUILD_VARIANT: &str = "PhotoStore-dev build";
 #[cfg(not(feature = "dev-install"))]
@@ -86,8 +90,8 @@ fn native_options(custom_titlebar: bool) -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_icon(app_icon::window_icon())
-            .with_app_id(APP_ID)
-            .with_title(APP_NAME)
+            .with_app_id(app_id())
+            .with_title(app_name())
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([760.0, 480.0])
             .with_drag_and_drop(true)
@@ -340,7 +344,7 @@ fn main() -> eframe::Result {
     let created_in_callback = app_created.clone();
     let started_sentinel = sentinel.clone();
     let result = eframe::run_native(
-        APP_NAME,
+        &app_name(),
         options,
         Box::new(move |cc| {
             created_in_callback.store(true, std::sync::atomic::Ordering::Relaxed);

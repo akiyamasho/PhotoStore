@@ -47,8 +47,9 @@ Read the relevant crate and docs before editing. Keep manifests valid, preserve 
 
 ## Local development installation policy
 
-Every completed milestone is delivered to the isolated `PhotoStore-dev` installation before the
-milestone is considered complete. The dev app has its own macOS bundle identifier, executable and
+Every completed milestone is delivered to an isolated development installation before the
+milestone is considered complete. Consolidated main work uses `PhotoStore-dev`; an independent
+goal uses its own `PhotoStore-dev-<goal>` bundle and settings. Each dev app has its own macOS bundle identifier, executable and
 configuration, recovery, presets, logs, UI state, and process identity; it must never overwrite,
 restart, close, reinstall, or register document handlers for the production `PhotoStore.app`.
 Dev updates must preserve the dev app's unsaved documents and recovery data. When a dev app is
