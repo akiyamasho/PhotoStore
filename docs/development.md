@@ -48,19 +48,33 @@ To build a local arm64 app that cannot claim PhotoStore's production file associ
 
     packaging/macos/package-dev.sh
 
-The script sets the compile-time development identity, builds with HEIF support, and writes a
-signed PhotoStore-dev.app to dist/release/dev/PhotoStore-dev-<commit>.app. It uses the shared
-Cargo target directory and leaves the unique assembly directory in /tmp for inspection. Use
---skip-build only with an already-built arm64 binary whose --version output contains the workspace
-version, commit short SHA, and [dev] marker. The resulting plist uses ai.photostore.app.dev,
-PhotoStore-dev, and the full commit SHA, and omits document type and UTI declarations; manual
-File > Open still works.
+The script sets the compile-time development identity, builds with HEIF and dev-install support,
+and writes a signed PhotoStore-dev.app to dist/release/dev/PhotoStore-dev-<commit>.app. It uses
+the shared Cargo target directory, offline single-job settings, and leaves the unique assembly
+directory in /tmp for inspection. Use --skip-build only with an already-built arm64 binary whose
+--version output contains the workspace version, commit short SHA, [dev] marker, and exact
+(PhotoStore-dev build) marker. The default plist uses ai.photostore.app.dev, PhotoStore-dev,
+the full commit SHA, and no document type or UTI declarations; manual File > Open still works.
 
-The development binary stores preferences and recovery data under
+For a review candidate tied to one focused goal, pass a lowercase slug up to 48 characters:
+
+    packaging/macos/package-dev.sh --goal timeline-edit-safety
+
+This produces PhotoStore-dev-timeline-edit-safety.app with bundle identifier
+ai.photostore.app.dev.timeline-edit-safety and stores its own goal metadata. The runtime must
+include (PhotoStore-dev-timeline-edit-safety build) in --version; a binary baked for another
+goal is rejected. Each goal RC uses its own preferences, recovery, presets, logs, UI state, and
+process namespace.
+
+The consolidated development binary stores preferences and recovery data under
 ~/Library/Application Support/PhotoStore-dev. Launch it in the background without changing the
 current production app's focus or state with:
 
     open -g -j -n -a /Applications/PhotoStore-dev.app
+
+A goal RC is launched from its own staged path with the same background flags, for example:
+
+    open -g -j -n -a /Applications/PhotoStore-dev-timeline-edit-safety.app
 
 That command assumes you have placed the app at that path yourself; the packaging script does not
 install or replace anything. Promotion to a production app is an explicit later release action.

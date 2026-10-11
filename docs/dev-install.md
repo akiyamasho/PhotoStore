@@ -25,7 +25,7 @@ To install a previously verified feature build without rebuilding:
 packaging/macos/install-dev.sh --skip-build --binary target/debug/photostore
 ```
 
-The script requires the binary's embedded `PhotoStore-dev build` marker, records the source SHA
+The script requires the binary's embedded (PhotoStore-dev build) marker, records the source SHA
 and working-tree hash in the bundle metadata, and uses one shared Cargo target with one build job.
 It does not launch the app by default. During installation, the script may seed a missing dev
 `preferences.json` from the read-only production preferences file. Pass
@@ -35,3 +35,10 @@ preferences are retained; production preferences and recovery/private artwork ar
 changed. If `CRAFT_FONTS_DIR` points to the existing local craft-fonts checkout, its OFL records
 are copied with the bundle. Promotion to production is a separate, explicit user-requested release
 step after review.
+
+For a goal-specific review candidate, use packaging/macos/package-dev.sh --goal
+<lowercase-slug>. It creates a separate app name, bundle identifier, executable, process
+namespace, and state directory for that goal. The consolidated install-dev.sh intentionally
+rejects such a binary; it remains reserved for the unqualified PhotoStore-dev installation.
+Never replace a running consolidated or goal-specific bundle, and launch either one in the
+background with open -g -j -n so the production app and the user's active UI remain untouched.

@@ -50,8 +50,12 @@ mod ui_state;
 use photostore_engine::Session;
 use photostore_ui_egui::PhotoStoreApp;
 
-fn build_variant() -> &'static str {
-    if photostore_engine::build_info::is_dev_build() { "PhotoStore-dev build" } else { "PhotoStore production build" }
+fn build_variant() -> String {
+    if photostore_engine::build_info::is_dev_build() {
+        format!("{} build", photostore_engine::build_info::app_name())
+    } else {
+        "PhotoStore production build".into()
+    }
 }
 /// Windows and Linux: no OS title bar; the app's top bar is the title bar, with its own caption
 /// buttons and edge resizing (`photostore_ui_egui::titlebar`), as Photoshop does on Windows. macOS

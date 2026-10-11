@@ -61,12 +61,18 @@ KYS import remains supported; KYS export is not claimed.
 
 The 0.14.0 pass removes the application-quit bypass, resets close intent on Cancel, and targets
 selective same-playhead post-edit video-surface and dense-property persistence before history/save.
-The 33.04-second compiler gate, 5m32s preview build, native 8,314-byte demo proof, targeted
-captures, and isolated development compiler gate are complete. The latter exited 0; its log is
-`/private/tmp/photostore-0.14.0-dev-check-20261011.log`. Dense-property runtime behavior remains unverified. This is a development
-branch milestone using the separate PhotoStore-dev identity/configuration and hidden background
-launches; development commit/push, exact-SHA package, and installation remain pending. No production
-tag or release is planned. The behavior remains bounded and evidence-gated;
+The 33.04-second compiler gate, 5m32s preview build, native 8,314-byte demo proof, and targeted
+captures remain complete. The earlier consolidated development compiler exited 0; its log is
+`/private/tmp/photostore-0.14.0-dev-check-20261011.log`, but it predates and does not cover the new
+namespace. The goal-specific compiler exited 0; log
+`/private/tmp/photostore-0.14.0-goal-rc-check-20261011.log`. Three standard-only namespace tests
+passed with zero failures; log `/private/tmp/photostore-build-rs-test-20261011.log`. Five of nine RC
+steps are complete: version/docs, preview, actual captures/docs, namespace authoring, and
+goal-specific compiler/tests. Local commit, push, exact-SHA package, background installation, and
+focused runtime test remain pending. The RC uses `PhotoStore-dev-timeline-safety`,
+bundle ID `ai.photostore.app.dev.timeline-safety`, and default macOS configuration
+`~/Library/Application Support/PhotoStore-dev-timeline-safety`; production remains untouched.
+No production tag or release is planned. The behavior remains bounded and evidence-gated;
 no complete timeline persistence or Photoshop parity claim is made.
 
 ## 2026-10-10: Smart Object contents identity (#2163)

@@ -23,12 +23,34 @@ pub fn is_dev_build() -> bool {
 
 /// The user-facing application name for this binary.
 pub fn app_name() -> &'static str {
-    if is_dev_build() { "PhotoStore-dev" } else { "PhotoStore" }
+    if is_dev_build() { option_env!("PHOTOSTORE_GENERATED_APP_NAME").unwrap_or("PhotoStore-dev") } else { "PhotoStore" }
 }
 
 /// The native application identifier for this binary.
 pub fn app_id() -> &'static str {
-    if is_dev_build() { "ai.photostore.app.dev" } else { "ai.photostore.app" }
+    if is_dev_build() { option_env!("PHOTOSTORE_GENERATED_APP_ID").unwrap_or("ai.photostore.app.dev") } else { "ai.photostore.app" }
+}
+
+/// The Linux configuration directory name for this binary.
+pub fn linux_config_name() -> &'static str {
+    if is_dev_build() { option_env!("PHOTOSTORE_GENERATED_LINUX_CONFIG").unwrap_or("photostore-dev") } else { "photostore" }
+}
+
+/// The portable marker names for this binary.
+pub fn portable_marker_names() -> [&'static str; 2] {
+    if is_dev_build() {
+        [
+            option_env!("PHOTOSTORE_GENERATED_PORTABLE_MARKER_ONE").unwrap_or("portable-dev.txt"),
+            option_env!("PHOTOSTORE_GENERATED_PORTABLE_MARKER_TWO").unwrap_or("PhotoStore-dev.portable"),
+        ]
+    } else {
+        ["portable.txt", "PhotoStore.portable"]
+    }
+}
+
+/// The portable data directory name for this binary.
+pub fn portable_data_dir() -> &'static str {
+    if is_dev_build() { option_env!("PHOTOSTORE_GENERATED_PORTABLE_DATA_DIR").unwrap_or("PhotoStoreDevData") } else { "PhotoStoreData" }
 }
 
 /// The full git commit this build was made from, when the build environment recorded it.

@@ -252,17 +252,23 @@ The bounded pass covers close safeguards and selective same-playhead timeline pe
 preview, and actual screenshot evidence are complete: the compiler check passed in 33.04 seconds,
 the preview build completed in 5m32s with marker `preview-0.14.0-timeline-safety`, and the native
 demo `.pcraft` is 8,314 bytes with one tile on frame 0 and blank frames 1 and 2 before seeking.
-Dense-property runtime behavior remains unverified. The separate PhotoStore-dev identity/configuration
-is implemented. The isolated development compiler exited 0; log
-`/private/tmp/photostore-0.14.0-dev-check-20261011.log`. Five of eight delivery steps are complete:
-version/docs, preview, actual screenshots/docs, development isolation, and development compiler.
-Development commit/push, exact-SHA development package, and background development installation
-remain pending. No production tag or release is planned.
+Dense-property runtime behavior remains unverified. The earlier consolidated development compiler
+exited 0; log `/private/tmp/photostore-0.14.0-dev-check-20261011.log`, but that gate predates and
+does not cover the new namespace. The goal-specific compiler exited 0; log
+`/private/tmp/photostore-0.14.0-goal-rc-check-20261011.log`. Three standard-only namespace tests
+passed with zero failures; log `/private/tmp/photostore-build-rs-test-20261011.log`. Five of nine RC
+delivery steps are complete: version/docs, preview, actual screenshots/docs, namespace authoring,
+and goal-specific compiler/tests. Local commit, push, exact-SHA package, background installation,
+and focused background runtime test remain pending. The RC namespace is `PhotoStore-dev-timeline-safety`, bundle ID
+`ai.photostore.app.dev.timeline-safety`, default macOS configuration
+`~/Library/Application Support/PhotoStore-dev-timeline-safety`. No production tag or release is
+planned.
 
 Milestones: close safeguards and timeline persistence are implemented for this checkpoint, with
-compiler/evidence recorded above. Development delivery has 8 steps: version/docs, preview, actual
-screenshots/docs, development isolation, development compiler, development commit/push, exact-SHA
-development package, and background development installation; the first five are complete.
+prior compiler/evidence recorded above. RC delivery has 9 steps: version/docs, preview, actual
+screenshots/docs, development namespace authoring, goal-specific compiler, local commit, push,
+exact-SHA package/background installation, and focused background runtime test; the first four are
+complete.
 Stopwatches and full Photoshop parity remain future work.
 
 ## Animation and timeline

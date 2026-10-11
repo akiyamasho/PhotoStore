@@ -29,8 +29,15 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
   (cd "$ROOT" && CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}" CARGO_BUILD_JOBS=1 RAYON_NUM_THREADS=1 nice -n 10 cargo build --locked --offline -p photostore --bin photostore --features dev-install)
 fi
 [ -x "$TARGET" ] || { echo "error: dev binary not found or not executable: $TARGET" >&2; exit 1; }
-if ! "$TARGET" --version 2>/dev/null | grep -Fq 'PhotoStore-dev build'; then
+VERSION_OUTPUT="$("$TARGET" --version 2>/dev/null || true)"
+if ! printf '%s' "$VERSION_OUTPUT" | grep -Fq '(PhotoStore-dev build)'; then
   echo "error: refusing to install a binary without the dev-install build marker" >&2
+  exit 1
+fi
+# This consolidated installer owns the unqualified dev namespace. A goal RC
+# must be packaged and launched under its own identity and config directory.
+if printf '%s' "$VERSION_OUTPUT" | grep -Eq 'PhotoStore-dev-[a-z0-9-]+|ai\.photostore\.app\.dev\.'; then
+  echo "error: refusing to install a goal-specific dev binary; use package-dev.sh --goal SLUG" >&2
   exit 1
 fi
 

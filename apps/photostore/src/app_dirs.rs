@@ -3,7 +3,7 @@
 //!
 //! In order:
 //! 1. `PHOTOSTORE_CONFIG_DIR`, when set (tests, agents, custom setups).
-//! 2. **Portable mode** (#228): a marker file ([`PORTABLE_MARKERS`]) beside the executable puts
+//! 2. **Portable mode** (#228): a marker file from [`portable_markers`] beside the executable puts
 //!    everything in `<exe dir>/PhotoStoreData`, so a portable copy on a USB stick leaves nothing in
 //!    `%APPDATA%`. The Windows portable zip ships with `portable.txt`; the MSI doesn't. If that
 //!    folder can't be written (read-only medium, Program Files), the app warns and falls back.
@@ -15,15 +15,13 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 /// Files beside the executable that switch on portable mode (either one; contents are ignored).
-#[cfg(feature = "dev-install")]
-pub const PORTABLE_MARKERS: [&str; 2] = ["portable-dev.txt", "PhotoStore-dev.portable"];
-#[cfg(not(feature = "dev-install"))]
-pub const PORTABLE_MARKERS: [&str; 2] = ["portable.txt", "PhotoStore.portable"];
+pub fn portable_markers() -> [&'static str; 2] {
+    photostore_engine::build_info::portable_marker_names()
+}
 /// The data folder created beside the executable in portable mode.
-#[cfg(feature = "dev-install")]
-pub const PORTABLE_DATA_DIR: &str = "PhotoStoreDevData";
-#[cfg(not(feature = "dev-install"))]
-pub const PORTABLE_DATA_DIR: &str = "PhotoStoreData";
+pub fn portable_data_dir() -> &'static str {
+    photostore_engine::build_info::portable_data_dir()
+}
 
 /// How [`DataDir::dir`] was chosen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,7 +73,7 @@ pub fn resolve(env: impl Fn(&str) -> Option<OsString>, exe_dir: Option<&Path>) -
     let Some((exe_dir, marker)) = exe_dir.and_then(|d| portable_marker(d).map(|m| (d, m))) else {
         return DataDir { dir: platform, mode: Mode::Platform, warning: None };
     };
-    let data = exe_dir.join(PORTABLE_DATA_DIR);
+    let data = exe_dir.join(portable_data_dir());
     match ensure_writable(&data) {
         Ok(()) => DataDir { dir: Some(data), mode: Mode::Portable, warning: None },
         Err(e) => {
@@ -91,7 +89,7 @@ pub fn resolve(env: impl Fn(&str) -> Option<OsString>, exe_dir: Option<&Path>) -
 pub fn platform_dir(env: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
     let home = env("HOME").filter(|h| !h.is_empty()).map(PathBuf::from);
     let app_name = photostore_engine::build_info::app_name();
-    let linux_name = if photostore_engine::build_info::is_dev_build() { "photostore-dev" } else { "photostore" };
+    let linux_name = photostore_engine::build_info::linux_config_name();
     if cfg!(target_os = "macos") {
         return home.map(|h| h.join("Library/Application Support").join(app_name));
     }
@@ -103,7 +101,7 @@ pub fn platform_dir(env: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> 
 
 /// The first portable marker file in `exe_dir`, if any.
 pub fn portable_marker(exe_dir: &Path) -> Option<PathBuf> {
-    PORTABLE_MARKERS.iter().map(|m| exe_dir.join(m)).find(|p| p.is_file())
+    portable_markers().iter().map(|m| exe_dir.join(m)).find(|p| p.is_file())
 }
 
 /// Create `dir` and prove a file can be written in it (a folder can exist yet be read-only).
@@ -154,22 +152,21 @@ mod tests {
         let dir = d.dir.unwrap();
         assert_eq!(Some(dir.clone()), platform_dir(&env));
         assert!(!dir.starts_with(&exe));
-        assert!(!exe.join(PORTABLE_DATA_DIR).exists(), "no portable folder without a marker");
+        assert!(!exe.join(portable_data_dir()).exists(), "no portable folder without a marker");
         // The convention per platform.
         if cfg!(target_os = "macos") {
             assert_eq!(dir, root.join("home/Library/Application Support").join(photostore_engine::build_info::app_name()));
         } else if cfg!(windows) {
             assert_eq!(dir, root.join("appdata").join(photostore_engine::build_info::app_name()));
         } else {
-            let name = if photostore_engine::build_info::is_dev_build() { "photostore-dev" } else { "photostore" };
-            assert_eq!(dir, root.join("home/.config").join(name));
+            assert_eq!(dir, root.join("home/.config").join(photostore_engine::build_info::linux_config_name()));
         }
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn either_marker_keeps_everything_beside_the_exe() {
-        for marker in PORTABLE_MARKERS {
+        for marker in portable_markers() {
             let root = temp("portable");
             let exe = root.join("PhotoStore");
             std::fs::create_dir_all(&exe).unwrap();
@@ -178,7 +175,7 @@ mod tests {
             assert_eq!(d.mode, Mode::Portable, "{marker}");
             assert!(d.warning.is_none());
             let dir = d.dir.unwrap();
-            assert_eq!(dir, exe.join(PORTABLE_DATA_DIR));
+            assert_eq!(dir, exe.join(portable_data_dir()));
             assert!(dir.is_dir(), "the data folder is created");
             assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "the write probe is removed");
             // Every derived path sits under the exe dir.
@@ -204,9 +201,9 @@ mod tests {
         let root = temp("unwritable");
         let exe = root.join("bin");
         std::fs::create_dir_all(&exe).unwrap();
-        std::fs::write(exe.join("portable.txt"), b"").unwrap();
+        std::fs::write(exe.join(portable_markers()[0]), b"").unwrap();
         // A file where the data folder should go: it can't be created, on every platform.
-        std::fs::write(exe.join(PORTABLE_DATA_DIR), b"in the way").unwrap();
+        std::fs::write(exe.join(portable_data_dir()), b"in the way").unwrap();
         let env = fake_home(&root);
         let d = resolve(&env, Some(&exe));
         assert_eq!(d.mode, Mode::Platform);
@@ -224,11 +221,11 @@ mod tests {
         let root = temp("override");
         let exe = root.join("bin");
         std::fs::create_dir_all(&exe).unwrap();
-        std::fs::write(exe.join("portable.txt"), b"").unwrap();
+        std::fs::write(exe.join(portable_markers()[0]), b"").unwrap();
         let custom = root.join("custom");
         let d = resolve(env_of(&[("PHOTOSTORE_CONFIG_DIR", &custom)]), Some(&exe));
         assert_eq!((d.mode, d.dir), (Mode::Override, Some(custom)));
-        assert!(!exe.join(PORTABLE_DATA_DIR).exists());
+        assert!(!exe.join(portable_data_dir()).exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 
