@@ -26,8 +26,9 @@ LEASE = Path.home() / "Library/Application Support/PhotoStore/local-ci/dev-watch
 BUILD_LOCK = Path.home() / "Library/Application Support/PhotoStore/local-ci/poll.lock"
 FONTS = Path(os.environ.get("CRAFT_FONTS_DIR", "/Users/computer/Library/Application Support/PhotoStore/local-ci/craft-fonts"))
 PENDING = STATE / "pending.json"
+BACKGROUND_BUNDLE = RUNTIME / "PhotoStore-dev.app"
 EXCLUDED = {".git", "target", "node_modules", "docs", ".codex", "dev-runtime", "screenshots"}
-SUFFIXES = {".rs", ".toml", ".lock", ".json", ".ron", ".wgsl", ".glsl", ".metal", ".plist", ".sh", ".py"}
+SUFFIXES = {".rs", ".toml", ".lock", ".json", ".ron", ".wgsl", ".glsl", ".metal", ".plist", ".sh", ".py", ".svg", ".icns", ".ttf", ".otf", ".png"}
 
 
 def log(message: str) -> None:
@@ -58,7 +59,7 @@ def atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
 def source_files() -> list[Path]:
     result: list[Path] = []
     for base, dirs, files in os.walk(ROOT):
-        dirs[:] = [d for d in dirs if d not in EXCLUDED and not d.startswith(".")]
+        dirs[:] = [d for d in dirs if d not in EXCLUDED and (not d.startswith(".") or d == ".cargo")]
         for name in files:
             path = Path(base) / name
             if path.suffix in SUFFIXES and path.is_file():
@@ -93,7 +94,13 @@ def build() -> tuple[Path, str, str] | None:
     name = f"{commit}-{before[:16]}"
     frozen = RUNTIME / name / "photostore"
     if frozen.is_file():
-        return frozen, name, before
+        try:
+            marker = subprocess.run([str(frozen), "--version"], check=True, text=True, capture_output=True, timeout=5).stdout
+            if "PhotoStore-dev build" in marker and commit[:9] in marker:
+                return frozen, name, before
+        except (OSError, subprocess.SubprocessError):
+            pass
+        frozen.unlink(missing_ok=True)
     validate_fonts()
     frozen.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
@@ -136,19 +143,64 @@ def choose_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def start(binary: Path, name: str) -> tuple[subprocess.Popen[bytes], int]:
+class OwnedProcess:
+    def __init__(self, pid: int, process: subprocess.Popen[bytes] | None = None) -> None:
+        self.pid = pid
+        self.process = process
+
+    def poll(self) -> int | None:
+        if self.process is not None:
+            return self.process.poll()
+        try:
+            os.kill(self.pid, 0)
+        except OSError:
+            return 1
+        return None
+
+
+def background_bundle(binary: Path) -> None:
+    executable = BACKGROUND_BUNDLE / "Contents/MacOS/PhotoStore-dev"
+    resources = BACKGROUND_BUNDLE / "Contents/Resources"
+    resources.mkdir(parents=True, exist_ok=True)
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    pointer = BACKGROUND_BUNDLE / "Contents/Resources/current-binary"
+    atomic_write(pointer, (str(binary) + "\n").encode(), 0o600)
+    if not executable.exists():
+        executable.write_text("#!/bin/sh\nset -eu\nexec \"$(cat \"$(dirname \"$0\")/../Resources/current-binary\")\" \"$@\"\n", encoding="utf-8")
+        os.chmod(executable, 0o755)
+    info = BACKGROUND_BUNDLE / "Contents/Info.plist"
+    if not info.exists():
+        info.write_text("<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>CFBundleExecutable</key><string>PhotoStore-dev</string><key>CFBundleIdentifier</key><string>ai.photostore.app.dev</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleName</key><string>PhotoStore-dev</string></dict></plist>", encoding="utf-8")
+
+
+def start(binary: Path, name: str) -> tuple[OwnedProcess, int]:
     port = choose_port()
     env = os.environ.copy()
     env.pop("PHOTOSTORE_DEV_GOAL", None)
     env.pop("PHOTOSTORE_CONFIG_DIR", None)
     args = [str(binary), "--control", str(port), "--control-token-file", str(TOKEN), "--automation-read-root", str(ROOT), "--automation-write-root", str(ROOT)]
-    child = subprocess.Popen(args, cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if env.get("PHOTOSTORE_DEV_BACKGROUND") == "1" and sys.platform == "darwin":
+        background_bundle(binary)
+        subprocess.run(["open", "-g", "-j", str(BACKGROUND_BUNDLE), "--args", *args], cwd=ROOT, env=env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        pid = None
+        for _ in range(50):
+            lines = subprocess.run(["/bin/ps", "-axo", "pid=,command="], text=True, capture_output=True, check=True).stdout.splitlines()
+            matches = [int(line.split(None, 1)[0]) for line in lines if str(binary) in line]
+            if matches:
+                pid = matches[-1]
+                break
+            time.sleep(0.1)
+        if pid is None:
+            raise RuntimeError("background PhotoStore child did not appear")
+        child = OwnedProcess(pid)
+    else:
+        child = OwnedProcess(subprocess.Popen(args, cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).pid)
     atomic_write(STATE / "child.json", json.dumps({"pid": child.pid, "binary": str(binary), "runtime": name, "port": port}).encode())
     log(f"[app] started pid={child.pid} runtime={name}")
     return child, port
 
 
-def request_reload(child: subprocess.Popen[bytes], port: int) -> bool:
+def request_reload(child: OwnedProcess, port: int) -> bool:
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=1.0) as conn:
             reader = conn.makefile("rb")
@@ -179,27 +231,53 @@ def read_pending() -> dict | None:
         return None
 
 
+def child_lease_live() -> bool:
+    try:
+        lease = json.loads(LEASE.read_text(encoding="utf-8"))
+        pid, binary = lease.get("child_pid"), lease.get("binary")
+        if not isinstance(pid, int) or not isinstance(binary, str):
+            return False
+        os.kill(pid, 0)
+        return any(str(pid) in line and binary in line for line in subprocess.run(["/bin/ps", "-axo", "pid=,command="], text=True, capture_output=True, check=True).stdout.splitlines())
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+
+
+def consolidated_dev_alive() -> bool:
+    lines = subprocess.run(["/bin/ps", "-axo", "pid=,command="], text=True, capture_output=True, check=True).stdout.splitlines()
+    return any("/Applications/PhotoStore-dev.app/Contents/MacOS/PhotoStore-dev" in line for line in lines)
+
+
 def write_lease(child_pid: int | None, binary: Path | None) -> None:
     atomic_write(LEASE, json.dumps({"watcher_pid": os.getpid(), "child_pid": child_pid, "binary": str(binary) if binary else None, "uid": os.getuid(), "state": str(STATE)}).encode())
 
 
 def run(once: bool) -> int:
-    ensure_state()
+    STATE.mkdir(parents=True, exist_ok=True)
     with OWNER_LOCK.open("a+") as owner:
         try:
             fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise SystemExit("photostore-dev: another watcher already owns this runtime")
+        if child_lease_live():
+            raise SystemExit("photostore-dev: an owned dev child is still running; refusing a second watcher")
+        if consolidated_dev_alive():
+            raise SystemExit("photostore-dev: consolidated PhotoStore-dev is running outside this watcher; refusing to attach")
+        ensure_state()
         PID_FILE.write_text(str(os.getpid()), encoding="ascii")
         write_lease(None, None)
-        child: subprocess.Popen[bytes] | None = None
+        child: OwnedProcess | None = None
         port = 0
         applied = ""
         failed = ""
+        retry_at = 0.0
         pending = read_pending()
         try:
             while True:
                 current = fingerprint()
+                if pending and pending.get("source") != current:
+                    pending = None
+                    PENDING.unlink(missing_ok=True)
                 if child is None or child.poll() is not None:
                     if pending and Path(pending["binary"]).is_file():
                         child, port = start(Path(pending["binary"]), pending["runtime"])
@@ -210,6 +288,8 @@ def run(once: bool) -> int:
                     elif current != applied and current != failed:
                         result = build()
                         if result is None:
+                            if once:
+                                return 1
                             failed = current
                         else:
                             child, port = start(result[0], result[1])
@@ -217,16 +297,21 @@ def run(once: bool) -> int:
                             applied, failed = result[2], ""
                 current = fingerprint()
                 if child is not None and child.poll() is None and current != applied and current != failed:
-                    result = build()
-                    if result is not None:
-                        pending = save_pending(result)
-                        if request_reload(child, port):
-                            deadline = time.monotonic() + 5
-                            while child.poll() is None and time.monotonic() < deadline:
-                                time.sleep(0.1)
-                            if child.poll() is not None:
-                                child = None
-                                write_lease(None, None)
+                    if pending is None:
+                        result = build()
+                        if result is not None:
+                            pending = save_pending(result)
+                        else:
+                            failed = current
+                    if pending is not None and pending.get("source") == current and time.monotonic() >= retry_at and request_reload(child, port):
+                        deadline = time.monotonic() + 5
+                        while child.poll() is None and time.monotonic() < deadline:
+                            time.sleep(0.1)
+                        if child.poll() is not None:
+                            child = None
+                            write_lease(None, None)
+                    elif pending is not None and pending.get("source") == current:
+                        retry_at = time.monotonic() + 2.0
                 if once:
                     return 0
                 time.sleep(0.5)
@@ -256,7 +341,8 @@ def main() -> int:
         status()
         return 0
     if args.background:
-        child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--once" if args.once else "--watch"], cwd=ROOT, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        env = os.environ.copy(); env["PHOTOSTORE_DEV_BACKGROUND"] = "1"
+        child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--once" if args.once else "--watch"], cwd=ROOT, env=env, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"photostore-dev watcher started pid={child.pid}")
         return 0
     return run(args.once)
