@@ -16,6 +16,13 @@ The completed 0.8.0 release grouped Audio, Smart Filter Masks, and the New Docum
 
 The 0.9.0 source pass keeps mask transfer atomic and document-safe: copy and move use document IDs, inherited locks, copy-on-write copies, explicit overwrite, and one undo edit. Channel references use strings for mask properties and open-document indexes for channel sources. Keyframe Set/Delete uses typed pending values, document timeline bounds, target-aware guards, atomic persistence, and no-op detection. Compiler, packaging, release, and reinstall evidence are complete for this pass; broad UI acceptance and Photoshop parity remain unverified.
 
+## 2026-10-11: 0.10.0 repeat and onion playback pass
+
+Repeat counts remain persisted as bounded total plays, with `None` reserved for forever. Onion-skin
+settings persist in native documents, while preview pixels are endpoint-bounded and capped by ghost
+count, working resolution, buffers, and one composite texture; those preview pixels do not enter
+exports or action recordings. The compiler gate passed; release and install evidence remain pending.
+
 ## 2026-10-10: Smart Object contents identity (#2163)
 
 Smart Object instances carry a document-scoped contents ID separately from their layer ID. Normal duplicates preserve it; New Smart Object via Copy creates a new one. Contents edits update the matching instances together, retaining their individual placement and filters. Copies into another document remap contents IDs as a batch, preserving sharing within the copied layers without joining existing destination objects.

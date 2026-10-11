@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use photostore_doc::{FrameLayerState, LayerTimelineRange, Timeline, TimelineLoop, TimelineMode, LayerId};
+use photostore_doc::{FrameLayerState, LayerTimelineRange, Timeline, TimelineLoop, TimelineMode, LayerId, OnionSkinBlend, DocId};
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
@@ -45,6 +45,23 @@ fn with_timeline(s: &mut Session, f: impl FnOnce(&mut Option<Timeline>)) -> Resu
 
 fn bad(cmd: &str, msg: String) -> EngineError {
     EngineError::BadParams { cmd: cmd.into(), msg }
+}
+
+fn check_document(s: &Session, p: &Value, cmd: &str) -> Result<()> {
+    if let Some(v) = p.get("document") {
+        let id = v.as_u64().map(DocId).ok_or_else(|| bad(cmd, "`document` must be a document id".into()))?;
+        let actual = s.active().ok_or(EngineError::NoDocument)?.doc.id;
+        if id != actual { return Err(bad(cmd, format!("document {id:?} is not active"))); }
+    }
+    Ok(())
+}
+
+fn strict_keys(p: &Value, allowed: &[&str], cmd: &str) -> Result<()> {
+    let Some(obj) = p.as_object() else { return Err(bad(cmd, "parameters must be an object".into())); };
+    if let Some(key) = obj.keys().find(|k| !allowed.contains(&k.as_str())) {
+        return Err(bad(cmd, format!("unknown parameter `{key}`")));
+    }
+    Ok(())
 }
 
 /// The optional `duration` param, rejected unless it's a whole number in `1..=MAX_DURATION`.
@@ -227,13 +244,46 @@ fn toggle_onion_skin(s: &mut Session) -> Result<Value> {
 }
 
 fn set_loop(s: &mut Session, p: &Value) -> Result<Value> {
+    strict_keys(p, &["mode", "count", "document"], "timeline.setLoop")?;
+    check_document(s, p, "timeline.setLoop")?;
     let mode = match p.get("mode").and_then(Value::as_str) {
         Some("once") => TimelineLoop::Once,
         Some("loop") => TimelineLoop::Loop,
+        Some("forever") => TimelineLoop::Loop,
         Some("pingPong") | Some("ping-pong") => TimelineLoop::PingPong,
-        _ => return Err(bad("timeline.setLoop", "`mode` must be `once`, `loop`, or `pingPong`".into())),
+        Some("count") => TimelineLoop::Loop,
+        _ => return Err(bad("timeline.setLoop", "`mode` must be `once`, `loop`, `forever`, `pingPong`, or `count`".into())),
     };
-    with_timeline(s, |t| if let Some(t) = t { t.loop_mode = mode; })
+    let mode_name = p.get("mode").and_then(Value::as_str).unwrap_or("");
+    let count = match p.get("count") {
+        None => None,
+        Some(v) => Some(v.as_u64().and_then(|n| u32::try_from(n).ok()).filter(|n| (1..=65_536).contains(n)).ok_or_else(|| bad("timeline.setLoop", "`count` must be an integer from 1 to 65536".into()))?),
+    };
+    if mode_name == "count" && count.is_none() { return Err(bad("timeline.setLoop", "count mode requires `count` from 1 to 65536".into())); }
+    let next_count = if mode == TimelineLoop::Once { None } else if mode_name == "forever" { None } else { count };
+    if s.active().and_then(|st| st.doc.timeline.as_ref()).is_some_and(|t| t.loop_mode == mode && t.loop_count == next_count) { return info(s); }
+    with_timeline(s, |t| if let Some(t) = t {
+        t.loop_mode = mode;
+        t.loop_count = next_count;
+    })
+}
+
+fn set_onion_skin_settings(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "timeline.setOnionSkinSettings";
+    strict_keys(p, &["framesBefore", "framesAfter", "spacing", "minOpacity", "maxOpacity", "blend", "document"], CMD)?;
+    check_document(s, p, CMD)?;
+    let current = s.active().and_then(|st| st.doc.timeline.as_ref()).map(|t| t.onion_settings).ok_or(EngineError::NoDocument)?;
+    let mut next = current;
+    if let Some(v) = p.get("framesBefore") { next.frames_before = v.as_u64().and_then(|n| u32::try_from(n).ok()).filter(|n| *n <= 8).ok_or_else(|| bad(CMD, "`framesBefore` must be an integer from 0 to 8".into()))?; }
+    if let Some(v) = p.get("framesAfter") { next.frames_after = v.as_u64().and_then(|n| u32::try_from(n).ok()).filter(|n| *n <= 8).ok_or_else(|| bad(CMD, "`framesAfter` must be an integer from 0 to 8".into()))?; }
+    if let Some(v) = p.get("spacing") { next.spacing = v.as_u64().and_then(|n| u32::try_from(n).ok()).filter(|n| (1..=1000).contains(n)).ok_or_else(|| bad(CMD, "`spacing` must be an integer from 1 to 1000".into()))?; }
+    fn opacity(v: &Value, key: &str, cmd: &str) -> Result<f32> { let n = v.as_f64().filter(|n| n.is_finite() && (0.0..=1.0).contains(n)).ok_or_else(|| bad(cmd, format!("`{key}` must be finite and from 0 to 1")))?; Ok(n as f32) }
+    if let Some(v) = p.get("minOpacity") { next.min_opacity = opacity(v, "minOpacity", CMD)?; }
+    if let Some(v) = p.get("maxOpacity") { next.max_opacity = opacity(v, "maxOpacity", CMD)?; }
+    if next.min_opacity > next.max_opacity { return Err(bad(CMD, "`minOpacity` must be no greater than `maxOpacity`".into())); }
+    if let Some(v) = p.get("blend") { next.blend = match v.as_str() { Some("normal") => OnionSkinBlend::Normal, Some("multiply") => OnionSkinBlend::Multiply, Some("screen") => OnionSkinBlend::Screen, Some("difference") => OnionSkinBlend::Difference, _ => return Err(bad(CMD, "`blend` must be normal, multiply, screen, or difference".into())) }; }
+    if current == next { return info(s); }
+    with_timeline(s, |t| if let Some(t) = t { t.onion_settings = next; })
 }
 
 fn make_frames_from_layers(s: &mut Session) -> Result<Value> {
@@ -702,7 +752,7 @@ fn info(s: &mut Session) -> Result<Value> {
     let st = s.active().ok_or(EngineError::NoDocument)?;
     Ok(match &st.doc.timeline {
         Some(t) => {
-            json!({"timeline": {"fps": t.fps, "duration": t.duration, "current": t.current, "workStart": t.work_start, "workEnd": t.work_end, "time": t.time(), "mode": match t.mode { TimelineMode::Video => "video", TimelineMode::FrameAnimation => "frameAnimation" }, "loop": match t.loop_mode { TimelineLoop::Once => "once", TimelineLoop::Loop => "loop", TimelineLoop::PingPong => "pingPong" }, "onionSkin": t.onion_skin}})
+            json!({"timeline": {"fps": t.fps, "duration": t.duration, "current": t.current, "workStart": t.work_start, "workEnd": t.work_end, "time": t.time(), "mode": match t.mode { TimelineMode::Video => "video", TimelineMode::FrameAnimation => "frameAnimation" }, "loop": match t.loop_mode { TimelineLoop::Once => "once", TimelineLoop::Loop => "loop", TimelineLoop::PingPong => "pingPong" }, "loopCount": t.loop_count, "onionSkin": t.onion_skin, "onionSkinSettings": t.onion_settings}})
         }
         None => json!({"timeline": null}),
     })
@@ -724,8 +774,9 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("timeline.previousFrame", "Previous Frame", "{} → {timeline}", has_timeline, |s, _| step(s, -1)),
         spec!("timeline.setProps", "Timeline Settings", r#"{fps?, duration?, workStart?, workEnd?} → {timeline}"#, has_timeline, |s, p| set_props(s, p)),
         spec!("timeline.setMode", "Timeline Mode", r#"{mode:video|frameAnimation} → {timeline}"#, has_timeline, |s, p| set_mode(s, p)),
-        spec!("timeline.setLoop", "Timeline Loop", r#"{mode:once|loop|pingPong} → {timeline}"#, has_timeline, |s, p| set_loop(s, p)),
+        spec!("timeline.setLoop", "Timeline Loop", r#"{mode:once|loop|forever|pingPong|count,count?:1..65536} → {timeline}"#, has_timeline, |s, p| set_loop(s, p)),
         spec!("timeline.toggleOnionSkin", "Toggle Onion Skin", "{} → {timeline}", has_timeline, |s, _| toggle_onion_skin(s)),
+        spec!("timeline.setOnionSkinSettings", "Onion Skin Settings", r#"{framesBefore?,framesAfter?,spacing?,minOpacity?,maxOpacity?,blend?,document?} → {timeline}"#, has_timeline, |s, p| set_onion_skin_settings(s, p)),
         spec!("timeline.makeFramesFromLayers", "Make Frames From Layers", "{} → {layer, mode}", has_doc, |s, _| make_frames_from_layers(s)),
         spec!("timeline.insertFrame", "New Frame", "{} → {timeline}", has_timeline, |s, _| frame_edit(s, "insert")),
         spec!("timeline.duplicateFrame", "Duplicate Frame", "{} → {timeline}", has_timeline, |s, _| frame_edit(s, "duplicate")),

@@ -275,14 +275,25 @@ fn timed_cache_key(bytes: &[u8], fmt: PixelFormat, frame: usize) -> CacheKey {
 fn timeline_frame_at_time(doc: &Document, time: f64) -> usize {
     let Some(t) = doc.timeline.as_ref() else { return 0 };
     let duration = t.duration.clamp(1, 1_000_000);
+    let loop_count = t.loop_count.map(|n| n.clamp(1, 65_536));
     let seconds = time.max(0.0) as f64;
     let explicit = t.frame_delays_ms.iter().take(duration).any(|d| *d > 0);
     if !explicit {
         let frame = (seconds * t.fps.max(1e-3) as f64 + 1e-9).floor() as usize;
         return match t.loop_mode {
-            photostore_doc::TimelineLoop::Loop => frame % duration,
+            photostore_doc::TimelineLoop::Loop => {
+                let cycle = duration as f64 / t.fps.max(1e-3) as f64;
+                if let Some(n) = loop_count {
+                    if seconds >= cycle * f64::from(n) { return duration - 1; }
+                }
+                frame % duration
+            }
             photostore_doc::TimelineLoop::PingPong if duration > 1 => {
                 let span = duration.saturating_mul(2).saturating_sub(2).max(1);
+                let cycle = span as f64 / t.fps.max(1e-3) as f64;
+                if let Some(n) = loop_count {
+                    if seconds >= cycle * f64::from(n) { return 0; }
+                }
                 let p = frame % span;
                 if p < duration { p } else { span - p }
             }
@@ -294,10 +305,16 @@ fn timeline_frame_at_time(doc: &Document, time: f64) -> usize {
     let total_ms = (0..duration).fold(0.0f64, |sum, i| (sum + delay(i)).min(f64::MAX / 2.0));
     let mut at = seconds * 1000.0;
     match t.loop_mode {
-        photostore_doc::TimelineLoop::Loop => at %= total_ms.max(1.0),
-        _ => at = at.min((total_ms - f64::EPSILON).max(0.0)),
+        photostore_doc::TimelineLoop::Loop => {
+            if let Some(n) = loop_count {
+                if at >= total_ms * f64::from(n) { return duration - 1; }
+            }
+            at %= total_ms.max(1.0)
+        }
+        photostore_doc::TimelineLoop::Once => at = at.min((total_ms - f64::EPSILON).max(0.0)),
+        photostore_doc::TimelineLoop::PingPong => {}
     }
-    let mut frame = 0usize;
+    let mut frame = duration - 1;
     let mut acc = 0.0f64;
     for i in 0..duration {
         acc = (acc + delay(i)).min(f64::MAX / 2.0);
@@ -305,7 +322,11 @@ fn timeline_frame_at_time(doc: &Document, time: f64) -> usize {
     }
     if t.loop_mode == photostore_doc::TimelineLoop::PingPong && duration > 1 {
         let span = (total_ms * 2.0 - delay(duration - 1) - delay(0)).max(1.0);
-        let mut p = (seconds * 1000.0) % span;
+        let elapsed = seconds * 1000.0;
+        if let Some(n) = loop_count {
+            if elapsed >= span * f64::from(n) { return 0; }
+        }
+        let mut p = elapsed % span;
         if p >= total_ms { p = (span - p - f64::EPSILON).max(0.0); }
         acc = 0.0;
         for i in 0..duration {

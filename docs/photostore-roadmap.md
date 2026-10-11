@@ -15,7 +15,7 @@ This is the working roadmap for the independent PhotoStore product. It records t
 
 ## Priorities
 
-1. Continue the post-release pass after the completed 0.9.0 mask transfer, Channels, and video keyframe milestone. Source/tag `3c905b47444cb71a9137572859d7a84cdffdb125` is published and installed; compiler evidence is recorded in `/private/tmp/photostore-mask-channels-keyframes-check-20261011-final.log`. Broad acceptance remains unverified. Next work is finite frame-animation repeat choices, configurable bounded onion skins, sparse property stopwatches, Smart transform/style coverage, and broader PSD fidelity.
+1. Complete the current 0.10.0 animation playback pass: finite frame-animation repeat choices and configurable bounded onion skins first, followed by sparse property stopwatches, Smart transform/style coverage, and broader PSD fidelity. The 0.9.0 source/tag `3c905b47444cb71a9137572859d7a84cdffdb125` remains published and installed; the 0.10.0 compiler gate passed, while release and install gates are pending.
 2. Deepen Smart Objects with contents editing, shared contents identity, smart-filter editing, linked-source workflows, and faithful PSD acceptance.
 3. Improve brush behavior and interaction: pressure/tilt/rotation dynamics, smoothing, presets, tablet edge cases, deterministic replay, and responsive large-document painting.
 4. Harden PSD and command coverage around the workflows PhotoStore promises. Add focused fixtures and measurements when a feature is implemented; avoid claiming parity before it is measured.

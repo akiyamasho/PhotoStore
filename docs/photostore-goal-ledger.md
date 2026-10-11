@@ -130,6 +130,27 @@ validation, and running PID 11312. The previous-app backup is
 retained recovery sibling is `/Applications/PhotoStore-0.8.0-recovery-20261011-121622.app`.
 The old 0.8.0 `Untitled-1` was left cleanly and no artwork recovery is claimed.
 
+## Current 0.10.0 animation playback pass
+
+Version 0.10.0 is prepared in source; the installed and published release remains 0.9.0. The
+repeat/onion pass is documented in [animation-playback.md](animation-playback.md). Its twelve steps:
+
+1. Architecture and public specification — complete.
+2. Persisted repeat/onion model — implemented.
+3. Strict repeat/onion commands — implemented.
+4. Finite playback, Smart Object, and GIF behavior — implemented.
+5. Native UI editors and editable bindings — implemented.
+6. Bounded canvas onion compositing — implemented.
+7. Compiler gate — complete; the required check passed in 8.21 seconds with warnings and the existing 0.1.6 future-incompatibility notice. Final log: `/private/tmp/photostore-animation-repeat-onion-check-20261011-final.log`.
+8. Version and documentation — prepared; implementation/compiler evidence is complete.
+9. Commit and push — pending.
+10. Tag — pending; planned immutable tag `photostore-animation-repeat-onion-2026-10-11`.
+11. Build and publish — pending.
+12. Reinstall and confirmation — pending.
+
+The New Document fix and historical 0.8.0 64×64 confirmation remain recorded above. No new broad
+UI, Photoshop parity, compiler, release, or install claim is made for 0.10.0.
+
 ## Animation and timeline
 
 ### Implemented milestone

@@ -51,6 +51,20 @@ pub struct TimelineUi {
     pub tween_selected_layers: bool,
     #[serde(skip)]
     pending_keyframe: Option<PendingKeyframe>,
+    #[serde(skip)]
+    loop_editor_open: bool,
+    #[serde(skip)]
+    pending_loop_count: String,
+    #[serde(skip)]
+    pending_loop_origin: Option<photostore_doc::DocId>,
+    #[serde(skip)]
+    onion_editor_open: bool,
+    #[serde(skip)]
+    pending_onion: Option<PendingOnionSettings>,
+    #[serde(skip)]
+    onion_error: String,
+    #[serde(skip)]
+    loop_error: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -62,6 +76,17 @@ struct PendingKeyframe {
     x: f32,
     y: f32,
     opacity: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PendingOnionSettings {
+    doc: photostore_doc::DocId,
+    frames_before: u32,
+    frames_after: u32,
+    spacing: u32,
+    min_opacity: f32,
+    max_opacity: f32,
+    blend: photostore_doc::OnionSkinBlend,
 }
 
 fn default_tween_additions() -> u64 { 1 }
@@ -78,6 +103,8 @@ impl std::fmt::Debug for TimelineUi {
             .field("thumb_generation", &self.thumb_generation)
             .field("thumb_page", &self.thumb_page)
             .field("pending_keyframe", &self.pending_keyframe.is_some())
+            .field("loop_editor_open", &self.loop_editor_open)
+            .field("onion_editor_open", &self.onion_editor_open)
             .finish()
     }
 }
@@ -146,11 +173,40 @@ pub fn checked(app: &PhotoStoreApp, id: &str) -> Option<bool> {
 
 /// Ids this module owns (for parity / enablement).
 pub fn handles(id: &str) -> bool {
-    matches!(id, "window.panel.timeline" | "timeline.playPause" | "timeline.stop")
+    matches!(id, "window.panel.timeline" | "timeline.playPause" | "timeline.stop" | "timeline.setLoop" | "timeline.setOnionSkinSettings")
+}
+
+pub(crate) fn open_loop_editor(app: &mut PhotoStoreApp) -> Result<(), String> {
+    let Some(st) = app.session.active() else { return Err("Open a document before editing timeline loop settings".into()); };
+    let Some(t) = st.doc.timeline.as_ref() else { return Err("Create a timeline before editing loop settings".into()); };
+    app.ui.timeline.pending_loop_count = t.loop_count.unwrap_or(3).to_string();
+    app.ui.timeline.pending_loop_origin = Some(st.doc.id);
+    app.ui.timeline.loop_error.clear();
+    app.ui.timeline.open = true;
+    app.ui.timeline.loop_editor_open = true;
+    Ok(())
+}
+
+pub(crate) fn open_onion_editor(app: &mut PhotoStoreApp) -> Result<(), String> {
+    let Some(st) = app.session.active() else { return Err("Open a document before editing onion skin settings".into()); };
+    let Some(t) = st.doc.timeline.as_ref() else { return Err("Create a timeline before editing onion skin settings".into()); };
+            let s = t.onion_settings.normalized();
+            app.ui.timeline.pending_onion = Some(PendingOnionSettings { doc: st.doc.id, frames_before: s.frames_before, frames_after: s.frames_after, spacing: s.spacing, min_opacity: s.min_opacity, max_opacity: s.max_opacity, blend: s.blend });
+            app.ui.timeline.onion_error.clear();
+            app.ui.timeline.open = true;
+            app.ui.timeline.onion_editor_open = true;
+    Ok(())
 }
 
 /// Toggle the Timeline panel.
-pub fn menu(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, _params: &Value) -> Option<Result<Value, String>> {
+pub fn menu(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    let empty_params = params.is_null() || params.as_object().is_some_and(serde_json::Map::is_empty);
+    if id == "timeline.setLoop" && empty_params {
+        return Some(open_loop_editor(app).map(|_| Value::Null));
+    }
+    if id == "timeline.setOnionSkinSettings" && empty_params {
+        return Some(open_onion_editor(app).map(|_| Value::Null));
+    }
     if id == "window.panel.timeline" {
         app.ui.timeline.open = !app.ui.timeline.open;
         if !app.ui.timeline.open {
@@ -197,6 +253,7 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
     let animation_delay = tl.and_then(|t| t.frame_delays_ms.get(t.current).copied());
     let (thumb_start, frame_thumb_ids) = tl.map_or((0, Vec::new()), |timeline| frame_thumbnails(app, &ctx, timeline));
     let mut act: Option<(&str, Value)> = None;
+    let active_doc_id = doc_snapshot.as_ref().map(|(doc, _)| doc.id);
     let mut close = false;
     let mut toggle_play = false;
     let mut tween_from = if app.ui.timeline.tween_from.is_empty() { "current".to_string() } else { app.ui.timeline.tween_from.clone() };
@@ -223,6 +280,7 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                 }
             });
         });
+
         ui.separator();
 
         if !have_doc {
@@ -250,13 +308,24 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                     if ui.selectable_label(!frame_mode, tl!("Video Timeline")).clicked() { act = Some(("timeline.setMode", json!({"mode":"video"}))); }
                     if ui.selectable_label(frame_mode, tl!("Frame Animation")).clicked() { act = Some(("timeline.setMode", json!({"mode":"frameAnimation"}))); }
                     ui.separator();
-                    let loop_label = match tl.loop_mode { photostore_doc::TimelineLoop::Once => tl!("Once"), photostore_doc::TimelineLoop::Loop => tl!("Loop"), photostore_doc::TimelineLoop::PingPong => tl!("Ping-pong") };
+                    let loop_label = match tl.loop_mode {
+                        photostore_doc::TimelineLoop::Once => tl!("Once").to_owned(),
+                        photostore_doc::TimelineLoop::Loop => tl.loop_count.map_or_else(|| tl!("Forever").to_owned(), |n| format!("{} times", n)),
+                        photostore_doc::TimelineLoop::PingPong => tl!("Ping-pong").to_owned(),
+                    };
                     egui::ComboBox::from_id_salt("timeline-loop").selected_text(loop_label).show_ui(ui, |ui| {
-                        if ui.selectable_label(matches!(tl.loop_mode, photostore_doc::TimelineLoop::Once), tl!("Once")).clicked() { act = Some(("timeline.setLoop", json!({"mode":"once"}))); }
-                        if ui.selectable_label(matches!(tl.loop_mode, photostore_doc::TimelineLoop::Loop), tl!("Loop")).clicked() { act = Some(("timeline.setLoop", json!({"mode":"loop"}))); }
-                        if ui.selectable_label(matches!(tl.loop_mode, photostore_doc::TimelineLoop::PingPong), tl!("Ping-pong")).clicked() { act = Some(("timeline.setLoop", json!({"mode":"pingPong"}))); }
+                        if ui.selectable_label(matches!(tl.loop_mode, photostore_doc::TimelineLoop::Once), tl!("Once")).clicked() { act = Some(("timeline.setLoop", json!({"mode":"once","document":doc_snapshot.as_ref().map(|(d, _)| d.id.0)}))); }
+                        if ui.selectable_label(matches!(tl.loop_mode, photostore_doc::TimelineLoop::Loop) && tl.loop_count == Some(3), tl!("3 Times")).clicked() { act = Some(("timeline.setLoop", json!({"mode":"count","count":3,"document":doc_snapshot.as_ref().map(|(d, _)| d.id.0)}))); }
+                        if ui.selectable_label(matches!(tl.loop_mode, photostore_doc::TimelineLoop::Loop) && tl.loop_count.is_none(), tl!("Forever")).clicked() { act = Some(("timeline.setLoop", json!({"mode":"forever","document":doc_snapshot.as_ref().map(|(d, _)| d.id.0)}))); }
+                        if ui.button(tl!("Other…")).clicked() {
+                            let _ = open_loop_editor(app);
+                        }
+                        if ui.selectable_label(matches!(tl.loop_mode, photostore_doc::TimelineLoop::PingPong), tl!("Ping-pong")).clicked() { act = Some(("timeline.setLoop", json!({"mode":"pingPong","document":doc_snapshot.as_ref().map(|(d, _)| d.id.0)}))); }
                     });
                     if ui.selectable_label(tl.onion_skin, tl!("Onion Skin")).clicked() { act = Some(("timeline.toggleOnionSkin", json!({}))); }
+                    if ui.button(tl!("Onion Skin Settings")).clicked() {
+                        let _ = open_onion_editor(app);
+                    }
                 });
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -424,6 +493,69 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
         }
         });
 
+    if app.ui.timeline.loop_editor_open {
+        let mut open = true;
+        let mut close_requested = false;
+        let mut count = app.ui.timeline.pending_loop_count.clone();
+        let origin = app.ui.timeline.pending_loop_origin;
+        egui::Window::new(tl!("Loop count")).collapsible(false).resizable(false).open(&mut open).show(&ctx, |ui| {
+            ui.label(tl!("Total plays (1–65536)"));
+            ui.text_edit_singleline(&mut count);
+            if !app.ui.timeline.loop_error.is_empty() { ui.colored_label(egui::Color32::RED, &app.ui.timeline.loop_error); }
+            ui.horizontal(|ui| {
+                if ui.button(tl!("OK")).clicked() {
+                    if let Ok(value) = count.trim().parse::<u32>() {
+                        if (1..=65_536).contains(&value) && origin == active_doc_id {
+                            act = Some(("timeline.setLoop", json!({"mode":"count","count":value,"document":active_doc_id.map(|id| id.0)})));
+                            close_requested = true;
+                        } else { app.ui.timeline.loop_error = tl!("Enter a whole number from 1 to 65536 for this document").into(); }
+                    } else { app.ui.timeline.loop_error = tl!("Enter a whole number from 1 to 65536").into(); }
+                }
+                if ui.button(tl!("Cancel")).clicked() { close_requested = true; }
+            });
+        });
+        if close_requested { open = false; }
+        app.ui.timeline.pending_loop_count = count;
+        app.ui.timeline.loop_editor_open = open;
+    }
+
+    if app.ui.timeline.onion_editor_open {
+        let mut open = true;
+        let mut close_requested = false;
+        let mut draft = app.ui.timeline.pending_onion.clone();
+        let origin = draft.as_ref().map(|d| d.doc);
+        egui::Window::new(tl!("Onion Skin Settings")).collapsible(false).resizable(false).open(&mut open).show(&ctx, |ui| {
+            if let Some(draft) = draft.as_mut() {
+                ui.horizontal(|ui| { ui.label(tl!("Before")); ui.add(egui::DragValue::new(&mut draft.frames_before).range(0..=8)); ui.label(tl!("After")); ui.add(egui::DragValue::new(&mut draft.frames_after).range(0..=8)); });
+                ui.horizontal(|ui| { ui.label(tl!("Spacing")); ui.add(egui::DragValue::new(&mut draft.spacing).range(1..=1000)); });
+                let mut min_percent = draft.min_opacity * 100.0;
+                let mut max_percent = draft.max_opacity * 100.0;
+                ui.horizontal(|ui| { ui.label(tl!("Min opacity")); if ui.add(egui::Slider::new(&mut min_percent, 0.0..=100.0).suffix("%")).changed() { draft.min_opacity = min_percent / 100.0; } });
+                ui.horizontal(|ui| { ui.label(tl!("Max opacity")); if ui.add(egui::Slider::new(&mut max_percent, 0.0..=100.0).suffix("%")).changed() { draft.max_opacity = max_percent / 100.0; } });
+                egui::ComboBox::from_id_salt("onion-blend").selected_text(format!("{:?}", draft.blend)).show_ui(ui, |ui| {
+                    for (value, label) in [(photostore_doc::OnionSkinBlend::Normal, "Normal"), (photostore_doc::OnionSkinBlend::Multiply, "Multiply"), (photostore_doc::OnionSkinBlend::Screen, "Screen"), (photostore_doc::OnionSkinBlend::Difference, "Difference")] {
+                        if ui.selectable_label(draft.blend == value, label).clicked() { draft.blend = value; }
+                    }
+                });
+                if !app.ui.timeline.onion_error.is_empty() { ui.colored_label(egui::Color32::RED, &app.ui.timeline.onion_error); }
+                ui.horizontal(|ui| {
+                    if ui.button(tl!("Apply")).clicked() {
+                        if draft.min_opacity > draft.max_opacity { app.ui.timeline.onion_error = tl!("Minimum opacity must be no greater than maximum opacity").into(); }
+                        else if origin != active_doc_id { app.ui.timeline.onion_error = tl!("The document changed; reopen settings").into(); }
+                        else {
+                            act = Some(("timeline.setOnionSkinSettings", json!({"framesBefore":draft.frames_before,"framesAfter":draft.frames_after,"spacing":draft.spacing,"minOpacity":draft.min_opacity,"maxOpacity":draft.max_opacity,"blend":format!("{:?}", draft.blend).to_lowercase(),"document":active_doc_id.map(|id| id.0)})));
+                            close_requested = true;
+                        }
+                    }
+                    if ui.button(tl!("Cancel")).clicked() { close_requested = true; }
+                });
+            }
+        });
+        if close_requested { open = false; }
+        app.ui.timeline.pending_onion = draft;
+        app.ui.timeline.onion_editor_open = open;
+    }
+
     if close {
         app.ui.timeline.open = false;
         app.ui.timeline.playing = false;
@@ -445,7 +577,15 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
         app.timeline_playback = runtime;
     }
     if let Some((cmd, p)) = act {
-        let _ = app.run(cmd, p);
+        if let Err(error) = app.run(cmd, p) {
+            app.ui.status = error.clone();
+            app.ui.status_error = true;
+            if cmd == "timeline.setLoop" { app.ui.timeline.loop_editor_open = true; app.ui.timeline.loop_error = error; }
+            else if cmd == "timeline.setOnionSkinSettings" { app.ui.timeline.onion_editor_open = true; app.ui.timeline.onion_error = error; }
+        } else if cmd == "timeline.setOnionSkinSettings" {
+            app.ui.timeline.pending_onion = None;
+            app.ui.timeline.onion_error.clear();
+        }
     }
     if app.ui.timeline.playing && !app.timeline_playback.playing {
         let mut runtime = std::mem::take(&mut app.timeline_playback);

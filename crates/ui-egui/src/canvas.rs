@@ -5,7 +5,7 @@
 //! with direct GPU rendering behind the same `CanvasCache` interface.
 
 use egui::{Color32, Mesh, PointerButton, Pos2, Rect, Sense, Stroke, TextureOptions, Vec2, pos2, vec2};
-use photostore_doc::{Document, LayerContent};
+use photostore_doc::{Document, LayerContent, OnionSkinBlend};
 use photostore_geom::Rect as DRect;
 use serde_json::json;
 
@@ -25,31 +25,132 @@ pub(crate) struct OnionSkinCache {
     pub texture: egui::TextureHandle,
 }
 
-fn draw_onion_skin(app: &mut PhotoStoreApp, painter: &egui::Painter, xf: &ViewXform, idx: usize, output: Option<u32>) {
-    let Some(st) = app.session.documents().get(idx) else { return };
-    let Some(timeline) = &st.doc.timeline else { return };
-    if !timeline.onion_skin || timeline.current == 0 { app.onion_preview = None; return; }
-    let previous = timeline.current - 1;
-    let key = format!("{}:{}:{}:{}:{}", st.doc.id.0, st.revision, previous, st.doc.size.width, output.unwrap_or(0));
+fn ensure_onion_skin(app: &mut PhotoStoreApp, painter: &egui::Painter, idx: usize, output: Option<u32>) -> Option<egui::TextureId> {
+    if idx >= app.session.documents().len() {
+        app.onion_preview = None;
+        return None;
+    }
+    let onion_enabled = match app.session.documents()[idx].doc.timeline.as_ref() {
+        Some(timeline) => timeline.onion_skin,
+        None => {
+            app.onion_preview = None;
+            return None;
+        }
+    };
+    if !onion_enabled || app.drag.is_some() {
+        app.onion_preview = None;
+        return None;
+    }
+    // These previews are rendered by paths outside `display_doc` (including GPU-specialized
+    // filter and dialog previews), so their committed-document onion cache would be stale.
+    if app.transform_preview.is_some()
+        || app.type_transform_preview.is_some()
+        || app.filter_preview.is_some()
+        || app.camera_raw.is_some()
+        || app.wide_angle.is_some()
+    {
+        app.onion_preview = None;
+        return None;
+    }
+    // Canvas textures can be backed by a temporary display document (adjustment, transform,
+    // style, gradient, or retouch preview). Onion snapshots intentionally use the committed
+    // document, so defer the overlay until that preview has ended instead of covering it with a
+    // stale composite.
+    let committed = app.session.documents()[idx].doc.clone();
+    let (shown, preview_key) = display_doc(app, idx);
+    if preview_key != 0 && !std::sync::Arc::ptr_eq(&shown, &committed) {
+        app.onion_preview = None;
+        return None;
+    }
+    let Some(st) = app.session.documents().get(idx) else { app.onion_preview = None; return None };
+    let Some(timeline) = &st.doc.timeline else { app.onion_preview = None; return None };
+    let settings = timeline.onion_settings.normalized();
+    let current = timeline.current.min(timeline.duration.saturating_sub(1));
+    let spacing = settings.spacing.max(1) as usize;
+    let mut frames = Vec::with_capacity((settings.frames_before + settings.frames_after) as usize);
+    for distance in 1..=settings.frames_before as usize {
+        let Some(frame) = current.checked_sub(distance.saturating_mul(spacing)) else { break };
+        frames.push((frame, distance, true));
+    }
+    for distance in 1..=settings.frames_after as usize {
+        let Some(frame) = current.checked_add(distance.saturating_mul(spacing)) else { break };
+        if frame >= timeline.duration { break; }
+        frames.push((frame, distance, false));
+    }
+    if frames.is_empty() {
+        app.onion_preview = None;
+        return None;
+    }
+    // Render the current frame into the same combined buffer as the ghosts. This keeps the
+    // overlay self-contained and gives it the same color-management path as the canvas texture.
+    let (display, display_key) = canvas_display(app, &st.doc, output);
+    let key = format!(
+        "{}:{}:{}:{}x{}:{}:{:?}:{:?}:{}:{}",
+        st.doc.id.0,
+        st.revision,
+        current,
+        st.doc.size.width,
+        st.doc.size.height,
+        output.unwrap_or(0),
+        settings,
+        frames,
+        display_key,
+        app.session.color.main_display.unwrap_or(0),
+    );
     if app.onion_preview.as_ref().is_none_or(|cache| cache.key != key) {
-        let mut preview = (*st.doc).clone();
-        if let Some(t) = &mut preview.timeline { t.current = previous; }
-        photostore_engine::sync_video(&mut preview);
-        let longest = preview.size.width.max(preview.size.height);
+        let longest = st.doc.size.width.max(st.doc.size.height);
         let factor = longest.div_ceil(MAX_TEXTURE).max(1);
-        let (w, h) = ((preview.size.width / factor).max(1), (preview.size.height / factor).max(1));
-        let full = photostore_compose::render_reduced(&preview, w, h);
-        let image = display_image(None, &full);
+        // Onion previews have a stricter bound than the ordinary canvas cache: every buffer is at
+        // most 1024 pixels on its long edge, and all ghosts share one flattened texture.
+        let factor = factor.max(longest.div_ceil(1024).max(1));
+        let (w, h) = ((st.doc.size.width / factor).max(1), (st.doc.size.height / factor).max(1));
+        let mut combined = render_onion_frame(&st.doc, current, w, h);
+        // Composite farthest first so the nearest frame remains the strongest reference when
+        // several snapshots overlap. The two sides retain their own nearest/farthest ramp.
+        let before_count = frames.iter().filter(|(_, _, before)| *before).count();
+        let after_count = frames.len().saturating_sub(before_count);
+        frames.sort_by_key(|(_, distance, _)| std::cmp::Reverse(*distance));
+        for (frame, distance, before) in frames {
+            let side_count = if before { before_count } else { after_count };
+            let opacity = onion_opacity(settings.min_opacity, settings.max_opacity, distance, side_count);
+            let snapshot = render_onion_frame(&st.doc, frame, w, h);
+            composite_onion(&mut combined, &snapshot, settings.blend, opacity);
+        }
+        let image = display_image(display.as_deref(), &combined);
         let texture = match app.onion_preview.take() {
             Some(mut cache) => { cache.texture.set(image, TextureOptions::LINEAR); cache.texture }
             None => painter.ctx().load_texture("timeline-onion-skin", image, TextureOptions::LINEAR),
         };
         app.onion_preview = Some(OnionSkinCache { key, texture });
     }
-    let Some(cache) = &app.onion_preview else { return };
-    let alpha = Color32::from_rgba_unmultiplied(80, 170, 255, 76);
-    let size = [st.doc.size.width as f32, st.doc.size.height as f32];
-    paint_mapped_image(painter, xf, cache.texture.id(), Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), size, alpha);
+    app.onion_preview.as_ref().map(|cache| cache.texture.id())
+}
+
+fn render_onion_frame(doc: &Document, frame: usize, w: u32, h: u32) -> photostore_compose::Buffer {
+    let mut preview = doc.clone();
+    if let Some(timeline) = &mut preview.timeline {
+        timeline.current = frame.min(timeline.duration.saturating_sub(1));
+    }
+    photostore_engine::sync_video(&mut preview);
+    photostore_compose::render_reduced(&preview, w, h)
+}
+
+fn onion_opacity(min: f32, max: f32, distance: usize, count: usize) -> f32 {
+    if count <= 1 { return max.clamp(0.0, 1.0); }
+    let t = (count.saturating_sub(distance) as f32 / (count - 1) as f32).clamp(0.0, 1.0);
+    (min + (max - min) * t).clamp(0.0, 1.0)
+}
+
+fn composite_onion(dst: &mut photostore_compose::Buffer, src: &photostore_compose::Buffer, blend: OnionSkinBlend, opacity: f32) {
+    let mode = match blend {
+        OnionSkinBlend::Normal => photostore_color::BlendMode::Normal,
+        OnionSkinBlend::Multiply => photostore_color::BlendMode::Multiply,
+        OnionSkinBlend::Screen => photostore_color::BlendMode::Screen,
+        OnionSkinBlend::Difference => photostore_color::BlendMode::Difference,
+    };
+    for (backdrop, source) in dst.px.iter_mut().zip(&src.px) {
+        *backdrop = photostore_compose::psblend::composite(mode, *backdrop, *source, opacity);
+    }
 }
 
 /// A transient source image beneath the brush outline; never part of the document render.
@@ -2259,11 +2360,15 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
     let drop_shadow = drop_shadow && !beyond;
     // Live adjustment previews on big documents use a downsampled proxy (see proxy.rs), unless
     // Preferences › Performance › Low Resolution Previews is off.
+    // A combined onion texture includes the current frame, so it must replace the ordinary
+    // canvas image rather than be painted over it (which would double-composite transparency).
+    let onion_texture = ensure_onion_skin(app, &painter, idx, output);
     let mut on_gpu = false;
     // A flipped view draws through the CPU path (the GPU canvas shader has no mirroring).
     // Rotation stays on the GPU: it is a view uniform, not a CPU blit.
     let gpu_ok = crate::gpu_canvas::gpu_view_ok(flip, view.rotation);
-    if app.gpu.is_some()
+    if onion_texture.is_none()
+        && app.gpu.is_some()
         && gpu_ok
         && let Some((k, key, preview_size)) =
             ensure_adjust_proxy(app, idx, view.zoom).or_else(|| ensure_filter_preview(app, idx, &ctx)).or_else(|| ensure_proxy_preview(app, idx))
@@ -2291,7 +2396,7 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
             hdr: hdr_preview(app, &doc),
         };
         crate::gpu_canvas::GpuCanvas::paint(&painter, rect, params);
-    } else if gpu_ok && ensure_gpu(app, idx, visible_doc_rect(&xf)) {
+    } else if onion_texture.is_none() && gpu_ok && ensure_gpu(app, idx, visible_doc_rect(&xf)) {
         on_gpu = true;
         app.perf.gpu = true;
         // Shadow, checkerboard, document and pixel grid in one custom shader (gpu_canvas.rs).
@@ -2337,7 +2442,8 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
                 }
             }
         }
-        if let Some((tex, _scale)) = ensure_texture(app, &ctx, idx, output) {
+        let tex = onion_texture.or_else(|| ensure_texture(app, &ctx, idx, output).map(|(tex, _scale)| tex));
+        if let Some(tex) = tex {
             if rotated {
                 paint_mapped_image(&painter, &xf, tex, Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), size, Color32::WHITE);
             } else {
@@ -2346,7 +2452,6 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
             }
         }
     }
-    draw_onion_skin(app, &painter, &xf, idx, output);
     // Channels panel: alpha / Quick Mask overlays and single-channel views (channel_view.rs).
     if let Some(tex) = crate::channel_view::ensure(app, &ctx, idx) {
         if view.rotation.abs() > 0.05 {

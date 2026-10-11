@@ -162,6 +162,13 @@ pub struct GifFrame {
 /// Encode an animated GIF (GIF89a). Each frame carries its own local colour table; `loop_forever`
 /// adds the NETSCAPE2.0 looping extension.
 pub fn encode_gif_animated(width: u32, height: u32, frames: &[GifFrame], loop_forever: bool) -> Result<Vec<u8>, CodecError> {
+    encode_gif_animated_with_loop_count(width, height, frames, if loop_forever { None } else { Some(1) })
+}
+
+/// Encode an animated GIF with an optional total play count. `None` writes the GIF
+/// NETSCAPE extension with a zero restart count (forever); `Some(1)` omits the extension.
+/// Positive counts are total plays, so the extension value is `total_plays - 1`.
+pub fn encode_gif_animated_with_loop_count(width: u32, height: u32, frames: &[GifFrame], total_plays: Option<u32>) -> Result<Vec<u8>, CodecError> {
     let (w, h) = (width as usize, height as usize);
     if width == 0 || height == 0 || width > 65535 || height > 65535 {
         return Err(gif_err("GIF size must be 1..=65535"));
@@ -169,16 +176,22 @@ pub fn encode_gif_animated(width: u32, height: u32, frames: &[GifFrame], loop_fo
     if frames.is_empty() {
         return Err(gif_err("an animated GIF needs at least one frame"));
     }
+    if let Some(n) = total_plays {
+        if !(1..=65_536).contains(&n) { return Err(gif_err("GIF total play count must be 1..=65536")); }
+    }
     let mut out = b"GIF89a".to_vec();
     out.extend((width as u16).to_le_bytes());
     out.extend((height as u16).to_le_bytes());
     out.push(0x70); // no global colour table, 8-bit colour resolution
     out.push(0); // background colour index
     out.push(0); // pixel aspect ratio
-    if loop_forever {
+    if total_plays != Some(1) {
         out.extend([0x21, 0xFF, 0x0B]);
         out.extend_from_slice(b"NETSCAPE2.0");
-        out.extend([0x03, 0x01, 0x00, 0x00, 0x00]); // loop count 0 = forever
+        let restarts = total_plays.map_or(0, |n| (n - 1) as u16);
+        out.extend([0x03, 0x01]);
+        out.extend(restarts.to_le_bytes());
+        out.push(0);
     }
     for f in frames {
         if f.palette.is_empty() || f.palette.len() > 256 || f.indices.len() != w * h || f.indices.iter().any(|&i| usize::from(i) >= f.palette.len()) {

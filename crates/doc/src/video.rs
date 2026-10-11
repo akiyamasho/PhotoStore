@@ -142,6 +142,60 @@ pub enum TimelineLoop {
     PingPong,
 }
 
+/// How neighbouring frames are composited for onion skin previews.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OnionSkinBlend {
+    Normal,
+    Multiply,
+    Screen,
+    Difference,
+}
+
+impl Default for OnionSkinBlend {
+    fn default() -> Self { Self::Normal }
+}
+
+/// Timeline onion skin preview settings. Values are bounded when a document is loaded or edited.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnionSkinSettings {
+    #[serde(default = "default_onion_before")]
+    pub frames_before: u32,
+    #[serde(default)]
+    pub frames_after: u32,
+    #[serde(default = "default_onion_spacing")]
+    pub spacing: u32,
+    #[serde(default = "default_onion_opacity")]
+    pub min_opacity: f32,
+    #[serde(default = "default_onion_opacity")]
+    pub max_opacity: f32,
+    #[serde(default)]
+    pub blend: OnionSkinBlend,
+}
+
+fn default_onion_before() -> u32 { 1 }
+fn default_onion_spacing() -> u32 { 1 }
+fn default_onion_opacity() -> f32 { 0.3 }
+
+impl Default for OnionSkinSettings {
+    fn default() -> Self {
+        Self { frames_before: 1, frames_after: 0, spacing: 1, min_opacity: 0.3, max_opacity: 0.3, blend: OnionSkinBlend::Normal }
+    }
+}
+
+impl OnionSkinSettings {
+    pub fn normalized(mut self) -> Self {
+        self.frames_before = self.frames_before.min(8);
+        self.frames_after = self.frames_after.min(8);
+        self.spacing = self.spacing.clamp(1, 1000);
+        self.min_opacity = if self.min_opacity.is_finite() { self.min_opacity.clamp(0.0, 1.0) } else { 0.3 };
+        self.max_opacity = if self.max_opacity.is_finite() { self.max_opacity.clamp(0.0, 1.0) } else { 0.3 };
+        if self.min_opacity > self.max_opacity { self.max_opacity = self.min_opacity; }
+        self
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FrameLayerState {
     pub layer: LayerId,
@@ -204,9 +258,14 @@ pub struct Timeline {
     /// Playback loop policy.
     #[serde(default)]
     pub loop_mode: TimelineLoop,
+    /// Total plays for finite Loop/PingPong playback. None means unbounded.
+    #[serde(default)]
+    pub loop_count: Option<u32>,
     /// Display the previous frame as a translucent onion-skin reference.
     #[serde(default)]
     pub onion_skin: bool,
+    #[serde(default)]
+    pub onion_settings: OnionSkinSettings,
     /// Per-frame visibility/opacity snapshots used by Frame Animation mode.
     #[serde(default)]
     pub frame_states: Vec<Vec<FrameLayerState>>,
@@ -226,13 +285,16 @@ pub struct Timeline {
 impl Timeline {
     pub fn new(duration: usize, fps: f32) -> Self {
         let d = duration.max(1);
-        Timeline { fps: valid_fps(fps), duration: d, current: 0, work_start: 0, work_end: d, mode: TimelineMode::Video, loop_mode: TimelineLoop::Loop, onion_skin: false, frame_states: Vec::new(), property_frames: Vec::new(), frame_delays_ms: vec![0; d.min(1_000_000)], layer_ranges: Vec::new(), audio_tracks: Vec::new() }
+        Timeline { fps: valid_fps(fps), duration: d, current: 0, work_start: 0, work_end: d, mode: TimelineMode::Video, loop_mode: TimelineLoop::Loop, loop_count: None, onion_skin: false, onion_settings: OnionSkinSettings::default(), frame_states: Vec::new(), property_frames: Vec::new(), frame_delays_ms: vec![0; d.min(1_000_000)], layer_ranges: Vec::new(), audio_tracks: Vec::new() }
     }
 
     /// Keep every index inside `0..duration` and the work area non-empty.
     pub fn clamp(&mut self) {
         self.duration = self.duration.max(1);
         self.fps = valid_fps(self.fps);
+        self.loop_count = self.loop_count.map(|n| n.clamp(1, 65_536));
+        if self.loop_mode == TimelineLoop::Once { self.loop_count = None; }
+        self.onion_settings = self.onion_settings.normalized();
         self.current = self.current.min(self.duration - 1);
         self.work_start = self.work_start.min(self.duration - 1);
         self.work_end = self.work_end.clamp(self.work_start + 1, self.duration);

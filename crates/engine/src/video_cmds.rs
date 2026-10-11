@@ -1146,7 +1146,11 @@ fn render_document_with(
                 return Err(cancelled());
             }
         }
-        let gif = photostore_codecs::web::encode_gif_animated(w as u32, h as u32, &gframes, !matches!(loop_mode, photostore_doc::TimelineLoop::Once)).map_err(|e| EngineError::Other(e.to_string()))?;
+        let total_plays = base.timeline.as_ref().map(|t| match t.loop_mode {
+            photostore_doc::TimelineLoop::Once => Some(1),
+            photostore_doc::TimelineLoop::Loop | photostore_doc::TimelineLoop::PingPong => t.loop_count,
+        }).unwrap_or(None);
+        let gif = photostore_codecs::web::encode_gif_animated_with_loop_count(w as u32, h as u32, &gframes, total_plays).map_err(|e| EngineError::Other(e.to_string()))?;
         let name = p.get("path").and_then(Value::as_str).and_then(|path| Path::new(path).file_name().and_then(|n| n.to_str())).map(str::to_owned).unwrap_or_else(|| format!("{stem}.gif"));
         let output = p.get("path").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| format!("{dir}/{name}"));
         let overwrite = p.get("overwrite").and_then(Value::as_bool).unwrap_or(false);

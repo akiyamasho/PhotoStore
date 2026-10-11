@@ -26,5 +26,7 @@ Filters, masks, identity and the current visual centre. It restores the source's
 and orientation by clearing perspective and warp and placing the source unscaled at that centre.
 The command does not unwrap the object or attempt full Photoshop transform-history parity.
 
-Known gaps remain audio, transitions, complex transform/tween interpolation, export fidelity for
-all external animated formats, and exact Photoshop parity for unusual timeline metadata.
+Finite timeline repeat counts now propagate to animated Smart Object children; legacy unbounded
+palindrome timing remains supported. Known gaps remain audio, transitions, complex transform/tween
+interpolation, export fidelity for all external animated formats, and exact Photoshop parity for
+unusual timeline metadata.

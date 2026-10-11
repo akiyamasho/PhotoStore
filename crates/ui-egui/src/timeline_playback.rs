@@ -74,6 +74,7 @@ impl Runtime {
             ^ (t.work_start as u64).rotate_left(13) ^ (t.work_end as u64).rotate_left(19)
             ^ match t.mode { TimelineMode::Video => 0x11, TimelineMode::FrameAnimation => 0x29 }
             ^ match t.loop_mode { TimelineLoop::Once => 0x31, TimelineLoop::Loop => 0x47, TimelineLoop::PingPong => 0x59 };
+        x = x.wrapping_mul(31).wrapping_add(t.loop_count.unwrap_or(0) as u64);
         for &d in &t.frame_delays_ms { x = x.wrapping_mul(1_099_511_628_211).wrapping_add(u64::from(d)); }
         for &d in fallback { x = x.wrapping_mul(31).wrapping_add(u64::from(d)); }
         x
@@ -126,11 +127,21 @@ impl Runtime {
         let mut completed = false;
         match t.loop_mode {
             TimelineLoop::Once => { if local >= span { completed = true; local = span; } }
-            TimelineLoop::Loop => { local %= span; }
+            TimelineLoop::Loop => {
+                if let Some(count) = t.loop_count {
+                    let total = span * f64::from(count.clamp(1, 65_536));
+                    if local >= total { completed = true; local = span; }
+                    else { local %= span; }
+                } else { local %= span; }
+            }
             TimelineLoop::PingPong => {
                 let cycle = (span * 2.0).max(f64::EPSILON);
-                local %= cycle;
-                if local >= span { local = cycle - local; reverse = true; }
+                if let Some(count) = t.loop_count {
+                    let total = cycle * f64::from(count.clamp(1, 65_536));
+                    if local >= total { completed = true; local = 0.0; }
+                    else { local %= cycle; }
+                } else { local %= cycle; }
+                if !completed && local >= span { local = cycle - local; reverse = true; }
             }
         }
         let target = if matches!(t.mode, TimelineMode::FrameAnimation) {
@@ -210,15 +221,19 @@ impl Runtime {
         }
         let elapsed = (now - self.started_at).max(0.0);
         let (frame, reverse, completed) = self.frame_for_elapsed(t, elapsed);
-        if matches!(t.loop_mode, TimelineLoop::Loop) {
+        let mut cycle_audio_started = false;
+        if matches!(t.loop_mode, TimelineLoop::Loop | TimelineLoop::PingPong) {
             let span = if matches!(t.mode, TimelineMode::FrameAnimation) {
                 self.variable_prefix.get(t.work_end).copied().unwrap_or(0.0) - self.variable_prefix.get(t.work_start).copied().unwrap_or(0.0)
             } else { (t.work_end.saturating_sub(t.work_start)) as f64 / f64::from(t.fps.max(0.001)) };
             if span > 0.0 {
-                let cycle = ((self.start_offset + elapsed) / span).floor() as usize;
-                if cycle > self.loop_cycle {
+                let cycle_span = if matches!(t.loop_mode, TimelineLoop::PingPong) { span * 2.0 } else { span };
+                let cycle = ((self.start_offset + elapsed) / cycle_span).floor() as usize;
+                let completed_cycle = t.loop_count.is_some_and(|n| cycle >= n.clamp(1, 65_536) as usize);
+                if cycle > self.loop_cycle && !completed_cycle && !completed {
                     self.loop_cycle = cycle;
                     if let Err(error) = self.start_audio(t, doc, frame) { app.ui.status = format!("Audio preview: {error}"); app.ui.status_error = true; }
+                    cycle_audio_started = true;
                 }
             }
         }
@@ -228,13 +243,15 @@ impl Runtime {
             if !self.reverse_audio_reported { app.ui.status = "Audio preview stopped during reverse ping-pong playback".into(); app.ui.status_error = false; self.reverse_audio_reported = true; }
         } else if !reverse && self.reverse_leg && matches!(t.loop_mode, TimelineLoop::PingPong) {
             self.reverse_leg = false;
-            if let Err(error) = self.start_audio(t, doc, frame) { app.ui.status = format!("Audio preview: {error}"); app.ui.status_error = true; }
+            if !cycle_audio_started && !completed {
+                if let Err(error) = self.start_audio(t, doc, frame) { app.ui.status = format!("Audio preview: {error}"); app.ui.status_error = true; }
+            }
         }
         if frame != t.current {
             let _ = app.run("timeline.setFrame", json!({"frame": frame}));
             self.expected_revision = app.session.active().map_or(revision, |st| st.revision);
         }
-        if matches!(t.loop_mode, TimelineLoop::Once) && completed { self.stop(); }
+        if completed { self.stop(); }
         ctx.request_repaint_after(Duration::from_millis(8));
     }
 }
