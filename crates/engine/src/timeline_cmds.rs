@@ -142,6 +142,7 @@ fn collect_layer_states(layers: &[photostore_doc::Layer], out: &mut Vec<FrameLay
             visible: layer.visible,
             opacity: layer.opacity,
             position: photostore_doc::comps::layer_position(layer),
+                video_position: layer.video.as_ref().map(|v| v.applied_translation),
             blend: Some(layer.blend),
             fill_opacity: Some(layer.fill_opacity),
             effects: Some(photostore_doc::FrameEffectsState { enabled: layer.effects.enabled, items: layer.effects.items.clone(), reference: layer.effects.reference }),
@@ -160,6 +161,7 @@ fn bake_owned_opacity(states: &mut [Vec<FrameLayerState>], layers: &[photostore_
                 out.push((l.id, track.clone(), FrameLayerState {
                     layer: l.id, visible: l.visible, opacity: l.opacity,
                     position: photostore_doc::comps::layer_position(l), blend: Some(l.blend), fill_opacity: Some(l.fill_opacity),
+                    video_position: l.video.as_ref().map(|v| v.applied_translation),
                     effects: Some(photostore_doc::FrameEffectsState { enabled: l.effects.enabled, items: l.effects.items.clone(), reference: l.effects.reference }),
                 }));
             }
@@ -210,13 +212,19 @@ fn clear_owned_position(layers: &mut [Layer]) {
     }
 }
 
-fn freeze_and_clear_owned_position(layers: &mut [Layer], _frame: usize) {
+fn freeze_and_clear_owned_position(layers: &mut [Layer], frame: usize) {
     for layer in layers {
-        if layer.position_animation.is_some() {
+        if let Some(track) = layer.position_animation.as_ref() {
+            let value = track.sampled_value(frame);
+            if let Some(video) = layer.video.as_mut() {
+                video.base_translation = value;
+                video.applied_translation = value;
+                for key in &mut video.keyframes { key.x = 0.0; key.y = 0.0; }
+            }
             layer.position_animation = None;
         }
         if let Some(children) = layer.children_mut() {
-            freeze_and_clear_owned_position(children, _frame);
+            freeze_and_clear_owned_position(children, frame);
         }
     }
 }
@@ -224,7 +232,7 @@ fn freeze_and_clear_owned_position(layers: &mut [Layer], _frame: usize) {
 fn validate_owned_position_snapshot(layers: &[Layer], inherited_position: bool) -> Result<()> {
     for layer in layers {
         let positional = matches!(&layer.content, photostore_doc::LayerContent::Raster(_) | photostore_doc::LayerContent::Text(_) | photostore_doc::LayerContent::Shape(_) | photostore_doc::LayerContent::Smart(_));
-        if (inherited_position || layer.position_animation.is_some()) && positional && photostore_doc::comps::layer_position(layer).is_none() {
+        if layer.video.is_none() && (inherited_position || layer.position_animation.is_some()) && positional && photostore_doc::comps::layer_position(layer).is_none() {
             return Err(bad(
                 "timeline.setMode",
                 format!("position animation on layer {} cannot be represented in a frame snapshot because its displayed geometry is empty or clipped", layer.id.0),
@@ -431,6 +439,7 @@ fn make_frames_from_layers(s: &mut Session) -> Result<Value> {
                 visible: if Some(*layer) == background { current.get(slot).map_or(true, |v| v.0) } else { *layer == *source },
                 opacity: current.get(slot).map_or(1.0, |v| v.1),
                 position: doc.layer(*layer).and_then(photostore_doc::comps::layer_position),
+                video_position: doc.layer(*layer).and_then(|l| l.video.as_ref().map(|v| v.applied_translation)),
                 blend: doc.layer(*layer).map(|l| l.blend),
                 fill_opacity: doc.layer(*layer).map(|l| l.fill_opacity),
                 effects: doc.layer(*layer).map(|l| photostore_doc::FrameEffectsState { enabled: l.effects.enabled, items: l.effects.items.clone(), reference: l.effects.reference }),

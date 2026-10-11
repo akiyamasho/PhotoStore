@@ -26,9 +26,54 @@ fn validate_position_animation(a: &photostore_doc::PositionAnimation) -> Result<
     a.validate().map_err(FormatError::corrupt)
 }
 
+fn validate_video_translation(v: (i32, i32)) -> Result<()> {
+    if !(-photostore_doc::MAX_POSITION_COORDINATE..=photostore_doc::MAX_POSITION_COORDINATE).contains(&v.0)
+        || !(-photostore_doc::MAX_POSITION_COORDINATE..=photostore_doc::MAX_POSITION_COORDINATE).contains(&v.1)
+    {
+        return Err(FormatError::corrupt("video translation must be between -1000000 and 1000000"));
+    }
+    Ok(())
+}
+
+fn validate_video_keyframes(keys: &[photostore_doc::VideoKeyframe]) -> Result<()> {
+    if keys.len() > photostore_doc::MAX_POSITION_ANIMATION_KEYS {
+        return Err(FormatError::LimitExceeded("video keyframe track exceeds 100000 keyframes".into()));
+    }
+    for key in keys {
+        if key.frame > photostore_doc::MAX_POSITION_ANIMATION_FRAME || !key.x.is_finite() || !key.y.is_finite()
+            || key.x.abs() > photostore_doc::MAX_POSITION_COORDINATE as f32 || key.y.abs() > photostore_doc::MAX_POSITION_COORDINATE as f32
+        {
+            return Err(FormatError::corrupt("video keyframe position is invalid"));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_timeline_positions(timeline: Option<&photostore_doc::Timeline>) -> Result<()> {
+    let Some(timeline) = timeline else { return Ok(()) };
+    for rows in [&timeline.frame_states, &timeline.property_frames] {
+        if rows.len() > photostore_doc::MAX_POSITION_ANIMATION_FRAME + 1 {
+            return Err(FormatError::LimitExceeded("timeline position snapshots exceed frame 999999".into()));
+        }
+        for row in rows.iter() {
+            for state in row {
+                if let Some(value) = state.video_position {
+                    validate_video_translation(value)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_position_layers(layers: &[LayerM]) -> Result<()> {
     fn visit(layers: &[LayerM], tracks: &mut usize, keys: &mut usize) -> Result<()> {
         for layer in layers {
+            if let Some(video) = &layer.video {
+                validate_video_translation(video.base_translation)?;
+                validate_video_translation(video.applied_translation)?;
+                validate_video_keyframes(&video.keyframes)?;
+            }
             if let Some(animation) = &layer.position_animation {
                 *tracks = tracks.saturating_add(1);
                 *keys = keys.saturating_add(animation.keys.len());
@@ -105,6 +150,11 @@ pub(crate) fn validate_opacity_document_layers(layers: &[Layer]) -> Result<()> {
     visit(layers, &mut 0, &mut 0)?;
     fn positions(layers: &[Layer], tracks: &mut usize, keys: &mut usize) -> Result<()> {
         for layer in layers {
+            if let Some(video) = &layer.video {
+                validate_video_translation(video.base_translation)?;
+                validate_video_translation(video.applied_translation)?;
+                validate_video_keyframes(&video.keyframes)?;
+            }
             if let Some(animation) = &layer.position_animation {
                 *tracks = tracks.saturating_add(1);
                 *keys = keys.saturating_add(animation.keys.len());
@@ -342,6 +392,8 @@ fn video_m(v: &photostore_doc::VideoData, sink: &mut dyn Sink) -> crate::manifes
         fps: v.fps,
         playback: v.playback,
         show_altered: v.show_altered,
+        base_translation: v.base_translation,
+        applied_translation: v.applied_translation,
     }
 }
 
@@ -556,6 +608,8 @@ impl Loader<'_> {
             fps: m.fps,
             playback: m.playback,
             show_altered: m.show_altered,
+            base_translation: { validate_video_translation(m.base_translation)?; m.base_translation },
+            applied_translation: { validate_video_translation(m.applied_translation)?; m.applied_translation },
         })
     }
 

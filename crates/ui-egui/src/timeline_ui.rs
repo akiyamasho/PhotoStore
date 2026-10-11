@@ -246,7 +246,12 @@ pub fn menu(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, params: &Val
         if keyed {
             let frame = app.session.active().and_then(|st| st.doc.timeline.as_ref().map(|t| t.current)).unwrap_or(0);
             let track = app.session.active().and_then(|st| st.doc.layer(layer_id)).and_then(|l| l.position_animation.as_ref());
-            let source = track.map_or((0, 0), |a| if a.enabled { a.sampled_value(frame) } else { a.applied_value });
+            let source = track.map_or_else(
+                || app.session.active().and_then(|st| st.doc.layer(layer_id).map(|layer| {
+                    if layer.video.is_some() { photostore_engine::sample_layer_position(&st.doc, layer, frame) } else { photostore_doc::comps::layer_position(layer).unwrap_or((0, 0)) }
+                })).unwrap_or((0, 0)),
+                |a| if a.enabled { a.sampled_value(frame) } else { a.applied_value },
+            );
             let history = app.session.active().map(|st| (st.history.past_len(), st.history.future_len())).unwrap_or_default();
             let signature = crate::position_ui::track_signature(track);
             app.ui.timeline.position.pending_disable = Some(crate::position_ui::PendingDisable { doc: doc_id, layer: layer_id, frame, source, history, signature });
@@ -516,8 +521,7 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                             for (_, _, layer) in doc.walk() {
                                 if layer.name == "Background" && layer.locks.position { continue; }
                                 if let Some(next) = crate::opacity_ui::row(app, ui, doc, layer, tl.current, tl.work_start, tl.work_end, !doc.effective_locks(layer.id).all) { act = Some(next); }
-                                if layer.video.is_none()
-                                    && !matches!(layer.content, photostore_doc::LayerContent::Group(_) | photostore_doc::LayerContent::Fill(_) | photostore_doc::LayerContent::Adjustment(_))
+                                if !matches!(layer.content, photostore_doc::LayerContent::Group(_) | photostore_doc::LayerContent::Fill(_) | photostore_doc::LayerContent::Adjustment(_))
                                     && let Some(next) = crate::position_ui::row(app, ui, doc, layer, tl.current, tl.work_start, tl.work_end, { let locks = doc.effective_locks(layer.id); !locks.all && !locks.position })
                                 { act = Some(next); }
                             }
@@ -541,20 +545,32 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                                 }
                                 let Some(pending) = app.ui.timeline.pending_keyframe.as_mut() else { return; };
                                 ui.push_id(("video-keyframe-editor", doc.id.0, layer_id.0), |ui| ui.horizontal(|ui| {
+                            let owned_position = layer.position_animation.is_some();
                             let owned_opacity = layer.opacity_animation.is_some();
-                            ui.label(RichText::new(if owned_opacity { tl!("Position Keyframe") } else { tl!("Position / Opacity Keyframe") }).color(t.text_dim));
-                            ui.add(egui::DragValue::new(&mut pending.x).prefix("x "));
-                            ui.add(egui::DragValue::new(&mut pending.y).prefix("y "));
+                            if owned_position && owned_opacity {
+                                ui.label(RichText::new(tl!("Position and opacity stopwatches own this video layer")).color(t.text_dim));
+                                ui.label(tl!("Use the owned tracks above; legacy keyframes remain separate."));
+                            } else {
+                                ui.label(RichText::new(if owned_position { tl!("Legacy Opacity Keyframe") } else if owned_opacity { tl!("Legacy Position Keyframe") } else { tl!("Position / Opacity Keyframe") }).color(t.text_dim));
+                            }
+                            if !owned_position {
+                                ui.add(egui::DragValue::new(&mut pending.x).prefix("x "));
+                                ui.add(egui::DragValue::new(&mut pending.y).prefix("y "));
+                            }
                             if !owned_opacity {
                                 ui.add(egui::DragValue::new(&mut pending.opacity).range(0.0..=1.0).prefix("α "));
                             }
-                            if crate::widgets::secondary_button(ui, "◆", 28.0).on_hover_text(tl!("Set keyframe")).clicked() {
-                                let mut params = json!({"document": doc.id.0, "layer": active_id, "frame": tl.current, "x": pending.x, "y": pending.y});
+                            if !(owned_position && owned_opacity) && crate::widgets::secondary_button(ui, "◆", 28.0).on_hover_text(tl!("Set legacy video keyframe")).clicked() {
+                                let mut params = json!({"document": doc.id.0, "layer": active_id, "frame": tl.current});
+                                if !owned_position {
+                                    params["x"] = json!(pending.x);
+                                    params["y"] = json!(pending.y);
+                                }
                                 if !owned_opacity { params["opacity"] = json!(pending.opacity); }
                                 act = Some(("timeline.addKeyframe", params));
                             }
                             let key_exists = video.keyframes.iter().any(|key| key.frame == tl.current);
-                            if key_exists && crate::widgets::secondary_button(ui, "×", 28.0).on_hover_text(tl!("Delete keyframe")).clicked() {
+                            if key_exists && crate::widgets::secondary_button(ui, "×", 28.0).on_hover_text(tl!("Delete legacy video keyframe; owned motion is unchanged")).clicked() {
                                 act = Some(("timeline.deleteKeyframe", json!({"document": doc.id.0, "layer": active_id, "frame": tl.current})));
                             }
                                 }));

@@ -140,6 +140,7 @@ pub(crate) fn read_manifest(src: &dyn Source, opts: &LoadOptions) -> Result<Mani
     let mut m: Manifest = serde_json::from_value(v)?;
     m.document.layers = layers_from_json(layers)?;
     crate::convert::validate_opacity_manifest_layers(&m.document.layers)?;
+    crate::convert::validate_timeline_positions(m.document.timeline.as_ref())?;
     Ok(m)
 }
 
@@ -505,6 +506,7 @@ impl PcraftWriter {
         self.hash_cache.retain(|_, (w, _)| w.strong_count() > 0);
         convert::check_nesting(&doc.layers)?;
         convert::validate_opacity_document_layers(&doc.layers)?;
+        convert::validate_timeline_positions(doc.timeline.as_ref())?;
         if let Some(recording) = &doc.recording {
             convert::validate_recording(recording)?;
         }

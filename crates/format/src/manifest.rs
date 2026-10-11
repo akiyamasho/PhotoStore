@@ -198,6 +198,10 @@ pub struct VideoDataM {
     pub playback: photostore_doc::VideoPlayback,
     #[serde(default)]
     pub show_altered: bool,
+    #[serde(default)]
+    pub base_translation: (i32, i32),
+    #[serde(default)]
+    pub applied_translation: (i32, i32),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

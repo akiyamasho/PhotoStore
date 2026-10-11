@@ -204,6 +204,11 @@ pub struct VideoData {
     pub playback: VideoPlayback,
     /// Show the altered (painted) frames rather than the original footage.
     pub show_altered: bool,
+    /// Authored translation applied to every source frame before timeline motion.
+    pub base_translation: (i32, i32),
+    /// Last translation materialized in the displayed cache. This is cache state and is
+    /// deliberately persisted so a seek can undo exactly one prior application.
+    pub applied_translation: (i32, i32),
 }
 
 impl VideoData {
@@ -217,6 +222,8 @@ impl VideoData {
             fps,
             playback: VideoPlayback::default(),
             show_altered: true,
+            base_translation: (0, 0),
+            applied_translation: (0, 0),
         }
     }
     pub fn len(&self) -> usize {
@@ -238,6 +245,8 @@ impl PartialEq for VideoData {
             && self.fps == o.fps
             && self.playback == o.playback
             && self.show_altered == o.show_altered
+            && self.base_translation == o.base_translation
+            && self.applied_translation == o.applied_translation
     }
 }
 
@@ -406,6 +415,10 @@ pub struct FrameLayerState {
     /// Top-left of the layer's stable content bounds. Missing in legacy files.
     #[serde(default)]
     pub position: Option<(i32, i32)>,
+    /// Canonical top-left translation for a video layer. Unlike `position`, this is independent
+    /// of the displayed source frame's content bounds.
+    #[serde(default)]
+    pub video_position: Option<(i32, i32)>,
     /// Appearance captured for this frame. These fields are optional so native files written
     /// before frame-animation appearance snapshots were introduced remain readable.
     #[serde(default)]
@@ -426,7 +439,7 @@ pub struct FrameEffectsState {
 
 impl FrameLayerState {
     pub fn legacy(layer: LayerId, visible: bool, opacity: f32) -> Self {
-        Self { layer, visible, opacity, position: None, blend: None, fill_opacity: None, effects: None }
+        Self { layer, visible, opacity, position: None, video_position: None, blend: None, fill_opacity: None, effects: None }
     }
 }
 

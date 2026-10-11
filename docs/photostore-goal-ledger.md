@@ -460,3 +460,23 @@ The full Photoshop scope is tracked by family. Prioritize animation and Smart Ob
 ## Ledger discipline
 
 For each future entry, record the capability, status (`implemented`, `unverified`, or `pending`), evidence path or fixture, known limitation, and the next concrete action. Keep inherited history and licensing intact. Update status only after the corresponding implementation or acceptance evidence exists; never use the 627/627 menu-liveness figure as a substitute for behavior parity.
+
+## 2026-10-11: 0.16.0 independent video Position source checkpoint
+
+The current source-stage pass adds independent Position ownership for video clips. Canonical clip
+translation persists as `base_translation` and `applied_translation`; `FrameLayerState.video_position`
+keeps snapshots independent from changing source-frame bounds. Position and Opacity are separate
+owned tracks. Whole-pixel Linear/Hold keys, navigation, deletion, and stopwatch defaults are bounded
+to 100,000 keys, 256 tracks, frame 999,999, and ±1,000,000 coordinates. First enable migrates
+legacy placement with exact bounded integer-frame Hold samples, rejects ambiguous dense bbox snapshots
+and owned Position ancestors, and preserves raw XY for alpha-only edits. Rendering and source painting
+use canonical offsets without baking motion into footage; destructive timeline operations freeze the
+shown pose into the base translation while preserving alpha.
+
+Candidate identity is `PhotoStore-dev-video-position`, bundle ID `ai.photostore.app.dev.video-position`,
+branch `codex/video-position`, base `2b93f6dd260291f9f49c8a5efda0698d3eb6cef8`, and version 0.16.0
+development. Code and authored controls are implemented and source-reviewed. Compiler, package,
+install, native-runtime, private-push, screenshot/UI-pixel, Smart visual, PSD, full-affine, release,
+and parity evidence remain pending. The full product backfill is unfinished; future work includes
+animated parents, full Smart affine support, and external PSD temporal acceptance. See
+[video-position.md](video-position.md).

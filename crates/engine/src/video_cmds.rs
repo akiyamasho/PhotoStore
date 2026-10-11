@@ -83,7 +83,8 @@ pub fn sync_plain(doc: &mut Document) {
     let cur = doc.timeline.as_ref().map_or(0, |t| t.current);
     let timeline_fps = doc.timeline.as_ref().map_or(30.0_f64, |t| f64::from(t.fps.max(0.001)));
     let ranges = doc.timeline.as_ref().map(|t| t.layer_ranges.clone()).unwrap_or_default();
-    sync_layers(&mut doc.layers, cur, timeline_fps, &ranges);
+    let geometry = doc.clone();
+    sync_layers(&geometry, &mut doc.layers, cur, timeline_fps, &ranges);
     if let Some(t) = &doc.timeline
         && let Some(states) = if matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation) {
             t.frame_states.get(cur)
@@ -123,12 +124,12 @@ fn apply_owned_position(doc: &mut Document, frame: usize) {
     let geometry = doc.clone();
     fn visit(geometry: &Document, layers: &mut [Layer], frame: usize) {
         for layer in layers {
-            if layer.position_animation.is_some() && layer.video.is_none() {
-                let Some(track) = layer.position_animation.as_ref() else { continue };
+            if let Some(track) = layer.position_animation.as_ref() {
                 let desired = track.sampled_value(frame);
                 let (dx, dy) = (desired.0.saturating_sub(track.applied_value.0), desired.1.saturating_sub(track.applied_value.1));
-                if dx != 0 || dy != 0 { crate::layer_multi_cmds::shift_shown(geometry, layer, dx, dy); }
+                if layer.video.is_none() && (dx != 0 || dy != 0) { crate::layer_multi_cmds::shift_shown(geometry, layer, dx, dy); }
                 if let Some(track) = layer.position_animation.as_mut() { track.applied_value = desired; }
+                if let Some(video) = layer.video.as_mut() { video.applied_translation = desired; }
             }
             if let Some(children) = layer.children_mut() { visit(geometry, children, frame); }
         }
@@ -163,6 +164,7 @@ fn apply_states(geometry: &Document, layers: &mut [Layer], states: &[FrameLayerS
             // delta once per layer avoids accumulating transforms while seeking. Legacy states
             // have no position and retain the document's current geometry.
             if let Some((x, y)) = state.position
+                && state.video_position.is_none()
                 && !(matches!(geometry.timeline.as_ref().map(|t| t.mode), Some(photostore_doc::TimelineMode::Video)) && layer.position_animation.is_some())
             {
                 let bounds = photostore_doc::comps::position_bounds(layer);
@@ -176,7 +178,8 @@ fn apply_states(geometry: &Document, layers: &mut [Layer], states: &[FrameLayerS
                 layer.effects.enabled = effects.enabled;
                 layer.effects.items = effects.items;
                 layer.effects.reference = effects.reference;
-                if let Some((x, y)) = state.position
+                let snapshot = if layer.video.is_some() { state.video_position } else { state.position };
+                if let Some((x, y)) = snapshot
                     && matches!(geometry.timeline.as_ref().map(|t| t.mode), Some(photostore_doc::TimelineMode::Video))
                     && let Some(track) = layer.position_animation.as_ref()
                     && let Some(reference) = layer.effects.reference.as_mut()
@@ -209,7 +212,7 @@ fn source_index(cur: usize, timeline_fps: f64, video: &VideoData, range: Option<
     video.frames.len().saturating_sub(1)
 }
 
-fn sync_layers(layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[photostore_doc::LayerTimelineRange]) {
+fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[photostore_doc::LayerTimelineRange]) {
     for l in layers.iter_mut() {
         let transform = l.video.as_ref().map(|v| keyframe_transform(v, cur));
         if let Some((_, _, opacity)) = transform {
@@ -217,13 +220,19 @@ fn sync_layers(layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[ph
             // implicit reset to 1.0.
             if l.video.as_ref().is_some_and(|v| !v.keyframes.is_empty()) { l.opacity = opacity; }
         }
+        let desired = l.video.as_ref().map(|_| crate::position_cmds::sample_layer_position(geometry, l, cur));
+        if let (Some((dx, dy)), Some(video)) = (desired, l.video.as_ref()) {
+            let previous = video.applied_translation;
+            let shift = (dx.saturating_sub(previous.0), dy.saturating_sub(previous.1));
+            if shift != (0, 0) { crate::layer_multi_cmds::shift_shown(geometry, l, shift.0, shift.1); }
+        }
         let frame = l.video.as_ref().and_then(|v| {
             let index = source_index(cur, timeline_fps, v, ranges.iter().find(|range| range.layer == l.id));
             v.frames.get(index.min(v.frames.len().saturating_sub(1)))
         }).map(|surface| {
-            let (dx, dy, _) = transform.unwrap_or((0.0, 0.0, 1.0));
-            let dx = dx.round().clamp(-1_000_000.0, 1_000_000.0) as i32;
-            let dy = dy.round().clamp(-1_000_000.0, 1_000_000.0) as i32;
+            let (dx, dy, _) = desired.map_or((0, 0, 1), |p| (p.0, p.1, 1));
+            let dx = dx.clamp(-1_000_000, 1_000_000);
+            let dy = dy.clamp(-1_000_000, 1_000_000);
             if dx == 0 && dy == 0 { surface.clone() } else { surface.translated(dx, dy, surface.content_bounds()) }
         });
         if let Some(f) = frame
@@ -231,8 +240,14 @@ fn sync_layers(layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[ph
         {
             *s = f;
         }
+        if let Some(p) = desired {
+            if let Some(v) = l.video.as_mut() { v.applied_translation = p; }
+            if let Some(a) = l.position_animation.as_mut()
+                && geometry.timeline.as_ref().is_some_and(|t| matches!(t.mode, photostore_doc::TimelineMode::Video))
+            { a.applied_value = p; }
+        }
         if let Some(ch) = l.children_mut() {
-            sync_layers(ch, cur, timeline_fps, ranges);
+            sync_layers(geometry, ch, cur, timeline_fps, ranges);
         }
     }
 }
@@ -391,14 +406,19 @@ fn canonicalize_layers(before: &[Layer], after: &mut Document, current: usize, f
                     && old_video.playback == new_video.playback
                     && old_video.show_altered == new_video.show_altered
             });
-            if stable_video {
+            let translation_changed = new.video.as_ref().is_some_and(|v| old_video.base_translation != v.base_translation || old_video.applied_translation != v.applied_translation);
+            let position_changed = match (&old.position_animation, &new.position_animation) {
+                (None, None) => false,
+                (Some(a), Some(b)) => a.enabled != b.enabled || a.static_value != b.static_value || a.applied_value != b.applied_value || !std::sync::Arc::ptr_eq(&a.keys, &b.keys),
+                _ => true,
+            };
+            if stable_video && !translation_changed && !position_changed {
                 let at = source_index(current, fps, old_video, ranges.iter().find(|r| r.layer == id)).min(old_video.frames.len().saturating_sub(1));
                 let underlying_unchanged = old_video.frames.get(at).zip(new.video.as_ref().and_then(|v| v.frames.get(at))).is_some_and(|(old_frame, new_frame)| shallow_surface_eq(old_frame, new_frame));
                 if underlying_unchanged && let (LayerContent::Raster(new_surface), Some(video)) = (&mut new.content, new.video.as_mut()) {
                     if !shallow_surface_eq(old_surface, new_surface) {
-                        let (dx, dy, _) = keyframe_transform(video, current);
-                        let dx = dx.round().clamp(-1_000_000.0, 1_000_000.0) as i32;
-                        let dy = dy.round().clamp(-1_000_000.0, 1_000_000.0) as i32;
+                        let dx = video.applied_translation.0;
+                        let dy = video.applied_translation.1;
                         if let Some(frame) = video.frames.get_mut(at) {
                             *frame = if dx == 0 && dy == 0 { new_surface.clone() } else { new_surface.translated(-dx, -dy, new_surface.content_bounds()) };
                         }
@@ -431,7 +451,10 @@ fn canonicalize_states(before: &Document, after: &mut Document, current: usize) 
             if old.opacity != new.opacity { state.opacity = new.opacity; }
             let old_pos = photostore_doc::comps::layer_position(old);
             let new_pos = photostore_doc::comps::layer_position(new);
-            if old_pos != new_pos && !(video_mode && new.position_animation.is_some()) { state.position = new_pos; }
+            if new.video.is_some() {
+                state.video_position = new.video.as_ref().map(|v| v.applied_translation);
+                state.position = None;
+            } else if old_pos != new_pos && !(video_mode && new.position_animation.is_some()) { state.position = new_pos; }
             if old.blend != new.blend { state.blend = Some(new.blend); }
             if old.fill_opacity != new.fill_opacity { state.fill_opacity = Some(new.fill_opacity); }
             if old.effects != new.effects { state.effects = Some(photostore_doc::FrameEffectsState { enabled: new.effects.enabled, items: new.effects.items.clone(), reference: new.effects.reference }); }
@@ -458,6 +481,7 @@ fn collect_states(layers: &[Layer], states: &mut Vec<FrameLayerState>) {
             visible: layer.visible,
             opacity: layer.opacity,
             position: photostore_doc::comps::layer_position(layer),
+            video_position: layer.video.as_ref().map(|v| v.applied_translation),
             blend: Some(layer.blend),
             fill_opacity: Some(layer.fill_opacity),
             effects: Some(photostore_doc::FrameEffectsState { enabled: layer.effects.enabled, items: layer.effects.items.clone(), reference: layer.effects.reference }),
@@ -470,9 +494,8 @@ fn store_layers(layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[p
     for l in layers.iter_mut() {
         if let (Some(v), LayerContent::Raster(s)) = (&mut l.video, &l.content) {
             let at = source_index(cur, timeline_fps, v, ranges.iter().find(|range| range.layer == l.id)).min(v.frames.len().saturating_sub(1));
-            let (dx, dy, _) = keyframe_transform(v, cur);
-            let dx = dx.round().clamp(-1_000_000.0, 1_000_000.0) as i32;
-            let dy = dy.round().clamp(-1_000_000.0, 1_000_000.0) as i32;
+            let dx = v.applied_translation.0;
+            let dy = v.applied_translation.1;
             if let Some(f) = v.frames.get_mut(at) {
                 *f = if dx == 0 && dy == 0 { s.clone() } else { s.translated(-dx, -dy, s.content_bounds()) };
             }
@@ -512,6 +535,9 @@ pub fn keyframe_target_enabled(s: &Session, id: &str, p: &Value) -> Option<std::
         };
         let layer = st.doc.layer(layer_id).ok_or_else(|| "target layer does not exist".to_string())?;
         if layer.video.is_none() { return Err("target layer is not a video layer".into()); }
+        if p.get("x").is_some() || p.get("y").is_some() {
+            if layer.position_animation.is_some() { return Err("video position is owned by a Position stopwatch; use timeline.setPositionKeyframe".into()); }
+        }
         if p.get("opacity").is_some() && layer.opacity_animation.is_some() {
             return Err("video opacity is owned by an opacity stopwatch; use timeline.setOpacityKeyframe or layer.setProps".into());
         }
@@ -635,6 +661,9 @@ fn keyframe(s: &mut Session, p: &Value, remove: bool) -> Result<Value> {
     let sampled = s.active().and_then(|st| st.doc.layer(layer_id)).and_then(|l| l.video.as_ref()).map(|v| sample_keyframe_transform(v, frame)).unwrap_or((0.0, 0.0, 1.0));
     if p.get("opacity").is_some() && s.active().and_then(|st| st.doc.layer(layer_id)).is_some_and(|l| l.opacity_animation.is_some()) {
         return Err(EngineError::BadParams { cmd: cmd.into(), msg: "video opacity is owned by an opacity stopwatch; use timeline.setOpacityKeyframe or layer.setProps".into() });
+    }
+    if (p.get("x").is_some() || p.get("y").is_some()) && s.active().and_then(|st| st.doc.layer(layer_id)).is_some_and(|l| l.position_animation.is_some()) {
+        return Err(EngineError::BadParams { cmd: cmd.into(), msg: "video position is owned by a Position stopwatch; use timeline.setPositionKeyframe".into() });
     }
     let existing_opacity = s.active().and_then(|st| st.doc.layer(layer_id)).and_then(|l| l.video.as_ref()).and_then(|v| v.keyframes.iter().find(|key| key.frame == frame)).map(|key| key.opacity);
     let parse_finite = |name: &str, max: f64, default: f32| -> Result<f32> {

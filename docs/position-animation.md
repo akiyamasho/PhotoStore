@@ -78,3 +78,5 @@ branch checkpoint: `codex/position-stopwatch`. No screenshot/UI-pixel, Smart vis
 or full-affine acceptance is claimed. Native PSD temporal acceptance remains outside this pass.
 
 The public workflow reference is [Adobe's overview of animating layer properties](https://helpx.adobe.com/uk/photoshop/desktop/add-video-and-animation/use-keyframes/overview-of-animating-layer-properties.html).
+
+Video-layer Position ownership is documented separately in [video-position.md](video-position.md).

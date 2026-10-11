@@ -109,6 +109,7 @@ mod variables_cmds;
 pub mod vector_cmds;
 mod video_cmds;
 pub use video_cmds::{render_video_with, sample_keyframe_transform, sync as sync_video};
+pub use position_cmds::sample_layer_position;
 pub mod vp_cmds;
 pub mod warp_cmds;
 pub mod web_cmds;

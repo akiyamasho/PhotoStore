@@ -1,4 +1,4 @@
-//! Position animation controls for ordinary layers in the video timeline.
+//! Position animation controls for ordinary and video layers in the timeline.
 
 use egui::{RichText, Ui, vec2};
 use serde_json::{Value, json};
@@ -33,8 +33,12 @@ fn target_params(doc: photostore_doc::DocId, layer: photostore_doc::LayerId) -> 
     json!({"document": doc.0, "layer": layer.0})
 }
 
-fn fallback_position(layer: &photostore_doc::Layer) -> (i32, i32) {
-    photostore_doc::comps::layer_position(layer).unwrap_or((0, 0))
+fn fallback_position(doc: &photostore_doc::Document, layer: &photostore_doc::Layer, frame: usize) -> (i32, i32) {
+    if layer.video.is_some() {
+        photostore_engine::sample_layer_position(doc, layer, frame)
+    } else {
+        photostore_doc::comps::layer_position(layer).unwrap_or((0, 0))
+    }
 }
 
 pub(crate) fn track_signature(track: Option<&photostore_doc::PositionAnimation>) -> u64 {
@@ -50,7 +54,7 @@ pub(crate) fn track_signature(track: Option<&photostore_doc::PositionAnimation>)
     hasher.finish()
 }
 
-/// Draw one ordinary layer's position row and return a command to run after UI borrows end.
+/// Draw one layer's position row and return a command to run after UI borrows end.
 pub(crate) fn row(
     app: &mut PhotoStoreApp,
     ui: &mut Ui,
@@ -63,7 +67,7 @@ pub(crate) fn row(
 ) -> Option<(&'static str, Value)> {
     let state = &mut app.ui.timeline.position;
     let track = layer.position_animation.as_ref();
-    let fallback = fallback_position(layer);
+    let fallback = fallback_position(doc, layer, frame);
     let value = track.map_or(fallback, |a| if a.enabled { a.sampled_value(frame) } else { a.applied_value });
     let enabled = track.is_some_and(|a| a.enabled);
     let key = (doc.id.0, layer.id.0);
@@ -250,7 +254,7 @@ pub(crate) fn confirmation(app: &mut PhotoStoreApp, ctx: &egui::Context) -> Opti
         let current_value = layer
             .position_animation
             .as_ref()
-            .map_or_else(|| fallback_position(layer), |a| if a.enabled { a.sampled_value(pending.frame) } else { a.applied_value });
+            .map_or_else(|| fallback_position(&st.doc, layer, pending.frame), |a| if a.enabled { a.sampled_value(pending.frame) } else { a.applied_value });
         st.doc.id != pending.doc
             || st.doc.timeline.as_ref().is_none_or(|t| !matches!(t.mode, photostore_doc::TimelineMode::Video) || t.current != pending.frame)
             || st.history.past_len() != pending.history.0

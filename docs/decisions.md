@@ -183,3 +183,20 @@ inactive, and non-frontmost state, and the final flow produced 42 RPC responses,
 expected rejection (`id18`, `timeline.addKeyframe` with owned opacity) and 41 successful responses,
 before a clean quit with the listener closed. Screenshot and release evidence remain pending; the
 development branch checkpoint is prepared on `codex/video-opacity`.
+
+## 2026-10-11: 0.16.0 independent video Position development
+
+Video Position persists canonical clip translation as `base_translation` plus the last rendered
+`applied_translation`; frame snapshots use `video_position` rather than a source-frame bbox. The
+owned Position track is independent from Opacity and uses whole-pixel Linear/Hold keys with bounded
+100,000-key, 256-track, frame-999999, and ±1m limits. First enable migrates legacy placement at
+integer frames with exact bounded Hold samples, rejects ambiguous dense bbox snapshots and owned
+Position ancestors, and preserves raw XY for alpha-only operations. Rendering, seeking, source-frame
+painting, save/reopen, and frame conversion use canonical offsets so motion is not baked into footage.
+Destructive timeline operations freeze the visible pose into the base translation and preserve alpha.
+
+This is a source-reviewed development checkpoint on `codex/video-position`, base
+`2b93f6dd260291f9f49c8a5efda0698d3eb6cef8`, targeting `PhotoStore-dev-video-position` with bundle
+ID `ai.photostore.app.dev.video-position`. Compiler, package, install, native-runtime, screenshot,
+PSD, Smart visual, full-affine, release, and parity evidence remain pending. Future work includes
+animated Position parents, full Smart affine support, and external PSD temporal acceptance.
