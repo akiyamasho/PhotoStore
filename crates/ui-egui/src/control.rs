@@ -26,6 +26,8 @@
 //! - `ui.focus`: bring the main window to the front
 //! - `app.open {path}` / `app.save {path}`: relative file I/O under the automation roots; reply with `warnings`
 //! - `app.quit`
+//! - `app.devReload` (dev-install builds only): close for a watcher restart when no documents or
+//!   background jobs are open; this refuses to discard user state.
 //! - `jobs.list` / `jobs.cancel {job?}`: background jobs (#210) with progress; cancel one (or all).
 //!   `engine.execute`, `ui.menu.invoke` and `ui.dialog.confirm` wait for a command that runs as a
 //!   job unless `wait: false` (then the reply is `{job, pending: true}`)
@@ -940,7 +942,32 @@ fn dispatch(app: &mut PhotoStoreApp, ctx: &egui::Context, req: &ControlRequest) 
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             ok(Value::Null)
         }
+        #[cfg(feature = "dev-install")]
+        "app.devReload" => match dev_reload_blocker(app) {
+            Some(reason) => err(reason),
+            None => {
+                app.allow_close = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                ok(json!({"closing": true}))
+            }
+        },
         other => err(format!("unknown method `{other}`")),
+    }
+}
+
+#[cfg(feature = "dev-install")]
+fn dev_reload_blocker(app: &PhotoStoreApp) -> Option<&'static str> {
+    dev_reload_block_reason(app.session.documents().len(), app.session.has_jobs())
+}
+
+#[cfg(feature = "dev-install")]
+fn dev_reload_block_reason(documents: usize, jobs: bool) -> Option<&'static str> {
+    if documents > 0 {
+        Some("dev reload deferred while documents are open; save and close them first")
+    } else if jobs {
+        Some("dev reload deferred while background jobs are running")
+    } else {
+        None
     }
 }
 
@@ -1984,5 +2011,16 @@ mod tests {
             assert_eq!(app.synthetic.len(), events);
             app.synthetic.clear();
         }
+    }
+
+    #[cfg(feature = "dev-install")]
+    #[test]
+    fn dev_reload_gate_is_conservative() {
+        assert!(dev_reload_block_reason(0, false).is_none());
+        assert!(dev_reload_block_reason(1, false).unwrap().contains("documents are open"));
+        assert!(dev_reload_block_reason(0, true).unwrap().contains("background jobs"));
+        // An open document wins over the job message so a caller never mistakes a dirty tab for
+        // a safe restart merely because its job queue also happens to be active.
+        assert!(dev_reload_block_reason(2, true).unwrap().contains("documents are open"));
     }
 }

@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# Enables the authenticated, conservative restart hook used only by `./dev`.
+dev-install = []
+
 [lints]
 workspace = true
 
