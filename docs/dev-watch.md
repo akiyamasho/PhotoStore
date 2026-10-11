@@ -9,7 +9,7 @@ From the repository root, the supported commands are:
 ./dev                 # foreground incremental build and safe owned-app restart
 ./dev --background    # start the watcher without taking over the user's UI
 ./dev --once          # build once and perform one guarded reload attempt
-./dev --status        # print watcher state and owned runtime count
+./dev --status        # print watcher state and owned child metadata
 ```
 
 `--background` is for agent-driven work that must leave the user's foreground application alone.

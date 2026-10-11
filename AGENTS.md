@@ -47,9 +47,9 @@ Read the relevant crate and docs before editing. Keep manifests valid, preserve 
 
 ## Local development installation policy
 
-Every completed milestone is delivered to the isolated consolidated `PhotoStore-dev` installation
-before the milestone is considered complete. The normal edit loop is the repository-root `./dev`
-watcher documented in [`docs/dev-install.md`](docs/dev-install.md) and
+Deliver milestone changes through the consolidated `PhotoStore-dev` runtime; use the repository-root
+`./dev` watcher for local iteration, and reserve installed bundle refreshes for local CI/main
+promotion. The normal edit loop is documented in [`docs/dev-install.md`](docs/dev-install.md) and
 [`docs/dev-watch.md`](docs/dev-watch.md). It uses one shared Cargo target and incrementally builds
 changed inputs; it does not require a new pull request or a fresh application reinstall for each
 edit. An explicitly requested independent goal may use a separate `PhotoStore-dev-<goal>` identity,
@@ -60,7 +60,8 @@ background jobs or dialogs. Any open tab, including a saved tab, defers the queu
 close every tab to let it apply automatically. It never closes an unrelated owner process and never
 touches `/Applications/PhotoStore.app`. Source preferences and configuration are preserved. The
 loop is a safe process restart, not in-process hot module replacement. When launched by an agent,
-use background mode so the user's active UI is not blocked.
+use background mode so the user's active UI is not blocked; background mode must not focus or raise
+the app window.
 
 ## Local CI and release watcher
 
@@ -76,7 +77,8 @@ validates all refs before checkout.
 
 Every new main SHA builds and installs the isolated `PhotoStore-dev` bundle with the
 `dev-install` feature and the separate `/Users/computer/Desktop/dev/tools/Animation/photostore_keys.dev.json`
-export. A production build is triggered only by a published, non-draft, non-prerelease GitHub
+export, unless a live owned dev watcher or its child process is active, in which case the CI install
+is deferred. A production build is triggered only by a published, non-draft, non-prerelease GitHub
 Release; the release tag is resolved to its exact commit SHA before building. A pushed tag,
 draft, prerelease, PR, or release creation alone never promotes production. The verified
 production bundle is staged and atomically installed at `/Applications/PhotoStore.app` only
