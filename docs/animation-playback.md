@@ -1,6 +1,6 @@
 # Animation playback and onion skins
 
-PhotoStore's planned 0.10.0 pass makes timeline repeat and onion-skin settings explicit in native
+PhotoStore's released 0.10.0 milestone makes timeline repeat and onion-skin settings explicit in native
 documents. It keeps the existing `TimelineLoop` model and serde defaults: `Once`, `Loop`, and
 `PingPong`, with `loop_count` meaning finite total plays (`Some(1..=65_536)`) or `None` for
 forever. Strict commands are document-ID guarded; finite loops end on the last frame, while finite

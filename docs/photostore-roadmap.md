@@ -15,7 +15,7 @@ This is the working roadmap for the independent PhotoStore product. It records t
 
 ## Priorities
 
-1. Complete the current 0.10.0 animation playback pass: finite frame-animation repeat choices and configurable bounded onion skins first, followed by sparse property stopwatches, Smart transform/style coverage, and broader PSD fidelity. The 0.9.0 source/tag `3c905b47444cb71a9137572859d7a84cdffdb125` remains published and installed; the 0.10.0 compiler gate passed, while release and install gates are pending.
+1. Continue the post-release pass after the completed 0.10.0 animation playback milestone. Source/tag `f3a749978f72c91c0f0d4b4aa5d3e5e79ce7ec3e` is published and installed; broad acceptance remains unverified. Next work is Smart Object failure-safe closing/Don't Save/parent navigation, sparse property stopwatches, full transform/style coverage, linked external PSD behavior, and broader fidelity.
 2. Deepen Smart Objects with contents editing, shared contents identity, smart-filter editing, linked-source workflows, and faithful PSD acceptance.
 3. Improve brush behavior and interaction: pressure/tilt/rotation dynamics, smoothing, presets, tablet edge cases, deterministic replay, and responsive large-document painting.
 4. Harden PSD and command coverage around the workflows PhotoStore promises. Add focused fixtures and measurements when a feature is implemented; avoid claiming parity before it is measured.
@@ -47,15 +47,15 @@ parity, or complete PSD/external-format compatibility.
 
 The action-recording and animation/smart-mask releases are historical: `photostore-action-recording-2026-10-11`
 and `photostore-animation-smart-masks-2026-10-11` were published and installed locally. The current
-installed release is the 0.9.0 `photostore-mask-channels-keyframes-2026-10-11` prerelease. Broad
+installed release is the 0.10.0 `photostore-animation-repeat-onion-2026-10-11` prerelease. Broad
 native visual QA and UI parity remain unverified.
 The old-workspace native-save issue remains a secondary reliability gap; the old process and artwork
 were preserved, but the attempted recovery target did not appear.
 
 The audio/clip source milestone is pushed, compiler-verified, packaged, and retained in the current
-0.9.0 install. Its remaining integration status is tracked in [audio-timeline.md](audio-timeline.md);
+0.10.0 install. Its remaining integration status is tracked in [audio-timeline.md](audio-timeline.md);
 no broad UI or acceptance claim is made. The current installed source/tag is
-`3c905b47444cb71a9137572859d7a84cdffdb125`.
+`f3a749978f72c91c0f0d4b4aa5d3e5e79ce7ec3e`.
 
 Smart Filter Masks and the New Document Fix are implemented, compiler-verified, packaged, and
 installed in the historical 0.8.0 source. The targeted New Document confirmation passed. The

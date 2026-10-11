@@ -21,7 +21,8 @@ The 0.9.0 source pass keeps mask transfer atomic and document-safe: copy and mov
 Repeat counts remain persisted as bounded total plays, with `None` reserved for forever. Onion-skin
 settings persist in native documents, while preview pixels are endpoint-bounded and capped by ghost
 count, working resolution, buffers, and one composite texture; those preview pixels do not enter
-exports or action recordings. The compiler gate passed; release and install evidence remain pending.
+exports or action recordings. The compiler, release, and install evidence are complete for this
+pass; broad UI acceptance and Photoshop parity remain unverified.
 
 ## 2026-10-10: Smart Object contents identity (#2163)
 

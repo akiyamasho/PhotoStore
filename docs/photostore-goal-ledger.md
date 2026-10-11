@@ -82,7 +82,7 @@ Further Photoshop backfill is the next pass and is outside this twelve-step coun
 unknown PSD filters, audio latency/master-clock behavior, and broader acceptance remain unverified;
 the 0.9.0 mask transfer and Channels implementation is tracked below.
 
-## Current 0.9.0 mask, Channels, and keyframe pass
+## Historical 0.9.0 mask, Channels, and keyframe pass
 
 This source pass follows the installed and published 0.8.0 release. The 0.9.0 release pass is now
 complete:
@@ -111,8 +111,8 @@ are limited to known values; overwrite defaults false; failures retain the form 
 `status_error`, and success closes it. Remaining scope includes general sparse tracks, stopwatches,
 full transform/style controls, transitions, groups, exact audio master-clock synchronization,
 coalesced external key-edit refresh, and broad UI/Photoshop acceptance. The 0.9.0
-mask/Channels/keyframe release is the current installed product. No new broad QA or Photoshop
-parity claim is made. The prior 0.8.0 targeted 64×64 New Document confirmation remains historical
+mask/Channels/keyframe release is historical. No new broad QA or Photoshop parity claim is made.
+The prior 0.8.0 targeted 64×64 New Document confirmation remains historical
 evidence.
 
 The immutable 0.9.0 source/tag is `3c905b47444cb71a9137572859d7a84cdffdb125`. The [published
@@ -130,10 +130,10 @@ validation, and running PID 11312. The previous-app backup is
 retained recovery sibling is `/Applications/PhotoStore-0.8.0-recovery-20261011-121622.app`.
 The old 0.8.0 `Untitled-1` was left cleanly and no artwork recovery is claimed.
 
-## Current 0.10.0 animation playback pass
+## Completed 0.10.0 animation playback release pass
 
-Version 0.10.0 is prepared in source; the installed and published release remains 0.9.0. The
-repeat/onion pass is documented in [animation-playback.md](animation-playback.md). Its twelve steps:
+Version 0.10.0 is published and installed. The repeat/onion pass is documented in
+[animation-playback.md](animation-playback.md). Its twelve steps:
 
 1. Architecture and public specification — complete.
 2. Persisted repeat/onion model — implemented.
@@ -143,13 +143,28 @@ repeat/onion pass is documented in [animation-playback.md](animation-playback.md
 6. Bounded canvas onion compositing — implemented.
 7. Compiler gate — complete; the required check passed in 8.21 seconds with warnings and the existing 0.1.6 future-incompatibility notice. Final log: `/private/tmp/photostore-animation-repeat-onion-check-20261011-final.log`.
 8. Version and documentation — prepared; implementation/compiler evidence is complete.
-9. Commit and push — pending.
-10. Tag — pending; planned immutable tag `photostore-animation-repeat-onion-2026-10-11`.
-11. Build and publish — pending.
-12. Reinstall and confirmation — pending.
+9. Commit and push — complete at source commit `f3a749978f72c91c0f0d4b4aa5d3e5e79ce7ec3e`.
+10. Tag — complete: `photostore-animation-repeat-onion-2026-10-11`.
+11. Build and publish — complete as the published 0.10.0 prerelease.
+12. Reinstall and confirmation — complete; the canonical 0.10.0 app passed strict signature validation and started successfully. The prior 0.9.0 app was retained cleanly.
 
 The New Document fix and historical 0.8.0 64×64 confirmation remain recorded above. No new broad
-UI, Photoshop parity, compiler, release, or install claim is made for 0.10.0.
+UI or Photoshop parity claim is made for 0.10.0.
+
+The immutable 0.10.0 source/tag is `f3a749978f72c91c0f0d4b4aa5d3e5e79ce7ec3e`. The [published
+prerelease](https://github.com/akiyamasho/PhotoStore/releases/tag/photostore-animation-repeat-onion-2026-10-11)
+is an ARM64, ad hoc signed, not notarized build. The DMG is 26,361,008 bytes with SHA-256
+`e94a86862a0157c22bf29db4789b67613a2dfb440441ad4650158c98fbd22137`; the CLI ZIP is 16,293,312
+bytes with SHA-256 `834925e42a5613bdefea0157b9585e08957fd0e9bd293912ffec1fe5b4a8de6a`.
+`SHA256SUMS` is 208 bytes and contains exactly those two assets. The UTC build log is
+`/private/tmp/photostore-0.10.0-build.log`.
+
+The canonical `/Applications/PhotoStore.app` is version 0.10.0 with bundle `ai.photostore.app`,
+binary SHA-256 `90f90eae31f8043577323e4138cf694c2a4d3167b1f103f55d55e76c934bc969`, strict signature
+validation, and running PID 24533. The previous-app backup is
+`/private/tmp/photostore-reinstall-0.10.0-20261011-123258/previous-PhotoStore-0.9.0.app`; the
+retained recovery sibling is `/Applications/PhotoStore-0.9.0-recovery-20261011-123258.app`.
+The old 0.9.0 window had no document or unsaved marker and quit cleanly without a prompt.
 
 ## Animation and timeline
 
