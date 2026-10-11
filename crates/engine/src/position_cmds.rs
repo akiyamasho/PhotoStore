@@ -121,8 +121,8 @@ fn sample_legacy_keys(keys: &[VideoKeyframe], frame: usize) -> (f32, f32) {
         }
         (lo.checked_sub(1), (lo < keys.len()).then_some(lo))
     } else {
-        let mut left = None;
-        let mut right = None;
+        let mut left: Option<usize> = None;
+        let mut right: Option<usize> = None;
         for (i, key) in keys.iter().enumerate() {
             if key.frame <= frame && left.map_or(true, |j| keys[j].frame <= key.frame) { left = Some(i); }
             if key.frame >= frame && right.map_or(true, |j| keys[j].frame > key.frame) { right = Some(i); }
