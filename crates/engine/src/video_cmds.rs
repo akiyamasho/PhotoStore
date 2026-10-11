@@ -142,7 +142,10 @@ fn apply_states(geometry: &Document, layers: &mut [Layer], states: &[FrameLayerS
 
 fn source_index(cur: usize, timeline_fps: f64, video: &VideoData, range: Option<&photostore_doc::LayerTimelineRange>) -> usize {
     let relative = range.map_or(cur, |r| cur.saturating_sub(r.start));
-    let seconds = relative as f64 / timeline_fps.max(0.001);
+    let playback = video.playback;
+    let source_in = if playback.source_in_seconds.is_finite() && playback.source_in_seconds >= 0.0 { playback.source_in_seconds } else { 0.0 };
+    let speed = if playback.speed.is_finite() && playback.speed > 0.0 { playback.speed } else { 1.0 };
+    let seconds = source_in + relative as f64 / timeline_fps.max(0.001) * speed;
     if !video.frame_delays_ms.iter().any(|delay| *delay > 0) {
         return (seconds * f64::from(video.fps.max(0.001)) + 1e-9).floor() as usize;
     }
@@ -159,7 +162,11 @@ fn source_index(cur: usize, timeline_fps: f64, video: &VideoData, range: Option<
 fn sync_layers(layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[photostore_doc::LayerTimelineRange]) {
     for l in layers.iter_mut() {
         let transform = l.video.as_ref().map(|v| keyframe_transform(v, cur));
-        if let Some((_, _, opacity)) = transform { l.opacity = opacity; }
+        if let Some((_, _, opacity)) = transform {
+            // An empty keyframe track means ordinary authored opacity, rather than an
+            // implicit reset to 1.0.
+            if l.video.as_ref().is_some_and(|v| !v.keyframes.is_empty()) { l.opacity = opacity; }
+        }
         let frame = l.video.as_ref().and_then(|v| {
             let index = source_index(cur, timeline_fps, v, ranges.iter().find(|range| range.layer == l.id));
             v.frames.get(index.min(v.frames.len().saturating_sub(1)))
@@ -443,7 +450,10 @@ fn new_from_file(s: &mut Session, p: &Value) -> Result<Value> {
         .and_then(Value::as_str)
         .ok_or_else(|| EngineError::BadParams { cmd: "layer.videoLayers.newVideoLayerFromFile".into(), msg: "need `path`".into() })?
         .to_string();
-    let fps = p.get("fps").and_then(Value::as_f64).unwrap_or(30.0) as f32;
+    let fps = match p.get("fps") {
+        None => 30.0,
+        Some(v) => v.as_f64().filter(|f| f.is_finite() && *f > 0.0 && *f <= 1000.0).ok_or_else(|| EngineError::BadParams { cmd: "layer.videoLayers.newVideoLayerFromFile".into(), msg: "fps must be a finite number above 0 and at most 1000".into() })? as f32,
+    };
     let fmt = s.active().ok_or(EngineError::NoDocument)?.doc.pixel_format();
     if is_movie_path(&path) {
         let start = optional_index(p, "start", "layer.videoLayers.newVideoLayerFromFile")?;
@@ -452,6 +462,13 @@ fn new_from_file(s: &mut Session, p: &Value) -> Result<Value> {
         return crate::jobs::edit_job(s, "New Video Layer from Movie", move |doc, active, ctx| {
             let (frames, source_fps) = decode_movie_frames(&path, fmt, start, end, override_fps, ctx)?;
             let n = frames.len();
+            let info = crate::media_backend::probe(&path).map_err(media_error)?;
+            let original_fps = info.fps.as_f64().max(0.001);
+            let canonical_path = std::fs::canonicalize(&path).map_err(|e| EngineError::Other(format!("movie path is not readable: {e}")))?.to_string_lossy().into_owned();
+            let source_trim = start.unwrap_or(0) as f64 / original_fps;
+            let output_duration = n as f64 / f64::from(source_fps.max(0.001));
+            let playback_speed = f64::from(source_fps.max(0.001)) / original_fps;
+            if !playback_speed.is_finite() || !(0.01..=100.0).contains(&playback_speed) { return Err(EngineError::BadParams { cmd: "layer.videoLayers.newVideoLayerFromFile".into(), msg: "interpreted/original fps ratio must be in 0.01..=100".into() }); }
             if doc.timeline.is_none() { doc.timeline = Some(Timeline::new(n, source_fps)); }
             if let Some(t) = &mut doc.timeline {
                 t.duration = t.duration.max(media_duration_in_timeline_frames(n, source_fps, t.fps));
@@ -460,10 +477,20 @@ fn new_from_file(s: &mut Session, p: &Value) -> Result<Value> {
             let name = doc.next_layer_name(Path::new(&path).file_stem().and_then(|s| s.to_str()).unwrap_or("Movie"));
             let mut l = Layer::raster(name, fmt);
             let mut v = VideoData::new(frames, source_fps);
-            v.source = photostore_doc::VideoSource::File { path: path.clone() };
+            v.source = photostore_doc::VideoSource::File { path: canonical_path.clone() };
             l.video = Some(v);
             let id = doc.insert_above(*active, l);
             *active = Some(id);
+            if info.has_audio {
+                let audio = crate::media_backend::probe_audio(&canonical_path).map_err(media_error)?;
+                let audio_remaining = (audio.duration_seconds - source_trim).max(0.0);
+                let audio_duration = output_duration.min(audio_remaining / playback_speed);
+                if audio_duration > 0.0 {
+                    if let Some(t) = &mut doc.timeline {
+                        crate::audio_cmds::add_linked_movie_audio(t, id, canonical_path, audio.duration_seconds, source_trim, audio_duration, 0.0, playback_speed)?;
+                    }
+                }
+            }
             sync(doc);
             Ok((id, n))
         }, |(id, n)| json!({"layer": id.0, "frames": n}));
@@ -501,43 +528,119 @@ fn replace_footage(s: &mut Session, p: &Value) -> Result<Value> {
     if is_movie_path(&path) {
         let start = optional_index(p, "start", "layer.videoLayers.replaceFootage")?;
         let end = optional_index(p, "end", "layer.videoLayers.replaceFootage")?;
-        let override_fps = p.get("fps").and_then(Value::as_f64);
+        let override_fps = match p.get("fps") {
+            None => None,
+            Some(v) => Some(v.as_f64().filter(|f| f.is_finite() && *f > 0.0 && *f <= 1000.0).ok_or_else(|| EngineError::BadParams { cmd: "layer.videoLayers.replaceFootage".into(), msg: "fps must be a finite number above 0 and at most 1000".into() })?),
+        };
         return crate::jobs::edit_job(s, "Replace Movie Footage", move |doc, active, ctx| {
             let id = active.ok_or(EngineError::NoDocument)?;
             let (frames, source_fps) = decode_movie_frames(&path, fmt, start, end, override_fps, ctx)?;
+            let info = crate::media_backend::probe(&path).map_err(media_error)?;
+            let canonical_path = std::fs::canonicalize(&path).map_err(|e| EngineError::Other(format!("movie path is not readable: {e}")))?.to_string_lossy().into_owned();
+            let original_fps = info.fps.as_f64().max(0.001);
+            let source_trim = start.unwrap_or(0) as f64 / original_fps;
+            let output_duration = frames.len() as f64 / f64::from(source_fps.max(0.001));
+            let audio_speed = f64::from(source_fps.max(0.001)) / original_fps;
+            if !audio_speed.is_finite() || !(0.01..=100.0).contains(&audio_speed) { return Err(EngineError::BadParams { cmd: "layer.videoLayers.replaceFootage".into(), msg: "interpreted/original fps ratio must be in 0.01..=100".into() }); }
+            let audio_info = if info.has_audio { Some(crate::media_backend::probe_audio(&canonical_path).map_err(media_error)?) } else { None };
+            let audio_duration = audio_info.as_ref().map(|a| output_duration.min((a.duration_seconds - source_trim).max(0.0) / audio_speed)).unwrap_or(0.0);
             let duration = doc.timeline.as_ref().map(|t| media_duration_in_timeline_frames(frames.len(), source_fps, t.fps));
+            let old_range = doc.timeline.as_ref().and_then(|t| t.layer_ranges.iter().find(|r| r.layer == id).cloned());
             let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
             let length = {
                 let v = l.video.as_mut().ok_or_else(|| EngineError::Other("active layer is not a video layer".into()))?;
                 v.frames = frames;
                 v.fps = source_fps;
-                v.source = photostore_doc::VideoSource::File { path: path.clone() };
+                v.playback = photostore_doc::VideoPlayback::default();
+                v.source = photostore_doc::VideoSource::File { path: canonical_path.clone() };
                 v.frames.len()
             };
             if let (Some(t), Some(duration)) = (&mut doc.timeline, duration) {
                 t.duration = t.duration.max(duration);
+                if let Some(range) = t.layer_ranges.iter_mut().find(|r| r.layer == id) {
+                    range.end = range.start.saturating_add(duration).min(t.duration);
+                }
                 t.clamp();
+            }
+            if let Some(t) = &mut doc.timeline {
+                for track in &mut t.audio_tracks {
+                    track.clips.retain_mut(|clip| {
+                        if clip.linked_video != Some(id) { return true; }
+                        let Some(audio_info) = &audio_info else { return false; };
+                        if audio_duration <= 1e-9 { return false; }
+                        clip.path = canonical_path.clone();
+                        clip.source_duration_seconds = audio_info.duration_seconds;
+                        clip.trim_in_seconds = source_trim;
+                        clip.speed = audio_speed;
+                        clip.duration_seconds = audio_duration;
+                        clip.start_seconds = old_range.as_ref().map_or(0.0, |r| r.start as f64 / f64::from(t.fps.max(0.001)));
+                        clip.envelope_offset_seconds = 0.0;
+                        clip.envelope_duration_seconds = Some(audio_duration);
+                        clip.fade_in_seconds = clip.fade_in_seconds.min(audio_duration);
+                        clip.fade_out_seconds = clip.fade_out_seconds.min(audio_duration);
+                        true
+                    });
+                }
             }
             sync(doc);
             Ok((id, length))
         }, |(id, n)| json!({"layer": id.0, "frames": n}));
     }
     let frames = load_frames(&path, fmt)?;
-    edit_video(s, "Replace Footage", move |v, _| {
+    let id = s.edit("Replace Footage", move |doc, active| {
+        store(doc);
+        let id = active.ok_or(EngineError::NoDocument)?;
+        let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
+        let v = l.video.as_mut().ok_or_else(|| EngineError::Other("active layer is not a video layer".into()))?;
         v.frames = frames;
         v.source = photostore_doc::VideoSource::File { path: path.clone() };
-        Ok(())
-    })
+        if let Some(t) = &mut doc.timeline { for track in &mut t.audio_tracks { track.clips.retain(|clip| clip.linked_video != Some(id)); } }
+        sync(doc);
+        Ok(id)
+    })?;
+    Ok(json!({"layer": id.0, "frames": s.active().and_then(|st| st.doc.layer(id)).and_then(|l| l.video.as_ref()).map_or(0, |v| v.frames.len())}))
 }
 
 fn interpret_footage(s: &mut Session, p: &Value) -> Result<Value> {
-    let fps = p.get("fps").and_then(Value::as_f64);
-    edit_video(s, "Interpret Footage", move |v, _| {
-        if let Some(f) = fps {
-            v.fps = f as f32;
+    let fps = p.get("fps").and_then(Value::as_f64).filter(|f| f.is_finite() && *f > 0.0 && *f <= 1000.0).ok_or_else(|| EngineError::BadParams { cmd: "layer.videoLayers.interpretFootage".into(), msg: "fps must be a finite number above 0 and at most 1000".into() })? as f32;
+    s.edit("Interpret Footage", |doc, active| {
+        crate::video_cmds::store(doc);
+        let id = active.ok_or(EngineError::NoDocument)?;
+        let old_fps = doc.layer(id).and_then(|l| l.video.as_ref()).map(|v| f64::from(v.fps.max(0.001))).ok_or(EngineError::NoLayer(id))?;
+        let frame_count = doc.layer(id).and_then(|l| l.video.as_ref()).map(|v| v.frames.len()).unwrap_or(0);
+        let ratio = f64::from(fps) / old_fps;
+        if !ratio.is_finite() || !(0.01..=100.0).contains(&ratio) { return Err(EngineError::BadParams { cmd: "layer.videoLayers.interpretFootage".into(), msg: "FPS ratio must be in 0.01..=100".into() }); }
+        let timeline_fps = f64::from(doc.timeline.as_ref().map_or(30.0, |t| t.fps.max(0.001)));
+        let new_frames = media_duration_in_timeline_frames(frame_count, fps, timeline_fps as f32);
+        if let Some(v) = doc.layer_mut(id).and_then(|l| l.video.as_mut()) { v.fps = fps; }
+        if let Some(t) = &mut doc.timeline {
+            let range_start = t.layer_ranges.iter().find(|r| r.layer == id).map_or(0, |r| r.start);
+            let range_end = range_start.saturating_add(new_frames).min(MAX_EXPORT_FRAMES);
+            if let Some(range) = t.layer_ranges.iter_mut().find(|r| r.layer == id) { range.end = range_end; } else { t.layer_ranges.push(photostore_doc::LayerTimelineRange { layer: id, start: range_start, end: range_end }); }
+            t.duration = t.duration.max(range_end);
+            t.work_end = t.work_end.max(range_end).min(MAX_EXPORT_FRAMES);
+            for track in &mut t.audio_tracks {
+                for clip in &mut track.clips {
+                    if clip.linked_video == Some(id) {
+                        let speed = clip.speed * ratio;
+                        if !speed.is_finite() || !(0.01..=100.0).contains(&speed) { return Err(EngineError::BadParams { cmd: "layer.videoLayers.interpretFootage".into(), msg: "linked audio speed would leave supported range".into() }); }
+                        clip.speed = speed;
+                        let remaining = (clip.source_duration_seconds - clip.trim_in_seconds).max(0.0) / speed;
+                        clip.duration_seconds = (clip.duration_seconds / ratio).min(new_frames as f64 / timeline_fps).min(remaining);
+                        if clip.duration_seconds <= 1e-9 { return Err(EngineError::BadParams { cmd: "layer.videoLayers.interpretFootage".into(), msg: "linked audio reaches EOF after interpretation".into() }); }
+                        clip.envelope_offset_seconds = 0.0;
+                        clip.envelope_duration_seconds = Some(clip.duration_seconds);
+                        clip.fade_in_seconds = clip.fade_in_seconds.min(clip.duration_seconds);
+                        clip.fade_out_seconds = clip.fade_out_seconds.min(clip.duration_seconds);
+                    }
+                }
+            }
+            t.clamp();
         }
+        sync(doc);
         Ok(())
-    })
+    })?;
+    Ok(json!({"fps": fps}))
 }
 
 fn reload_frame(s: &mut Session, _p: &Value) -> Result<Value> {
@@ -685,6 +788,9 @@ fn render_video(s: &mut Session, p: &Value) -> Result<Value> {
         let height = base.size.height;
         let fmt = match format.as_str() { "mp4" => crate::media_backend::VideoFormat::Mp4H264, "mov" => crate::media_backend::VideoFormat::MovProResAlpha, _ => crate::media_backend::VideoFormat::WebmVp9Alpha };
         let source_duration = timeline.as_ref().map_or((last - first + 1) as f64 / doc_fps, |t| timeline_export_duration(t, first, last));
+        let audio_clips = timeline.as_ref().map_or_else(|| Ok(Vec::new()), |t| {
+            crate::audio_cmds::audio_mix_for_range(t, t.frame_start_seconds(first), t.frame_start_seconds(last.saturating_add(1)))
+        })?;
         let fps_num = (fps * 1000.0).round().clamp(1.0, u32::MAX as f64) as u32;
         let writer_fps = f64::from(fps_num) / 1000.0;
         let source_rate = timeline.as_ref().map_or(true, |t| !matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation));
@@ -697,7 +803,7 @@ fn render_video(s: &mut Session, p: &Value) -> Result<Value> {
         let cfg = crate::media_backend::VideoWriterConfig { width, height, fps: crate::media_backend::Rational::new(fps_num, 1000), format: fmt, duration_frames: Some(frames), overwrite };
         let result_path = path.clone();
         return crate::jobs::run(s, "Render Movie", false, move |ctx| {
-            crate::media_backend::write_video_from_frames(&path, &cfg, &[], |i| {
+            crate::media_backend::write_video_from_frames(&path, &cfg, &audio_clips, |i| {
                 ctx.check().map_err(|e| crate::media_backend::MediaBackendError::Process(e.to_string()))?;
                 let mut doc = base.clone();
                 let source_frame = if same_source_rate {

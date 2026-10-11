@@ -155,6 +155,9 @@ mod tab_strip;
 pub mod theme;
 pub mod tiff_options_ui;
 mod timeline_ui;
+mod timeline_playback;
+mod video_clip_ui;
+mod audio_ui;
 mod titlebar;
 pub mod tone;
 mod tool_cursor;
@@ -367,6 +370,9 @@ type InfoSampleKey = (i32, i32, u64, u32);
 pub struct PhotoStoreApp {
     pub session: Session,
     pub ui: UiState,
+    /// Transient Timeline transport clock and native preview process. Kept out of UiState so
+    /// playback handles and caches never enter saved UI snapshots or clone operations.
+    timeline_playback: timeline_playback::Runtime,
     pub services: Services,
     /// Canvas caches per (document, display): CPU textures hold monitor values; the GPU
     /// canvas state is shared (`canvas::GPU_OUTPUT`).
@@ -576,6 +582,7 @@ impl PhotoStoreApp {
         let mut app = Self {
             session,
             ui: UiState::default(),
+            timeline_playback: timeline_playback::Runtime::default(),
             services,
             canvases: HashMap::new(),
             navigator_textures: HashMap::new(),
@@ -1364,7 +1371,7 @@ impl eframe::App for PhotoStoreApp {
         }
         // The Timeline is a true bottom dock, so it reserves canvas space before the central area
         // is laid out. Other windows remain overlays below.
-        timeline_ui::windows(self, &ctx);
+        timeline_ui::windows(self, ui);
         let t = theme::Tokens::get(&ctx);
         let backdrop = if chrome { prefs_ui::pasteboard_color(self).unwrap_or(t.canvas) } else { egui::Color32::BLACK };
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(backdrop)).show(ui, |ui| {

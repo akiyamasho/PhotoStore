@@ -1,0 +1,11 @@
+# Audio timeline milestone
+
+The current source implements persisted audio tracks and clips in the native timeline model. Each clip stores a linked local path, timeline start, source trim, duration, speed, volume, mute state, fade-in/out, optional linked video layer, and its original envelope offset/duration. Native `.pcraft` documents retain these tracks and clips.
+
+The Timeline UI exposes track mute/rename/remove, clip mute, volume, fades, trim, speed, duration, relink, delete, and split at the playhead. Body and trim drags have partial commit coverage; committed clip drags are one edit when the drag ends. Splitting preserves the source/envelope distinction and carries fade coverage across the two resulting clips rather than treating each half as a new source. Play and stop are editable command shortcuts through `timeline.playPause` and `timeline.stop`.
+
+Movie layers with audio create linked movie-audio clips. The media probe supplies source duration and the interpreted/original FPS ratio determines the linked audio speed and output duration; replacing footage and interpreting footage update or remove the linked clip as appropriate. Linked-video split, retime, replacement, and interpretation paths are present. Missing or invalid media produces an explicit error. Relinking probes the replacement file before changing the stored clip. Reload-footage behavior and arbitrary split-segment replacement envelopes remain gaps.
+
+Preview and video export share the FFmpeg mixer path. Desktop preview streams the mix to FFplay; export supplies the same clip mix, including mute, volume, speed, trims, offsets, and fades. The runtime uses a monotonic UI clock and streamed audio output. Output latency and exact master-clock synchronization remain unverified. During PingPong reverse playback, audio is explicitly stopped/muted for the reverse leg and restarted on the forward leg.
+
+The audio/video source is integrated and compiler-verified, but is not a packaged release or local install. The native check passed with the locked offline single-job HEIF app/CLI build in 7.88 seconds; the log is `/private/tmp/photostore-audio-clip-check-20261011-rerun2.log`. Exact audio latency, full UI acceptance, and full Photoshop timeline groups, transitions, Smart Object timeline integration, and filter-mask scope remain unverified or unfinished.

@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use photostore_doc::{FrameLayerState, LayerTimelineRange, Timeline, TimelineLoop, TimelineMode};
+use photostore_doc::{FrameLayerState, LayerTimelineRange, Timeline, TimelineLoop, TimelineMode, LayerId};
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
@@ -270,7 +270,12 @@ fn make_frames_from_layers(s: &mut Session) -> Result<Value> {
 }
 
 fn delete(s: &mut Session) -> Result<Value> {
-    with_timeline(s, |t| *t = None)
+    s.edit("Delete Timeline", |doc, _| {
+        crate::video_cmds::store(doc);
+        doc.timeline = None;
+        Ok(())
+    })?;
+    info(s)
 }
 
 fn set_frame(s: &mut Session, p: &Value) -> Result<Value> {
@@ -294,22 +299,21 @@ fn step(s: &mut Session, delta: i64) -> Result<Value> {
 fn set_props(s: &mut Session, p: &Value) -> Result<Value> {
     let fps = fps_param("timeline.setProps", p)?;
     let duration = duration_param("timeline.setProps", p)?;
-    with_timeline(s, |t| {
-        if let Some(t) = t {
-            if let Some(fps) = fps {
-                t.fps = fps;
-            }
-            if let Some(d) = duration {
-                t.duration = d;
-            }
-            if let Some(ws) = p.get("workStart").and_then(Value::as_u64) {
-                t.work_start = ws as usize;
-            }
-            if let Some(we) = p.get("workEnd").and_then(Value::as_u64) {
-                t.work_end = we as usize;
-            }
-        }
-    })
+    let ws = p.get("workStart").map(|v| v.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad("timeline.setProps", "workStart must be a whole frame".into()))).transpose()?;
+    let we = p.get("workEnd").map(|v| v.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad("timeline.setProps", "workEnd must be a whole frame".into()))).transpose()?;
+    s.edit("Timeline Settings", |doc, _| {
+        crate::video_cmds::store(doc);
+        let t = doc.timeline.as_mut().ok_or_else(|| bad("timeline.setProps", "no timeline (create one first)".into()))?;
+        if let Some(fps) = fps { t.fps = fps; }
+        if let Some(d) = duration { t.duration = d; }
+        if let Some(ws) = ws { t.work_start = ws; }
+        if let Some(we) = we { t.work_end = we; }
+        if t.work_start >= t.work_end { return Err(bad("timeline.setProps", "workStart must be less than workEnd".into())); }
+        if let Some(x) = ws { if x >= t.duration { return Err(bad("timeline.setProps", "workStart must be less than duration".into())); } }
+        if let Some(x) = we { if x == 0 || x > t.duration { return Err(bad("timeline.setProps", "workEnd must be in 1..=duration".into())); } }
+        t.clamp(); crate::video_cmds::sync(doc); Ok(())
+    })?;
+    info(s)
 }
 
 fn frame_edit(s: &mut Session, op: &str) -> Result<Value> {
@@ -377,12 +381,209 @@ fn set_layer_range(s: &mut Session, p: &Value) -> Result<Value> {
     let layer = p.get("layer").and_then(Value::as_u64).map(photostore_doc::LayerId).ok_or_else(|| bad("timeline.setLayerRange", "need numeric `layer`".into()))?;
     let start = p.get("start").and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad("timeline.setLayerRange", "need numeric `start`".into()))?;
     let end = p.get("end").and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad("timeline.setLayerRange", "need numeric `end`".into()))?;
-    with_timeline(s, |slot| if let Some(t) = slot {
-        let bounded_start = start.min(t.duration.saturating_sub(1));
-        let minimum_end = bounded_start.saturating_add(1);
-        let range = LayerTimelineRange { layer, start: bounded_start, end: end.clamp(minimum_end, t.duration.max(minimum_end)) };
+    if s.active().and_then(|st| st.doc.layer(layer)).is_some_and(|l| l.video.is_some()) {
+        return set_video_clip(s, &json!({"layer": layer.0, "start": start, "end": end}));
+    }
+    s.edit("Trim Layer Track", |doc, _| {
+        crate::video_cmds::store(doc);
+        if doc.layer(layer).is_none() { return Err(EngineError::NoLayer(layer)); }
+        let t = doc.timeline.as_mut().ok_or_else(|| bad("timeline.setLayerRange", "no timeline (create one first)".into()))?;
+        if start >= end || end > t.duration { return Err(bad("timeline.setLayerRange", "range must satisfy 0 <= start < end <= duration".into())); }
+        let range = LayerTimelineRange { layer, start, end };
         if let Some(existing) = t.layer_ranges.iter_mut().find(|r| r.layer == layer) { *existing = range; } else { t.layer_ranges.push(range); }
-    })
+        crate::video_cmds::sync(doc);
+        Ok(())
+    })?;
+    info(s)
+}
+
+fn clip_layer_param(s: &Session, p: &Value, cmd: &str) -> Result<LayerId> {
+    let id = p.get("layer").and_then(Value::as_u64).map(LayerId).or_else(|| s.active().and_then(|st| st.active_layer)).ok_or_else(|| bad(cmd, "need numeric `layer` or an active layer".into()))?;
+    let st = s.active().ok_or(EngineError::NoDocument)?;
+    if st.doc.layer(id).is_none() { return Err(EngineError::NoLayer(id)); }
+    Ok(id)
+}
+
+fn video_source_duration(v: &photostore_doc::VideoData) -> f64 {
+    let fps = f64::from(v.fps.max(0.001));
+    v.frames.iter().enumerate().map(|(i, _)| f64::from(v.frame_delays_ms.get(i).copied().unwrap_or(0)).max(if v.frame_delays_ms.get(i).copied().unwrap_or(0) == 0 { 1000.0 / fps } else { 0.0 }) / 1000.0).sum()
+}
+
+fn set_video_clip(s: &mut Session, p: &Value) -> Result<Value> {
+    let id = p.get("layer").and_then(Value::as_u64).map(LayerId).ok_or_else(|| bad("timeline.setVideoClip", "need numeric `layer`".into()))?;
+    let requested_source = p.get("sourceInSeconds").map(|v| v.as_f64().ok_or_else(|| bad("timeline.setVideoClip", "sourceInSeconds must be finite".into()))).transpose()?;
+    let requested_speed = p.get("speed").map(|v| v.as_f64().ok_or_else(|| bad("timeline.setVideoClip", "speed must be finite".into()))).transpose()?;
+    if let Some(x) = requested_source { if !x.is_finite() || x < 0.0 { return Err(bad("timeline.setVideoClip", "sourceInSeconds must be finite and non-negative".into())); } }
+    if let Some(x) = requested_speed { if !x.is_finite() || !(0.01..=100.0).contains(&x) { return Err(bad("timeline.setVideoClip", "speed must be finite and in 0.01..=100".into())); } }
+    let start = p.get("start").map(|v| v.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad("timeline.setVideoClip", "start must be a whole frame".into()))).transpose()?;
+    let end = p.get("end").map(|v| v.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad("timeline.setVideoClip", "end must be a whole frame".into()))).transpose()?;
+    s.edit("Set Video Clip", |doc, _| {
+        crate::video_cmds::store(doc);
+        let v = doc.layer(id).ok_or(EngineError::NoLayer(id))?.video.as_ref().ok_or_else(|| bad("timeline.setVideoClip", "layer is not a video layer".into()))?.clone();
+        let (old, timeline_fps, timeline_duration, authored_range) = {
+            let t = doc.timeline.as_ref().ok_or_else(|| bad("timeline.setVideoClip", "no timeline (create one first)".into()))?;
+            (t.layer_ranges.iter().find(|r| r.layer == id).cloned(), f64::from(t.fps.max(0.001)), t.duration, t.layer_ranges.iter().any(|r| r.layer == id))
+        };
+        let old = old.unwrap_or_else(|| LayerTimelineRange { layer: id, start: 0, end: timeline_duration });
+        let ns = start.unwrap_or(old.start); let speed = requested_speed.unwrap_or(v.playback.speed);
+        let source_in = requested_source.unwrap_or(v.playback.source_in_seconds);
+        if ns >= MAX_DURATION { return Err(bad("timeline.setVideoClip", "start exceeds the timeline frame limit".into())); }
+        let source_span = if authored_range { (old.end - old.start) as f64 / timeline_fps * v.playback.speed } else { (video_source_duration(&v) - v.playback.source_in_seconds).max(0.0) };
+        let requested_output = (source_span / speed * timeline_fps).ceil().max(1.0) as usize;
+        let ne = end.unwrap_or_else(|| ns.saturating_add(requested_output));
+        if ne <= ns || ne > MAX_DURATION { return Err(bad("timeline.setVideoClip", "end must satisfy start < end and the timeline limit".into())); }
+        let available = video_source_duration(&v);
+        let output_seconds = (ne - ns) as f64 / timeline_fps;
+        if source_in > available + 1e-9 { return Err(bad("timeline.setVideoClip", "sourceInSeconds is past the playable source".into())); }
+        let source_end = source_in + output_seconds * speed;
+        let rounding_hold = speed / timeline_fps;
+        if source_end > available + rounding_hold + 1e-9 { return Err(bad("timeline.setVideoClip", "clip consumes more source than the video contains".into())); }
+        if source_in >= available { return Err(bad("timeline.setVideoClip", "sourceInSeconds must precede the playable source end".into())); }
+        let old_video_speed = v.playback.speed;
+        if !old_video_speed.is_finite() || old_video_speed <= 0.0 { return Err(bad("timeline.setVideoClip", "existing video playback speed is invalid".into())); }
+        if let Some(layer) = doc.layer_mut(id) { if let Some(v) = &mut layer.video { v.playback.source_in_seconds = source_in; v.playback.speed = speed; } }
+        let t = doc.timeline.as_mut().ok_or_else(|| bad("timeline.setVideoClip", "no timeline".into()))?;
+        if ne > t.duration { t.duration = ne; t.work_end = t.work_end.max(ne).min(MAX_DURATION); }
+        if let Some(r) = t.layer_ranges.iter_mut().find(|r| r.layer == id) { r.start = ns; r.end = ne; } else { t.layer_ranges.push(LayerTimelineRange { layer: id, start: ns, end: ne }); }
+        let cut_delta_source = source_in - v.playback.source_in_seconds;
+        let reauthor_timing = requested_source.is_some() || requested_speed.is_some() || end.is_some();
+        let new_start_seconds = ns as f64 / timeline_fps;
+        let new_duration = output_seconds.min((available - source_in).max(0.0) / speed);
+        for track in &t.audio_tracks {
+            for clip in &track.clips {
+                if clip.linked_video == Some(id) {
+                    let audio_factor = clip.speed / old_video_speed;
+                    let new_audio_speed = audio_factor * speed;
+                    let new_trim = clip.trim_in_seconds + cut_delta_source * audio_factor;
+                    if !new_audio_speed.is_finite() || !(0.01..=100.0).contains(&new_audio_speed) || !new_trim.is_finite() || new_trim < 0.0 {
+                        return Err(bad("timeline.setVideoClip", "linked audio retiming ratio or trim is invalid".into()));
+                    }
+                }
+            }
+        }
+        for track in &mut t.audio_tracks {
+            track.clips.retain_mut(|clip| {
+                if clip.linked_video == Some(id) {
+                    let audio_factor = clip.speed / old_video_speed;
+                    let new_audio_speed = audio_factor * speed;
+                    debug_assert!(new_audio_speed.is_finite() && (0.01..=100.0).contains(&new_audio_speed));
+                    clip.speed = new_audio_speed;
+                    clip.trim_in_seconds += cut_delta_source * audio_factor;
+                    debug_assert!(clip.trim_in_seconds.is_finite() && clip.trim_in_seconds >= 0.0);
+                    clip.start_seconds = new_start_seconds;
+                    let remaining = (clip.source_duration_seconds - clip.trim_in_seconds).max(0.0) / clip.speed;
+                    clip.duration_seconds = if reauthor_timing { new_duration.min(remaining) } else { clip.duration_seconds.min(new_duration).min(remaining) };
+                    if clip.duration_seconds <= 1e-9 { return false; }
+                    if reauthor_timing {
+                        clip.envelope_offset_seconds = 0.0;
+                        clip.envelope_duration_seconds = Some(clip.duration_seconds);
+                        clip.fade_in_seconds = clip.fade_in_seconds.min(clip.duration_seconds);
+                        clip.fade_out_seconds = clip.fade_out_seconds.min(clip.duration_seconds);
+                    }
+                    return clip.duration_seconds > 1e-9;
+                }
+                true
+            });
+        }
+        crate::video_cmds::sync(doc); Ok(())
+    })?;
+    info(s)
+}
+
+fn split_video_clip(s: &mut Session, p: &Value) -> Result<Value> {
+    let id = p.get("layer").and_then(Value::as_u64).map(LayerId).ok_or_else(|| bad("timeline.splitVideoClip", "need numeric `layer`".into()))?;
+    let cut = match p.get("frame") {
+        Some(v) => v.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad("timeline.splitVideoClip", "frame must be a whole number".into()))?,
+        None => s.active().and_then(|st| st.doc.timeline.as_ref().map(|t| t.current)).ok_or_else(|| bad("timeline.splitVideoClip", "no playhead frame".into()))?,
+    };
+    s.edit("Split Video Clip", |doc, active| {
+        crate::video_cmds::store(doc);
+        let original = doc.layer(id).ok_or(EngineError::NoLayer(id))?.clone();
+        let v = original.video.as_ref().ok_or_else(|| bad("timeline.splitVideoClip", "layer is not a video layer".into()))?.clone();
+        let (range, fps) = {
+            let t = doc.timeline.as_ref().ok_or_else(|| bad("timeline.splitVideoClip", "no timeline".into()))?;
+            let fps = f64::from(t.fps.max(0.001));
+            let explicit = t.layer_ranges.iter().find(|r| r.layer == id).cloned();
+            let range = explicit.unwrap_or_else(|| {
+                let available = video_source_duration(&v);
+                let source_in = v.playback.source_in_seconds;
+                let speed = v.playback.speed;
+                let frames = ((available - source_in).max(0.0) / speed * fps).ceil().max(1.0) as usize;
+                LayerTimelineRange { layer: id, start: 0, end: frames.min(t.duration) }
+            });
+            (range, fps)
+        };
+        let available = video_source_duration(&v);
+        if !v.playback.source_in_seconds.is_finite() || v.playback.source_in_seconds < 0.0 || v.playback.source_in_seconds >= available || !v.playback.speed.is_finite() || !(0.01..=100.0).contains(&v.playback.speed) {
+            return Err(bad("timeline.splitVideoClip", "video playback range is invalid".into()));
+        }
+        if range.start >= range.end || range.end > doc.timeline.as_ref().map_or(0, |t| t.duration) {
+            return Err(bad("timeline.splitVideoClip", "video clip range is invalid".into()));
+        }
+        if cut <= range.start || cut >= range.end { return Err(bad("timeline.splitVideoClip", "frame must be strictly inside the clip".into())); }
+        let mut associated_splits = 0usize;
+        for track in doc.timeline.as_ref().ok_or_else(|| bad("timeline.splitVideoClip", "no timeline".into()))?.audio_tracks.iter() {
+            for clip in &track.clips {
+                if clip.linked_video != Some(id) { continue; }
+                if !clip.start_seconds.is_finite() || clip.start_seconds < 0.0 || !clip.duration_seconds.is_finite() || clip.duration_seconds <= 0.0 || !clip.source_duration_seconds.is_finite() || clip.source_duration_seconds <= 0.0 || !clip.trim_in_seconds.is_finite() || clip.trim_in_seconds < 0.0 || !clip.speed.is_finite() || !(0.01..=100.0).contains(&clip.speed) || clip.trim_in_seconds + clip.duration_seconds * clip.speed > clip.source_duration_seconds + 1e-9 || !clip.envelope_offset_seconds.is_finite() || clip.envelope_offset_seconds < 0.0 {
+                    return Err(bad("timeline.splitVideoClip", "linked audio clip has invalid source or timing".into()));
+                }
+                if !clip.fade_in_seconds.is_finite() || !clip.fade_out_seconds.is_finite() || clip.fade_in_seconds < 0.0 || clip.fade_out_seconds < 0.0 || clip.fade_in_seconds > clip.duration_seconds || clip.fade_out_seconds > clip.duration_seconds { return Err(bad("timeline.splitVideoClip", "linked audio fades are invalid".into())); }
+                if let Some(env) = clip.envelope_duration_seconds {
+                    if !env.is_finite() || env <= 0.0 || clip.envelope_offset_seconds + clip.duration_seconds > env + 1e-9 { return Err(bad("timeline.splitVideoClip", "linked audio envelope is invalid".into())); }
+                }
+                if clip.start_seconds < range.start as f64 / fps + (cut - range.start) as f64 / fps && clip.start_seconds + clip.duration_seconds > range.start as f64 / fps + (cut - range.start) as f64 / fps { associated_splits += 1; }
+            }
+        }
+        let total_clips = doc.timeline.as_ref().unwrap().audio_tracks.iter().map(|tr| tr.clips.len()).sum::<usize>();
+        if total_clips.saturating_add(associated_splits) > 4096 { return Err(bad("timeline.splitVideoClip", "audio clip limit exceeded".into())); }
+        let mut right = original.duplicate();
+        let right_id = right.id;
+        let rel = (cut - range.start) as f64 / fps;
+        if let Some(rv) = &mut right.video { rv.playback.source_in_seconds = v.playback.source_in_seconds + rel * v.playback.speed; rv.playback.speed = v.playback.speed; }
+        let inserted = doc.insert_above(Some(id), right);
+        if inserted != right_id { return Err(bad("timeline.splitVideoClip", "failed to insert split layer".into())); }
+        let t = doc.timeline.as_mut().ok_or_else(|| bad("timeline.splitVideoClip", "no timeline".into()))?;
+        if let Some(r) = t.layer_ranges.iter_mut().find(|r| r.layer == id) { r.end = cut; } else { t.layer_ranges.push(LayerTimelineRange { layer: id, start: range.start, end: cut }); }
+        t.layer_ranges.push(LayerTimelineRange { layer: right_id, start: cut, end: range.end });
+        // Property snapshots use layer ids as references; duplicate the source state for the new layer.
+        for states in t.frame_states.iter_mut() {
+            if let Some(state) = states.iter().find(|x| x.layer == id).cloned() { let mut copy = state; copy.layer = right_id; states.push(copy); }
+        }
+        for states in t.property_frames.iter_mut() {
+            if let Some(state) = states.iter().find(|x| x.layer == id).cloned() { let mut copy = state; copy.layer = right_id; states.push(copy); }
+        }
+        let cut_seconds = (cut - range.start) as f64 / fps;
+        let mut next_clip_id = t.audio_tracks.iter().flat_map(|tr| tr.clips.iter()).map(|c| c.id).max().unwrap_or(0).checked_add(1).ok_or_else(|| bad("timeline.splitVideoClip", "audio clip id space exhausted".into()))?;
+        for track in &mut t.audio_tracks {
+            let mut additions = Vec::new();
+            for clip in &mut track.clips {
+                if clip.linked_video != Some(id) { continue; }
+                let clip_end = clip.start_seconds + clip.duration_seconds;
+                let clip_start = clip.start_seconds;
+                let cut_abs = range.start as f64 / fps + cut_seconds;
+                if clip_end <= cut_abs || clip_start >= cut_abs { if clip_start >= cut_abs { clip.linked_video = Some(right_id); } continue; }
+                let left_duration = (cut_abs - clip_start).max(0.0).min(clip.duration_seconds);
+                let right_duration = (clip_end - cut_abs).max(0.0);
+                if left_duration <= 0.0 || right_duration <= 0.0 { continue; }
+                let mut right_clip = clip.clone();
+                right_clip.id = next_clip_id; next_clip_id = next_clip_id.checked_add(1).ok_or_else(|| bad("timeline.splitVideoClip", "audio clip id space exhausted".into()))?;
+                right_clip.linked_video = Some(right_id);
+                right_clip.start_seconds = cut_abs;
+                right_clip.trim_in_seconds += left_duration * clip.speed;
+                right_clip.duration_seconds = right_duration;
+                right_clip.envelope_offset_seconds += left_duration;
+                let envelope_duration = clip.envelope_duration_seconds.unwrap_or(clip.duration_seconds);
+                clip.duration_seconds = left_duration;
+                clip.envelope_duration_seconds = Some(envelope_duration);
+                right_clip.envelope_duration_seconds = Some(envelope_duration);
+                additions.push(right_clip);
+            }
+            track.clips.extend(additions);
+        }
+        *active = Some(right_id); crate::video_cmds::sync(doc); Ok(right_id.0)
+    })?;
+    Ok(json!({"left": id.0, "right": s.active().and_then(|st| st.active_layer).map(|x| x.0)}))
 }
 
 fn tween_endpoint(t: &Timeline, p: &Value, key: &str, fallback: usize) -> usize {
@@ -530,6 +731,8 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("timeline.duplicateFrame", "Duplicate Frame", "{} → {timeline}", has_timeline, |s, _| frame_edit(s, "duplicate")),
         spec!("timeline.deleteFrame", "Delete Frame", "{} → {timeline}", has_timeline, |s, _| frame_edit(s, "delete")),
         spec!("timeline.setLayerRange", "Trim Layer Track", "{layer,start,end} → {timeline}", has_timeline, |s, p| set_layer_range(s, p)),
+        spec!("timeline.setVideoClip", "Set Video Clip", "{layer?:active,start?,end?,sourceInSeconds?,speed?} → {timeline}", has_timeline, |s, p| set_video_clip(s, p)),
+        spec!("timeline.splitVideoClip", "Split Video Clip", "{layer?:active,frame?:playhead} → {left,right}", has_timeline, |s, p| split_video_clip(s, p)),
         spec!("timeline.setAnimationFrameDelay", "Set Animation Frame Delay", "{frame?,delayMs} → {timeline}", has_timeline, |s, p| set_animation_delay(s, p)),
         spec!("timeline.tweenFrames", "Tween Animation Frames", "{from?,to?,framesToAdd,position?,opacity?,effects?,layers?:all|selected} → {framesAdded}", has_timeline, |s, p| tween_frames(s, p)),
         spec!("timeline.info", "Timeline Info", "{} → {timeline}", has_doc, |s, _| info(s)),

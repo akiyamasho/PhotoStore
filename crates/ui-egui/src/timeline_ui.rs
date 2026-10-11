@@ -1,7 +1,7 @@
 //! Window › Timeline: a docked panel that creates and drives the document timeline. All actions
 //! run the engine `timeline.*` commands, so the control channel drives it the same way.
 
-use egui::{RichText, vec2};
+use egui::{RichText, Ui, vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::hash::{Hash, Hasher};
@@ -132,30 +132,55 @@ pub fn checked(app: &PhotoStoreApp, id: &str) -> Option<bool> {
 
 /// Ids this module owns (for parity / enablement).
 pub fn handles(id: &str) -> bool {
-    id == "window.panel.timeline"
+    matches!(id, "window.panel.timeline" | "timeline.playPause" | "timeline.stop")
 }
 
 /// Toggle the Timeline panel.
-pub fn menu(app: &mut PhotoStoreApp, id: &str, _params: &Value) -> Option<Result<Value, String>> {
+pub fn menu(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, _params: &Value) -> Option<Result<Value, String>> {
     if id == "window.panel.timeline" {
         app.ui.timeline.open = !app.ui.timeline.open;
+        if !app.ui.timeline.open {
+            app.ui.timeline.playing = false;
+            let mut runtime = std::mem::take(&mut app.timeline_playback);
+            runtime.stop();
+            app.timeline_playback = runtime;
+        }
         return Some(Ok(json!({ "open": app.ui.timeline.open })));
+    }
+    if id == "timeline.playPause" {
+        if app.timeline_playback.playing { let mut runtime = std::mem::take(&mut app.timeline_playback); runtime.stop(); app.timeline_playback = runtime; app.ui.timeline.playing = false; }
+        else {
+            app.ui.timeline.playing = true;
+            let mut runtime = std::mem::take(&mut app.timeline_playback);
+            runtime.play(app, ctx.input(|i| i.time));
+            app.timeline_playback = runtime;
+        }
+        return Some(Ok(Value::Null));
+    }
+    if id == "timeline.stop" {
+        let mut runtime = std::mem::take(&mut app.timeline_playback);
+        runtime.stop();
+        app.timeline_playback = runtime;
+        app.ui.timeline.playing = false;
+        return Some(Ok(Value::Null));
     }
     None
 }
 
 /// Render the Timeline panel.
-pub fn windows(app: &mut PhotoStoreApp, ctx: &egui::Context) {
+pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
     if !app.ui.timeline.open {
         return;
     }
-    let tl = app.session.active().and_then(|d| d.doc.timeline.clone());
-    let have_doc = app.session.active().is_some();
-    let layer_rows: Vec<(u64, String, bool)> = app.session.active().map(|d| d.doc.layers.iter().map(|l| (l.id.0, l.name.clone(), l.video.is_some())).collect()).unwrap_or_default();
-    let active_delay = app.session.active().and_then(|d| d.active_layer.and_then(|id| d.doc.layer(id))).and_then(|l| l.video.as_ref()).and_then(|v| v.frame_delays_ms.get(tl.as_ref().map_or(0, |t| t.current)).copied());
-    let active_video_id = app.session.active().and_then(|d| d.active_layer).map(|id| id.0);
-    let animation_delay = tl.as_ref().and_then(|t| t.frame_delays_ms.get(t.current).copied());
-    let (thumb_start, frame_thumb_ids) = tl.as_ref().map_or((0, Vec::new()), |timeline| frame_thumbnails(app, ctx, timeline));
+    let ctx = parent.ctx().clone();
+    let doc_snapshot = app.session.active().map(|d| (d.doc.clone(), d.active_layer));
+    let tl = doc_snapshot.as_ref().and_then(|(doc, _)| doc.timeline.as_ref());
+    let have_doc = doc_snapshot.is_some();
+    let layer_rows: Vec<(u64, String, bool)> = doc_snapshot.as_ref().map(|(doc, _)| doc.layers.iter().map(|l| (l.id.0, l.name.clone(), l.video.is_some())).collect()).unwrap_or_default();
+    let active_delay = doc_snapshot.as_ref().and_then(|(doc, active)| active.and_then(|id| doc.layer(id))).and_then(|l| l.video.as_ref()).and_then(|v| v.frame_delays_ms.get(tl.map_or(0, |t| t.current)).copied());
+    let active_video_id = doc_snapshot.as_ref().and_then(|(_, active)| *active).map(|id| id.0);
+    let animation_delay = tl.and_then(|t| t.frame_delays_ms.get(t.current).copied());
+    let (thumb_start, frame_thumb_ids) = tl.map_or((0, Vec::new()), |timeline| frame_thumbnails(app, &ctx, timeline));
     let mut act: Option<(&str, Value)> = None;
     let mut close = false;
     let mut toggle_play = false;
@@ -167,14 +192,14 @@ pub fn windows(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     let mut tween_effects = app.ui.timeline.tween_effects;
     let mut tween_selected_layers = app.ui.timeline.tween_selected_layers;
     let playing = app.ui.timeline.playing;
-    let t = Tokens::get(ctx);
+    let t = Tokens::get(&ctx);
 
-    egui::Window::new(tl!("Timeline"))
+    egui::Panel::bottom("timeline-panel")
         .resizable(true)
-        .default_size([400.0, 330.0])
-        .min_size([300.0, 170.0])
+        .default_size(330.0)
+        .size_range(egui::Rangef::new(170.0, 640.0))
         .frame(egui::Frame::NONE.fill(t.card).inner_margin(egui::Margin::same(8)))
-        .show(ctx, |ui| {
+        .show(parent, |ui| {
         ui.horizontal(|ui| {
             ui.label(RichText::new(tl!("Timeline")).strong().color(t.text));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -335,38 +360,43 @@ pub fn windows(app: &mut PhotoStoreApp, ctx: &egui::Context) {
                 });
                 egui::ScrollArea::vertical().max_height(130.0).show(ui, |ui| {
                     for (layer_id, name, video) in &layer_rows {
+                        if *video { continue; }
                         ui.horizontal(|ui| {
-                            ui.label(if *video { "▣" } else { "□" });
+                            ui.label("□");
                             ui.label(RichText::new(name).color(t.text));
-                            let range = tl.layer_ranges.iter().find(|r| r.layer.0 == *layer_id);
-                            let start = range.map_or(tl.work_start, |r| r.start) as f32 / tl.duration.max(1) as f32;
-                            let end = range.map_or(tl.work_end, |r| r.end) as f32 / tl.duration.max(1) as f32;
                             let width = ui.available_width().max(80.0);
                             let (bar, _) = ui.allocate_exact_size(vec2(width, 18.0), egui::Sense::hover());
                             let p = ui.painter_at(bar);
                             p.rect_filled(bar, 2.0, t.field);
-                            p.rect_filled(egui::Rect::from_min_max(egui::pos2(bar.left()+bar.width()*start, bar.top()+2.0), egui::pos2(bar.left()+bar.width()*end, bar.bottom()-2.0)), 2.0, t.accent.gamma_multiply(if *video { 0.65 } else { 0.3 }));
-                            if *video {
-                                let mut in_frame = range.map_or(tl.work_start, |r| r.start) as u64;
-                                let mut out_frame = range.map_or(tl.work_end, |r| r.end) as u64;
-                                if ui.add(egui::DragValue::new(&mut in_frame).prefix("in ")).changed() { act = Some(("timeline.setLayerRange", json!({"layer":layer_id,"start":in_frame,"end":out_frame}))); }
-                                if ui.add(egui::DragValue::new(&mut out_frame).prefix("out ")).changed() { act = Some(("timeline.setLayerRange", json!({"layer":layer_id,"start":in_frame,"end":out_frame}))); }
-                                if Some(*layer_id) == active_video_id {
-                                    let key = app.session.active().and_then(|d| d.active_layer.and_then(|id| d.doc.layer(id))).and_then(|l| l.video.as_ref()).and_then(|v| v.keyframes.iter().find(|k| k.frame == tl.current)).cloned();
-                                    let mut x = key.as_ref().map_or(0.0, |k| k.x);
-                                    let mut y = key.as_ref().map_or(0.0, |k| k.y);
-                                    let mut opacity = key.as_ref().map_or(1.0, |k| k.opacity);
-                                    ui.add(egui::DragValue::new(&mut x).prefix("x "));
-                                    ui.add(egui::DragValue::new(&mut y).prefix("y "));
-                                    ui.add(egui::DragValue::new(&mut opacity).range(0.0..=1.0).prefix("α "));
-                                    if crate::widgets::secondary_button(ui, "◆", 28.0).on_hover_text(tl!("Set keyframe")).clicked() { act = Some(("timeline.addKeyframe", json!({"frame":tl.current,"x":x,"y":y,"opacity":opacity}))); }
-                                    if key.is_some() && crate::widgets::secondary_button(ui, "×", 28.0).on_hover_text(tl!("Delete keyframe")).clicked() { act = Some(("timeline.deleteKeyframe", json!({"frame":tl.current}))); }
-                                }
-                            }
                         });
-                        if *video { ui.indent(("props", layer_id), |ui| { ui.weak(tl!("Opacity / Position keyframes")); }); }
                     }
                 });
+                if matches!(tl.mode, photostore_doc::TimelineMode::Video) {
+                    crate::video_clip_ui::show(app, ui, tl);
+                    if let (Some(active_id), Some((doc, _))) = (active_video_id, doc_snapshot.as_ref()) {
+                        if let Some(layer) = doc.layer(photostore_doc::LayerId(active_id)) {
+                            if let Some(video) = layer.video.as_ref() {
+                                let key = video.keyframes.iter().find(|key| key.frame == tl.current).cloned();
+                                ui.horizontal(|ui| {
+                            ui.label(RichText::new(tl!("Position / Opacity Keyframe")).color(t.text_dim));
+                            let mut x = key.as_ref().map_or(0.0, |key| key.x);
+                            let mut y = key.as_ref().map_or(0.0, |key| key.y);
+                            let mut opacity = key.as_ref().map_or(1.0, |key| key.opacity);
+                            ui.add(egui::DragValue::new(&mut x).prefix("x "));
+                            ui.add(egui::DragValue::new(&mut y).prefix("y "));
+                            ui.add(egui::DragValue::new(&mut opacity).range(0.0..=1.0).prefix("α "));
+                            if crate::widgets::secondary_button(ui, "◆", 28.0).on_hover_text(tl!("Set keyframe")).clicked() {
+                                act = Some(("timeline.addKeyframe", json!({"layer": active_id, "frame": tl.current, "x": x, "y": y, "opacity": opacity})));
+                            }
+                            if key.is_some() && crate::widgets::secondary_button(ui, "×", 28.0).on_hover_text(tl!("Delete keyframe")).clicked() {
+                                act = Some(("timeline.deleteKeyframe", json!({"layer": active_id, "frame": tl.current})));
+                            }
+                                });
+                            }
+                        }
+                    }
+                }
+                crate::audio_ui::show(app, ui, tl);
             }
         }
         });
@@ -374,6 +404,9 @@ pub fn windows(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     if close {
         app.ui.timeline.open = false;
         app.ui.timeline.playing = false;
+        let mut runtime = std::mem::take(&mut app.timeline_playback);
+        runtime.stop();
+        app.timeline_playback = runtime;
     }
     app.ui.timeline.tween_from = tween_from;
     app.ui.timeline.tween_to = tween_to;
@@ -384,30 +417,18 @@ pub fn windows(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     app.ui.timeline.tween_selected_layers = tween_selected_layers;
     if toggle_play {
         app.ui.timeline.playing = !app.ui.timeline.playing;
-        app.ui.timeline.last_time = ctx.input(|i| i.time);
-        app.ui.timeline.play_direction = 1;
+        let mut runtime = std::mem::take(&mut app.timeline_playback);
+        if app.ui.timeline.playing { runtime.play(app, ctx.input(|i| i.time)); } else { runtime.stop(); }
+        app.timeline_playback = runtime;
     }
     if let Some((cmd, p)) = act {
         let _ = app.run(cmd, p);
     }
-    // Playback: auto-advance the playhead at the frame rate (loops).
-    if app.ui.timeline.playing {
-        if let Some(t) = app.session.active().and_then(|d| d.doc.timeline.clone()) {
-            let now = ctx.input(|i| i.time);
-            let period = if matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation) { active_delay.or(animation_delay).map_or(1.0 / f64::from(t.fps.max(1.0)), |d| if d == 0 { 1.0 / f64::from(t.fps.max(1.0)) } else { f64::from(d) / 1000.0 }) } else { 1.0 / f64::from(t.fps.max(1.0)) };
-            if now - app.ui.timeline.last_time >= period {
-                app.ui.timeline.last_time = now;
-                let last = t.work_end.saturating_sub(1).min(t.duration.saturating_sub(1));
-                let next = match t.loop_mode {
-                    photostore_doc::TimelineLoop::Once => { if t.current >= last { app.ui.timeline.playing = false; t.current } else { t.current + 1 } }
-                    photostore_doc::TimelineLoop::Loop => if t.current >= last { t.work_start } else { t.current + 1 },
-                    photostore_doc::TimelineLoop::PingPong => { let direction = if app.ui.timeline.play_direction == 0 { 1 } else { app.ui.timeline.play_direction }; if t.current >= last { app.ui.timeline.play_direction = -1; t.current.saturating_sub(1) } else if t.current <= t.work_start { app.ui.timeline.play_direction = 1; t.current.saturating_add(1) } else if direction < 0 { t.current.saturating_sub(1) } else { t.current.saturating_add(1) } }
-                };
-                let _ = app.run("timeline.setFrame", json!({ "frame": next as u64 }));
-            }
-            ctx.request_repaint();
-        } else {
-            app.ui.timeline.playing = false;
-        }
+    if app.ui.timeline.playing && !app.timeline_playback.playing {
+        let mut runtime = std::mem::take(&mut app.timeline_playback);
+        runtime.play(app, ctx.input(|i| i.time));
+        app.timeline_playback = runtime;
     }
+    crate::timeline_playback::tick(app, &ctx);
+    app.ui.timeline.playing = app.timeline_playback.playing;
 }

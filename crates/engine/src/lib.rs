@@ -8,6 +8,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod actions_cmds;
+pub mod audio_cmds;
 pub mod adjust_cmds;
 pub mod adjust_params;
 pub mod align_cmds;
@@ -118,6 +119,7 @@ use photostore_ops::{History, LayerTarget};
 use serde_json::Value;
 
 pub use commands::{CommandSpec, command_specs};
+pub use audio_cmds::audio_mix_for_range;
 pub use photostore_doc as doc;
 pub use photostore_paint as paint;
 pub use photostore_paint::BrushSettings;

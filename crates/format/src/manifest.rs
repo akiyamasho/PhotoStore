@@ -195,6 +195,8 @@ pub struct VideoDataM {
     pub source: photostore_doc::VideoSource,
     pub fps: f32,
     #[serde(default)]
+    pub playback: photostore_doc::VideoPlayback,
+    #[serde(default)]
     pub show_altered: bool,
 }
 

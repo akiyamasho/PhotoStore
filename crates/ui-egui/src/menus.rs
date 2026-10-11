@@ -88,6 +88,10 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("recording.setPrivate", "Private Time-lapse Layer", &["Layer"], None),
     ("recording.privateFile", "Insert Private File…", &["Actions", "Add"], None),
     ("recording.privatePhoto", "Insert Private Photo…", &["Actions", "Add"], None),
+    // Timeline transport is shell-owned so palette, menus, and user-assigned shortcuts share one
+    // real runtime. Defaults are intentionally unassigned.
+    ("timeline.playPause", "Play/Pause Timeline", &["Actions", "Video"], None),
+    ("timeline.stop", "Stop Timeline", &["Actions", "Video"], None),
 ];
 
 /// Photoshop's Window › <panel> ids for the panels the shell already has, as `window.toggle.*`.
@@ -153,6 +157,9 @@ pub(crate) fn invoke_unguarded(app: &mut PhotoStoreApp, ctx: &egui::Context, id:
     if let Some(result) = crate::movie_ui::invoke(app, ctx, id, &params) {
         return result;
     }
+    if let Some(result) = crate::audio_ui::invoke(app, ctx, id, &params) {
+        return result;
+    }
     if id == "ui.symmetryTransform" {
         return crate::symmetry_ui::begin(app).map(|_| Value::Null);
     }
@@ -193,7 +200,7 @@ pub(crate) fn invoke_unguarded(app: &mut PhotoStoreApp, ctx: &egui::Context, id:
         return r;
     }
     // Window > Timeline panel.
-    if let Some(r) = crate::timeline_ui::menu(app, id, &params) {
+    if let Some(r) = crate::timeline_ui::menu(app, ctx, id, &params) {
         return r;
     }
     // Filter › Plug-ins (installed WebAssembly plug-ins, Install Plug-in…).
@@ -1311,6 +1318,9 @@ pub fn apply_workspace(app: &mut PhotoStoreApp) {
     app.ui.timeline.open = app.ui.workspace == "Motion";
     if !app.ui.timeline.open {
         app.ui.timeline.playing = false;
+        let mut runtime = std::mem::take(&mut app.timeline_playback);
+        runtime.stop();
+        app.timeline_playback = runtime;
     }
 }
 

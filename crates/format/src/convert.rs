@@ -230,6 +230,7 @@ fn video_m(v: &photostore_doc::VideoData, sink: &mut dyn Sink) -> crate::manifes
         keyframes: v.keyframes.clone(),
         source: v.source.clone(),
         fps: v.fps,
+        playback: v.playback,
         show_altered: v.show_altered,
     }
 }
@@ -435,7 +436,7 @@ impl Loader<'_> {
         let frames = m.frames.iter().map(|f| self.surface(f)).collect::<Result<Vec<_>>>()?;
         let mut frame_delays_ms = m.frame_delays_ms.clone();
         frame_delays_ms.resize(frames.len(), 0);
-        Ok(photostore_doc::VideoData { frames, frame_delays_ms, keyframes: m.keyframes.clone(), source: m.source.clone(), fps: m.fps, show_altered: m.show_altered })
+        Ok(photostore_doc::VideoData { frames, frame_delays_ms, keyframes: m.keyframes.clone(), source: m.source.clone(), fps: m.fps, playback: m.playback, show_altered: m.show_altered })
     }
 
     fn surface(&mut self, m: &SurfaceM) -> Result<Surface> {

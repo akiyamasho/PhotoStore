@@ -28,6 +28,8 @@ pub struct VideoData {
     pub keyframes: Vec<VideoKeyframe>,
     pub source: VideoSource,
     pub fps: f32,
+    /// Source playback origin and rate for the editable video layer.
+    pub playback: VideoPlayback,
     /// Show the altered (painted) frames rather than the original footage.
     pub show_altered: bool,
 }
@@ -35,7 +37,7 @@ pub struct VideoData {
 impl VideoData {
     pub fn new(frames: Vec<Surface>, fps: f32) -> Self {
         let count = frames.len();
-        VideoData { frames: if frames.is_empty() { Vec::new() } else { frames }, frame_delays_ms: vec![0; count], keyframes: Vec::new(), source: VideoSource::Blank, fps, show_altered: true }
+        VideoData { frames: if frames.is_empty() { Vec::new() } else { frames }, frame_delays_ms: vec![0; count], keyframes: Vec::new(), source: VideoSource::Blank, fps, playback: VideoPlayback::default(), show_altered: true }
     }
     pub fn len(&self) -> usize {
         self.frames.len()
@@ -49,8 +51,72 @@ impl VideoData {
 // by shape, not contents — enough for change detection.
 impl PartialEq for VideoData {
     fn eq(&self, o: &Self) -> bool {
-        self.frames.len() == o.frames.len() && self.frame_delays_ms == o.frame_delays_ms && self.keyframes == o.keyframes && self.source == o.source && self.fps == o.fps && self.show_altered == o.show_altered
+        self.frames.len() == o.frames.len() && self.frame_delays_ms == o.frame_delays_ms && self.keyframes == o.keyframes && self.source == o.source && self.fps == o.fps && self.playback == o.playback && self.show_altered == o.show_altered
     }
+}
+
+/// Source playback controls for a video layer.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VideoPlayback {
+    #[serde(default)]
+    pub source_in_seconds: f64,
+    #[serde(default = "default_playback_speed")]
+    pub speed: f64,
+}
+
+impl Default for VideoPlayback {
+    fn default() -> Self {
+        Self { source_in_seconds: 0.0, speed: 1.0 }
+    }
+}
+
+fn default_playback_speed() -> f64 { 1.0 }
+
+/// An audio clip placed on a document timeline. Time fields are output/document wall-clock
+/// seconds; source media consumed by a clip is `duration_seconds * speed`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AudioClip {
+    pub id: u64,
+    pub name: String,
+    /// Linked local asset path.
+    pub path: String,
+    pub start_seconds: f64,
+    /// Source trim-in, in source seconds.
+    pub trim_in_seconds: f64,
+    pub duration_seconds: f64,
+    pub source_duration_seconds: f64,
+    #[serde(default = "default_clip_speed")]
+    pub speed: f64,
+    #[serde(default = "default_clip_volume")]
+    pub volume: f64,
+    #[serde(default)]
+    pub fade_in_seconds: f64,
+    #[serde(default)]
+    pub fade_out_seconds: f64,
+    #[serde(default)]
+    pub muted: bool,
+    #[serde(default)]
+    pub linked_video: Option<LayerId>,
+    /// Output-time offset into the original envelope. For an unsplit clip this is zero.
+    #[serde(default)]
+    pub envelope_offset_seconds: f64,
+    /// Original envelope duration in output seconds. Missing values mean this clip's duration.
+    #[serde(default)]
+    pub envelope_duration_seconds: Option<f64>,
+}
+
+fn default_clip_speed() -> f64 { 1.0 }
+fn default_clip_volume() -> f64 { 1.0 }
+
+/// An audio track containing ordered linked local audio clips.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AudioTrack {
+    pub id: u64,
+    pub name: String,
+    #[serde(default)]
+    pub muted: bool,
+    #[serde(default)]
+    pub clips: Vec<AudioClip>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -152,12 +218,15 @@ pub struct Timeline {
     pub frame_delays_ms: Vec<u32>,
     #[serde(default)]
     pub layer_ranges: Vec<LayerTimelineRange>,
+    /// Audio tracks associated with this timeline.
+    #[serde(default)]
+    pub audio_tracks: Vec<AudioTrack>,
 }
 
 impl Timeline {
     pub fn new(duration: usize, fps: f32) -> Self {
         let d = duration.max(1);
-        Timeline { fps: valid_fps(fps), duration: d, current: 0, work_start: 0, work_end: d, mode: TimelineMode::Video, loop_mode: TimelineLoop::Loop, onion_skin: false, frame_states: Vec::new(), property_frames: Vec::new(), frame_delays_ms: vec![0; d.min(1_000_000)], layer_ranges: Vec::new() }
+        Timeline { fps: valid_fps(fps), duration: d, current: 0, work_start: 0, work_end: d, mode: TimelineMode::Video, loop_mode: TimelineLoop::Loop, onion_skin: false, frame_states: Vec::new(), property_frames: Vec::new(), frame_delays_ms: vec![0; d.min(1_000_000)], layer_ranges: Vec::new(), audio_tracks: Vec::new() }
     }
 
     /// Keep every index inside `0..duration` and the work area non-empty.
@@ -180,6 +249,26 @@ impl Timeline {
     /// Playhead time in seconds.
     pub fn time(&self) -> f32 {
         self.current as f32 / self.fps.max(1e-3)
+    }
+
+    /// Start time of a frame in output/document seconds. `frame == duration` is the exclusive
+    /// timeline end; larger values are clamped to it. Invalid stored frame rates use 30 fps.
+    pub fn frame_start_seconds(&self, frame: usize) -> f64 {
+        let frame = frame.min(self.duration);
+        match self.mode {
+            TimelineMode::Video => frame as f64 / f64::from(valid_fps(self.fps)),
+            TimelineMode::FrameAnimation => {
+                let fallback = 1.0 / f64::from(valid_fps(self.fps));
+                self.frame_delays_ms.iter().take(frame).fold(0.0, |total, delay| {
+                    total + if *delay > 0 { f64::from(*delay) / 1000.0 } else { fallback }
+                }) + frame.saturating_sub(self.frame_delays_ms.len()) as f64 * fallback
+            }
+        }
+    }
+
+    /// Total output/document duration in seconds.
+    pub fn duration_seconds(&self) -> f64 {
+        self.frame_start_seconds(self.duration)
     }
 }
 

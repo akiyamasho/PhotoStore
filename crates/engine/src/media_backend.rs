@@ -91,9 +91,19 @@ pub struct AudioMixClip {
     pub fade_in_seconds: f64,
     pub fade_out_seconds: f64,
     pub mute: bool,
+    /// Playback rate (0.01..=100). The source trim is in source seconds.
+    pub speed: f64,
+    /// Seconds skipped from the original output envelope by the export window.
+    pub offset_seconds: f64,
+    /// Amount of the clip envelope to render in this range.
+    pub limit_seconds: Option<f64>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioInfo { pub duration_seconds: f64, pub channels: u32, pub sample_rate: u32 }
+
 pub fn supported_video_extensions() -> &'static [&'static str] { &["mp4", "mov", "webm", "avi", "mkv", "m4v", "mpg", "mpeg"] }
+pub fn supported_audio_extensions() -> &'static [&'static str] { &["wav", "aif", "aiff", "mp3", "m4a", "aac", "flac", "ogg", "opus"] }
 
 pub fn software_availability() -> (bool, bool) {
     (resolve_binary("PHOTOSTORE_FFMPEG", "ffmpeg").is_some(), resolve_binary("PHOTOSTORE_FFPROBE", "ffprobe").is_some())
@@ -104,6 +114,16 @@ fn resolve_binary(variable: &str, default: &str) -> Option<PathBuf> {
     if let Some(found) = env::var_os("PATH").and_then(|paths| env::split_paths(&paths).map(|p| p.join(default)).find(|p| p.is_file())) { return Some(found); }
     [format!("/opt/homebrew/opt/ffmpeg-full/bin/{default}"), format!("/usr/local/opt/ffmpeg-full/bin/{default}"), format!("/opt/homebrew/bin/{default}"), format!("/usr/local/bin/{default}")]
         .into_iter().map(PathBuf::from).find(|p| p.is_file())
+}
+
+fn resolve_ffplay() -> Option<PathBuf> {
+    if let Ok(path) = env::var("PHOTOSTORE_FFPLAY") {
+        if !path.is_empty() && Path::new(&path).is_file() { return Some(PathBuf::from(path)); }
+    }
+    resolve_binary("PHOTOSTORE_FFPLAY", "ffplay").or_else(|| {
+        ["/opt/homebrew/opt/ffmpeg-full/bin/ffplay", "/usr/local/opt/ffmpeg-full/bin/ffplay"]
+            .into_iter().map(PathBuf::from).find(|path| path.is_file())
+    })
 }
 
 fn local_file(path: &Path) -> Result<PathBuf> {
@@ -168,6 +188,223 @@ pub fn probe(path: impl AsRef<Path>) -> Result<MediaInfo> {
     let frame_count = video.get("nb_frames").and_then(Value::as_str).and_then(|s| s.parse().ok());
     let codec_name = video.get("codec_name").and_then(Value::as_str).map(str::to_owned);
     Ok(MediaInfo { width, height, fps, duration_seconds: duration, frame_count, has_audio: streams.iter().any(|s| s.get("codec_type").and_then(Value::as_str) == Some("audio")), codec_name })
+}
+
+/// Probe an audio stream without requiring a video stream.
+pub fn probe_audio(path: impl AsRef<Path>) -> Result<AudioInfo> {
+    let path = local_file(path.as_ref())?;
+    let exe = resolve_binary("PHOTOSTORE_FFPROBE", "ffprobe").ok_or(MediaBackendError::Unsupported)?;
+    let mut child = Command::new(exe).args(["-v","error","-protocol_whitelist","file,pipe","-select_streams","a:0","-show_entries","stream=channels,sample_rate,duration:format=duration","-of","json"]).arg(&path).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let err_rx = stderr_drain(&mut child);
+    let stdout = match child.stdout.take().map(|s| bounded_reader(s, MAX_OUTPUT)).transpose() {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => Vec::new(),
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = err_rx.recv();
+            return Err(error.into());
+        }
+    };
+    if stdout.len() >= MAX_OUTPUT {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = err_rx.recv();
+        return Err(MediaBackendError::Metadata("ffprobe JSON exceeded bounded output limit".into()));
+    }
+    let status = match child.wait() {
+        Ok(status) => status,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = err_rx.recv();
+            return Err(error.into());
+        }
+    };
+    let stderr = err_rx.recv().unwrap_or_default();
+    if !status.success() { return Err(command_error(status, &stderr, "ffprobe")); }
+    let root: Value = serde_json::from_slice(&stdout).map_err(|e| MediaBackendError::Metadata(e.to_string()))?;
+    let st = root.get("streams").and_then(Value::as_array).and_then(|a| a.first()).ok_or_else(|| MediaBackendError::Metadata("no audio stream".into()))?;
+    let duration = st.get("duration").and_then(Value::as_str).and_then(|x| x.parse::<f64>().ok())
+        .or_else(|| root.get("format").and_then(|x| x.get("duration")).and_then(Value::as_str).and_then(|x| x.parse::<f64>().ok()))
+        .unwrap_or(0.0);
+    let channels = st.get("channels").and_then(Value::as_u64).and_then(|x| u32::try_from(x).ok())
+        .filter(|x| *x > 0).ok_or_else(|| MediaBackendError::Metadata("invalid channel count".into()))?;
+    let sample_rate = st.get("sample_rate").and_then(Value::as_str).and_then(|x| x.parse::<u32>().ok())
+        .filter(|x| *x > 0).ok_or_else(|| MediaBackendError::Metadata("invalid sample rate".into()))?;
+    if !duration.is_finite() || duration <= 0.0 { return Err(MediaBackendError::Metadata("invalid audio duration".into())); }
+    Ok(AudioInfo { duration_seconds: duration, channels, sample_rate })
+}
+
+/// A streaming preview: one ffmpeg mixer feeds one ffplay process through a pipe.
+pub struct AudioPreview { mixer: Child, player: Child, mixer_err: mpsc::Receiver<Vec<u8>>, player_err: mpsc::Receiver<Vec<u8>>, done: bool }
+impl AudioPreview {
+    pub fn start(clips: &[AudioMixClip], duration_seconds: f64) -> Result<Self> {
+        if !duration_seconds.is_finite() || duration_seconds <= 0.0 { return Err(MediaBackendError::InvalidInput("preview duration must be positive".into())); }
+        if clips.is_empty() { return Err(MediaBackendError::InvalidInput("no audio clips to preview".into())); }
+        validate_audio_clips(clips)?;
+        let ffmpeg = resolve_binary("PHOTOSTORE_FFMPEG", "ffmpeg").ok_or(MediaBackendError::Unsupported)?;
+        let ffplay = resolve_ffplay().ok_or_else(|| MediaBackendError::Process("ffplay is unavailable; install ffplay or set PHOTOSTORE_FFPLAY".into()))?;
+        let mut mix = Command::new(ffmpeg);
+        mix.args(["-v", "error", "-threads", "1", "-filter_threads", "1", "-filter_complex_threads", "1", "-protocol_whitelist", "file,pipe"]);
+        for clip in clips {
+            mix.args(["-threads", "1", "-ss"]).arg(format_seconds(clip.trim_in_seconds));
+            if let Some(duration) = clip.duration_seconds { mix.arg("-t").arg(format_seconds(duration * clip.speed)); }
+            mix.arg("-i").arg(local_file(&clip.input_path)?);
+        }
+        let filter = audio_filter(clips, 0, duration_seconds, "out")?;
+        mix.args(["-filter_complex", &filter, "-map", "[out]", "-threads:a", "1", "-f", "wav", "-ac", "2", "-ar", "48000", "pipe:1"])
+            .stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut mixer = mix.spawn()?;
+        let mixer_err = stderr_drain(&mut mixer);
+        let stdout = match mixer.stdout.take() {
+            Some(stdout) => stdout,
+            None => {
+                let _ = mixer.kill();
+                let _ = mixer.wait();
+                let _ = mixer_err.recv();
+                return Err(MediaBackendError::Process("ffmpeg mixer stdout unavailable".into()));
+            }
+        };
+        let mut player_command = Command::new(ffplay);
+        player_command.args(["-nodisp", "-autoexit", "-v", "error", "-threads", "1", "-f", "wav", "-i", "pipe:0"])
+            .stdin(Stdio::from(stdout)).stdout(Stdio::null()).stderr(Stdio::piped());
+        let player = match player_command.spawn() {
+            Ok(player) => player,
+            Err(error) => {
+                let _ = mixer.kill();
+                let _ = mixer.wait();
+                let _ = mixer_err.recv();
+                return Err(error.into());
+            }
+        };
+        let mut player = player;
+        let player_err = stderr_drain(&mut player);
+        Ok(Self { mixer, player, mixer_err, player_err, done: false })
+    }
+    pub fn poll(&mut self) -> Result<bool> {
+        if self.done { return Ok(false); }
+        let mixer_status = match self.mixer.try_wait() {
+            Ok(status) => status,
+            Err(error) => {
+                self.stop();
+                return Err(MediaBackendError::Io(error));
+            }
+        };
+        if let Some(status) = mixer_status {
+            if !status.success() {
+                let diagnostic = diagnostic_try_recv(&self.mixer_err);
+                self.stop();
+                return Err(MediaBackendError::Process(format!("ffmpeg mixer failed: {diagnostic}")));
+            }
+        }
+        let player_status = match self.player.try_wait() {
+            Ok(status) => status,
+            Err(error) => {
+                self.stop();
+                return Err(MediaBackendError::Io(error));
+            }
+        };
+        if let Some(status) = player_status {
+            self.done = true;
+            let _ = self.mixer.kill();
+            let _ = self.mixer.wait();
+            if !status.success() {
+                return Err(MediaBackendError::Process(format!("ffplay failed: {}", diagnostic_try_recv(&self.player_err))));
+            }
+            return Ok(false);
+        }
+        Ok(true)
+    }
+    pub fn stop(&mut self) {
+        let _ = self.mixer.kill();
+        let _ = self.player.kill();
+        let _ = self.mixer.wait();
+        let _ = self.player.wait();
+        self.done = true;
+        let _ = self.mixer_err.try_recv();
+        let _ = self.player_err.try_recv();
+    }
+}
+impl Drop for AudioPreview { fn drop(&mut self) { self.stop(); } }
+
+fn diagnostic_try_recv(rx: &mpsc::Receiver<Vec<u8>>) -> String {
+    match rx.try_recv() {
+        Ok(bytes) if !bytes.is_empty() => String::from_utf8_lossy(&bytes).trim().to_string(),
+        _ => "no diagnostics".into(),
+    }
+}
+
+fn atempo_chain(speed: f64) -> Result<String> {
+    if !speed.is_finite() || !(0.01..=100.0).contains(&speed) { return Err(MediaBackendError::InvalidInput("audio speed must be 0.01..=100".into())); }
+    let mut value = speed;
+    let mut chain = String::new();
+    while value > 2.0 { chain.push_str(",atempo=2.0"); value /= 2.0; }
+    while value < 0.5 { chain.push_str(",atempo=0.5"); value *= 2.0; }
+    chain.push_str(&format!(",atempo={value:.9}"));
+    Ok(chain)
+}
+
+fn format_seconds(value: f64) -> String { format!("{value:.9}") }
+
+fn validate_audio_clips(clips: &[AudioMixClip]) -> Result<()> {
+    if clips.len() > 128 { return Err(MediaBackendError::InvalidInput("audio clip count exceeds 128".into())); }
+    for clip in clips {
+        let values = [clip.start_seconds, clip.trim_in_seconds, clip.volume, clip.fade_in_seconds, clip.fade_out_seconds, clip.speed, clip.offset_seconds];
+        if values.iter().any(|value| !value.is_finite() || *value < 0.0) {
+            return Err(MediaBackendError::InvalidInput("audio timing, volume, and fades must be finite and non-negative".into()));
+        }
+        if clip.speed < 0.01 || clip.speed > 100.0 { return Err(MediaBackendError::InvalidInput("audio speed must be 0.01..=100".into())); }
+        if clip.duration_seconds.is_some_and(|value| !value.is_finite() || value <= 0.0) {
+            return Err(MediaBackendError::InvalidInput("audio duration must be finite and positive".into()));
+        }
+        if clip.limit_seconds.is_some_and(|value| !value.is_finite() || value <= 0.0) {
+            return Err(MediaBackendError::InvalidInput("audio limit must be finite and positive".into()));
+        }
+        if clip.volume > 4.0 { return Err(MediaBackendError::InvalidInput("audio volume cannot exceed 4".into())); }
+        if let Some(duration) = clip.duration_seconds {
+            if clip.fade_in_seconds > duration || clip.fade_out_seconds > duration {
+                return Err(MediaBackendError::InvalidInput("audio fades cannot exceed clip duration".into()));
+            }
+            if clip.offset_seconds > duration || clip.limit_seconds.is_some_and(|limit| clip.offset_seconds + limit > duration) {
+                return Err(MediaBackendError::InvalidInput("audio offset and limit exceed clip duration".into()));
+            }
+            if !(duration * clip.speed).is_finite() {
+                return Err(MediaBackendError::InvalidInput("audio source duration is invalid or unbounded".into()));
+            }
+        } else {
+            return Err(MediaBackendError::InvalidInput("audio source duration is required to bound decoding".into()));
+        }
+    }
+    Ok(())
+}
+
+fn audio_filter(clips: &[AudioMixClip], input_offset: usize, output_duration: f64, output_label: &str) -> Result<String> {
+    validate_audio_clips(clips)?;
+    if !output_duration.is_finite() || output_duration <= 0.0 { return Err(MediaBackendError::InvalidInput("audio output duration must be positive".into())); }
+    let mut labels = Vec::with_capacity(clips.len());
+    let mut filter = String::new();
+    for (index, clip) in clips.iter().enumerate() {
+        let label = format!("audio{index}");
+        let mut chain = format!("[{}:a]aresample=48000,asetpts=PTS-STARTPTS{}", index + input_offset, atempo_chain(clip.speed)?);
+        if let Some(duration) = clip.duration_seconds { chain.push_str(&format!(",atrim=duration={}", format_seconds(duration))); }
+        if clip.fade_in_seconds > 0.0 { chain.push_str(&format!(",afade=t=in:st=0:d={}", format_seconds(clip.fade_in_seconds))); }
+        if let Some(duration) = clip.duration_seconds {
+            if clip.fade_out_seconds > 0.0 {
+                let start = (duration - clip.fade_out_seconds).max(0.0);
+                chain.push_str(&format!(",afade=t=out:st={}:d={}", format_seconds(start), format_seconds(clip.fade_out_seconds)));
+            }
+        }
+        chain.push_str(&format!(",atrim=start={}", format_seconds(clip.offset_seconds)));
+        if let Some(limit) = clip.limit_seconds { chain.push_str(&format!(":duration={}", format_seconds(limit))); }
+        chain.push_str(",asetpts=PTS-STARTPTS");
+        chain.push_str(&format!(",volume={}", format_seconds(if clip.mute { 0.0 } else { clip.volume })));
+        chain.push_str(&format!(",adelay={}:all=1,apad[{}];", (clip.start_seconds * 1000.0).round(), label));
+        filter.push_str(&chain);
+        labels.push(format!("[{label}]"));
+    }
+    filter.push_str(&format!("{}amix=inputs={}:duration=longest:dropout_transition=0:normalize=0,aresample=48000,aformat=channel_layouts=stereo,atrim=duration={},asetpts=PTS-STARTPTS[{}]", labels.concat(), labels.len(), format_seconds(output_duration), output_label));
+    Ok(filter)
 }
 
 fn decoder_codec(info: &MediaInfo) -> Option<&'static str> { match info.codec_name.as_deref() { Some("vp9") => Some("libvpx-vp9"), Some("vp8") => Some("libvpx"), _ => None } }
@@ -249,14 +486,12 @@ where F: FnMut(u64) -> Result<Rgba8Image> {
     if cfg.width == 0 || cfg.height == 0 || cfg.width > MAX_DIMENSION || cfg.height > MAX_DIMENSION || !cfg.fps.valid() { return Err(MediaBackendError::InvalidInput("invalid output dimensions or frame rate".into())); }
     let output = output.as_ref(); let parent = output.parent().unwrap_or_else(|| Path::new(".")); fs::create_dir_all(parent)?; let stem = output.file_name().and_then(|x| x.to_str()).unwrap_or("movie"); let mut tmp = parent.join(format!(".{stem}.photostore-{}.tmp", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos())); let mut marker = None; for n in 0..100u32 { match fs::OpenOptions::new().write(true).create_new(true).open(&tmp) { Ok(file) => { marker = Some(file); break; }, Err(e) if e.kind() == io::ErrorKind::AlreadyExists => { tmp = parent.join(format!(".{stem}.photostore-{}-{n}.tmp", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos())); }, Err(e) => return Err(e.into()) } } let Some(marker) = marker else { return Err(MediaBackendError::Process("could not create unique temporary output".into())); }; drop(marker); let mut temp_guard = TempGuard::new(tmp.clone());
     if !cfg.overwrite && output.exists() { return Err(MediaBackendError::InvalidInput(format!("output already exists: {}", output.display()))); }
-    for clip in audio {
-        let values = [clip.start_seconds, clip.trim_in_seconds, clip.volume, clip.fade_in_seconds, clip.fade_out_seconds];
-        if values.iter().any(|v| !v.is_finite() || *v < 0.0) || clip.duration_seconds.is_some_and(|v| !v.is_finite() || v <= 0.0) { let _ = fs::remove_file(&tmp); return Err(MediaBackendError::InvalidInput("audio timing, volume, and fades must be finite and non-negative".into())); }
-    }
+    validate_audio_clips(audio)?;
     let exe = match resolve_binary("PHOTOSTORE_FFMPEG", "ffmpeg") { Some(p) => p, None => { let _ = fs::remove_file(&tmp); return Err(MediaBackendError::Unsupported); } };
     let mut cmd = Command::new(exe); cmd.args(["-v", "error", "-threads", "1", "-filter_threads", "1", "-protocol_whitelist", "file,pipe", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", &format!("{}x{}", cfg.width, cfg.height), "-r", &format!("{}/{}", cfg.fps.num, cfg.fps.den), "-i", "pipe:0"]);
-    for clip in audio { let p = match local_file(&clip.input_path) { Ok(p) => p, Err(e) => { let _ = fs::remove_file(&tmp); return Err(e); } }; cmd.arg("-ss").arg(clip.trim_in_seconds.max(0.0).to_string()).arg("-i").arg(p); }
-    cmd.args(["-map", "0:v:0"]); append_audio_args(&mut cmd, audio);
+    let output_duration = cfg.duration_frames.unwrap_or(0) as f64 * cfg.fps.den as f64 / cfg.fps.num as f64;
+    append_audio_args(&mut cmd, audio, output_duration)?;
+    cmd.args(["-map", "0:v:0"]);
     match cfg.format { VideoFormat::Mp4H264 => { cmd.args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"]); }, VideoFormat::MovProResAlpha => { cmd.args(["-c:v", "prores_ks", "-profile:v", "4", "-pix_fmt", "yuva444p10le", "-c:a", "aac"]); }, VideoFormat::WebmVp9Alpha => { cmd.args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0", "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-auto-alt-ref", "0", "-c:a", "libopus"]); } }
     if cfg.duration_frames.is_none() { let _ = fs::remove_file(&tmp); return Err(MediaBackendError::InvalidInput("duration_frames must be finite and positive".into())); }
     if cfg.duration_frames == Some(0) { let _ = fs::remove_file(&tmp); return Err(MediaBackendError::InvalidInput("duration_frames must be positive".into())); }
@@ -286,7 +521,17 @@ where F: FnMut(u64) -> Result<Rgba8Image> {
     let stderr = err_rx.recv().unwrap_or_default();
     if let Err(e) = write_result { let _ = fs::remove_file(&tmp); return Err(e); }
     if !status.success() { let _ = fs::remove_file(&tmp); return Err(command_error(status, &stderr, "ffmpeg")); }
-    if let Err(e) = fs::rename(&tmp, output) { return Err(e.into()); }
+    if cfg.overwrite {
+        fs::rename(&tmp, output)?;
+    } else {
+        match fs::hard_link(&tmp, output) {
+            Ok(()) => fs::remove_file(&tmp)?,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                return Err(MediaBackendError::InvalidInput(format!("output appeared during export: {}", output.display())));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
     temp_guard.disarm();
     Ok(())
 }
@@ -404,24 +649,17 @@ where F: FnMut(u64) -> Result<Rgba8Image> {
     Ok(())
 }
 
-fn append_audio_args(cmd: &mut Command, clips: &[AudioMixClip]) {
-    if clips.is_empty() { cmd.arg("-an"); return; }
-    let mut labels = Vec::new(); let mut filter = String::new();
-    for (i, c) in clips.iter().enumerate() {
-        let label = format!("a{i}");
-        let mut chain = format!("[{}:a]aresample=async=1", i + 1);
-        if let Some(d) = c.duration_seconds {
-            chain.push_str(&format!(",atrim=duration={d}"));
-        }
-        chain.push_str(",asetpts=PTS-STARTPTS");
-        if c.mute { chain.push_str(",volume=0"); } else { chain.push_str(&format!(",volume={}", c.volume.max(0.0))); }
-        if c.fade_in_seconds > 0.0 { chain.push_str(&format!(",afade=t=in:st=0:d={}", c.fade_in_seconds)); }
-        if let Some(d) = c.duration_seconds { if c.fade_out_seconds > 0.0 { chain.push_str(&format!(",afade=t=out:st={}:d={}", (d - c.fade_out_seconds).max(0.0), c.fade_out_seconds)); } }
-        if c.start_seconds > 0.0 { chain.push_str(&format!(",adelay={}:all=1", (c.start_seconds * 1000.0).round())); }
-        chain.push_str(",apad");
-        chain.push_str(&format!("[{label}];"));
-        filter.push_str(&chain);
-        labels.push(format!("[{label}]"));
+fn append_audio_args(cmd: &mut Command, clips: &[AudioMixClip], output_duration: f64) -> Result<()> {
+    if clips.is_empty() { cmd.arg("-an"); return Ok(()); }
+    for clip in clips {
+        let duration = clip.duration_seconds.map(|value| value * clip.speed);
+        if let Some(duration) = duration { if !duration.is_finite() || duration <= 0.0 { return Err(MediaBackendError::InvalidInput("audio source duration overflow".into())); } }
+        let path = local_file(&clip.input_path)?;
+        cmd.args(["-threads", "1", "-ss"]).arg(format_seconds(clip.trim_in_seconds));
+        if let Some(duration) = duration { cmd.arg("-t").arg(format_seconds(duration)); }
+        cmd.arg("-i").arg(path);
     }
-    filter.push_str(&format!("{}amix=inputs={}:duration=longest:dropout_transition=0[outa]", labels.concat(), labels.len())); cmd.args(["-filter_complex", &filter, "-map", "[outa]"]);
+    let filter = audio_filter(clips, 1, output_duration, "outa")?;
+    cmd.args(["-filter_complex", &filter, "-map", "[outa]"]);
+    Ok(())
 }

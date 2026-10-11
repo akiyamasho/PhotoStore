@@ -11,7 +11,7 @@ Updated 2026-10-11. This is an operational ledger for the independent PhotoStore
 - Icon direction: PhotoStore icon with the requested twist; keep the asset provenance row with the icon work.
 - README/AGENTS direction: keep badges, install, run, and contributor guidance lean and operational.
 - Branding release completed: tag `photostore-branding-2026-10-11` points to `e3703d4be2ceba37e04b81b2761f7b3acc27235b`; the [PhotoStore 0.6.1 release](https://github.com/akiyamasho/PhotoStore/releases/tag/photostore-branding-2026-10-11) contains the Apple Silicon DMG, CLI ZIP, and `SHA256SUMS`.
-- Audio work in progress remains saved locally on `codex/animation-audio-backfill-wip` at `287f7c94c065d37d3bdc177c3e44f28719490e84`; it was not included in this release. Restore and rebase it onto the renamed identifiers before finishing shared-audio preview/export, clip retiming, the real UI clock, and compilation.
+- Audio/video work in progress remains saved locally on `codex/animation-audio-backfill-wip` at `287f7c94c065d37d3bdc177c3e44f28719490e84`; the integrated audio/clip milestone is documented in [audio-timeline.md](audio-timeline.md). It is compiler-verified but not packaged or installed.
 - Photoshop-facing scope: timeline/frame animation and Smart Objects are first product priorities, while the inherited feature surface remains evidence to audit rather than a completeness claim.
 
 ## Evidence rules
@@ -73,9 +73,9 @@ The prior 0.6.1 process (PID 57432) remained alive with its artwork untouched af
 
 ### Unverified or incomplete
 
-- Audio backend descriptors are detected, but persisted audio tracks, playback, and mix behavior are not implemented or accepted yet.
+- Persisted audio tracks/clips, linked movie audio, editing commands, shared FFmpeg preview/export, and streamed playback are present in source. The locked offline native app/CLI HEIF compiler check passed in 7.88 seconds; its log is `/private/tmp/photostore-audio-clip-check-20261011-rerun2.log`. Full UI/audio acceptance remains unverified.
 - Transitions are not implemented or accepted.
-- Stopwatches, transform tracks, clip groups, split, speed, and slip workflows are still pending.
+- Stopwatches, transform tracks, clip groups, transitions, reload-footage behavior, arbitrary split-segment replacement envelopes, and full Photoshop timeline/group/filter-mask scope remain pending.
 - Complex tween interpolation is configurable and carries position/opacity/effects properties, but required acceptance evidence is pending.
 - Rational source rate is probed by the media backend but stored as `f32` in the existing document model (`crates/doc/src/video.rs`).
 - Eager decoded movie surfaces are capped at 512 MiB; the native import range is currently command parameters rather than a dedicated picker form.
@@ -87,7 +87,7 @@ The prior 0.6.1 process (PID 57432) remained alive with its artwork untouched af
 ### Exact next steps
 
 1. Complete acceptance of the native media boundary: verify decode ownership, cancellation, tiny MP4/MOV/WebM cases, range selection, fractional-FPS timestamps, and UI failure behavior. Record supported containers/codecs before calling import/export supported.
-2. Finish timeline semantics: audio tracks and mix, clip groups/split/speed/slip, transitions, loop counts, onion skins, work-area rendering, and long-video memory behavior.
+2. Continue the integrated audio/clip milestone: finish body/trim commit controls, reload-footage and split-segment replacement behavior, then address exact audio latency and shared-clock acceptance; continue clip groups, transitions, loop counts, onion skins, work-area rendering, and long-video memory behavior.
 3. Add deterministic timing fixtures covering mismatched FPS, explicit frame delays, seek/playback boundaries, nested animated Smart Objects, and frame-animation export.
 4. Add interaction acceptance for the Photoshop Video Timeline and Frame Animation panels after the engine contracts are stable.
 5. Keep the alternate `.kys` mapping optional. If supplied at `/Users/computer/Desktop/dev/tools/Animation/photoshop_keys.kys`, use the primary/alternate API with stable Japanese IDs and preserve PhotoStore defaults for unmapped shortcuts.

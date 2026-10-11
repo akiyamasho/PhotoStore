@@ -219,6 +219,8 @@ pub fn authorize_engine_command(id: &str, params: &Value) -> Result<(), Automati
                 | "layer.videoLayers.newVideoLayerFromFile"
                 | "layer.videoLayers.replaceFootage"
                 | "layer.videoLayers.reloadFrame"
+                | "timeline.addAudioClip"
+                | "timeline.relinkAudioClip"
                 | "recording.export"
                 | "recording.privateFile"
                 | "recording.privatePhoto"

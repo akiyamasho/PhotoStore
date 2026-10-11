@@ -15,7 +15,7 @@ This is the working roadmap for the independent PhotoStore product. It records t
 
 ## Priorities
 
-1. Extend animation with audio, transitions, complex tween interpolation, and robust video import/export boundaries. The unfinished audio backfill remains on `codex/animation-audio-backfill-wip` at `287f7c94c065d37d3bdc177c3e44f28719490e84`.
+1. Continue the integrated audio/clip milestone described in [audio-timeline.md](audio-timeline.md): finish body/trim commit controls, reload-footage and split-segment replacement behavior, and exact audio latency/shared-clock acceptance. The work remains on `codex/animation-audio-backfill-wip` at `287f7c94c065d37d3bdc177c3e44f28719490e84`; compiler verification passed, but packaging and local install are pending.
 2. Deepen Smart Objects with contents editing, shared contents identity, smart-filter editing, linked-source workflows, and faithful PSD acceptance.
 3. Improve brush behavior and interaction: pressure/tilt/rotation dynamics, smoothing, presets, tablet edge cases, deterministic replay, and responsive large-document painting.
 4. Harden PSD and command coverage around the workflows PhotoStore promises. Add focused fixtures and measurements when a feature is implemented; avoid claiming parity before it is measured.
@@ -46,6 +46,9 @@ The action-recording release is complete: `photostore-action-recording-2026-10-1
 and PhotoStore 0.7.0 is installed locally. Broad native visual QA and UI parity remain unverified.
 The old-workspace native-save issue remains a secondary reliability gap; the old process and artwork
 were preserved, but the attempted recovery target did not appear.
+
+The audio/clip source milestone is not yet compiled, published, or installed. Its remaining
+integration status is tracked in [audio-timeline.md](audio-timeline.md); no acceptance claim is made.
 
 ## CI and release follow-up
 
