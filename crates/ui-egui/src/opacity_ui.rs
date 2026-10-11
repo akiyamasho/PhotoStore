@@ -59,7 +59,7 @@ pub(crate) fn row(
     }
     let mut draft = state.drafts.get(&key).cloned().unwrap_or_else(|| format!("{:.1}", value.clamp(0.0, 1.0) * 100.0));
     let mut action = None;
-    ui.group(|ui| {
+    ui.push_id(("opacity-row", doc.id.0, layer.id.0), |ui| ui.group(|ui| {
         ui.horizontal(|ui| {
             ui.label("□");
             ui.label(RichText::new(&layer.name).strong());
@@ -154,7 +154,7 @@ pub(crate) fn row(
                 }));
             });
         }
-    });
+    }));
     state.drafts.insert(key, draft);
     action
 }

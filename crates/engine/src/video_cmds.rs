@@ -477,6 +477,9 @@ pub fn keyframe_target_enabled(s: &Session, id: &str, p: &Value) -> Option<std::
         };
         let layer = st.doc.layer(layer_id).ok_or_else(|| "target layer does not exist".to_string())?;
         if layer.video.is_none() { return Err("target layer is not a video layer".into()); }
+        if p.get("opacity").is_some() && layer.opacity_animation.is_some() {
+            return Err("video opacity is owned by an opacity stopwatch; use timeline.setOpacityKeyframe or layer.setProps".into());
+        }
         let locks = st.doc.effective_locks(layer_id);
         if locks.all || locks.position { return Err("target video layer is locked".into()); }
         let frame = match p.get("frame") {
@@ -595,6 +598,10 @@ fn keyframe(s: &mut Session, p: &Value, remove: bool) -> Result<Value> {
         (frame, id, st.doc.id)
     };
     let sampled = s.active().and_then(|st| st.doc.layer(layer_id)).and_then(|l| l.video.as_ref()).map(|v| sample_keyframe_transform(v, frame)).unwrap_or((0.0, 0.0, 1.0));
+    if p.get("opacity").is_some() && s.active().and_then(|st| st.doc.layer(layer_id)).is_some_and(|l| l.opacity_animation.is_some()) {
+        return Err(EngineError::BadParams { cmd: cmd.into(), msg: "video opacity is owned by an opacity stopwatch; use timeline.setOpacityKeyframe or layer.setProps".into() });
+    }
+    let existing_opacity = s.active().and_then(|st| st.doc.layer(layer_id)).and_then(|l| l.video.as_ref()).and_then(|v| v.keyframes.iter().find(|key| key.frame == frame)).map(|key| key.opacity);
     let parse_finite = |name: &str, max: f64, default: f32| -> Result<f32> {
         match p.get(name) {
             None => Ok(default),
@@ -608,7 +615,7 @@ fn keyframe(s: &mut Session, p: &Value, remove: bool) -> Result<Value> {
         1.0
     } else {
         match p.get("opacity") {
-            None => sampled.2,
+            None => existing_opacity.unwrap_or(sampled.2),
             Some(v) => v.as_f64().filter(|v| v.is_finite() && (0.0..=1.0).contains(v)).map(|v| v as f32)
                 .ok_or_else(|| EngineError::BadParams { cmd: cmd.into(), msg: "`opacity` must be finite and within 0..=1".into() })?,
         }

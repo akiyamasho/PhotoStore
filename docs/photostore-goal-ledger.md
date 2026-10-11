@@ -304,6 +304,32 @@ values and native ZIP keys, real close/reopen preservation, and disable clearing
 was produced because the focus=false attempt timed out; visual interaction acceptance remains
 unverified.
 
+## Current 0.16.0 independent video-opacity pass
+
+Version 0.16.0 is prepared as development scaffolding on isolated branch `codex/video-opacity`.
+The engine and timeline UI source work is implemented. The combined compiler passed in 45.07 seconds
+with exit 0; log `/private/tmp/photostore-video-opacity-check-20261011.log` records 7 engine
+warnings and 1 existing UI warning with no errors. This completes the compiler step (milestone 2/3,
+67%); development delivery is at step 1/4 (25%), with package, install, runtime receipt, and source
+commit still pending. No source SHA, screenshot, release, publication, promotion, or production
+install is claimed.
+
+The pass adds an independent owned video-opacity track while preserving the coupled legacy XY/opacity
+behavior untouched; the ignored-alpha editor is hidden whenever an owned track exists.
+First enable preserves the legacy opacity curve and dense opacity snapshots. Sparse unique legacy
+curves migrate to Linear interpolation; duplicate or dense curves use bounded exact integer-frame
+Hold migration, including finite out-of-unit legacy alpha values, retaining raw interpolation before
+integer clamping. After the dense extent, migration restores the legacy/static value at frame extent
+when the extent is at most 999,999. Sparse unique unit keys preserve future keys. Invalid or
+non-finite input and limits above 1,000,000 frames, 100,000 owned keys, or 256 tracks fail atomically. The UI renders
+the video opacity row and retains the legacy position-only editor when any owned track exists;
+editable default-unassigned shortcuts remain available.
+
+Candidate development identity: `PhotoStore-dev-video-opacity`, bundle ID
+`ai.photostore.app.dev.video-opacity`; production remains untouched. Full Photoshop Smart Object/
+PSD parity, audio behavior, and visual interaction acceptance remain unverified. Screenshot evidence
+is required before any published release; the hidden 0.15.0 screenshot attempt produced no image.
+
 ## Animation and timeline
 
 ### Implemented milestone

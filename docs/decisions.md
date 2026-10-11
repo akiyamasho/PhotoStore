@@ -115,3 +115,18 @@ remain pending for the bounded preferences retry and report that preferences the
 the last successful `(path, encoded shortcuts)` snapshot is retained to avoid rewriting it for
 unrelated preference changes. Existing preference files remain compatible because the field is
 optional, and web shells leave the control unavailable when native persistence is unsupported.
+
+## 2026-10-11: 0.16.0 independent video-opacity migration
+
+Independent video opacity reuses existing owned tracks and leaves coupled video XY/opacity behavior
+unchanged. The first enable preserves the legacy opacity curve and dense snapshots. Sparse legacy
+curves with unique keys migrate to Linear interpolation; duplicate or dense legacy curves migrate to
+bounded exact integer-frame Hold keys, including finite out-of-unit legacy alpha values, by retaining
+raw interpolation before integer clamping. Migration is atomic and bounded at 1,000,000 frames,
+100,000 owned keys, and 256 tracks, with non-finite or invalid input rejected. Sparse unique unit
+keys retain future keys through Linear migration. After the dense extent, migration restores the
+legacy/static value at frame extent when the extent is at most 999,999. The engine/UI implementation
+is complete for this source pass. The combined compiler passed in 45.07 seconds with exit 0; log
+`/private/tmp/photostore-video-opacity-check-20261011.log` records 7 engine warnings and 1 existing
+UI warning with no errors. Package, install, runtime, screenshot, and release evidence remain
+pending.

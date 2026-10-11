@@ -1,4 +1,4 @@
-//! Timeline opacity stopwatches for ordinary (non-video) layers.
+//! Timeline opacity stopwatches for ordinary and video layers.
 //!
 //! Opacity animation is document data and therefore all changes go through `Session::edit`.
 //! The command layer intentionally keeps key updates local and copy-on-write: dormant tracks
@@ -44,7 +44,6 @@ fn context(s: &Session, p: &Value, cmd: &str, allowed: &[&str]) -> Result<(DocId
         Some(v) => LayerId(v.as_u64().ok_or_else(|| bad(cmd, "`layer` must be a layer id"))?),
     };
     let layer = st.doc.layer(layer_id).ok_or(EngineError::NoLayer(layer_id))?;
-    if layer.video.is_some() { return Err(bad(cmd, "opacity stopwatches apply only to ordinary non-video layers")); }
     let locks = st.doc.effective_locks(layer_id);
     if locks.all || crate::extra_cmds::is_background(layer) { return Err(bad(cmd, "the layer is locked")); }
     let frame = match obj.get("frame") {
@@ -61,7 +60,6 @@ fn enabled(s: &Session) -> std::result::Result<(), String> {
     if st.doc.timeline.as_ref().is_none_or(|t| t.mode != photostore_doc::TimelineMode::Video) { return Err("an active video timeline is required".into()); }
     if st.doc.timeline.as_ref().is_some_and(|t| t.current >= t.duration) { return Err("the timeline playhead is outside its duration".into()); }
     let l = st.doc.layer(id).ok_or("no active layer")?;
-    if l.video.is_some() { return Err("opacity stopwatches apply only to ordinary non-video layers".into()); }
     let locks = st.doc.effective_locks(id);
     if locks.all || crate::extra_cmds::is_background(l) { return Err("the layer is locked".into()); }
     Ok(())
@@ -95,6 +93,83 @@ fn total_tracks(doc: &photostore_doc::Document) -> usize {
     doc.walk().iter().filter(|(_, _, l)| l.opacity_animation.is_some()).count()
 }
 
+fn dense_opacity_state<'a>(timeline: &'a photostore_doc::Timeline, layer_id: LayerId, frame: usize) -> Option<&'a photostore_doc::FrameLayerState> {
+    timeline.property_frames.get(frame)?.iter().find(|state| state.layer == layer_id)
+}
+
+fn legacy_video_opacity(points: &[photostore_doc::VideoKeyframe], frame: usize, fallback: f32) -> Result<f32> {
+    if points.is_empty() { return Ok(fallback); }
+    let upper = points.partition_point(|key| key.frame < frame);
+    let value = |value: f32| {
+        value.is_finite().then_some(value.clamp(0.0, 1.0)).ok_or_else(|| bad("timeline.setOpacityAnimation", "legacy video opacity contains a non-finite value"))
+    };
+    if frame <= points[0].frame { return value(points[0].opacity); }
+    if upper < points.len() && points[upper].frame == frame { return value(points[upper].opacity); }
+    if upper >= points.len() { return value(points.last().map_or(fallback, |key| key.opacity)); }
+    let a = &points[upper - 1];
+    let b = &points[upper];
+    let av = a.opacity;
+    let bv = b.opacity;
+    let span = b.frame.saturating_sub(a.frame) as f32;
+    if span <= 0.0 { return Ok(av.clamp(0.0, 1.0)); }
+    let elapsed = frame.saturating_sub(a.frame) as f32;
+    let interpolated = av + (bv - av) * (elapsed / span);
+    if !interpolated.is_finite() { return Err(bad("timeline.setOpacityAnimation", "legacy video opacity interpolation is non-finite")); }
+    Ok(interpolated.clamp(0.0, 1.0))
+}
+
+/// Convert legacy video opacity and dense property snapshots into one owned stopwatch.
+/// Dense or complex legacy tracks use Hold keys only for exact bitwise changes.
+fn migrate_video_opacity(doc: &photostore_doc::Document, layer_id: LayerId, static_value: f32) -> Result<Vec<OpacityKeyframe>> {
+    let layer = doc.layer(layer_id).ok_or(EngineError::NoLayer(layer_id))?;
+    let Some(video) = layer.video.as_ref() else { return Ok(Vec::new()); };
+    let timeline = doc.timeline.as_ref().ok_or_else(|| bad("timeline.setOpacityAnimation", "an active video timeline is required"))?;
+    if video.keyframes.len() > MAX_OPACITY_ANIMATION_KEYS { return Err(bad("timeline.setOpacityAnimation", format!("legacy video opacity track exceeds the {MAX_OPACITY_ANIMATION_KEYS}-key limit"))); }
+    let mut legacy = video.keyframes.clone();
+    if legacy.iter().any(|key| key.frame > MAX_OPACITY_ANIMATION_FRAME) { return Err(bad("timeline.setOpacityAnimation", format!("legacy opacity keyframe frame exceeds {MAX_OPACITY_ANIMATION_FRAME}"))); }
+    if legacy.iter().any(|key| !key.opacity.is_finite()) { return Err(bad("timeline.setOpacityAnimation", "legacy video opacity contains a non-finite value")); }
+    legacy.sort_by_key(|key| key.frame);
+    let has_duplicate = legacy.windows(2).any(|pair| pair[0].frame == pair[1].frame);
+    let has_out_of_range = legacy.iter().any(|key| !(0.0..=1.0).contains(&key.opacity));
+    let dense = timeline.property_frames.iter().any(|row| row.iter().any(|state| state.layer == layer_id));
+    if !has_duplicate && !has_out_of_range && !dense {
+        let mut keys = Vec::with_capacity(legacy.len().max(1));
+        for key in legacy {
+            keys.push(OpacityKeyframe { frame: key.frame, value: key.opacity.clamp(0.0, 1.0), interpolation: OpacityInterpolation::Linear });
+        }
+        return Ok(keys);
+    }
+    let last_legacy = legacy.last().map_or(0, |key| key.frame.saturating_add(1));
+    let extent = timeline.duration.max(timeline.property_frames.len()).max(last_legacy);
+    if extent == 0 || extent > MAX_OPACITY_ANIMATION_FRAME.saturating_add(1) || extent > 1_000_000 {
+        return Err(bad("timeline.setOpacityAnimation", "legacy opacity migration exceeds the one-million-frame limit"));
+    }
+    let mut keys = Vec::new();
+    let mut previous = None;
+    for frame in 0..extent {
+        let value = dense_opacity_state(timeline, layer_id, frame)
+            .map(|state| state.opacity)
+            .map_or_else(|| legacy_video_opacity(&legacy, frame, static_value), Ok)?;
+        if !value.is_finite() { return Err(bad("timeline.setOpacityAnimation", "dense or legacy video opacity contains a non-finite value")); }
+        let value = value.clamp(0.0, 1.0);
+        if previous.is_none_or(|old: f32| old.to_bits() != value.to_bits()) {
+            if keys.len() >= MAX_OPACITY_ANIMATION_KEYS { return Err(bad("timeline.setOpacityAnimation", format!("opacity animation migration exceeds the {MAX_OPACITY_ANIMATION_KEYS}-key limit"))); }
+            keys.push(OpacityKeyframe { frame, value, interpolation: OpacityInterpolation::Hold });
+            previous = Some(value);
+        }
+    }
+    // Dense snapshots are exact-frame overrides. Restore the legacy/static source immediately
+    // after the dense extent so a sparse override cannot mask a later legacy tail forever.
+    if extent <= MAX_OPACITY_ANIMATION_FRAME {
+        let restore = legacy_video_opacity(&legacy, extent, static_value)?;
+        if previous.is_none_or(|old: f32| old.to_bits() != restore.to_bits()) {
+            if keys.len() >= MAX_OPACITY_ANIMATION_KEYS { return Err(bad("timeline.setOpacityAnimation", format!("opacity animation migration exceeds the {MAX_OPACITY_ANIMATION_KEYS}-key limit"))); }
+            keys.push(OpacityKeyframe { frame: extent, value: restore, interpolation: OpacityInterpolation::Hold });
+        }
+    }
+    Ok(keys)
+}
+
 pub(crate) fn target_enabled(s: &Session, id: &str, p: &Value) -> Option<std::result::Result<(), String>> {
     if !matches!(id, "timeline.setOpacityAnimation" | "timeline.toggleOpacityAnimation" | "timeline.setOpacityKeyframe" | "timeline.deleteOpacityKeyframe") { return None; }
     let empty = json!({});
@@ -117,15 +192,23 @@ fn set_enabled(s: &mut Session, p: &Value) -> Result<Value> {
         if enabled && previous.is_none() && total_tracks(doc) >= MAX_OPACITY_ANIMATION_TRACKS {
             return Err(bad("timeline.setOpacityAnimation", format!("opacity animation track limit is {MAX_OPACITY_ANIMATION_TRACKS}")));
         }
-        if enabled && previous.is_none_or(|a| !a.enabled && a.keys.is_empty()) && total_keys(doc) >= MAX_OPACITY_ANIMATION_KEYS {
-            return Err(bad("timeline.setOpacityAnimation", format!("opacity animation key limit is {MAX_OPACITY_ANIMATION_KEYS}")));
-        }
         let current = doc.timeline.as_ref().map_or(0, |t| t.current);
+        let static_value = if layer.opacity.is_finite() { layer.opacity.clamp(0.0, 1.0) } else { return Err(bad("timeline.setOpacityAnimation", "layer opacity must be finite")); };
+        let migrating_video = enabled && previous.is_none() && layer.video.is_some();
+        let migrated_keys = if migrating_video { migrate_video_opacity(doc, layer_id, static_value)? } else { Vec::new() };
+        let new_key_count = if enabled && (previous.is_none() || previous.is_some_and(|a| !a.enabled && a.keys.is_empty())) {
+            migrated_keys.len().max(1)
+        } else { 0 };
+        if enabled && previous.is_none_or(|a| !a.enabled && a.keys.is_empty()) {
+            let total = total_keys(doc);
+            if new_key_count > MAX_OPACITY_ANIMATION_KEYS.saturating_sub(total) {
+                return Err(bad("timeline.setOpacityAnimation", format!("opacity animation migration exceeds the {MAX_OPACITY_ANIMATION_KEYS}-key document limit")));
+            }
+        }
         {
             let l = doc.layer_mut(layer_id).ok_or(EngineError::NoLayer(layer_id))?;
             if enabled {
-                let static_value = l.opacity.clamp(0.0, 1.0);
-                let mut keys = l.opacity_animation.as_ref().map(|a| a.keys.as_ref().clone()).unwrap_or_default();
+                let mut keys = if migrating_video { migrated_keys } else { l.opacity_animation.as_ref().map(|a| a.keys.as_ref().clone()).unwrap_or_default() };
                 if keys.is_empty() { keys.push(OpacityKeyframe { frame: current, value: static_value, interpolation: OpacityInterpolation::Linear }); }
                 l.opacity_animation = Some(OpacityAnimation { enabled: true, static_value, keys: Arc::new(keys) });
             } else {
