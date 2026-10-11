@@ -18,28 +18,55 @@ Input from files, commands, automation, and users is untrusted. Return actionabl
 
 Use `CARGO_BUILD_JOBS=1` for builds and tests. Use the shared Cargo target directory; do not create per-agent 10 GB target directories. Avoid fetching corpora or running heavy builds unless the task requires it. Do not run discretionary QA or validation passes unless the user explicitly opts in.
 
-## Recording and release documentation
+## Recording and release evidence
 
-Recording is off by default. Do not enable capture, tracing, or session recording as a
-side effect of normal startup, development, release, or screenshot work.
+Recording is off by default. Do not enable capture, tracing, or session recording as a side effect
+of normal startup, development, release, or screenshot work.
 
-Every release must document each released feature or fix with a real PhotoStore screenshot.
-Capture the relevant flow with disposable demo documents only; never include the owner's
-private, unsaved, or unrelated artwork. Store compressed, readable assets under
-`docs/screenshots/<version>/` as lossless PNG or readable WebP. The assets must be committed
-before the final release tag. Release Markdown and the README must reference the actual
-committed images using links that remain valid for this private GitHub repository. Keep a
-short evidence record for each image (feature/fix, demo document, source version, and known
-limits). Statuses must distinguish implemented, preview, verified, and published. Do not
-claim full Photoshop parity from menu wiring or an unverified UI path.
+Screenshots are captured when the user requests them or a specific product/evidence workflow
+requires them; they are not a gate for an ordinary bug-fix release. When requested, use real
+PhotoStore UI captures and disposable demo documents only. Never include private, unsaved, or
+unrelated artwork. Store readable PNG or WebP files under `docs/screenshots/<version>/`. Record the
+feature/fix, demo document, source version, capture method, and known limits. Release Markdown and
+the README should link to the actual repository images when they are available. Distinguish
+implemented, preview, verified, and published status, and do not claim full Photoshop parity from
+menu wiring or an unverified UI path.
 
-When a release needs new screenshots, use this order: implement and run the required
-compiler; make one provisional preview build, labeled as a preview and treated as one
-shared-target job; capture and legibility-check the UI screenshots; commit the docs and
-README image references; tag the exact source SHA; then perform the incremental final
-rebuild and verify its exact SHA and package integrity before publishing. Never retag or
-publish provisional binaries. Older immutable tags remain unchanged. A current release
-may be supplemented with a screenshot link only when its source version is verified.
+A requested screenshot may be captured from the final release binary and committed with the release
+documentation. Verified, source-version-specific screenshots and their documentation may also be
+added in a later documentation-only commit without retagging or rebuilding the binary. Documentation-
+or workflow-only commits may follow an immutable source tag; they do not move that tag or change the
+source SHA of its binary artifacts, and they do not require a binary rebuild or retag. Do not create
+a provisional preview build solely to satisfy a screenshot gate. State when synthetic automation
+input was used; it does not independently verify native OS input routing.
+
+## Authorized bug-fix release transaction
+
+When the user has explicitly authorized a stable release and production promotion in the active
+session, that authorization is sufficient; do not ask again. For an ordinary authorized bug-fix
+release, use one exact source commit and one app-plus-CLI release build. That release build is the
+required compiler/build pass; do not add a separate preview build or preliminary compiler build.
+
+Acquire the shared build/release queue lock before pushing and hold it through the release
+transaction: build, push, tag, publish the stable release, and install the same verified bundle.
+Do not push to `main` early and then wait for a redundant development rebuild of the release
+commit. If the queue is occupied by work for the exact same source SHA, prove the match and narrowly
+and gracefully cancel or suppress only that redundant duplicate; do not normalize a long wait behind
+it. Never cancel or interrupt unrelated jobs or applications. If an unrelated job owns the shared
+queue, wait for it to finish or report that blocker. Reuse the single verified app/CLI artifacts for
+publication and installation.
+
+Check the exact version, full source SHA, architecture, signature status, package integrity, and
+checksums once against those artifacts. If a mount or packaging verification step partially fails,
+retry only that owned step with the same artifacts; do not repeat a passed compiler or release
+build. Do not run discretionary QA unless the user asks for it. Keep tool waits bounded, change to
+a documented fallback after a repeated or hung tool failure, and report concrete blockers rather
+than retrying the same path indefinitely. Avoid narrating unchanged poll results while preserving
+higher-priority progress updates.
+
+Never replace, restart, close, or kill an active production app; never modify its private
+preferences or recovery state. Stage and install only after the exact release artifacts are
+verified, and only when production is not running.
 
 ## Changes
 
@@ -88,7 +115,10 @@ preferences/recovery, preserves an old-bundle backup, and does not launch apps a
 The existing native watcher file `/Users/computer/Desktop/dev/tools/Animation/photostore_keys.json`
 remains canonical.
 
-Do not enable the LaunchAgent until authoring/review and initial promotion are complete. Use
-`--bootstrap` or `--observe-only` for safe initialization. Human review remains required to
-create/publish releases and tags; automatic installation is authorized only for published
-stable releases. Every released feature/fix still requires the screenshot evidence rules above.
+The local CI LaunchAgent remains opt-in. Use `--bootstrap` or `--observe-only` for safe
+initialization, and do not enable it as a side effect of a release. The agent-led, user-authorized
+release transaction above is an explicit workflow exception to the watcher's normal human-review
+boundary; it does not imply that watcher code or its promotion policy changed. When that explicit
+authorization is absent, human review remains required to create or publish releases. Automatic
+installation by the watcher remains authorized only for published stable releases. The final
+production safety rules above continue to apply to both workflows.
