@@ -47,5 +47,11 @@ export, and the fresh rectangular marquee configuration.
 See the [0.13.0 screenshot evidence and gallery](docs/screenshots/0.13.0/evidence.md) for capture
 scope, demo-document details, and known limits.
 
-The 0.13.1 dev-watch screenshot set is prepared but has no capture yet; the release page will link
-only committed evidence after the compiler and preview capture pass.
+The 0.13.1 dev-watch capture shows the tool icons and native shortcut-file autosave field in the
+consolidated `PhotoStore-dev` workflow. It uses a disposable blank document and does not claim to
+show the later CI release event.
+
+![Toolbar icons and shortcut-file autosave](docs/screenshots/0.13.1/toolbar-shortcut-autosave.png)
+
+See the [0.13.1 screenshot evidence](docs/screenshots/0.13.1/evidence.md) for the exact preview
+source, capture hash, runtime path, and known limits.
