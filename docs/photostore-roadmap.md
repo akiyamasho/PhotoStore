@@ -15,7 +15,7 @@ This is the working roadmap for the independent PhotoStore product. It records t
 
 ## Priorities
 
-1. Continue the post-release work after the completed 0.8.0 Audio, Smart Filter Masks, and New Document Fix pass. The source/tag is `711e73995ac23b5a408a6a07e458ebfc3df91d12`, the prerelease is published and installed, and the targeted New Document confirmation passed. Remaining gaps include exact audio latency/master-clock behavior, sparse tracks, mask copy/move/channel selection, and broader acceptance; track the completed twelve steps in the goal ledger.
+1. Finish the current 0.9.0 source pass for mask transfer, Channels, and video keyframe controls. The 0.8.0 source/tag `711e73995ac23b5a408a6a07e458ebfc3df91d12` remains the published and installed release. The 0.9.0 engine/UI work is implemented and compiler-verified (final gate 3.71s, `/private/tmp/photostore-mask-channels-keyframes-check-20261011-final.log`); commit, tag, package, release, reinstall, and broad acceptance gates remain pending. Track the twelve steps in the goal ledger.
 2. Deepen Smart Objects with contents editing, shared contents identity, smart-filter editing, linked-source workflows, and faithful PSD acceptance.
 3. Improve brush behavior and interaction: pressure/tilt/rotation dynamics, smoothing, presets, tablet edge cases, deterministic replay, and responsive large-document painting.
 4. Harden PSD and command coverage around the workflows PhotoStore promises. Add focused fixtures and measurements when a feature is implemented; avoid claiming parity before it is measured.
@@ -59,7 +59,8 @@ or acceptance claim is made. The current installed source/tag is
 
 Smart Filter Masks and the New Document Fix are implemented, compiler-verified, packaged, and
 installed in the current 0.8.0 source. The targeted New Document confirmation passed; broad UI
-acceptance remains unverified. See [smart-filter-masks.md](smart-filter-masks.md).
+acceptance remains unverified. The 0.9.0 source pass adds mask transfer, Channels, and keyframe
+control repairs; its compiler and release gates remain pending. See [smart-filter-masks.md](smart-filter-masks.md).
 
 ## CI and release follow-up
 

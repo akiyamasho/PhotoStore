@@ -26,6 +26,25 @@ fn filter_enabled(app: &PhotoStoreApp, id: &str, layer: u64) -> bool {
     app.session.is_enabled_with(id, &params) || crate::menus::is_enabled(app, id)
 }
 
+#[derive(Clone, Copy)]
+struct FilterMaskDrag {
+    document: u64,
+    layer: u64,
+    copy: bool,
+}
+
+fn filter_mask_drag_key() -> egui::Id { egui::Id::new("smart-filter-mask-drag") }
+fn filter_mask_drop_key() -> egui::Id { egui::Id::new("smart-filter-mask-drop") }
+
+#[derive(Clone, Copy)]
+struct FilterMaskDrop {
+    source_document: u64,
+    source_layer: u64,
+    destination: u64,
+    copy: bool,
+    origin_active: Option<u64>,
+}
+
 /// Route Smart Object commands that require a path through the app's asynchronous picker.
 /// Returns `None` for commands that can be sent directly to the command registry.
 pub fn invoke_file_action(app: &mut PhotoStoreApp, id: &str, layer: u64) -> Option<Result<Value, String>> {
@@ -185,9 +204,27 @@ pub fn filter_rows(app: &mut PhotoStoreApp, ui: &mut egui::Ui, l: &Layer, depth:
     if sm.smart_filters.is_empty() {
         return;
     }
+    // A release outside every Smart Filters header leaves no valid drop target; clear that
+    // transient payload on the following frame.
+    if !ui.input(|i| i.pointer.primary_down() || i.pointer.any_released()) {
+        ui.ctx().data_mut(|d| d.remove::<FilterMaskDrag>(filter_mask_drag_key()));
+    }
     let t = Tokens::get(ui.ctx());
     let indent = 30.0 + depth as f32 * 14.0 + 34.0;
     let document = app.session.active().map(|s| s.doc.id.0).unwrap_or_default();
+    let destinations: Vec<(u64, String, bool)> = app.session.active().map(|st| st.doc.walk().into_iter().filter_map(|(_, _, layer)| {
+        matches!(&layer.content, LayerContent::Smart(sm) if !sm.smart_filters.is_empty())
+            .then(|| (layer.id.0, layer.name.clone(), matches!(&layer.content, LayerContent::Smart(sm) if sm.filter_mask.is_some())))
+    }).filter(|(id, _, _)| *id != l.id.0).collect()).unwrap_or_default();
+    if let Some(drop) = ui.ctx().data(|d| d.get_temp::<FilterMaskDrop>(filter_mask_drop_key())) {
+        let live = app.session.active().is_some_and(|st| {
+            st.doc.id.0 == drop.source_document
+                && st.active_layer.map(|id| id.0) == drop.origin_active
+                && st.doc.layer(photostore_doc::LayerId(drop.source_layer)).is_some_and(|l| matches!(&l.content, LayerContent::Smart(sm) if sm.filter_mask.is_some()))
+                && st.doc.layer(photostore_doc::LayerId(drop.destination)).is_some_and(|l| matches!(&l.content, LayerContent::Smart(sm) if sm.filter_mask.is_some()))
+        });
+        if !live { ui.ctx().data_mut(|d| d.remove::<FilterMaskDrop>(filter_mask_drop_key())); }
+    }
     let collapse_key = ui.id().with(("sf-collapsed", document, l.id.0));
     let collapsed = ui.data(|d| d.get_temp::<bool>(collapse_key)).unwrap_or(false);
     let (header, header_resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
@@ -214,7 +251,7 @@ pub fn filter_rows(app: &mut PhotoStoreApp, ui: &mut egui::Ui, l: &Layer, depth:
     if app.filter_mask_targeted() && app.ui.filter_mask_target == Some((document, l.id.0)) {
         crate::mask_thumbs_ui::paint_brackets(ui.painter(), mask_rect, t.text);
     }
-    let mask_resp = ui.interact(mask_rect, ui.id().with(("sf-mask", document, l.id.0)), Sense::click());
+    let mask_resp = ui.interact(mask_rect, ui.id().with(("sf-mask", document, l.id.0)), Sense::click_and_drag());
     let header_eye = Rect::from_min_size(pos2(header.left() + 28.0, header.center().y - 9.0), vec2(18.0, 18.0));
     let eye_resp = ui.interact(header_eye, ui.id().with(("sf-eye", l.id.0, "header")), Sense::click());
     if sm.filters_enabled {
@@ -229,7 +266,9 @@ pub fn filter_rows(app: &mut PhotoStoreApp, ui: &mut egui::Ui, l: &Layer, depth:
     if mask_resp.clicked() {
         let m = ui.input(|i| i.modifiers);
         if sm.filter_mask.is_some() {
-            if m.alt {
+            if m.command {
+                actions.push(("select.loadSelection".into(), json!({"channel": "filterMask", "layer": l.id.0, "operation": crate::channels_panel::load_operation(m)})));
+            } else if m.alt {
                 actions.push((photostore_engine::mask_view_cmds::FILTER_ID.into(), json!({"layer": l.id.0, "mode": if m.shift { "toggleOverlay" } else { "toggleGray" }})));
             } else if m.shift && filter_enabled(app, "layer.smartFilter.disableFilterMask", l.id.0) {
                 actions.push(("layer.smartFilter.disableFilterMask".into(), json!({"layer": l.id.0})));
@@ -237,6 +276,65 @@ pub fn filter_rows(app: &mut PhotoStoreApp, ui: &mut egui::Ui, l: &Layer, depth:
                 actions.push(("layer.select".into(), json!({"layer": l.id.0, "mode": "replace"})));
                 actions.push(("ui.filterMaskTarget".into(), json!({"target": true, "document": document, "layer": l.id.0})));
             }
+        }
+    }
+    // A filter-mask drag carries its origin scope and the Option-copy choice captured at
+    // press time. The existing filter-row drag key remains separate below.
+    if sm.filter_mask.is_some() {
+        if mask_resp.drag_started() {
+            ui.ctx().data_mut(|d| d.insert_temp(filter_mask_drag_key(), FilterMaskDrag {
+                document,
+                layer: l.id.0,
+                copy: ui.input(|i| i.modifiers.alt),
+            }));
+        }
+    }
+    let release_over_header = ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| ui.clip_rect().intersects(header) && header.contains(p));
+    if ui.input(|i| i.pointer.any_released()) && release_over_header
+        && let Some(drag) = ui.ctx().data(|d| d.get_temp::<FilterMaskDrag>(filter_mask_drag_key()))
+        && drag.document == document && drag.layer != l.id.0
+        && app.session.active().is_some_and(|st| st.doc.id.0 == document)
+    {
+        let valid = app.session.active().and_then(|st| st.doc.layer(photostore_doc::LayerId(drag.layer)))
+            .is_some_and(|source| matches!(&source.content, LayerContent::Smart(sm) if sm.filter_mask.is_some()));
+        if valid {
+            let drop = FilterMaskDrop {
+                source_document: drag.document,
+                source_layer: drag.layer,
+                destination: l.id.0,
+                copy: drag.copy,
+                origin_active: app.session.active().and_then(|st| st.active_layer.map(|id| id.0)),
+            };
+            if sm.filter_mask.is_some() {
+                ui.ctx().data_mut(|d| d.insert_temp(filter_mask_drop_key(), drop));
+            } else {
+                actions.push((if drag.copy { "layer.smartFilter.copyFilterMask" } else { "layer.smartFilter.moveFilterMask" }.into(),
+                    json!({"source": drag.layer, "destination": l.id.0, "document": document, "overwrite": false})));
+            }
+        }
+        ui.ctx().data_mut(|d| d.remove::<FilterMaskDrag>(filter_mask_drag_key()));
+    }
+    // A destination with an existing mask requires an explicit overwrite choice.
+    if let Some(drop) = ui.ctx().data(|d| d.get_temp::<FilterMaskDrop>(filter_mask_drop_key()))
+        && drop.destination == l.id.0
+    {
+        let mut accept = false;
+        egui::Window::new(tl!("Replace Filter Mask?"))
+            .collapsible(false)
+            .resizable(false)
+            .show(ui.ctx(), |ui| {
+                ui.label(tl!("The destination already has a Smart Filter mask."));
+                ui.horizontal(|ui| {
+                    if ui.button(tl!("Overwrite")).clicked() { accept = true; }
+                    if ui.button(tl!("Cancel")).clicked() {
+                        ui.ctx().data_mut(|d| d.remove::<FilterMaskDrop>(filter_mask_drop_key()));
+                    }
+                });
+            });
+        if accept {
+            actions.push((if drop.copy { "layer.smartFilter.copyFilterMask" } else { "layer.smartFilter.moveFilterMask" }.into(),
+                json!({"source": drop.source_layer, "destination": drop.destination, "document": drop.source_document, "overwrite": true})));
+            ui.ctx().data_mut(|d| d.remove::<FilterMaskDrop>(filter_mask_drop_key()));
         }
     }
     header_resp.context_menu(|ui| {
@@ -284,6 +382,39 @@ pub fn filter_rows(app: &mut PhotoStoreApp, ui: &mut egui::Ui, l: &Layer, depth:
         if filter_enabled(app, "layer.smartFilter.deleteFilterMask", l.id.0) && ui.button(tl!("Delete Filter Mask")).clicked() {
             actions.push(("layer.smartFilter.deleteFilterMask".into(), json!({"layer": l.id.0})));
             ui.close();
+        }
+        if sm.filter_mask.is_some() && !destinations.is_empty() {
+            ui.separator();
+            ui.menu_button(tl!("Copy Filter Mask To"), |ui| {
+                for (destination, name, has_mask) in &destinations {
+                    if ui.button(name).clicked() {
+                        if *has_mask {
+                            ui.ctx().data_mut(|d| d.insert_temp(filter_mask_drop_key(), FilterMaskDrop {
+                                source_document: document, source_layer: l.id.0, destination: *destination,
+                                copy: true, origin_active: app.session.active().and_then(|st| st.active_layer.map(|id| id.0)),
+                            }));
+                        } else {
+                            actions.push(("layer.smartFilter.copyFilterMask".into(), json!({"source": l.id.0, "destination": destination, "document": document, "overwrite": false})));
+                        }
+                        ui.close();
+                    }
+                }
+            });
+            ui.menu_button(tl!("Move Filter Mask To"), |ui| {
+                for (destination, name, has_mask) in &destinations {
+                    if ui.button(name).clicked() {
+                        if *has_mask {
+                            ui.ctx().data_mut(|d| d.insert_temp(filter_mask_drop_key(), FilterMaskDrop {
+                                source_document: document, source_layer: l.id.0, destination: *destination,
+                                copy: false, origin_active: app.session.active().and_then(|st| st.active_layer.map(|id| id.0)),
+                            }));
+                        } else {
+                            actions.push(("layer.smartFilter.moveFilterMask".into(), json!({"source": l.id.0, "destination": destination, "document": document, "overwrite": false})));
+                        }
+                        ui.close();
+                    }
+                }
+            });
         }
     });
     if collapsed {
@@ -370,7 +501,7 @@ pub fn filter_rows(app: &mut PhotoStoreApp, ui: &mut egui::Ui, l: &Layer, depth:
 
 const THUMB_FILTER: u8 = 3;
 
-fn filter_mask_thumb(app: &mut PhotoStoreApp, ctx: &egui::Context, document: u64, id: photostore_doc::LayerId, mask: &photostore_doc::LayerMask) -> egui::TextureId {
+pub(crate) fn filter_mask_thumb(app: &mut PhotoStoreApp, ctx: &egui::Context, document: u64, id: photostore_doc::LayerId, mask: &photostore_doc::LayerMask) -> egui::TextureId {
     let rev = crate::surface_fingerprint(&mask.surface) ^ document.rotate_left(17);
     let key = (id, THUMB_FILTER);
     if let Some((old, tex)) = app.thumbs.get(&key) && *old == rev {
@@ -429,4 +560,66 @@ pub fn confirm_command(fields: &serde_json::Map<String, Value>, command: String,
         Some(sf) => ("layer.smartFilter.setParams".into(), json!({"layer": sf["layer"], "index": sf["index"], "params": params})),
         None => (command, params),
     }
+}
+
+pub fn open_mask_transfer_dialog(app: &mut PhotoStoreApp, command: &str) -> Result<u64, String> {
+    let st = app.session.active().ok_or("no document")?;
+    let source = st.active_layer.ok_or("no active layer")?;
+    let has_mask = st.doc.layer(source).is_some_and(|l| matches!(&l.content, LayerContent::Smart(sm) if sm.filter_mask.is_some()));
+    if !has_mask { return Err("the active Smart Object has no Smart Filter mask".into()); }
+    let first = st.doc.walk().into_iter().find_map(|(_, _, l)| {
+        (l.id != source && matches!(&l.content, LayerContent::Smart(sm) if !sm.smart_filters.is_empty())).then_some(l.id.0)
+    });
+    if first.is_none() { return Err("no eligible Smart Object destination".into()); }
+    let mut fields = serde_json::Map::new();
+    fields.insert("__command".into(), json!(command));
+    fields.insert("__label".into(), json!(if command.ends_with("copyFilterMask") { "Copy Filter Mask To" } else { "Move Filter Mask To" }));
+    fields.insert("__maskTransfer".into(), json!({"document": st.doc.id.0, "source": source.0, "destination": first, "overwrite": false}));
+    Ok(app.ui.open_dialog(crate::state::DialogKind::Command, fields))
+}
+
+pub fn mask_transfer_body(app: &PhotoStoreApp, ui: &mut egui::Ui, fields: &mut serde_json::Map<String, Value>) {
+    if let Some(error) = fields.get("__error").and_then(Value::as_str) {
+        ui.colored_label(Tokens::get(ui.ctx()).danger, error);
+        ui.add_space(6.0);
+    }
+    let Some(info) = fields.get_mut("__maskTransfer").and_then(Value::as_object_mut) else { return };
+    let Some(document) = info.get("document").and_then(Value::as_u64) else { return };
+    let source = info.get("source").and_then(Value::as_u64).unwrap_or_default();
+    let Some(st) = app.session.documents().iter().find(|st| st.doc.id.0 == document) else {
+        ui.colored_label(Tokens::get(ui.ctx()).danger, tl!("The source document is no longer open."));
+        return;
+    };
+    let destinations: Vec<(u64, String, bool)> = st.doc.walk().into_iter().filter_map(|(_, _, l)| {
+        (l.id.0 != source && matches!(&l.content, LayerContent::Smart(sm) if !sm.smart_filters.is_empty())).then(|| (l.id.0, l.name.clone(), matches!(&l.content, LayerContent::Smart(sm) if sm.filter_mask.is_some())))
+    }).collect();
+    ui.label(tl!("Destination Smart Object"));
+    let selected = info.get("destination").and_then(Value::as_u64);
+    let name = destinations.iter().find(|(id, _, _)| Some(*id) == selected).map(|(_, n, _)| n.as_str()).unwrap_or(tl!("Choose a destination"));
+    egui::ComboBox::from_id_salt(ui.id().with("mask-transfer-destination")).selected_text(name).show_ui(ui, |ui| {
+        for (id, name, _) in &destinations { if ui.selectable_label(Some(*id) == selected, name).clicked() { info.insert("destination".into(), json!(id)); } }
+    });
+    let occupied = destinations.iter().find(|(id, _, _)| Some(*id) == selected).is_some_and(|(_, _, has)| *has);
+    let mut overwrite = info.get("overwrite").and_then(Value::as_bool).unwrap_or(false);
+    if ui.add_enabled(occupied, egui::Checkbox::new(&mut overwrite, tl!("Replace existing mask"))).changed() {
+        info.insert("overwrite".into(), json!(overwrite));
+    }
+}
+
+pub fn confirm_mask_transfer(app: &mut PhotoStoreApp, fields: &serde_json::Map<String, Value>) -> Result<Value, String> {
+    let info = fields.get("__maskTransfer").and_then(Value::as_object).ok_or("missing mask transfer")?;
+    let document = photostore_doc::DocId(info.get("document").and_then(Value::as_u64).ok_or("missing document")?);
+    let source = info.get("source").and_then(Value::as_u64).ok_or("choose a source")?;
+    let destination = info.get("destination").and_then(Value::as_u64).ok_or("choose a destination")?;
+    let overwrite = info.get("overwrite").and_then(Value::as_bool).unwrap_or(false);
+    let command = fields.get("__command").and_then(Value::as_str).ok_or("missing command")?.to_string();
+    if !matches!(command.as_str(), "layer.smartFilter.copyFilterMask" | "layer.smartFilter.moveFilterMask") {
+        return Err("unsupported Smart Filter mask transfer command".into());
+    }
+    app.with_document(document, |app| {
+        let st = app.session.active().ok_or("document is no longer open")?;
+        if !st.doc.layer(photostore_doc::LayerId(source)).is_some_and(|l| matches!(&l.content, LayerContent::Smart(sm) if sm.filter_mask.is_some())) { return Err("source Smart Filter mask is no longer available".into()); }
+        if !st.doc.layer(photostore_doc::LayerId(destination)).is_some_and(|l| matches!(&l.content, LayerContent::Smart(sm) if !sm.smart_filters.is_empty())) { return Err("destination Smart Object is no longer available".into()); }
+        app.run(&command, json!({"source": source, "destination": destination, "document": document.0, "overwrite": overwrite}))
+    })
 }

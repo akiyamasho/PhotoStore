@@ -1455,14 +1455,12 @@ impl PhotoStoreApp {
             return params;
         }
         if self.filter_mask_targeted() {
-            let Some((document, layer)) = self.ui.filter_mask_target else { return params };
+            let Some((_, layer)) = self.ui.filter_mask_target else { return params };
             let mut out = match params { Value::Object(m) => m, _ => serde_json::Map::new() };
             if out.get("layer").and_then(Value::as_u64).is_some_and(|explicit| explicit != layer) {
                 return Value::Object(out);
             }
             out.insert("target".into(), Value::from("filterMask"));
-            out.entry("document").or_insert_with(|| Value::from(document));
-            out.entry("layer").or_insert_with(|| Value::from(layer));
             return Value::Object(out);
         }
         if !self.layer_mask_targeted() { return params; }

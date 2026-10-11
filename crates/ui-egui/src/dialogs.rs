@@ -202,6 +202,7 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
                 }
                 DialogKind::Command if crate::color_range_ui::owns(&fields) => crate::color_range_ui::body(app, ui, &mut fields),
                 DialogKind::Command if crate::prefs_ui::owns(&fields) => crate::prefs_ui::body(app, ui, &mut fields),
+                DialogKind::Command if fields.contains_key("__maskTransfer") => crate::smart_ui::mask_transfer_body(app, ui, &mut fields),
                 DialogKind::Command if fields.contains_key("__export") => crate::export_dialog::body(app, ui, &mut fields),
                 DialogKind::Command if fields.contains_key("__sizing") => crate::sizing::body(ui, &mut fields),
                 DialogKind::Command if crate::adjust_dialog::owns(&fields) => crate::adjust_dialog::body(app, ui, &mut fields),
@@ -417,6 +418,26 @@ pub fn confirm(app: &mut PhotoStoreApp, id: u64) -> Result<Value, String> {
                     dialog.fields.insert("__error".into(), json!(error));
                 }
                 Err(error)
+            }
+        }
+    }
+    if let Some(d) = app.ui.dialogs.iter().find(|d| d.id == id)
+        && d.kind == DialogKind::Command
+        && d.fields.contains_key("__maskTransfer")
+    {
+        let fields = d.fields.clone();
+        match crate::smart_ui::confirm_mask_transfer(app, &fields) {
+            Ok(value) => {
+                let _ = app.ui.close_dialog(id);
+                return Ok(value);
+            }
+            Err(error) => {
+                app.ui.status = error.clone();
+                app.ui.status_error = true;
+                if let Some(dialog) = app.ui.dialog_mut(id) {
+                    dialog.fields.insert("__error".into(), json!(error));
+                }
+                return Err(error);
             }
         }
     }

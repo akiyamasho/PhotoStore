@@ -1413,6 +1413,55 @@ fn invert_filter_mask(s: &mut Session, p: &Value) -> Result<Value> {
         m.surface.write_region(r, &v); m.surface.prune(); Ok(json!({"layer": id.0}))
     })
 }
+
+/// Copy or move the single mask shared by a smart object's filter stack.
+fn transfer_filter_mask(s: &mut Session, p: &Value, move_mask: bool) -> Result<Value> {
+    let cmd = if move_mask { "layer.smartFilter.moveFilterMask" } else { "layer.smartFilter.copyFilterMask" };
+    if !p.is_object() { return Err(bad(cmd, "params must be an object")); }
+    let source = p.get("source").and_then(Value::as_u64).map(LayerId).ok_or_else(|| bad(cmd, "`source` must be a layer id"))?;
+    let destination = p.get("destination").and_then(Value::as_u64).map(LayerId).ok_or_else(|| bad(cmd, "`destination` must be a layer id"))?;
+    let overwrite = match p.get("overwrite") {
+        None => false,
+        Some(Value::Bool(v)) => *v,
+        Some(_) => return Err(bad(cmd, "`overwrite` must be a boolean")),
+    };
+    if let Some(document) = p.get("document") {
+        if document.as_u64() != Some(s.active().ok_or(EngineError::NoDocument)?.doc.id.0) {
+            return Err(bad(cmd, "the target document is no longer active"));
+        }
+    }
+    let st = s.active().ok_or(EngineError::NoDocument)?;
+    let src = st.doc.layer(source).ok_or(EngineError::NoLayer(source))?;
+    let dst = st.doc.layer(destination).ok_or(EngineError::NoLayer(destination))?;
+    let sm = match &src.content { LayerContent::Smart(sm) => sm, _ => return Err(bad(cmd, "the source layer is not a smart object")) };
+    let dm = match &dst.content { LayerContent::Smart(sm) => sm, _ => return Err(bad(cmd, "the destination layer is not a smart object")) };
+    if sm.filter_mask.is_none() { return Err(bad(cmd, "the source smart object has no filter mask")); }
+    if let Some(mask) = &sm.filter_mask {
+        if !mask.density.is_finite() || !(0.0..=1.0).contains(&mask.density) {
+            return Err(bad(cmd, "the source filter mask density is invalid"));
+        }
+        if !mask.feather.is_finite() || !(0.0..=1000.0).contains(&mask.feather) {
+            return Err(bad(cmd, "the source filter mask feather is invalid"));
+        }
+    }
+    if dm.smart_filters.is_empty() { return Err(bad(cmd, "the destination smart object has no smart filters")); }
+    let dst_locks = st.doc.effective_locks(destination);
+    let src_locks = st.doc.effective_locks(source);
+    if dst_locks.all || dst_locks.pixels { return Err(bad(cmd, "the destination layer is locked")); }
+    if move_mask && (src_locks.all || src_locks.pixels) { return Err(bad(cmd, "the source layer is locked")); }
+    if source == destination { return Ok(json!({"changed": false, "source": source.0, "destination": destination.0})); }
+    if dm.filter_mask.is_some() && !overwrite { return Err(bad(cmd, "the destination smart object already has a filter mask; pass `overwrite`: true")); }
+    let mask = sm.filter_mask.clone().ok_or_else(|| bad(cmd, "the source smart object has no filter mask"))?;
+    s.edit(if move_mask { "Move Smart Filter Mask" } else { "Copy Smart Filter Mask" }, |doc, _| {
+        if move_mask {
+            let m = smart_mut(doc, source)?.filter_mask.take().ok_or_else(|| bad(cmd, "the source smart object has no filter mask"))?;
+            smart_mut(doc, destination)?.filter_mask = Some(m);
+        } else {
+            smart_mut(doc, destination)?.filter_mask = Some(mask.clone());
+        }
+        Ok(json!({"changed": true, "source": source.0, "destination": destination.0}))
+    })
+}
 fn convertible(s: &Session) -> std::result::Result<(), String> {
     let d = s.active().ok_or("no document open")?;
     let id = d.active_layer.ok_or("no active layer")?;
@@ -1536,6 +1585,8 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("layer.smartFilter.addFilterMask", "Add Filter Mask", SF, r##"{"layer":id?,"document":id?,"source":"white"|"selection"="white"}"##, has_smart, add_filter_mask),
         spec!("layer.smartFilter.editFilterMask", "Edit Smart Filter Mask", SF, r##"{"layer":id?,"document":id?,"density":0..100?,"feather":0..1000?}"##, has_filter_mask, edit_filter_mask),
         spec!("layer.smartFilter.invertFilterMask", "Invert Smart Filter Mask", SF, r##"{"layer":id?,"document":id?}"##, has_filter_mask, invert_filter_mask),
+        spec!("layer.smartFilter.copyFilterMask", "Copy Smart Filter Mask", SF, r##"{"source":layerId,"destination":layerId,"document":id?,"overwrite":bool=false}"##, |s| s.active().map(|_| ()).ok_or_else(|| "no document open".into()), |s, p| transfer_filter_mask(s, p, false)),
+        spec!("layer.smartFilter.moveFilterMask", "Move Smart Filter Mask", SF, r##"{"source":layerId,"destination":layerId,"document":id?,"overwrite":bool=false}"##, |s| s.active().map(|_| ()).ok_or_else(|| "no document open".into()), |s, p| transfer_filter_mask(s, p, true)),
         spec!(
             "layer.smartFilter.disableFilterMask",
             "Disable Filter Mask",

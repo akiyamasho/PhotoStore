@@ -258,6 +258,10 @@ pub(crate) fn invoke_unguarded(app: &mut PhotoStoreApp, ctx: &egui::Context, id:
         return Ok(json!({"workspace": app.ui.workspace}));
     }
     match id {
+        "layer.smartFilter.copyFilterMask" | "layer.smartFilter.moveFilterMask"
+            if params.as_object().is_none_or(|o| o.is_empty()) => {
+                Ok(json!({"dialog": crate::smart_ui::open_mask_transfer_dialog(app, id)?}))
+            }
         // ⌘↩ / Ctrl+Enter (#306): load the path selected in the Paths panel (or the one being
         // drawn) as a selection.
         "path.toSelection" if params.get("name").is_none() => crate::vector_ui::path_to_selection(app, params),

@@ -19,6 +19,8 @@ enum Row {
     QuickMask,
     /// The selected layer's mask: a temporary channel, listed while the layer is selected.
     LayerMask,
+    /// The selected Smart Object's shared Smart Filter mask.
+    FilterMask,
 }
 
 impl Row {
@@ -30,6 +32,7 @@ impl Row {
             Row::Alpha(i) => json!(i),
             Row::QuickMask => json!("quickMask"),
             Row::LayerMask => json!("mask"),
+            Row::FilterMask => json!("filterMask"),
         }
     }
 }
@@ -55,7 +58,9 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
     let view = st.channel_view.clone();
     // ⌥-click mask view (#196): gray shows the mask alone (colour eyes off), overlay over the composite.
     let mask_view = photostore_engine::mask_view_cmds::current(st).map(|v| v.mode);
+    let filter_view = photostore_engine::mask_view_cmds::current_filter(st).map(|v| v.mode);
     let gray_view = mask_view == Some(photostore_engine::mask_view_cmds::MaskViewMode::Gray);
+    let filter_gray_view = filter_view == Some(photostore_engine::mask_view_cmds::MaskViewMode::Gray);
     let active_layer = st.active_layer;
     let mode = doc.pixel_format().mode;
     let colors = mode.color_channels();
@@ -65,7 +70,13 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
     // The active layer's mask (Photoshop lists it, in italics, below the colour channels).
     let masked = active_layer.and_then(|id| doc.layer(id)).filter(|l| l.mask.is_some()).cloned();
     let mask_tex = masked.as_ref().and_then(|l| Some(app.mask_thumb(&ctx, &doc, l.id, l.mask.as_ref()?)));
+    let filtered = active_layer.and_then(|id| doc.layer(id)).and_then(|l| match &l.content {
+        photostore_doc::LayerContent::Smart(sm) => sm.filter_mask.as_ref().map(|mask| (l.id, mask)),
+        _ => None,
+    });
+    let filter_tex = filtered.map(|(id, mask)| crate::smart_ui::filter_mask_thumb(app, &ctx, doc.id.0, id, mask));
     let mask_targeted = masked.is_some() && app.ui.mask_target && view.target == ChannelTarget::Composite && !quick;
+    let filter_targeted = filtered.is_some() && app.filter_mask_targeted();
     // Multichannel images are their ink channels only (no composite or colour rows).
     let multichannel = doc.mode == photostore_doc::ColorMode::Multichannel;
     let mut rows = if multichannel { Vec::new() } else { vec![Row::Composite] };
@@ -74,6 +85,9 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
     }
     if masked.is_some() {
         rows.push(Row::LayerMask);
+    }
+    if filtered.is_some() {
+        rows.push(Row::FilterMask);
     }
     rows.extend((0..doc.channels.len()).map(Row::Alpha));
     if quick {
@@ -94,21 +108,21 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                     channel_cmds::composite_name(mode).to_string(),
                     0,
                     Some(2),
-                    view.visible_colors(colors) == colors && !gray_view,
-                    view.target == ChannelTarget::Composite && !quick && !mask_targeted,
+                    view.visible_colors(colors) == colors && !gray_view && !filter_gray_view,
+                    view.target == ChannelTarget::Composite && !quick && !mask_targeted && !filter_targeted,
                 ),
                 Row::Color(k) => (
                     channel_cmds::color_names(mode)[k].to_string(),
                     1 + k,
                     Some(3 + k),
-                    view.color_visible(k) && !gray_view,
-                    (view.target == ChannelTarget::Composite && !quick && !mask_targeted) || view.target == ChannelTarget::Color(k),
+                    view.color_visible(k) && !gray_view && !filter_gray_view,
+                    (view.target == ChannelTarget::Composite && !quick && !mask_targeted && !filter_targeted) || view.target == ChannelTarget::Color(k),
                 ),
                 Row::Alpha(i) => (
                     doc.channels[i].name.clone(),
                     1 + shown_colors + i,
                     Some(3 + shown_colors + i).filter(|s| *s <= 9),
-                    view.alpha_shown(i),
+                    view.alpha_shown(i) && !filter_gray_view,
                     view.target == ChannelTarget::Alpha(i),
                 ),
                 Row::QuickMask => {
@@ -117,6 +131,7 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                 Row::LayerMask => {
                     (masked.as_ref().map(|l| format!("{} Mask", l.name)).unwrap_or_default(), usize::MAX, None, mask_view.is_some(), mask_targeted)
                 }
+                Row::FilterMask => ("Filter Mask".to_string(), usize::MAX - 1, None, filter_view == Some(photostore_engine::mask_view_cmds::MaskViewMode::Overlay), filter_targeted),
             };
             let row_h = if t.pro { 36.0 } else { 40.0 };
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
@@ -133,17 +148,19 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
             let eye = Rect::from_min_size(pos2(rect.left() + 6.0, rect.center().y - 11.0), vec2(22.0, 22.0));
             let eye_resp = ui.interact(eye, ui.id().with(("chan-eye", format!("{:?}", row.reference()))), Sense::click());
             // Like Photoshop, the temporary mask row's eye is empty until the mask is shown.
-            if row != Row::LayerMask || visible || eye_resp.hovered() {
+            if !matches!(row, Row::LayerMask | Row::FilterMask) || visible || eye_resp.hovered() {
                 icons::paint(ui, eye, if visible { "eye" } else { "eye-off" }, 14.0, if visible { t.icon } else { t.text_faint });
             }
-            let eye_resp = eye_resp.on_hover_text(if row == Row::LayerMask { tl!("Show the layer mask as an overlay") } else { tl!("Toggle visibility") });
+            let eye_resp = eye_resp.on_hover_text(if row == Row::LayerMask || row == Row::FilterMask { tl!("Show the mask as an overlay") } else { tl!("Toggle visibility") });
             eye_resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Visibility {name}")));
             let layer_id = masked.as_ref().map(|l| l.id.0);
+            let filter_layer_id = filtered.map(|(id, _)| id.0);
             if eye_resp.clicked() {
                 let view_cmd = photostore_engine::mask_view_cmds::ID.to_string();
                 match row {
                     // The mask's eye: the overlay on, or the mask view off.
                     Row::LayerMask => actions.push((view_cmd, json!({ "layer": layer_id, "mode": if visible { "off" } else { "overlay" } }))),
+                    Row::FilterMask => actions.push((photostore_engine::mask_view_cmds::FILTER_ID.to_string(), json!({ "layer": filter_layer_id, "mode": if visible { "off" } else { "overlay" } }))),
                     // Showing the composite again over a gray mask view keeps the mask as an overlay.
                     Row::Composite if gray_view => actions.push((view_cmd, json!({ "layer": layer_id, "mode": "overlay" }))),
                     _ => actions.push(("channel.setVisible".into(), json!({ "channel": row.reference(), "visible": !visible }))),
@@ -153,7 +170,7 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
             let cell = Rect::from_min_size(pos2(rect.left() + 36.0, rect.center().y - ts / 2.0), vec2(ts, ts));
             // Thumbnails keep the document's aspect ratio (the textures are letterboxed squares).
             let (thumb, uv) = fit_thumb(cell, doc.size.width, doc.size.height);
-            let tex = if row == Row::LayerMask { mask_tex } else { thumbs.get(thumb_idx).copied() };
+            let tex = if row == Row::LayerMask { mask_tex } else if row == Row::FilterMask { filter_tex } else { thumbs.get(thumb_idx).copied() };
             if let Some(tex) = tex {
                 painter.image(tex, thumb, uv, Color32::WHITE);
             }
@@ -168,7 +185,7 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                 painter.rect_filled(Rect::from_min_size(thumb.right_bottom() - vec2(9.0, 9.0), vec2(9.0, 9.0)), 0.0, Color32::from_rgb(c[0], c[1], c[2]));
             }
             painter.rect_stroke(thumb, 0.0, Stroke::new(1.0, if t.pro { Color32::from_gray(20) } else { t.field_border }), StrokeKind::Outside);
-            let italic = matches!(row, Row::QuickMask | Row::LayerMask) || matches!(row, Row::Alpha(i) if doc.channels[i].spot.is_some());
+            let italic = matches!(row, Row::QuickMask | Row::LayerMask | Row::FilterMask) || matches!(row, Row::Alpha(i) if doc.channels[i].spot.is_some());
             let mut job = egui::text::LayoutJob::default();
             let font = if selected && !t.pro { theme::medium(12.5) } else { egui::FontId::proportional(12.0) };
             job.append(&name, 0.0, egui::TextFormat { font_id: font, color: t.text, italics: italic, ..Default::default() });
@@ -190,16 +207,25 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                 if m.command && row == Row::LayerMask {
                     let layer = masked.as_ref().map(|l| l.id.0);
                     actions.push(("select.loadSelection".into(), json!({ "channel": "mask", "layer": layer, "operation": load_operation(m) })));
+                } else if m.command && row == Row::FilterMask {
+                    let layer = filtered.map(|(id, _)| id.0);
+                    actions.push(("select.loadSelection".into(), json!({ "channel": "filterMask", "layer": layer, "operation": load_operation(m) })));
                 } else if m.command {
                     actions.push(("select.loadSelection".into(), json!({ "channel": row.reference(), "operation": load_operation(m) })));
                 } else if row == Row::LayerMask {
                     // Targets the mask, as clicking its thumbnail in the Layers panel does.
                     mask_click = Some(true);
+                    actions.push((photostore_engine::mask_view_cmds::FILTER_ID.into(), json!({"mode":"off"})));
                     actions.push(("channel.target".into(), json!({ "channel": "composite" })));
+                } else if row == Row::FilterMask {
+                    actions.push((photostore_engine::mask_view_cmds::ID.into(), json!({"mode":"off"})));
+                    actions.push(("channel.target".into(), json!({ "channel": "composite" })));
+                    actions.push(("ui.filterMaskTarget".into(), json!({"target": true, "document": doc.id.0, "layer": filter_layer_id})));
                 } else {
                     if matches!(row, Row::Composite | Row::Color(_)) {
                         mask_click = Some(false);
                     }
+                    if row != Row::FilterMask { actions.push((photostore_engine::mask_view_cmds::FILTER_ID.into(), json!({"mode":"off"}))); }
                     let target = if row == Row::QuickMask { json!("composite") } else { row.reference() };
                     actions.push(("channel.target".into(), json!({ "channel": target })));
                 }
@@ -259,6 +285,9 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                             item(ui, a, crate::layer_menu_ui::mask_toggle_label(enabled), "layer.layerMask.enabled", json!({}));
                             item(ui, a, "Delete Layer Mask", "layer.layerMask.delete", json!({}));
                         }
+                        Row::FilterMask => {
+                            item(ui, a, "Delete Filter Mask", "layer.smartFilter.deleteFilterMask", json!({"layer": filtered.map(|(id, _)| id.0)}));
+                        }
                     }
                     ui.separator();
                     item(ui, a, "New Channel…", "channel.new", json!({}));
@@ -272,13 +301,16 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
     });
     // Photoshop's order from the left: Load as selection, Save selection, New, Delete.
     widgets::panel_footer(ui, |ui| {
-        let target_ref = match view.target {
+        let target_ref = if filter_targeted {
+            json!("filterMask")
+        } else { match view.target {
             ChannelTarget::Alpha(i) => json!(i),
             ChannelTarget::Color(k) => json!({ "color": k }),
             ChannelTarget::Composite => json!("composite"),
-        };
+        }};
         if icons::button(ui, "trash", 26.0, false, tl!("Delete current channel")).clicked() {
-            actions.push(("channel.delete".into(), json!({})));
+            if filter_targeted { actions.push(("layer.smartFilter.deleteFilterMask".into(), json!({"layer": filtered.map(|(id, _)| id.0)}))); }
+            else { actions.push(("channel.delete".into(), json!({}))); }
         }
         if icons::button(ui, "plus", 26.0, false, tl!("Create new channel")).clicked() {
             actions.push(("channel.new".into(), json!({})));
@@ -287,12 +319,19 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
             actions.push(("select.saveSelection".into(), json!({})));
         }
         if icons::button(ui, "circle-dashed", 26.0, false, tl!("Load channel as selection")).clicked() {
-            actions.push(("select.loadSelection".into(), json!({ "channel": target_ref })));
+            let params = if filter_targeted {
+                json!({ "channel": target_ref, "layer": filtered.map(|(id, _)| id.0) })
+            } else {
+                json!({ "channel": target_ref })
+            };
+            actions.push(("select.loadSelection".into(), params));
         }
     });
     ctx.data_mut(|d| d.insert_temp(thumbs_id(), drawn));
     if let Some(on) = mask_click {
         app.ui.mask_target = on;
+        if on { app.ui.filter_mask_target = None; }
+        app.session.tools.target_mask(on);
     }
     for (id, p) in actions {
         if id == "ui.renameChannel" {
@@ -302,7 +341,19 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
             }
             continue;
         }
-        let _ = app.run(&id, p);
+        if id == "ui.filterMaskTarget" {
+            app.ui.filter_mask_target = (p.get("target").and_then(Value::as_bool) == Some(true)).then(|| {
+                Some((p.get("document")?.as_u64()?, p.get("layer")?.as_u64()?))
+            }).flatten();
+            app.ui.mask_target = false;
+            app.ui.vector_mask_target = false;
+            app.session.tools.target_mask(app.ui.filter_mask_target.is_some());
+        } else if id == "channel.target" {
+            app.ui.filter_mask_target = None;
+            let _ = app.run(&id, p);
+        } else {
+            let _ = app.run(&id, p);
+        }
     }
 }
 

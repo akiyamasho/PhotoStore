@@ -10,7 +10,11 @@ The recording milestone captures committed engine actions into bounded native do
 
 ## 2026-10-11: 0.8.0 release pass scope
 
-The next release pass groups Audio, Smart Filter Masks, and the New Document Fix. Source implementation status is tracked independently from compiler, packaging, release, and reinstall evidence; those gates remain pending until recorded. Further Photoshop backfill is outside the twelve-step release count.
+The completed 0.8.0 release grouped Audio, Smart Filter Masks, and the New Document Fix. Source implementation status was tracked independently from compiler, packaging, release, and reinstall evidence; further Photoshop backfill is outside that twelve-step release count.
+
+## 2026-10-11: 0.9.0 mask, channel, and keyframe pass
+
+The 0.9.0 source pass keeps mask transfer atomic and document-safe: copy and move use document IDs, inherited locks, copy-on-write copies, explicit overwrite, and one undo edit. Channel references use strings for mask properties and open-document indexes for channel sources. Keyframe Set/Delete uses typed pending values, document timeline bounds, target-aware guards, atomic persistence, and no-op detection. Compiler, packaging, release, reinstall, and broad UI acceptance remain separate gates.
 
 ## 2026-10-10: Smart Object contents identity (#2163)
 

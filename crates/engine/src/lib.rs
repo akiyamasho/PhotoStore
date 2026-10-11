@@ -106,7 +106,7 @@ pub mod type_styles_cmds;
 mod variables_cmds;
 pub mod vector_cmds;
 mod video_cmds;
-pub use video_cmds::{render_video_with, sync as sync_video};
+pub use video_cmds::{render_video_with, sample_keyframe_transform, sync as sync_video};
 pub mod vp_cmds;
 pub mod warp_cmds;
 pub mod web_cmds;
@@ -496,6 +496,7 @@ impl Session {
     fn precondition(&self, spec: &commands::CommandSpec, params: &Value) -> std::result::Result<(), String> {
         channel_cmds::filter_mask_target_enabled(self, spec.id, params)
             .or_else(|| channel_cmds::mask_target_enabled(self, spec.id, params))
+            .or_else(|| video_cmds::keyframe_target_enabled(self, spec.id, params))
             .unwrap_or_else(|| (spec.enabled)(self))
     }
 

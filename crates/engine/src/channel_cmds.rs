@@ -233,6 +233,8 @@ pub enum ChanRef {
     LayerMask,
     /// The layer's vector mask, rasterized (⌘-click its thumbnail, #196).
     VectorMask,
+    /// The active or explicitly selected smart object's filter mask.
+    FilterMask,
 }
 
 pub fn parse_ref(v: &Value, doc: &Document) -> Option<ChanRef> {
@@ -255,6 +257,7 @@ pub fn parse_ref(v: &Value, doc: &Document) -> Option<ChanRef> {
                 "transparency" => return Some(ChanRef::Transparency),
                 "mask" | "layermask" => return Some(ChanRef::LayerMask),
                 "vectormask" | "vector mask" => return Some(ChanRef::VectorMask),
+                "filtermask" | "filter mask" => return Some(ChanRef::FilterMask),
                 _ => {}
             }
             if l == composite_name(mode).to_ascii_lowercase() {
@@ -364,6 +367,15 @@ fn ref_planes(doc: &Document, layer: Option<LayerId>, active: Option<LayerId>, r
             // The path's shape, whether or not the mask is enabled (as Photoshop loads it).
             let shape = photostore_doc::VectorMask { enabled: true, density: 1.0, feather: 0.0, ..m.clone() };
             vec![photostore_vector::vector_mask_values(&shape, area)]
+        }
+        ChanRef::FilterMask => {
+            let id = layer.or(active).ok_or_else(|| EngineError::Other("filter mask needs a layer".into()))?;
+            let l = doc.layer(id).ok_or(EngineError::NoLayer(id))?;
+            let LayerContent::Smart(sm) = &l.content else {
+                return Err(EngineError::Other(format!("layer \"{}\" is not a smart object; it has no filter mask", l.name)));
+            };
+            let m = sm.filter_mask.as_ref().ok_or_else(|| EngineError::Other(format!("smart object layer \"{}\" has no filter mask", l.name)))?;
+            vec![read_plane(&m.surface, area)]
         }
     })
 }
@@ -566,6 +578,7 @@ pub(crate) fn filter_mask_target_enabled(s: &Session, id: &str, p: &Value) -> Op
     }
     let supported = (id.starts_with("filter.") && crate::filters::params_for(id, &Value::Null).is_some())
         || (id.strip_prefix("image.adjustments.").is_some_and(|k| crate::adjust_params::default_for(k, ColorMode::Rgb).is_ok()))
+        || id == "image.applyImage"
         || matches!(id, "edit.fill" | "paint.stroke" | "paint.pencil" | "paint.bucket" | "paint.gradient" | "paint.mixerBrush")
         || id.starts_with("paint.") && matches!(id, "paint.cloneStamp" | "paint.patternStamp" | "paint.healingBrush" | "paint.spotHealing" | "paint.dodge" | "paint.burn" | "paint.sponge" | "paint.blur" | "paint.sharpen" | "paint.smudge" | "paint.historyBrush" | "paint.redEye" | "paint.remove");
     if !supported {
@@ -935,17 +948,19 @@ fn duplicate_channel(s: &mut Session, p: &Value) -> Result<Value> {
     let src = s.active().ok_or(EngineError::NoDocument)?;
     let area = src.doc.bounds();
     let r = p.get("channel").and_then(|v| parse_ref(v, &src.doc)).ok_or_else(|| bad(cmd, "missing or unknown `channel`"))?;
+    let filter_layer = matches!(r, ChanRef::FilterMask).then(|| source_layer(p));
     let mut ch = match r {
         ChanRef::Alpha(i) => src.doc.channels.get(i).cloned().ok_or_else(|| bad(cmd, format!("no alpha channel {i}")))?,
         ChanRef::QuickMask => src.doc.quick_mask.clone().ok_or_else(|| bad(cmd, "not in Quick Mask mode"))?,
         other => {
-            let plane = gray_plane(&src.doc, None, src.active_layer, other)?;
+            let plane = gray_plane(&src.doc, filter_layer.flatten(), src.active_layer, other)?;
             AlphaChannel::new(String::new(), plane_surface(&plane, area, channel_format(&src.doc)))
         }
     };
     let base = match r {
         ChanRef::Alpha(_) | ChanRef::QuickMask => ch.name.clone(),
         ChanRef::Color(k) => color_names(edit_mode(&src.doc))[k].to_string(),
+        ChanRef::FilterMask => "Filter Mask".to_string(),
         _ => composite_name(edit_mode(&src.doc)).to_string(),
     };
     ch.name = p.get("name").and_then(Value::as_str).map_or_else(|| format!("{base} copy"), str::to_string);
@@ -1115,6 +1130,7 @@ fn parse_target(s: &Session, p: &Value, cmd: &str) -> Result<ChannelTarget> {
         Some(ChanRef::Composite) => Ok(ChannelTarget::Composite),
         Some(ChanRef::Color(k)) if k < color_count(doc) && color_count(doc) > 1 => Ok(ChannelTarget::Color(k)),
         Some(ChanRef::Alpha(i)) if i < doc.channels.len() => Ok(ChannelTarget::Alpha(i)),
+        Some(ChanRef::FilterMask) => Err(bad(cmd, "filter masks are source channels and cannot be selected as the persistent channel target")),
         _ => Err(bad(cmd, "`channel` must be \"composite\", a colour channel name or an alpha channel")),
     }
 }
@@ -1167,6 +1183,7 @@ fn set_visible(s: &mut Session, p: &Value) -> Result<Value> {
             v.set_alpha_visible(i, on);
         }
         ChanRef::QuickMask => v.quick_mask_hidden = !visible(!v.quick_mask_hidden),
+        ChanRef::FilterMask => return Err(bad(cmd, "filter-mask visibility is controlled by the Smart Filter mask view")),
         _ => return Err(bad(cmd, "that channel has no visibility")),
     }
     fix_view_now(st);
@@ -1415,11 +1432,11 @@ fn apply_image(s: &mut Session, p: &Value) -> Result<Value> {
         let area = doc.bounds();
         let selection = doc.selection.as_ref().map(|m| sel::mask_from_surface(Some(m), area));
         let weight = |i: usize| opacity * mask.as_ref().map_or(1.0, |m| m[i]) * selection.as_ref().map_or(1.0, |m| m[i]);
-        if is_channel_target(p) {
+        if target_of(p) != Target::Pixels {
             // A grayscale target gets the luminosity of a colour source (one plane).
             let srcp =
                 if src.len() == 1 { src[0].clone() } else { (0..src[0].len()).map(|i| src.iter().map(|pl| pl[i]).sum::<f32>() / src.len() as f32).collect() };
-            let (surf, _) = target_surface(doc, None, p)?;
+            let (surf, _) = target_surface(doc, layer, p)?;
             let base = read_plane(surf, area);
             let out: Vec<f32> = base.iter().enumerate().map(|(i, &b)| b + (blending.apply(b, srcp[i]) - b) * weight(i)).collect();
             *surf = plane_surface(&out, area, surf.format());
@@ -1560,7 +1577,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Load Selection…",
             ["Select"],
             None,
-            r##"{"channel":index|name|"composite"|"red|green|blue|…"|"transparency"|"mask"|"vectorMask"|"quickMask"|"selection","layer":id?,"document":index?,"invert":bool=false,"operation":"new|add|subtract|intersect"="new"}"##,
+            r##"{"channel":index|name|"composite"|"red|green|blue|…"|"transparency"|"mask"|"vectorMask"|"filterMask"|"quickMask"|"selection","layer":id?,"document":index?,"invert":bool=false,"operation":"new|add|subtract|intersect"="new"}"##,
             has_doc,
             load_selection
         ),

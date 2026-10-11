@@ -79,8 +79,39 @@ The 0.8.0 source/tag is `711e73995ac23b5a408a6a07e458ebfc3df91d12`. The [publish
 The canonical `/Applications/PhotoStore.app` is version 0.8.0 with bundle `ai.photostore.app`, strict signature validation, binary SHA-256 `40d09d7cf3a0374a5debc933d268ccdc9ce0894304228d381e5e0657f88168fa`, and running PID 86439. The previous app backup is `/private/tmp/photostore-reinstall-0.8.0-20261011-115045/previous-PhotoStore-0.7.0.app`; the retained recovery sibling is `/Applications/PhotoStore-0.7.0-recovery-20261011-115045.app`. No artwork save or recovery is claimed.
 
 Further Photoshop backfill is the next pass and is outside this twelve-step count. Exact UI parity,
-mask copy/move/channel selection, unknown PSD filters, audio latency/master-clock behavior, and
-broader acceptance remain unverified.
+unknown PSD filters, audio latency/master-clock behavior, and broader acceptance remain unverified;
+the 0.9.0 mask transfer and Channels implementation is tracked below.
+
+## Current 0.9.0 mask, Channels, and keyframe pass
+
+This source pass follows the installed and published 0.8.0 release. It does not claim a 0.9.0
+release. The twelve-step status is:
+
+1. Public specification and architecture — complete.
+2. Mask transfer engine — implemented: same-document ID guards, inherited locks, copy-on-write copy,
+   default no-overwrite, one atomic undo edit, and self no-op.
+3. Filter-mask channel sources — implemented for selection, Apply Image/Calculations, and duplicate
+   alpha channels, with document-index channel sources and document-ID mask/property guards.
+4. Mask transfer UI — implemented for plain move, Option copy, named destinations, overwrite prompt,
+   and preserved thumbnail modifiers.
+5. Channels UI — implemented for the temporary Filter Mask row, scoped normal target, overlay/gray
+   eyes, footer load/delete, and ordinary-channel exit from filter view.
+6. Video keyframe command/UI repairs — implemented for typed pending x/y/opacity values, document
+   timeline bounds, target and lock guards, atomic Set/Delete, and no-op handling.
+7. Compiler gate — complete; the initial rerun passed in 12.18 seconds and the final transfer-chooser gate passed in 3.71 seconds. Final log: `/private/tmp/photostore-mask-channels-keyframes-check-20261011-final.log`.
+8. Version and documentation — complete; version 0.9.0 is prepared.
+9. Commit and push — pending.
+10. Tag — pending.
+11. Build and publish — pending.
+12. Reinstall and confirmation — pending.
+
+Empty Copy/Move menus, the palette, and assigned shortcuts open the named-destination chooser. A
+captured document ID works across tabs; no-eligible-destination errors are explicit; transfer IDs
+are limited to known values; overwrite defaults false; failures retain the form with an inline
+`status_error`, and success closes it. Remaining scope includes general sparse tracks, stopwatches,
+full transform/style controls, transitions, groups, exact audio master-clock synchronization,
+coalesced external key-edit refresh, and broad UI/Photoshop acceptance. The 0.8.0
+recording/audio/mask release remains the current installed product.
 
 ## Animation and timeline
 
@@ -132,7 +163,7 @@ Official Photoshop references for future workflow comparison:
 ### Unverified or incomplete
 
 - Contents editing and shared contents identity workflows need product-level acceptance.
-- Smart Filter rows now support collapse, context menu, move/reorder, blend options, and delete in the engine/UI path (`crates/engine/src/smart_cmds.rs`, `crates/ui-egui/src/smart_ui.rs`); direct mask painting and full acceptance remain open.
+- Smart Filter rows now support collapse, context menu, move/reorder, blend options, delete, and the 0.9.0 mask transfer/Channels paths in the engine/UI; full acceptance remains open.
 - Smart Object corner skew and perspective/homography are present in the current model; transform reset clears warp/perspective while preserving source contents and identity. Their external-file fidelity remains unverified.
 - Linked-source workflows need explicit relink/update/missing-source behavior and acceptance.
 - PSD external acceptance remains incomplete: fidelity is masked by filter math, unsupported/unmapped Camera Raw settings, and other format-specific gaps. Do not describe Smart Object PSD parity as complete.
@@ -140,7 +171,7 @@ Official Photoshop references for future workflow comparison:
 ### Exact next steps
 
 1. Define source identity and contents-editing UX for embedded, linked, and shared sources, including stale/missing source behavior.
-2. Add mask copy/move and channel selection, keyframe UI coverage, sparse-track handling, editable parameter round trips, source refresh invalidation, and broader Smart appearance/animation coverage now that the targeted regression has passed.
+2. Continue 0.9.0 keyframe UI coverage, sparse-track handling, editable parameter round trips, source refresh invalidation, and broader Smart appearance/animation coverage; retain mask transfer and Channels implementation as compiler/release-pending work.
 3. Exercise the existing perspective/homography and transform-reset paths against source contents, masks, filters, identity, undo, and external-file round trips.
 4. Expand PSD acceptance fixtures for live Smart Objects, multiple instances, Smart Filters, masks, transforms, external sources, and Photoshop reopen/render checks.
 

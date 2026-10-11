@@ -13,6 +13,7 @@ use crate::commands::CommandSpec;
 use crate::{EngineError, Result, Session};
 
 const MAX_EXPORT_FRAMES: usize = 1_000_000;
+const MAX_VIDEO_KEYFRAMES: usize = 100_000;
 
 fn media_error(e: crate::media_backend::MediaBackendError) -> EngineError { EngineError::Other(format!("movie backend: {e}")) }
 
@@ -187,9 +188,10 @@ fn sync_layers(layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[ph
     }
 }
 
-fn keyframe_transform(video: &VideoData, frame: usize) -> (f32, f32, f32) {
+/// Sample the position and opacity track at a document-timeline frame.
+pub fn sample_keyframe_transform(video: &VideoData, frame: usize) -> (f32, f32, f32) {
     let mut points = video.keyframes.iter().collect::<Vec<_>>();
-    points.sort_by_key(|k| k.frame);
+    if points.windows(2).any(|pair| pair[0].frame > pair[1].frame) { points.sort_by_key(|k| k.frame); }
     let Some(first) = points.first() else { return (0.0, 0.0, 1.0) };
     if frame <= first.frame { return (first.x, first.y, first.opacity.clamp(0.0, 1.0)); }
     for pair in points.windows(2) {
@@ -201,6 +203,10 @@ fn keyframe_transform(video: &VideoData, frame: usize) -> (f32, f32, f32) {
         }
     }
     points.last().map_or((0.0, 0.0, 1.0), |k| (k.x, k.y, k.opacity.clamp(0.0, 1.0)))
+}
+
+fn keyframe_transform(video: &VideoData, frame: usize) -> (f32, f32, f32) {
+    sample_keyframe_transform(video, frame)
 }
 
 /// Keep edits made to every video layer's displayed content (paint, fills, filters) by writing it
@@ -268,6 +274,34 @@ fn active_video(s: &Session) -> std::result::Result<(), String> {
 
 fn has_doc(s: &Session) -> std::result::Result<(), String> {
     s.active().map(|_| ()).ok_or_else(|| "no document".into())
+}
+
+/// Target-aware enablement for keyframe commands. The generic command precondition only knows
+/// about the active layer, while scripts may address another video layer explicitly.
+pub fn keyframe_target_enabled(s: &Session, id: &str, p: &Value) -> Option<std::result::Result<(), String>> {
+    if !matches!(id, "timeline.addKeyframe" | "timeline.deleteKeyframe") { return None; }
+    Some((|| {
+        if !p.is_object() && !p.is_null() { return Err("keyframe parameters must be an object or null".into()); }
+        let st = s.active().ok_or_else(|| "no document".to_string())?;
+        if let Some(n) = p.get("document").and_then(Value::as_u64) {
+            if n != st.doc.id.0 { return Err("document is not active".into()); }
+        }
+        let layer_id = match p.get("layer") {
+            Some(v) => photostore_doc::LayerId(v.as_u64().ok_or_else(|| "layer must be a layer id".to_string())?),
+            None => st.active_layer.ok_or_else(|| "select a video layer".to_string())?,
+        };
+        let layer = st.doc.layer(layer_id).ok_or_else(|| "target layer does not exist".to_string())?;
+        if layer.video.is_none() { return Err("target layer is not a video layer".into()); }
+        let locks = st.doc.effective_locks(layer_id);
+        if locks.all || locks.position { return Err("target video layer is locked".into()); }
+        let frame = match p.get("frame") {
+            Some(v) => usize::try_from(v.as_u64().ok_or_else(|| "frame must be a non-negative integer".to_string())?).map_err(|_| "frame is too large".to_string())?,
+            None => st.doc.timeline.as_ref().map_or(0, |t| t.current),
+        };
+        let limit = st.doc.timeline.as_ref().map_or(1, |t| t.duration).min(MAX_EXPORT_FRAMES).max(1);
+        if frame >= limit { return Err("frame is outside the document timeline".into()); }
+        Ok(())
+    })())
 }
 
 /// Edit the active video layer's [`VideoData`] at the playhead, then re-sync the displayed frame.
@@ -356,17 +390,83 @@ fn set_frame_delay(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn keyframe(s: &mut Session, p: &Value, remove: bool) -> Result<Value> {
-    let frame = p.get("frame").and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok()).unwrap_or_else(|| s.active().and_then(|st| st.doc.timeline.as_ref().map(|t| t.current)).unwrap_or(0));
-    let x = p.get("x").and_then(Value::as_f64).filter(|v| v.is_finite() && v.abs() <= 1_000_000.0).unwrap_or(0.0) as f32;
-    let y = p.get("y").and_then(Value::as_f64).filter(|v| v.is_finite() && v.abs() <= 1_000_000.0).unwrap_or(0.0) as f32;
-    let opacity = p.get("opacity").and_then(Value::as_f64).filter(|v| v.is_finite() && (0.0..=1.0).contains(v)).unwrap_or(1.0) as f32;
-    edit_video(s, if remove { "Delete Video Keyframe" } else { "Add Video Keyframe" }, move |v, _| {
-        if frame >= v.frames.len().max(1) { return Err(EngineError::BadParams { cmd: if remove { "timeline.deleteKeyframe" } else { "timeline.addKeyframe" }.into(), msg: "frame is outside the video layer".into() }); }
-        v.keyframes.retain(|k| k.frame != frame);
-        if !remove { v.keyframes.push(photostore_doc::VideoKeyframe { frame, x, y, opacity }); }
-        v.keyframes.sort_by_key(|k| k.frame);
-        Ok(())
-    })
+    let cmd = if remove { "timeline.deleteKeyframe" } else { "timeline.addKeyframe" };
+    if !p.is_object() && !p.is_null() { return Err(EngineError::BadParams { cmd: cmd.into(), msg: "keyframe parameters must be an object or null".into() }); }
+    let (frame, layer_id, doc_id) = {
+        let st = s.active().ok_or(EngineError::NoDocument)?;
+        if let Some(expected) = p.get("document") {
+            let n = expected.as_u64().ok_or_else(|| EngineError::BadParams { cmd: cmd.into(), msg: "`document` must be a document id".into() })?;
+            if n != st.doc.id.0 { return Err(EngineError::BadParams { cmd: cmd.into(), msg: "document is not active".into() }); }
+        }
+        let frame = match p.get("frame") {
+            Some(v) => usize::try_from(v.as_u64().ok_or_else(|| EngineError::BadParams { cmd: cmd.into(), msg: "`frame` must be a non-negative integer".into() })?)
+                .map_err(|_| EngineError::BadParams { cmd: cmd.into(), msg: "`frame` is too large".into() })?,
+            None => st.doc.timeline.as_ref().map_or(0, |t| t.current),
+        };
+        let id = match p.get("layer") {
+            Some(v) => photostore_doc::LayerId(v.as_u64().ok_or_else(|| EngineError::BadParams { cmd: cmd.into(), msg: "`layer` must be a layer id".into() })?),
+            None => st.active_layer.ok_or(EngineError::NoLayer(photostore_doc::LayerId(0)))?,
+        };
+        (frame, id, st.doc.id)
+    };
+    let sampled = s.active().and_then(|st| st.doc.layer(layer_id)).and_then(|l| l.video.as_ref()).map(|v| sample_keyframe_transform(v, frame)).unwrap_or((0.0, 0.0, 1.0));
+    let parse_finite = |name: &str, max: f64, default: f32| -> Result<f32> {
+        match p.get(name) {
+            None => Ok(default),
+            Some(v) => v.as_f64().filter(|v| v.is_finite() && v.abs() <= max).map(|v| v as f32)
+                .ok_or_else(|| EngineError::BadParams { cmd: cmd.into(), msg: format!("`{name}` must be finite and within ±{max}" ) }),
+        }
+    };
+    let x = if remove { 0.0 } else { parse_finite("x", 1_000_000.0, sampled.0)? };
+    let y = if remove { 0.0 } else { parse_finite("y", 1_000_000.0, sampled.1)? };
+    let opacity = if remove {
+        1.0
+    } else {
+        match p.get("opacity") {
+            None => sampled.2,
+            Some(v) => v.as_f64().filter(|v| v.is_finite() && (0.0..=1.0).contains(v)).map(|v| v as f32)
+                .ok_or_else(|| EngineError::BadParams { cmd: cmd.into(), msg: "`opacity` must be finite and within 0..=1".into() })?,
+        }
+    };
+    // Avoid creating an undo step for an idempotent set or deleting an absent key.
+    if let Some(st) = s.active()
+        && st.doc.id == doc_id
+        && let Some(layer) = st.doc.layer(layer_id)
+        && let Some(v) = layer.video.as_ref()
+    {
+        if let Some(t) = st.doc.timeline.as_ref()
+            && frame >= t.duration.min(MAX_EXPORT_FRAMES)
+        { return Err(EngineError::BadParams { cmd: cmd.into(), msg: "frame is outside the document timeline".into() }); }
+        let locks = st.doc.effective_locks(layer_id);
+        if locks.all || locks.position { return Err(EngineError::BadParams { cmd: cmd.into(), msg: "target video layer is locked".into() }); }
+        let existing = v.keyframes.iter().find(|k| k.frame == frame);
+        if (remove && existing.is_none()) || (!remove && existing.is_some_and(|k| k.x == x && k.y == y && k.opacity == opacity)) {
+            return Ok(json!({"layer": layer_id.0, "frame": frame, "changed": false}));
+        }
+    }
+    let result = s.edit(if remove { "Delete Video Keyframe" } else { "Add Video Keyframe" }, move |doc, active| {
+        store(doc);
+        let t_duration = doc.timeline.as_ref().map_or(1, |t| t.duration).min(MAX_EXPORT_FRAMES).max(1);
+        if frame >= t_duration { return Err(EngineError::BadParams { cmd: cmd.into(), msg: "frame is outside the document timeline".into() }); }
+        let locks = doc.effective_locks(layer_id);
+        if locks.all || locks.position { return Err(EngineError::BadParams { cmd: cmd.into(), msg: "target video layer is locked".into() }); }
+        let l = doc.layer_mut(layer_id).ok_or(EngineError::NoLayer(layer_id))?;
+        if l.video.is_none() { return Err(EngineError::BadParams { cmd: cmd.into(), msg: "target layer is not a video layer".into() }); }
+        let v = l.video.as_mut().ok_or_else(|| EngineError::Other("target video layer disappeared".into()))?;
+        let existing = v.keyframes.iter().position(|k| k.frame == frame);
+        if remove {
+            if let Some(i) = existing { v.keyframes.remove(i); }
+        } else {
+            if existing.is_none() && v.keyframes.len() >= t_duration.min(MAX_VIDEO_KEYFRAMES) { return Err(EngineError::BadParams { cmd: cmd.into(), msg: "video keyframe track is full".into() }); }
+            let key = photostore_doc::VideoKeyframe { frame, x, y, opacity };
+            if let Some(i) = existing { v.keyframes[i] = key; } else { v.keyframes.push(key); }
+            v.keyframes.sort_by_key(|k| k.frame);
+        }
+        *active = Some(layer_id);
+        sync(doc);
+        Ok(json!({"layer": layer_id.0, "frame": frame, "changed": true}))
+    })?;
+    Ok(result)
 }
 
 fn restore_frame(s: &mut Session, _p: &Value) -> Result<Value> {

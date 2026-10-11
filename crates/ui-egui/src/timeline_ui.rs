@@ -49,6 +49,19 @@ pub struct TimelineUi {
     pub tween_effects: bool,
     #[serde(default)]
     pub tween_selected_layers: bool,
+    #[serde(skip)]
+    pending_keyframe: Option<PendingKeyframe>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PendingKeyframe {
+    doc: photostore_doc::DocId,
+    layer: photostore_doc::LayerId,
+    frame: usize,
+    track_signature: u64,
+    x: f32,
+    y: f32,
+    opacity: f32,
 }
 
 fn default_tween_additions() -> u64 { 1 }
@@ -64,6 +77,7 @@ impl std::fmt::Debug for TimelineUi {
             .field("frame_thumbs_len", &self.frame_thumbs.len())
             .field("thumb_generation", &self.thumb_generation)
             .field("thumb_page", &self.thumb_page)
+            .field("pending_keyframe", &self.pending_keyframe.is_some())
             .finish()
     }
 }
@@ -174,6 +188,7 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
     }
     let ctx = parent.ctx().clone();
     let doc_snapshot = app.session.active().map(|d| (d.doc.clone(), d.active_layer));
+    let timeline_history = app.session.active().map(|st| (st.history.past_len(), st.history.future_len())).unwrap_or_default();
     let tl = doc_snapshot.as_ref().and_then(|(doc, _)| doc.timeline.as_ref());
     let have_doc = doc_snapshot.is_some();
     let layer_rows: Vec<(u64, String, bool)> = doc_snapshot.as_ref().map(|(doc, _)| doc.layers.iter().map(|l| (l.id.0, l.name.clone(), l.video.is_some())).collect()).unwrap_or_default();
@@ -374,22 +389,30 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                 if matches!(tl.mode, photostore_doc::TimelineMode::Video) {
                     crate::video_clip_ui::show(app, ui, tl);
                     if let (Some(active_id), Some((doc, _))) = (active_video_id, doc_snapshot.as_ref()) {
-                        if let Some(layer) = doc.layer(photostore_doc::LayerId(active_id)) {
+                            if let Some(layer) = doc.layer(photostore_doc::LayerId(active_id)) {
                             if let Some(video) = layer.video.as_ref() {
-                                let key = video.keyframes.iter().find(|key| key.frame == tl.current).cloned();
+                                let layer_id = photostore_doc::LayerId(active_id);
+                                let mut signature_hasher = std::collections::hash_map::DefaultHasher::new();
+                                timeline_history.hash(&mut signature_hasher);
+                                let track_signature = signature_hasher.finish();
+                                let pending_id = (doc.id, layer_id, tl.current, track_signature);
+                                let needs_refresh = app.ui.timeline.pending_keyframe.as_ref().is_none_or(|pending| (pending.doc, pending.layer, pending.frame, pending.track_signature) != pending_id);
+                                if needs_refresh {
+                                    let (x, y, opacity) = photostore_engine::sample_keyframe_transform(video, tl.current);
+                                    app.ui.timeline.pending_keyframe = Some(PendingKeyframe { doc: doc.id, layer: layer_id, frame: tl.current, track_signature, x, y, opacity });
+                                }
+                                let Some(pending) = app.ui.timeline.pending_keyframe.as_mut() else { return; };
                                 ui.horizontal(|ui| {
                             ui.label(RichText::new(tl!("Position / Opacity Keyframe")).color(t.text_dim));
-                            let mut x = key.as_ref().map_or(0.0, |key| key.x);
-                            let mut y = key.as_ref().map_or(0.0, |key| key.y);
-                            let mut opacity = key.as_ref().map_or(1.0, |key| key.opacity);
-                            ui.add(egui::DragValue::new(&mut x).prefix("x "));
-                            ui.add(egui::DragValue::new(&mut y).prefix("y "));
-                            ui.add(egui::DragValue::new(&mut opacity).range(0.0..=1.0).prefix("α "));
+                            ui.add(egui::DragValue::new(&mut pending.x).prefix("x "));
+                            ui.add(egui::DragValue::new(&mut pending.y).prefix("y "));
+                            ui.add(egui::DragValue::new(&mut pending.opacity).range(0.0..=1.0).prefix("α "));
                             if crate::widgets::secondary_button(ui, "◆", 28.0).on_hover_text(tl!("Set keyframe")).clicked() {
-                                act = Some(("timeline.addKeyframe", json!({"layer": active_id, "frame": tl.current, "x": x, "y": y, "opacity": opacity})));
+                                act = Some(("timeline.addKeyframe", json!({"document": doc.id.0, "layer": active_id, "frame": tl.current, "x": pending.x, "y": pending.y, "opacity": pending.opacity})));
                             }
-                            if key.is_some() && crate::widgets::secondary_button(ui, "×", 28.0).on_hover_text(tl!("Delete keyframe")).clicked() {
-                                act = Some(("timeline.deleteKeyframe", json!({"layer": active_id, "frame": tl.current})));
+                            let key_exists = video.keyframes.iter().any(|key| key.frame == tl.current);
+                            if key_exists && crate::widgets::secondary_button(ui, "×", 28.0).on_hover_text(tl!("Delete keyframe")).clicked() {
+                                act = Some(("timeline.deleteKeyframe", json!({"document": doc.id.0, "layer": active_id, "frame": tl.current})));
                             }
                                 });
                             }
