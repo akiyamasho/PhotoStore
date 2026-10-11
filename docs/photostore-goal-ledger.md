@@ -466,8 +466,9 @@ For each future entry, record the capability, status (`implemented`, `unverified
 The current source-stage pass adds independent Position ownership for video clips. Canonical clip
 translation persists as `base_translation` and `applied_translation`; `FrameLayerState.video_position`
 keeps snapshots independent from changing source-frame bounds. Position and Opacity are separate
-owned tracks. Whole-pixel Linear/Hold keys, navigation, deletion, and stopwatch defaults are bounded
-to 100,000 keys, 256 tracks, frame 999,999, and ±1,000,000 coordinates. First enable migrates
+owned tracks. Whole-pixel Linear/Hold keys, navigation, and deletion are available; stopwatches are
+off by default. Animation tracks are bounded to 100,000 keys, 256 tracks, frame 999,999, and
+±1,000,000 coordinates. First enable migrates
 legacy placement with exact bounded integer-frame Hold samples, rejects ambiguous dense bbox snapshots
 and owned Position ancestors, and preserves raw XY for alpha-only edits. Rendering and source painting
 use canonical offsets without baking motion into footage; destructive timeline operations freeze the
@@ -475,8 +476,27 @@ shown pose into the base translation while preserving alpha.
 
 Candidate identity is `PhotoStore-dev-video-position`, bundle ID `ai.photostore.app.dev.video-position`,
 branch `codex/video-position`, base `2b93f6dd260291f9f49c8a5efda0698d3eb6cef8`, and version 0.16.0
-development. Code and authored controls are implemented and source-reviewed. Compiler, package,
-install, native-runtime, private-push, screenshot/UI-pixel, Smart visual, PSD, full-affine, release,
-and parity evidence remain pending. The full product backfill is unfinished; future work includes
+development. Code and authored controls are implemented and source-reviewed. At this source
+checkpoint, compiler, package, install, native-runtime, and private-push evidence were pending; the
+delivery receipt below records completion. Screenshot/UI-pixel, Smart visual, PSD, full-affine,
+release, and parity evidence remain pending. The full product backfill is unfinished; future work includes
 animated parents, full Smart affine support, and external PSD temporal acceptance. See
 [video-position.md](video-position.md).
+
+## 2026-10-11: 0.16.0 video Position delivery receipt
+
+The `PhotoStore-dev-video-position` candidate is installed at
+`/Applications/PhotoStore-dev-video-position.app`; its bundle ID is
+`ai.photostore.app.dev.video-position`, version 0.16.0 development, baked source SHA
+`2c3fd1099d516587b5893d08f2734832cbcd8751`, and installed executable SHA-256
+`514f390dba78eb664a8ebd904db076c820eba1c15e5bd6b727f9c73ab3c7f632`. The final compiler/package
+passed exit 0 in 3m00s, and installer evidence is retained in
+`/private/tmp/photostore-video-position-install-20261011.log`.
+
+The corrected bounded native flow passed 107 requests/responses with 106 successes, one expected
+legacy XY ownership rejection, and zero unexpected failures. It verified three in-app source frames
+(including an empty frame), painted placement [26,18,12,12], opacity 1.0/0.4/0.5, save/reopen,
+Video↔Frame conversion, alpha preservation, recording off, and disabled Position freeze at [10,6]
+with zero keys. Runtime cleanup confirmed the candidate process absent and listener closed. No
+screenshot/UI-pixel, Smart visual, animated-parent, PSD, full-affine, release, or full-product
+parity acceptance is claimed.

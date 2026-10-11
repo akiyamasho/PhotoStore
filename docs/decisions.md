@@ -195,8 +195,28 @@ Position ancestors, and preserves raw XY for alpha-only operations. Rendering, s
 painting, save/reopen, and frame conversion use canonical offsets so motion is not baked into footage.
 Destructive timeline operations freeze the visible pose into the base translation and preserve alpha.
 
-This is a source-reviewed development checkpoint on `codex/video-position`, base
+At the source checkpoint on `codex/video-position`, based on
 `2b93f6dd260291f9f49c8a5efda0698d3eb6cef8`, targeting `PhotoStore-dev-video-position` with bundle
-ID `ai.photostore.app.dev.video-position`. Compiler, package, install, native-runtime, screenshot,
-PSD, Smart visual, full-affine, release, and parity evidence remain pending. Future work includes
-animated Position parents, full Smart affine support, and external PSD temporal acceptance.
+ID `ai.photostore.app.dev.video-position`, compiler, package, install, and native-runtime evidence
+were pending; the delivery receipt below records completion. Screenshot, PSD, Smart visual,
+full-affine, release, and parity evidence remain pending. Future work includes animated Position
+parents, full Smart affine support, and external PSD temporal acceptance.
+
+## 2026-10-11: video Position delivery receipt
+
+The `PhotoStore-dev-video-position` candidate is installed at
+`/Applications/PhotoStore-dev-video-position.app` and was packaged at
+`/private/tmp/photostore-video-position-rc-0.16.0-2c3fd1099/PhotoStore-dev-video-position.app`.
+Bundle ID is `ai.photostore.app.dev.video-position`, version is 0.16.0 development, baked source
+SHA is `2c3fd1099d516587b5893d08f2734832cbcd8751`, and the installed executable SHA-256 is
+`514f390dba78eb664a8ebd904db076c820eba1c15e5bd6b727f9c73ab3c7f632`. The final compiler/package
+passed exit 0 in 3m00s; installer and package logs are retained at
+`/private/tmp/photostore-video-position-install-20261011.log` and
+`/private/tmp/photostore-video-position-package-final-20261011.log`.
+
+One corrected native flow passed with 107 requests and responses, 106 successes, one expected legacy
+XY ownership rejection, and zero unexpected failures. It covered three in-app source frames,
+including an empty frame, painted placement, opacity samples 1.0/0.4/0.5, save/reopen,
+Video↔Frame conversion, alpha preservation, recording-off state, and disabled Position freeze at
+[10,6] with zero keys. No screenshot, Smart visual, animated-parent, PSD, full-affine, release, or
+full-product parity claim is made.

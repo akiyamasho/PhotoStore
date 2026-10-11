@@ -80,3 +80,6 @@ or full-affine acceptance is claimed. Native PSD temporal acceptance remains out
 The public workflow reference is [Adobe's overview of animating layer properties](https://helpx.adobe.com/uk/photoshop/desktop/add-video-and-animation/use-keyframes/overview-of-animating-layer-properties.html).
 
 Video-layer Position ownership is documented separately in [video-position.md](video-position.md).
+
+The follow-on video Position candidate has its delivery receipt in [video-position.md](video-position.md);
+its compiler, package, install, and bounded native evidence are complete, while broader acceptance remains pending.
