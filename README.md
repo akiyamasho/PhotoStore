@@ -28,6 +28,11 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 open -a PhotoStore
 ```
 
+For the normal local edit loop, use the isolated [`PhotoStore-dev` installation](docs/dev-install.md)
+and [`development watcher`](docs/dev-watch.md). It incrementally builds and safely restarts the
+dev process while preserving protected documents and recovery state; it does not change the
+production `PhotoStore.app`.
+
 ## Latest screenshots
 
 The 0.13.0 preview documents editable per-tool and subtool shortcuts, clear bindings, native JSON
@@ -41,3 +46,6 @@ export, and the fresh rectangular marquee configuration.
 
 See the [0.13.0 screenshot evidence and gallery](docs/screenshots/0.13.0/evidence.md) for capture
 scope, demo-document details, and known limits.
+
+The 0.13.1 dev-watch screenshot set is prepared but has no capture yet; the release page will link
+only committed evidence after the compiler and preview capture pass.

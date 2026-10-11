@@ -43,11 +43,12 @@ alone cannot promote production. Builds embed and verify `PHOTOSTORE_BUILD_SHA` 
 production uses the official `heif` feature and requires `CRAFT_FONTS_DIR` for licenses.
 
 Bundles are frozen into a staging directory and codesign-verified before promotion. If the
-corresponding app identity is active, the bundle is retained as a pending artifact and installed
-on a later poll after exit. The watcher never kills, restarts, focuses, closes, or overwrites an
-active app, preserves an old production bundle backup, and keeps failure metadata with a
-five-minute retry backoff. Missing network/authentication/JSON metadata is an error and never
-advances a baseline.
+corresponding dev or production app identity is active with open document tabs, background jobs,
+or dialogs, the bundle is retained as a pending artifact and installed on a later poll after the
+guard is resolved. The dev watcher may close its own controlled blank process after that guard;
+local CI never closes an unrelated owner process. It preserves an old production bundle backup and
+keeps failure metadata with a five-minute retry backoff. Missing network/authentication/JSON
+metadata is an error and never advances a baseline.
 
 The native shortcut export remains
 `/Users/computer/Desktop/dev/tools/Animation/photostore_keys.json`; development uses its

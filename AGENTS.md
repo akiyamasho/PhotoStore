@@ -47,15 +47,20 @@ Read the relevant crate and docs before editing. Keep manifests valid, preserve 
 
 ## Local development installation policy
 
-Every completed milestone is delivered to an isolated development installation before the milestone
-is considered complete. Consolidated main work uses `PhotoStore-dev`; an independent goal or agent
-uses its own `PhotoStore-dev-<goal>` RC bundle, identity, process, configuration, recovery,
-presets, logs, UI state, and shortcut exporter. Each dev instance must never overwrite, restart,
-close, reinstall, or register document handlers for another dev instance or production
-`PhotoStore.app`. Dev updates must preserve that instance's unsaved documents and recovery data.
-When an app is launched by an agent, launch it hidden or in the background so the user's active UI
-is not blocked. The production `PhotoStore` app is reviewed in place and is released, tagged,
-published, or installed only after the user explicitly requests production release.
+Every completed milestone is delivered to the isolated consolidated `PhotoStore-dev` installation
+before the milestone is considered complete. The normal edit loop is the repository-root `./dev`
+watcher documented in [`docs/dev-install.md`](docs/dev-install.md) and
+[`docs/dev-watch.md`](docs/dev-watch.md). It uses one shared Cargo target and incrementally builds
+changed inputs; it does not require a new pull request or a fresh application reinstall for each
+edit. An explicitly requested independent goal may use a separate `PhotoStore-dev-<goal>` identity,
+but goal bundles are never the default workflow.
+
+The watcher may close the owned, controlled dev app only when it has no open document tabs and no
+background jobs or dialogs. Any open tab, including a saved tab, defers the queued reload; save and
+close every tab to let it apply automatically. It never closes an unrelated owner process and never
+touches `/Applications/PhotoStore.app`. Source preferences and configuration are preserved. The
+loop is a safe process restart, not in-process hot module replacement. When launched by an agent,
+use background mode so the user's active UI is not blocked.
 
 ## Local CI and release watcher
 

@@ -1,5 +1,15 @@
 # Implementation decisions
 
+## 2026-10-11: Consolidated development watcher boundary
+
+The default local edit loop uses one isolated `PhotoStore-dev` installation with incremental
+shared-target builds and safe process restarts. It does not require a pull request or a bundle
+reinstall for each edit, and it is not hot module replacement: open or unsaved documents and
+recovery state defer a restart until a disposable demo document is saved or closed. Independent
+goals use separate `PhotoStore-dev-<goal>` identities. Trusted `main` updates the consolidated
+dev installation; production remains eligible only from a published, non-draft, non-prerelease
+release whose tag resolves to its exact source SHA.
+
 ## 2026-10-11: Personal PhotoStore fork identity
 
 PhotoStore is maintained as an independent private fork of PhotoCraft for personal use and workflows. The repository keeps original source history, authorship, licenses, notices, and attribution records, with no upstream sync relationship.
