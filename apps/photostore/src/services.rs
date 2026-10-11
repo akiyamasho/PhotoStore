@@ -7,6 +7,7 @@ use photostore_format::RecoveryStore;
 use photostore_geom::Rect;
 use photostore_ui_egui::{FileDialogAnswer, FileDialogReply, FileDialogRequest, Recoverable, Services};
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -186,6 +187,51 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     photostore_format::atomic_write(path, bytes).map_err(|e| e.to_string())
 }
 
+type ShortcutExportCache = Rc<RefCell<Option<(String, String)>>>;
+
+fn save_preferences_with_shortcuts_at(text: &str, preferences: &Path, cache: &ShortcutExportCache) -> Result<(), String> {
+    write_atomic(preferences, text.as_bytes())?;
+    let root: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("Preferences saved, but shortcut export could not read preferences: {e}"))?;
+    let path = root.get("shortcutFile").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
+    if path.is_empty() {
+        *cache.try_borrow_mut().map_err(|_| "Preferences saved, but shortcut export cache is busy".to_string())? = None;
+        return Ok(());
+    }
+    photostore_engine::prefs::validate_shortcut_file(&path).map_err(|e| format!("Preferences saved, but shortcut export path `{path}` is invalid: {e}"))?;
+    let target = PathBuf::from(&path);
+    let parent = target.parent().filter(|p| !p.as_os_str().is_empty()).ok_or_else(|| format!("Preferences saved, but shortcut export path `{path}` has no parent directory"))?;
+    if !std::fs::metadata(parent).map_err(|e| format!("Preferences saved, but shortcut export folder `{}` is unavailable: {e}", parent.display()))?.is_dir() {
+        return Err(format!("Preferences saved, but shortcut export folder `{}` is not a directory", parent.display()));
+    }
+    if std::fs::symlink_metadata(&target).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(format!("Preferences saved, but shortcut export target `{path}` is a symlink"));
+    }
+    let prefs_name = preferences.file_name().ok_or("Preferences saved, but native preferences filename could not be checked")?;
+    let prefs_target = std::fs::canonicalize(preferences.parent().unwrap_or_else(|| Path::new("."))).map_err(|e| format!("Preferences saved, but native preferences location could not be checked: {e}"))?.join(prefs_name);
+    let target_name = target.file_name().ok_or_else(|| format!("Preferences saved, but shortcut export path `{path}` has no filename"))?;
+    let shortcut_target = std::fs::canonicalize(parent).map_err(|e| format!("Preferences saved, but shortcut export folder `{}` could not be resolved: {e}", parent.display()))?.join(target_name);
+    let existing_target = if target.exists() { std::fs::canonicalize(&target).map_err(|e| format!("Preferences saved, but shortcut export target `{path}` could not be resolved: {e}"))? } else { shortcut_target };
+    let same_target = existing_target == prefs_target
+        || (cfg!(target_os = "macos") && existing_target.to_string_lossy().eq_ignore_ascii_case(&prefs_target.to_string_lossy()));
+    if same_target {
+        return Err(format!("Preferences saved, but shortcut export path `{path}` is the native preferences file"));
+    }
+    let overrides: BTreeMap<String, String> = serde_json::from_value(root.get("shortcuts").cloned().unwrap_or_else(|| serde_json::json!({}))).map_err(|e| format!("Preferences saved, but shortcut overrides are malformed: {e}"))?;
+    let alternates: BTreeMap<String, Vec<String>> = serde_json::from_value(root.get("shortcutAlternates").cloned().unwrap_or_else(|| serde_json::json!({}))).map_err(|e| format!("Preferences saved, but alternate shortcuts are malformed: {e}"))?;
+    let encoded = photostore_engine::prefs::encode_shortcut_set(&overrides, &alternates).map_err(|e| format!("Preferences saved, but shortcut export could not be encoded: {e}"))?;
+    if target.is_file() && cache.try_borrow().map_err(|_| "Preferences saved, but shortcut export cache is busy".to_string())?.as_ref() == Some(&(path.clone(), encoded.clone())) {
+        return Ok(());
+    }
+    write_atomic(&target, encoded.as_bytes()).map_err(|e| format!("Preferences saved, but shortcut export to `{path}` failed: {e}"))?;
+    *cache.try_borrow_mut().map_err(|_| "Preferences saved, but shortcut export cache is busy".to_string())? = Some((path, encoded));
+    Ok(())
+}
+
+fn save_preferences_with_shortcuts(text: &str, cache: &ShortcutExportCache) -> Result<(), String> {
+    let preferences = prefs_file().ok_or("no config directory")?;
+    save_preferences_with_shortcuts_at(text, &preferences, cache)
+}
+
 fn export_options(settings: &photostore_ui_egui::ExportSettings) -> photostore_io::ExportOptions {
     let mut opts = photostore_io::ExportOptions::default();
     if let Some(q) = settings.jpeg_quality {
@@ -305,6 +351,7 @@ fn shell_word(s: &str) -> String {
 
 pub fn native(automation: Option<photostore_automation::AuthorizedWorkspace>) -> Services {
     let clip: Rc<RefCell<Option<arboard::Clipboard>>> = Rc::default();
+    let shortcut_export_cache: ShortcutExportCache = Rc::default();
     let automation_read = automation.clone().map(|workspace| {
         Box::new(move |path: &str| {
             let bytes = workspace.read(path).map_err(|error| error.to_string())?;
@@ -375,7 +422,7 @@ pub fn native(automation: Option<photostore_automation::AuthorizedWorkspace>) ->
         }),
         load_prefs: Some(Box::new(|| std::fs::read_to_string(prefs_file()?).ok())),
         photoshop_shortcuts: Some(Box::new(|| crate::photoshop_settings::live_keyboard_shortcuts(&|k| std::env::var_os(k)))),
-        save_prefs: Some(Box::new(|text: &str| write_atomic(&prefs_file().ok_or("no config directory")?, text.as_bytes()))),
+        save_prefs: Some(Box::new(move |text: &str| save_preferences_with_shortcuts(text, &shortcut_export_cache))),
         system_theme: crate::appearance::service(),
         append_text: Some(Box::new(|path: &str, text: &str| {
             use std::io::Write;
@@ -824,5 +871,36 @@ mod tests {
         std::fs::write(&bin, tga_1x1()).unwrap();
         assert_eq!(image_from_files(&[tga]), Some((1, 1, vec![255, 0, 0, 255])));
         assert!(image_from_files(&[bin]).is_none());
+    }
+
+    #[test]
+    fn shortcut_export_writes_updates_preserves_bindings_and_rejects_failures() {
+        let dir = temp("shortcut-export");
+        let preferences = dir.join("preferences.json");
+        let target = dir.join("keys.json");
+        let cache = ShortcutExportCache::default();
+        let text = |path: &Path, key: &str| serde_json::json!({
+            "shortcutFile": path,
+            "shortcuts": {"file.open": key, "file.close": ""},
+            "shortcutAlternates": {"file.open": ["Ctrl+O"]}
+        }).to_string();
+        let first = text(&target, "Cmd+O");
+        save_preferences_with_shortcuts_at(&first, &preferences, &cache).unwrap();
+        let exported = photostore_engine::prefs::decode_shortcut_set(&std::fs::read_to_string(&target).unwrap()).unwrap();
+        assert_eq!(exported.overrides.get("file.close").map(String::as_str), Some(""));
+        assert_eq!(exported.alternates.get("file.open").cloned(), Some(vec!["Ctrl+O".to_string()]));
+        let before_failure = std::fs::read(&target).unwrap();
+        let updated = text(&target, "Cmd+Shift+O");
+        save_preferences_with_shortcuts_at(&updated, &preferences, &cache).unwrap();
+        assert_ne!(std::fs::read(&target).unwrap(), before_failure);
+        let failed_target = dir.join("missing").join("keys.json");
+        let failed = text(&failed_target, "Cmd+P");
+        let before_missing_parent = std::fs::read(&target).unwrap();
+        assert!(save_preferences_with_shortcuts_at(&failed, &preferences, &cache).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), before_missing_parent);
+        let reserved = text(&preferences, "Cmd+R");
+        assert!(save_preferences_with_shortcuts_at(&reserved, &preferences, &cache).is_err());
+        assert!(std::fs::read_to_string(&preferences).unwrap().contains("shortcutFile"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

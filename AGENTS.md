@@ -44,3 +44,15 @@ may be supplemented with a screenshot link only when its source version is verif
 ## Changes
 
 Read the relevant crate and docs before editing. Keep manifests valid, preserve unrelated work, and make focused changes. Run only checks requested by the user or required to establish that an explicitly requested change is safe. Record significant product or format decisions in `docs/decisions.md`.
+
+## Local development installation policy
+
+Every completed milestone is delivered to an isolated development installation before the
+milestone is considered complete. Consolidated main work uses `PhotoStore-dev`; an independent
+goal uses its own `PhotoStore-dev-<goal>` bundle and settings. Each dev app has its own macOS bundle identifier, executable and
+configuration, recovery, presets, logs, UI state, and process identity; it must never overwrite,
+restart, close, reinstall, or register document handlers for the production `PhotoStore.app`.
+Dev updates must preserve the dev app's unsaved documents and recovery data. When a dev app is
+launched by an agent, launch it hidden or in the background so the user's active UI is not blocked.
+Production release, tagging, publication, or installation happens only after the user explicitly
+requests release to production following review.

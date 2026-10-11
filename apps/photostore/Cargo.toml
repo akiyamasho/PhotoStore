@@ -8,6 +8,8 @@ description = "PhotoStore: an open-source, native image editor"
 build = "build.rs"
 
 [features]
+# Isolated local desktop build; default builds retain the production identity and data paths.
+dev-install = []
 # Open HEIC/HEIF photos (the optional photostore-heif crate). Not default so distributors choose
 # it; official builds (CI, packaging/, release) build with `--features heif`.
 heif = ["photostore-codecs/heif"]
