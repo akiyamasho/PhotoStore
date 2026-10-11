@@ -532,6 +532,7 @@ impl Session {
         if let (Some(k), Some(id)) = (restrict, active) {
             channel_cmds::restrict_to_color(&before, &mut doc, id, k);
         }
+        video_cmds::canonicalize_edited_timeline(&before, &mut doc);
         // Recording is session/document state rather than an undoable canvas property.  Keep
         // the latest stream attached while the cloned document enters history.
         let previous_recording = before.recording.clone();

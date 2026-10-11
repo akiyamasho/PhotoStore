@@ -7,8 +7,8 @@
 //!    everything in `<exe dir>/PhotoStoreData`, so a portable copy on a USB stick leaves nothing in
 //!    `%APPDATA%`. The Windows portable zip ships with `portable.txt`; the MSI doesn't. If that
 //!    folder can't be written (read-only medium, Program Files), the app warns and falls back.
-//! 3. The platform convention: macOS `~/Library/Application Support/PhotoStore`, Windows
-//!    `%APPDATA%\PhotoStore`, Linux `$XDG_CONFIG_HOME/photostore` or `~/.config/photostore`.
+//! 3. The platform convention: macOS `~/Library/Application Support/PhotoStore[-dev]`, Windows
+//!    `%APPDATA%\PhotoStore[-dev]`, Linux `$XDG_CONFIG_HOME/photostore[-dev]` or `~/.config/photostore[-dev]`.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -84,13 +84,15 @@ pub fn resolve(env: impl Fn(&str) -> Option<OsString>, exe_dir: Option<&Path>) -
 /// The platform convention, from `env` (so tests can fake `HOME`/`APPDATA`/`XDG_CONFIG_HOME`).
 pub fn platform_dir(env: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
     let home = env("HOME").filter(|h| !h.is_empty()).map(PathBuf::from);
+    let app_name = photostore_engine::build_info::app_name();
+    let linux_name = if photostore_engine::build_info::is_dev_build() { "photostore-dev" } else { "photostore" };
     if cfg!(target_os = "macos") {
-        return home.map(|h| h.join("Library/Application Support/PhotoStore"));
+        return home.map(|h| h.join("Library/Application Support").join(app_name));
     }
     if cfg!(windows) {
-        return env("APPDATA").filter(|a| !a.is_empty()).map(|a| PathBuf::from(a).join("PhotoStore"));
+        return env("APPDATA").filter(|a| !a.is_empty()).map(|a| PathBuf::from(a).join(app_name));
     }
-    env("XDG_CONFIG_HOME").filter(|x| !x.is_empty()).map(PathBuf::from).or_else(|| home.map(|h| h.join(".config"))).map(|c| c.join("photostore"))
+    env("XDG_CONFIG_HOME").filter(|x| !x.is_empty()).map(PathBuf::from).or_else(|| home.map(|h| h.join(".config"))).map(|c| c.join(linux_name))
 }
 
 /// The first portable marker file in `exe_dir`, if any.
@@ -149,11 +151,12 @@ mod tests {
         assert!(!exe.join(PORTABLE_DATA_DIR).exists(), "no portable folder without a marker");
         // The convention per platform.
         if cfg!(target_os = "macos") {
-            assert_eq!(dir, root.join("home/Library/Application Support/PhotoStore"));
+            assert_eq!(dir, root.join("home/Library/Application Support").join(photostore_engine::build_info::app_name()));
         } else if cfg!(windows) {
-            assert_eq!(dir, root.join("appdata").join("PhotoStore"));
+            assert_eq!(dir, root.join("appdata").join(photostore_engine::build_info::app_name()));
         } else {
-            assert_eq!(dir, root.join("home/.config/photostore"));
+            let name = if photostore_engine::build_info::is_dev_build() { "photostore-dev" } else { "photostore" };
+            assert_eq!(dir, root.join("home/.config").join(name));
         }
         let _ = std::fs::remove_dir_all(&root);
     }

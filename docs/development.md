@@ -42,6 +42,29 @@ cargo xtask parity                                         # Photoshop menu cove
 
 Image code is slow at `opt-level 0`, so the workspace profile builds dependencies at `opt-level 2`. Use `--release` for anything interactive.
 
+### Isolated macOS development app
+
+To build a local arm64 app that cannot claim PhotoStore's production file associations, run:
+
+    packaging/macos/package-dev.sh
+
+The script sets the compile-time development identity, builds with HEIF support, and writes a
+signed PhotoStore-dev.app to dist/release/dev/PhotoStore-dev-<commit>.app. It uses the shared
+Cargo target directory and leaves the unique assembly directory in /tmp for inspection. Use
+--skip-build only with an already-built arm64 binary whose --version output contains the workspace
+version, commit short SHA, and [dev] marker. The resulting plist uses ai.photostore.dev,
+PhotoStore-dev, and the full commit SHA, and omits document type and UTI declarations; manual
+File > Open still works.
+
+The development binary stores preferences and recovery data under
+~/Library/Application Support/PhotoStore-dev. Launch it in the background without changing the
+current production app's focus or state with:
+
+    open -g -j -n -a /Applications/PhotoStore-dev.app
+
+That command assumes you have placed the app at that path yourself; the packaging script does not
+install or replace anything. Promotion to a production app is an explicit later release action.
+
 ## Fonts (craft-fonts)
 
 Font assets shared by the Crafting Apps live in [storytold/craft-fonts](https://github.com/storytold/craft-fonts), never in this repo: don't commit font files here (Inter and JetBrains Mono in `assets/fonts/` are the only exceptions; new fonts go to craft-fonts). The rules are in `craftrules/standards/fonts.md` in a sibling `craftrules` checkout (see below); that repository is not public, so outside contributors can ask a maintainer for the rules that apply to their change.

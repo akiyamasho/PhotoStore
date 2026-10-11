@@ -305,7 +305,12 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
         answer = buttons.iter().find(|b| b.0 == ButtonRole::Default).map(|b| b.4);
     }
     match answer {
-        Some(Answer::Cancel) => app.discard = None,
+        Some(Answer::Cancel) => {
+            // A cancelled quit must revoke any close permission or save-held close request.
+            app.allow_close = false;
+            app.jobs.close_after_saves = false;
+            app.discard = None;
+        }
         Some(Answer::Discard) => {
             if let Some(p) = app.discard.as_mut() {
                 if let Some(st) = app.session.documents().iter().find(|st| st.doc.id == doc) {

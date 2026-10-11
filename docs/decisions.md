@@ -57,6 +57,16 @@ keys, 32 alternate keys per binding, and 4 MiB. Shared tool keys are intentional
 reassigned. Shift switching defaults true while preserving explicit false and mouse choice. Existing
 KYS import remains supported; KYS export is not claimed.
 
+## 2026-10-11: 0.14.0 close and timeline persistence scope
+
+The 0.14.0 pass removes the application-quit bypass, resets close intent on Cancel, and targets
+selective same-playhead post-edit video-surface and dense-property persistence before history/save.
+The 33.04-second compiler gate, 5m32s preview build, native 8,314-byte demo proof, and targeted
+captures are complete. Dense-property runtime behavior remains unverified. This is a development
+branch milestone using the separate PhotoStore-dev identity/configuration and hidden background
+launches; no production tag or release is planned. The behavior remains bounded and evidence-gated;
+no complete timeline persistence or Photoshop parity claim is made.
+
 ## 2026-10-10: Smart Object contents identity (#2163)
 
 Smart Object instances carry a document-scoped contents ID separately from their layer ID. Normal duplicates preserve it; New Smart Object via Copy creates a new one. Contents edits update the matching instances together, retaining their individual placement and filters. Copies into another document remap contents IDs as a batch, preserving sharing within the copied layers without joining existing destination objects.

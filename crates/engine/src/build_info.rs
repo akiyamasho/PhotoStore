@@ -13,6 +13,24 @@
 /// The workspace version, such as `0.1.0` or `0.2.0-rc.1`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Whether this binary was compiled as the isolated development application.
+///
+/// The selector is deliberately compile time only. A running binary cannot be switched between
+/// production and development identities by changing its shell environment.
+pub fn is_dev_build() -> bool {
+    option_env!("PHOTOSTORE_DEV_BUILD") == Some("1")
+}
+
+/// The user-facing application name for this binary.
+pub fn app_name() -> &'static str {
+    if is_dev_build() { "PhotoStore-dev" } else { "PhotoStore" }
+}
+
+/// The native application identifier for this binary.
+pub fn app_id() -> &'static str {
+    if is_dev_build() { "ai.photostore.dev" } else { "ai.photostore.app" }
+}
+
 /// The full git commit this build was made from, when the build environment recorded it.
 pub fn git_sha() -> Option<&'static str> {
     option_env!("PHOTOSTORE_BUILD_SHA").map(str::trim).filter(|s| !s.is_empty())
@@ -30,7 +48,8 @@ pub fn short_sha() -> Option<&'static str> {
 
 /// `0.1.0 (3f2a9c1d0, 2026-10-01)`, or `0.1.0 (dev build)` without provenance.
 pub fn long_version() -> String {
-    format_long(VERSION, short_sha(), build_date())
+    let version = format_long(VERSION, short_sha(), build_date());
+    if is_dev_build() { format!("{version} [dev]") } else { version }
 }
 
 fn format_long(version: &str, sha: Option<&str>, date: Option<&str>) -> String {

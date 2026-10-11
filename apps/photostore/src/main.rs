@@ -50,9 +50,6 @@ mod ui_state;
 use photostore_engine::Session;
 use photostore_ui_egui::PhotoStoreApp;
 
-/// Matches the `.desktop` file and hicolor icon name, so Wayland docks pick up the icon.
-const APP_ID: &str = "ai.photostore.app";
-
 /// Windows and Linux: no OS title bar; the app's top bar is the title bar, with its own caption
 /// buttons and edge resizing (`photostore_ui_egui::titlebar`), as Photoshop does on Windows. macOS
 /// keeps its traffic lights over the integrated title strip.
@@ -75,8 +72,8 @@ fn native_options(custom_titlebar: bool) -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_icon(app_icon::window_icon())
-            .with_app_id(APP_ID)
-            .with_title("PhotoStore")
+            .with_app_id(photostore_engine::build_info::app_id())
+            .with_title(photostore_engine::build_info::app_name())
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([760.0, 480.0])
             .with_drag_and_drop(true)
@@ -329,7 +326,7 @@ fn main() -> eframe::Result {
     let created_in_callback = app_created.clone();
     let started_sentinel = sentinel.clone();
     let result = eframe::run_native(
-        "PhotoStore",
+        photostore_engine::build_info::app_name(),
         options,
         Box::new(move |cc| {
             created_in_callback.store(true, std::sync::atomic::Ordering::Relaxed);

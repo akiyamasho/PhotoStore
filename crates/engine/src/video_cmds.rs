@@ -4,7 +4,7 @@
 //! writes it back into the playhead's frame before anything re-syncs. Headless and scriptable. Native
 //! `.pcraft` files persist the complete frame stack.
 
-use photostore_doc::{Document, FrameLayerState, Layer, LayerContent, Timeline, VideoData};
+use photostore_doc::{Document, FrameLayerState, Layer, LayerContent, LayerId, Timeline, VideoData};
 use photostore_raster::Surface;
 use serde_json::{Value, json};
 use std::path::Path;
@@ -190,19 +190,46 @@ fn sync_layers(layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[ph
 
 /// Sample the position and opacity track at a document-timeline frame.
 pub fn sample_keyframe_transform(video: &VideoData, frame: usize) -> (f32, f32, f32) {
-    let mut points = video.keyframes.iter().collect::<Vec<_>>();
-    if points.windows(2).any(|pair| pair[0].frame > pair[1].frame) { points.sort_by_key(|k| k.frame); }
-    let Some(first) = points.first() else { return (0.0, 0.0, 1.0) };
-    if frame <= first.frame { return (first.x, first.y, first.opacity.clamp(0.0, 1.0)); }
-    for pair in points.windows(2) {
-        let a = pair[0]; let b = pair[1];
-        if frame <= b.frame {
-            let span = b.frame.saturating_sub(a.frame).max(1) as f32;
-            let u = (frame.saturating_sub(a.frame) as f32 / span).clamp(0.0, 1.0);
-            return (a.x + (b.x - a.x) * u, a.y + (b.y - a.y) * u, (a.opacity + (b.opacity - a.opacity) * u).clamp(0.0, 1.0));
+    let points = &video.keyframes;
+    if points.is_empty() { return (0.0, 0.0, 1.0); }
+    let sorted = points.windows(2).all(|pair| pair[0].frame <= pair[1].frame);
+    let (left, right) = if sorted {
+        // Lower-bound gives the first duplicate at an exact key. The preceding item is
+        // therefore the last duplicate on the left when interpolating between keys.
+        let mut lo = 0usize;
+        let mut hi = points.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if points[mid].frame < frame { lo = mid + 1; } else { hi = mid; }
         }
+        (lo.checked_sub(1), (lo < points.len()).then_some(lo))
+    } else {
+        // Malformed/legacy tracks retain deterministic one-pass semantics: first minimum
+        // right key and last maximum left key, with no allocation or reorder of authored data.
+        let mut left: Option<usize> = None;
+        let mut right: Option<usize> = None;
+        for (i, key) in points.iter().enumerate() {
+            if key.frame <= frame && left.map_or(true, |j| points[j].frame <= key.frame) { left = Some(i); }
+            if key.frame >= frame && right.map_or(true, |j| points[j].frame > key.frame) { right = Some(i); }
+        }
+        (left, right)
+    };
+    let Some(right) = right else {
+        let k = &points[left.unwrap_or(points.len() - 1)];
+        return (k.x, k.y, k.opacity.clamp(0.0, 1.0));
+    };
+    let Some(left) = left else {
+        let k = &points[right];
+        return (k.x, k.y, k.opacity.clamp(0.0, 1.0));
+    };
+    let a = &points[left];
+    let b = &points[right];
+    if a.frame == b.frame || frame == b.frame {
+        return (b.x, b.y, b.opacity.clamp(0.0, 1.0));
     }
-    points.last().map_or((0.0, 0.0, 1.0), |k| (k.x, k.y, k.opacity.clamp(0.0, 1.0)))
+    let span = b.frame.saturating_sub(a.frame).max(1) as f32;
+    let u = (frame.saturating_sub(a.frame) as f32 / span).clamp(0.0, 1.0);
+    (a.x + (b.x - a.x) * u, a.y + (b.y - a.y) * u, (a.opacity + (b.opacity - a.opacity) * u).clamp(0.0, 1.0))
 }
 
 fn keyframe_transform(video: &VideoData, frame: usize) -> (f32, f32, f32) {
@@ -229,6 +256,100 @@ pub fn store(doc: &mut Document) {
         states.clear(); collect_states(&doc.layers, states);
         }
     }
+}
+
+/// Persist a raster edit made to the currently displayed video frame while the edit transaction
+/// still has both the pre-edit document and the canonicalized display. This deliberately handles
+/// only stable playhead mappings; timeline/navigation commands and structural changes remain the
+/// responsibility of their existing command handlers.
+pub fn canonicalize_edited_timeline(before: &Document, after: &mut Document) {
+    let (Some(bt), Some(at)) = (&before.timeline, &after.timeline) else { return };
+    if bt.current != at.current || bt.mode != at.mode || bt.fps != at.fps || bt.duration != at.duration || bt.layer_ranges != at.layer_ranges { return; }
+    let current = at.current;
+    let fps = f64::from(at.fps.max(0.001));
+    canonicalize_layers(&before.layers, after, current, fps, &bt.layer_ranges);
+    canonicalize_states(before, after, current);
+}
+
+fn shallow_surface_eq(a: &Surface, b: &Surface) -> bool {
+    a.format() == b.format()
+        && a.default_pixel() == b.default_pixel()
+        && a.tile_count() == b.tile_count()
+        && a.tiles().zip(b.tiles()).all(|((ac, at), (bc, bt))| ac == bc && std::sync::Arc::ptr_eq(at, bt))
+}
+
+fn canonicalize_layers(before: &[Layer], after: &mut Document, current: usize, fps: f64, ranges: &[photostore_doc::LayerTimelineRange]) {
+    for old in before {
+        let id = old.id;
+        if let (Some(old_video), LayerContent::Raster(old_surface)) = (&old.video, &old.content)
+            && let Some(new) = after.layer_mut(id)
+        {
+            let stable_video = new.video.as_ref().is_some_and(|new_video| {
+                old_video.frames.len() == new_video.frames.len()
+                    && old_video.frame_delays_ms == new_video.frame_delays_ms
+                    && old_video.keyframes == new_video.keyframes
+                    && old_video.source == new_video.source
+                    && old_video.fps == new_video.fps
+                    && old_video.playback == new_video.playback
+                    && old_video.show_altered == new_video.show_altered
+            });
+            if stable_video {
+                let at = source_index(current, fps, old_video, ranges.iter().find(|r| r.layer == id)).min(old_video.frames.len().saturating_sub(1));
+                let underlying_unchanged = old_video.frames.get(at).zip(new.video.as_ref().and_then(|v| v.frames.get(at))).is_some_and(|(old_frame, new_frame)| shallow_surface_eq(old_frame, new_frame));
+                if underlying_unchanged && let (LayerContent::Raster(new_surface), Some(video)) = (&mut new.content, new.video.as_mut()) {
+                    if !shallow_surface_eq(old_surface, new_surface) {
+                        let (dx, dy, _) = keyframe_transform(video, current);
+                        let dx = dx.round().clamp(-1_000_000.0, 1_000_000.0) as i32;
+                        let dy = dy.round().clamp(-1_000_000.0, 1_000_000.0) as i32;
+                        if let Some(frame) = video.frames.get_mut(at) {
+                            *frame = if dx == 0 && dy == 0 { new_surface.clone() } else { new_surface.translated(-dx, -dy, new_surface.content_bounds()) };
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(children) = old.children() {
+            canonicalize_layers(children, after, current, fps, ranges);
+        }
+    }
+}
+
+fn canonicalize_states(before: &Document, after: &mut Document, current: usize) {
+    let Some(bt) = before.timeline.as_ref() else { return };
+    let Some(at) = after.timeline.as_ref() else { return };
+    let (before_frames, after_frames) = if matches!(at.mode, photostore_doc::TimelineMode::FrameAnimation) { (&bt.frame_states, &at.frame_states) } else { (&bt.property_frames, &at.property_frames) };
+    let (Some(before_states), Some(after_states)) = (before_frames.get(current), after_frames.get(current)) else { return };
+    if before_states.len() != after_states.len() || before_states.iter().zip(after_states.iter()).any(|(a, b)| a != b) { return; }
+    let frame_animation = matches!(at.mode, photostore_doc::TimelineMode::FrameAnimation);
+    let after_layers = &after.layers;
+    let Some(at) = after.timeline.as_mut() else { return };
+    let states = if frame_animation { at.frame_states.get_mut(current) } else { at.property_frames.get_mut(current) };
+    if let Some(states) = states {
+        for state in states {
+            let Some(old) = find_layer(&before.layers, state.layer) else { continue };
+            let Some(new) = find_layer(after_layers, state.layer) else { continue };
+            if old.visible != new.visible { state.visible = new.visible; }
+            if old.opacity != new.opacity { state.opacity = new.opacity; }
+            let old_pos = photostore_doc::comps::layer_position(old);
+            let new_pos = photostore_doc::comps::layer_position(new);
+            if old_pos != new_pos { state.position = new_pos; }
+            if old.blend != new.blend { state.blend = Some(new.blend); }
+            if old.fill_opacity != new.fill_opacity { state.fill_opacity = Some(new.fill_opacity); }
+            if old.effects != new.effects { state.effects = Some(photostore_doc::FrameEffectsState { enabled: new.effects.enabled, items: new.effects.items.clone(), reference: new.effects.reference }); }
+        }
+    }
+}
+
+fn find_layer<'a>(layers: &'a [Layer], id: LayerId) -> Option<&'a Layer> {
+    for layer in layers {
+        if layer.id == id { return Some(layer); }
+        if let Some(children) = layer.children()
+            && let Some(found) = find_layer(children, id)
+        {
+            return Some(found);
+        }
+    }
+    None
 }
 
 fn collect_states(layers: &[Layer], states: &mut Vec<FrameLayerState>) {

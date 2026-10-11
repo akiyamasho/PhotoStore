@@ -73,7 +73,9 @@ The transport is `apps/photostore/src/control_server.rs`, and the handlers are i
   (default) because occluded macOS windows stop rendering
 - `ui.focus`: bring the main window to the front
 - `app.open {path}` / `app.save {path?}`: relative file I/O through the configured automation roots (`app.open` reads under the read root, `app.save` writes under the write root; absolute paths, `..` and paths escaping the root are refused, and both fail closed when no root was granted). Both reply with `warnings` (import/export notes such as "adjustment layer flattened"; `[]` when none), also shown to the user in the status bar and as a notice (`notices` in `ui.inspect`); `app.open` also returns the `path` and document `name`, `app.save` the `path` written. `app.save` without `path` writes back only to the document's own PSD, PSB or `.pcraft` file, like File › Save. Automation opens and saves never fire script events. Use these two rather than `file.open`, `file.save`, `file.saveAs` or `file.saveACopy`, which the control channel refuses (see [Engine commands](#engine-commands))
-- `app.quit`
+- `app.quit`: requests an asynchronous window close and returns `null` immediately. If there is
+  unsaved work, the normal Save / Don't Save / Cancel prompt appears; Cancel leaves the window
+  open and revokes the pending close request.
 
 ## Engine commands
 

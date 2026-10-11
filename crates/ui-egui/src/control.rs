@@ -936,7 +936,6 @@ fn dispatch(app: &mut PhotoStoreApp, ctx: &egui::Context, req: &ControlRequest) 
         },
         "app.save" => wrap(app.save_automation(s("path").map(str::to_string)).map(|(p, w)| json!({"path": p, "warnings": w}))),
         "app.quit" => {
-            app.allow_close = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             ok(Value::Null)
         }

@@ -245,6 +245,24 @@ Issues [#1](https://github.com/akiyamasho/PhotoStore/issues/1) and [#2](https://
 
 The bounded twelve-step pass is: 1 Inventory+architecture; 2 Canonical bindings+dispatch; 3 Editable tool editor+sort; 4 Live labels+shared-key clearing; 5 Native JSON export/import; 6 Integration; 7 Compiler; 8 Version/docs; 9 Preview+actual captures; 10 Commit/push/tag; 11 Final build+publish; 12 Safe install+issue outcomes — all complete. Issues #1 and #2 are closed with milestone comments; sort/import-cancel remain unverified beyond the captured states. The 0.13.0 app is installed at `/Applications/PhotoStore-0.13.0.app` from source `94751b66e9683aec52276fed789fcd26f39fce01`, with binary SHA-256 `c0e44b69cf6920cb20d58067c64dff5b9f5b4c512b43261d55ec7da0bd3a2bd6`, bundle `ai.photostore.app`, strict signature validation, and PID 19812. Its isolated config is `/private/tmp/photostore-0.13.0-install-demo/config`. The canonical `/Applications/PhotoStore.app` 0.12.0 process (PID 80169) was dirty and left untouched; canonical promotion and owner-workspace migration are not claimed.
 
+## Current 0.14.0 close and timeline persistence pass
+
+Version 0.14.0 is prepared in source; 0.13.0 remains the latest immutable published milestone.
+The bounded pass covers close safeguards and selective same-playhead timeline persistence. Version/docs,
+preview, and actual screenshot evidence are complete: the compiler check passed in 33.04 seconds,
+the preview build completed in 5m32s with marker `preview-0.14.0-timeline-safety`, and the native
+demo `.pcraft` is 8,314 bytes with one tile on frame 0 and blank frames 1 and 2 before seeking.
+Dense-property runtime behavior remains unverified. The separate PhotoStore-dev identity/configuration
+is implemented; development compiler/package delivery, development commit/push, exact-SHA development
+package, and background development installation remain pending. No production tag or release is
+planned.
+
+Milestones: close safeguards and timeline persistence are implemented for this checkpoint, with
+compiler/evidence recorded above. Development delivery has 8 steps: version/docs, preview, actual
+screenshots/docs, development isolation, development compiler, development commit/push, exact-SHA
+development package, and background development installation. Stopwatches and full Photoshop parity
+remain future work.
+
 ## Animation and timeline
 
 ### Implemented milestone
