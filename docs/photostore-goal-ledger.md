@@ -260,9 +260,9 @@ passed with zero failures; log `/private/tmp/photostore-build-rs-test-20261011.l
 source is `08e285ea80ea160af9661596ceee9449b4122f8f`; its 5m22s development package is installed
 at `/Applications/PhotoStore-dev-timeline-safety.app` with binary SHA-256
 `5d677b261e2ddf7c281fbcf11fb4fd0458a3d5682db4cd4b219cabb439720168`. Focused runtime evidence is
-`/private/tmp/photostore-dev-timeline-safety-repair-20261011/runtime-evidence.json`. Eight of nine
+`/private/tmp/photostore-dev-timeline-safety-repair-20261011/runtime-evidence.json`. Nine of nine
 RC steps are complete: 1–6, 7, 8, and 9; the private branch push is complete at remote SHA
-`3d6c3bada5f8455b0b9c21cf1aa9b7e5297c3489`. There is no production tag, release, publication, or
+`da874a22738885cef9cee37094f6251a3fd65cfc`. There is no production tag, release, publication, or
 production reinstall. The RC namespace is `PhotoStore-dev-timeline-safety`, bundle ID
 `ai.photostore.app.dev.timeline-safety`, default macOS configuration
 `~/Library/Application Support/PhotoStore-dev-timeline-safety`. No production tag or release is
@@ -279,12 +279,12 @@ Stopwatches and full Photoshop parity remain future work.
 
 Version 0.15.0 is prepared on isolated branch `codex/opacity-stopwatch`; 0.14.0 remains the latest
 bounded close/timeline milestone. Engine/native opacity stopwatches and timeline-UI controls are
-implemented; the goal-specific compiler passed, while screenshots, runtime, package, installation,
-and release evidence are pending. Engine steps 1–5 of 5 and UI controls/wiring steps 1–3 are
-complete; two of three feature milestones are complete (67%). Development delivery has four steps:
-docs/source commit, exact-source package, goal install, and delivery record; all four remain pending.
-Compiler log: `/private/tmp/photostore-opacity-app-check-20261011.log`. No production tag, release,
-publication, or install is claimed.
+implemented; the goal-specific compiler passed, and the local package/runtime receipt is complete.
+Engine steps 1–5 of 5 and UI controls/wiring steps 1–3 are complete; all three bounded candidate
+milestones are complete (100%). Development delivery has four steps: docs/source commit, exact-source package,
+goal install, and delivery record; all four are complete locally. Compiler log:
+`/private/tmp/photostore-opacity-app-check-20261011.log`. No production tag, release, publication,
+promotion, or production install is claimed.
 
 The pass covers ordinary-layer and Smart opacity with sparse copy-on-write keys, Linear/Hold modes,
 typed-property auto-key, UI static-disable confirmation (explicit direct API false deletes without
@@ -295,6 +295,14 @@ curves preserve parent state through unpack/group. Coupled video XY/opacity beha
 and unchanged. Only independent video-opacity stopwatch UI/migration, dense acceptance, PSD temporal export, audio acceptance, and full Photoshop
 parity remain future work. Candidate dev identity is `PhotoStore-dev-opacity-animation` with bundle
 ID `ai.photostore.app.dev.opacity-animation`.
+
+Local receipt: source `c57ee914f11cc410d1b1f13900e0104770462256`, package 5m50s, installed at
+`/Applications/PhotoStore-dev-opacity-animation.app`, executable SHA-256
+`3ae43f985eeedc18633eb2445cebe3a69886ec81b9e830839ea53ec961ce292b`. The focused hidden native
+check confirmed fresh default configuration, zero initial documents, recording off, Linear/Hold
+values and native ZIP keys, real close/reopen preservation, and disable clearing keys. No screenshot
+was produced because the focus=false attempt timed out; visual interaction acceptance remains
+unverified.
 
 ## Animation and timeline
 

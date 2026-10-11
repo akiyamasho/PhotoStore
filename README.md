@@ -35,3 +35,5 @@ open -a PhotoStore
 ![Unsaved-change guard](docs/screenshots/0.14.0/unsaved-quit-cancel.webp)
 
 ![Reopened video timeline](docs/screenshots/0.14.0/timeline-saved-reopened.webp)
+
+0.15.0 local development candidate — [opacity stopwatch evidence](docs/screenshots/0.15.0/evidence.md).

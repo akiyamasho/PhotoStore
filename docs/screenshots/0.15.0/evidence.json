@@ -1,0 +1,35 @@
+{
+  "runtime": {
+    "app": "/Applications/PhotoStore-dev-opacity-animation.app",
+    "bundle": "ai.photostore.app.dev.opacity-animation",
+    "pid": 54063,
+    "control_port": 17641,
+    "source_commit": "c57ee914f11cc410d1b1f13900e0104770462256",
+    "binary_sha256": "3ae43f985eeedc18633eb2445cebe3a69886ec81b9e830839ea53ec961ce292b",
+    "default_config_path_absent": true,
+    "automation_root": "/private/tmp/PhotoStore-opacity-animation-20261011/work",
+    "launcher": "packaging/macos/launch-dev-background.sh",
+    "initial_documents": 0
+  },
+  "background_gate": {"hidden": true, "active": false, "frontmost": false},
+  "document": {"name": "Opacity Animation Demo", "width": 64, "height": 64, "recording_enabled": false, "ordinary_layer": "Ink", "paint_color": "#2468ff"},
+  "timeline": {"mode": "Video", "duration": 3, "fps": 3.0},
+  "opacity": {
+    "initial_static": 1.0,
+    "frame2_set": 0.25,
+    "linear_frame1": 0.625,
+    "hold_frame0": 1.0,
+    "hold_frame1": 1.0,
+    "hold_frame2": 0.25,
+    "manifest_keys": [
+      {"frame": 0, "value": 1.0, "interpolation": "hold"},
+      {"frame": 2, "value": 0.25, "interpolation": "linear"}
+    ],
+    "disabled": {"enabled": false, "keyCount": 0, "staticValue": 1.0}
+  },
+  "native_artifact": {"path": "/private/tmp/photostore-opacity-runtime-20261011-evidence/work/opacity-demo.pcraft", "bytes_before_disable": 7034, "bytes_after_disable": 6817, "zip_magic": "504b0304", "format_generator": "photostore-format 0.15.0", "save_warnings": []},
+  "reopen": {"frame1": 1.0, "frame2": 0.25},
+  "provenance": {"manifest_keys_are_live_observations": true, "retained_native_artifact_is_post_disable": true, "raw_api_log_retained": false},
+  "screenshot": {"request": "ui.screenshot path=opacity-stopwatch.png focus=false", "result": "timed out; no file produced; no foreground fallback attempted"},
+  "cleanup": {"saved": true, "app_quit": true, "control_listener_closed": true}
+}

@@ -70,9 +70,9 @@ passed with zero failures; log `/private/tmp/photostore-build-rs-test-20261011.l
 source is `08e285ea80ea160af9661596ceee9449b4122f8f`; its 5m22s development package is installed
 at `/Applications/PhotoStore-dev-timeline-safety.app` with binary SHA-256
 `5d677b261e2ddf7c281fbcf11fb4fd0458a3d5682db4cd4b219cabb439720168`. Focused runtime evidence is
-`/private/tmp/photostore-dev-timeline-safety-repair-20261011/runtime-evidence.json`. Eight of nine
+`/private/tmp/photostore-dev-timeline-safety-repair-20261011/runtime-evidence.json`. Nine of nine
 steps are complete: 1–6, 7, 8, and 9; the private branch push is complete at remote SHA
-`3d6c3bada5f8455b0b9c21cf1aa9b7e5297c3489`. The RC
+`da874a22738885cef9cee37094f6251a3fd65cfc`. The RC
 uses `PhotoStore-dev-timeline-safety`,
 bundle ID `ai.photostore.app.dev.timeline-safety`, and default macOS configuration
 `~/Library/Application Support/PhotoStore-dev-timeline-safety`; production remains untouched.
@@ -94,9 +94,10 @@ curves preserve parent state through unpack/group. Existing coupled video XY/opa
 implemented and unchanged. Only independent video-opacity stopwatch UI/migration, PSD temporal export,
 audio acceptance, and full Photoshop parity remain future work. Engine/native and timeline-UI source
 steps are implemented; the required compiler passed, log
-`/private/tmp/photostore-opacity-app-check-20261011.log`. Screenshots, runtime, package, installation,
-and release evidence remain pending. Candidate isolated identity is `PhotoStore-dev-opacity-animation` with bundle ID
-`ai.photostore.app.dev.opacity-animation`; production remains untouched.
+`/private/tmp/photostore-opacity-app-check-20261011.log`. The local candidate package/runtime receipt
+is complete, with no screenshot produced because the focus=false capture timed out; visual interaction
+acceptance remains unverified. Candidate isolated identity is `PhotoStore-dev-opacity-animation` with
+bundle ID `ai.photostore.app.dev.opacity-animation`; production remains untouched.
 
 ## 2026-10-10: Smart Object contents identity (#2163)
 
