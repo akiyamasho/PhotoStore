@@ -15,7 +15,7 @@ This is the working roadmap for the independent PhotoStore product. It records t
 
 ## Priorities
 
-1. Complete the remaining 0.8.0 release steps for Audio, Smart Filter Masks, and the New Document Fix. Source commit `405d102f1ddc8f13ed7ae8b6ce8779db0c0f28ec` is pushed and the native compiler gate passed; package, tag, publish, reinstall, and New Document confirmation remain pending. Track the twelve steps in the goal ledger.
+1. Continue the post-release work after the completed 0.8.0 Audio, Smart Filter Masks, and New Document Fix pass. The source/tag is `711e73995ac23b5a408a6a07e458ebfc3df91d12`, the prerelease is published and installed, and the targeted New Document confirmation passed. Remaining gaps include exact audio latency/master-clock behavior, sparse tracks, mask copy/move/channel selection, and broader acceptance; track the completed twelve steps in the goal ledger.
 2. Deepen Smart Objects with contents editing, shared contents identity, smart-filter editing, linked-source workflows, and faithful PSD acceptance.
 3. Improve brush behavior and interaction: pressure/tilt/rotation dynamics, smoothing, presets, tablet edge cases, deterministic replay, and responsive large-document painting.
 4. Harden PSD and command coverage around the workflows PhotoStore promises. Add focused fixtures and measurements when a feature is implemented; avoid claiming parity before it is measured.
@@ -45,18 +45,21 @@ Object, filtering/minimize/hide, and UI-only candidates were reported. This evid
 compiler and targeted function/integration behavior. It does not claim visual UI QA, Photoshop
 parity, or complete PSD/external-format compatibility.
 
-The action-recording release is complete: `photostore-action-recording-2026-10-11` is published
-and PhotoStore 0.7.0 is installed locally. Broad native visual QA and UI parity remain unverified.
+The action-recording release is historical: `photostore-action-recording-2026-10-11` was published
+and PhotoStore 0.7.0 was installed locally. The current installed release is the 0.8.0
+`photostore-animation-smart-masks-2026-10-11` prerelease. Broad native visual QA and UI parity
+remain unverified.
 The old-workspace native-save issue remains a secondary reliability gap; the old process and artwork
 were preserved, but the attempted recovery target did not appear.
 
-The audio/clip source milestone is pushed and compiler-verified, but is not packaged or locally
-installed. Its remaining integration status is tracked in [audio-timeline.md](audio-timeline.md);
-no broad UI or acceptance claim is made. The current installed release remains the 0.7.0
-action-recording release at source `56aede3295b1e344b709c79043ef608a1b21e855`.
+The audio/clip source milestone is pushed, compiler-verified, packaged, and installed in 0.8.0.
+Its remaining integration status is tracked in [audio-timeline.md](audio-timeline.md); no broad UI
+or acceptance claim is made. The current installed source/tag is
+`711e73995ac23b5a408a6a07e458ebfc3df91d12`.
 
-Smart Filter Masks and the New Document Fix are implemented and compiler-verified in the current
-source, but are not yet packaged or installed. See [smart-filter-masks.md](smart-filter-masks.md).
+Smart Filter Masks and the New Document Fix are implemented, compiler-verified, packaged, and
+installed in the current 0.8.0 source. The targeted New Document confirmation passed; broad UI
+acceptance remains unverified. See [smart-filter-masks.md](smart-filter-masks.md).
 
 ## CI and release follow-up
 

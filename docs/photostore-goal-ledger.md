@@ -11,7 +11,7 @@ Updated 2026-10-11. This is an operational ledger for the independent PhotoStore
 - Icon direction: PhotoStore icon with the requested twist; keep the asset provenance row with the icon work.
 - README/AGENTS direction: keep badges, install, run, and contributor guidance lean and operational.
 - Branding release completed: tag `photostore-branding-2026-10-11` points to `e3703d4be2ceba37e04b81b2761f7b3acc27235b`; the [PhotoStore 0.6.1 release](https://github.com/akiyamasho/PhotoStore/releases/tag/photostore-branding-2026-10-11) contains the Apple Silicon DMG, CLI ZIP, and `SHA256SUMS`.
-- Audio/video source commit `405d102f1ddc8f13ed7ae8b6ce8779db0c0f28ec` is pushed on `origin/main`; the earlier `287f7c94c065d37d3bdc177c3e44f28719490e84` is archived WIP. The integrated audio/clip milestone is documented in [audio-timeline.md](audio-timeline.md); it is compiler-verified but not packaged or installed.
+- Audio/video source commit `405d102f1ddc8f13ed7ae8b6ce8779db0c0f28ec` is pushed on `origin/main`; the earlier `287f7c94c065d37d3bdc177c3e44f28719490e84` is archived WIP. The integrated audio/clip milestone is documented in [audio-timeline.md](audio-timeline.md); it is compiler-verified and included in the packaged, installed 0.8.0 release.
 - Photoshop-facing scope: timeline/frame animation and Smart Objects are first product priorities, while the inherited feature surface remains evidence to audit rather than a completeness claim.
 
 ## Evidence rules
@@ -37,9 +37,9 @@ Updated 2026-10-11. This is an operational ledger for the independent PhotoStore
 - Local install record: `/Applications/PhotoStore.app` version 0.6.1, bundle `ai.photostore.app`, installed with the matching source SHA; strict signature validation passed, startup was confirmed, and the app remains open as PID 54840. The previous app backup is preserved at `/private/tmp/photostore-reinstall-20261011.qcBCXU/previous-PhotoStore.app`.
 - This release record does not claim full visual or Photoshop acceptance; the remaining Photoshop scope and active goal are unfinished.
 
-## Next priority: action recording
+## Historical 0.7.0 action-recording milestone
 
-Action recording is the current 0.7.0 milestone, ahead of further animation backfill. Its scope and
+Action recording was the 0.7.0 milestone, ahead of further animation backfill. Its scope and
 constraints are documented in [action-recording.md](action-recording.md). Compiler verification
 passed with the locked offline native targets, and the prerelease is published and installed; broad UI
 acceptance, native visual QA, and parity remain pending. The full Photoshop scope remains active and
@@ -59,20 +59,24 @@ The prior 0.6.1 process (PID 57432) remained alive with its artwork untouched af
 
 ## Current 0.8.0 release pass
 
-The upcoming release combines Audio, Smart Filter Masks, and the New Document Fix. Status is explicit:
+The completed 0.8.0 release combined Audio, Smart Filter Masks, and the New Document Fix. Status is explicit:
 
-1. Recording release installed — complete (`0.7.0`, current installed release).
+1. Recording release installed — complete as the historical 0.7.0 milestone; the current installed release is 0.8.0.
 2. Audio source integrated and pushed — complete (`405d102f1ddc8f13ed7ae8b6ce8779db0c0f28ec`).
-3. New Document Fix — implemented and compiler-verified.
-4. Smart Filter mask engine — implemented and compiler-verified.
-5. Smart Filter mask UI — implemented and compiler-verified.
-6. Movie reload/audio reprobe and split-envelope fixes — implemented and compiler-verified; arbitrary split-segment replacement remains open.
+3. New Document Fix — implemented, compiler-verified, and confirmed after reinstall with a normal 64×64 recording document creation.
+4. Smart Filter mask engine — implemented, compiler-verified, and included in the 0.8.0 release.
+5. Smart Filter mask UI — implemented, compiler-verified, and included in the 0.8.0 release.
+6. Movie reload/audio reprobe and split-envelope fixes — implemented, compiler-verified, and included in the 0.8.0 release; arbitrary split-segment replacement remains open.
 7. Native compiler gate — complete; the earlier gate exited 0 in 30.41 seconds, and the final live-mask/target-aware gate exited 0 in 4.27 seconds. Final log: `/private/tmp/photostore-smart-mask-newdoc-check-20261011-final.log`.
-8. Documentation and version update — complete; 0.8.0 version/docs preparation is ready.
-9. Commit and push — initial source commit `d50d5cd4b08f48b1093b1e52f08eb349601058f1` is pushed; the final live-mask correction commit is pending.
-10. Tag — held pending the final live-mask correction; no 0.8.0 release exists yet.
-11. Build and publish release — pending.
-12. Reinstall and confirm New Document creation — pending. The installed 0.7.0 app visibly confirmed the prior `file.new` invalid-parameter error (`recording` unknown) through read-only accessibility inspection; that specific cause is fixed, and confirmation is planned after the 0.8.0 reinstall.
+8. Documentation and version update — complete for 0.8.0.
+9. Commit and push — complete at source commit `711e73995ac23b5a408a6a07e458ebfc3df91d12`.
+10. Tag — complete: `photostore-animation-smart-masks-2026-10-11`.
+11. Build and publish release — complete as the published 0.8.0 prerelease.
+12. Reinstall and confirm New Document creation — complete. After reinstall, the native app showed `Untitled-1 — PhotoStore`, `64 px ×64 px (72ppi)`, Background on, and `Untitled-1 @200% (RGB/8)` with no unknown `recording` parameter error; the blank document was left visible.
+
+The 0.8.0 source/tag is `711e73995ac23b5a408a6a07e458ebfc3df91d12`. The [published prerelease](https://github.com/akiyamasho/PhotoStore/releases/tag/photostore-animation-smart-masks-2026-10-11) contains the ARM64 DMG (26,309,368 bytes, SHA-256 `b91990e7164d6114199a6aa6fe7d258cecec5469765c1634ce05b6e0094f875e`) and CLI ZIP (16,277,058 bytes, SHA-256 `1d52d4c8a671cd8a2b16ea68401196db4738609458df739c30c0d8de7777c198`); `SHA256SUMS` is 206 bytes and contains only those two entries. The optimized build completed in 5m24s on 2026-10-11 UTC; its log is `/private/tmp/photostore-0.8.0-build.log`. Artifacts are ad hoc signed and not notarized.
+
+The canonical `/Applications/PhotoStore.app` is version 0.8.0 with bundle `ai.photostore.app`, strict signature validation, binary SHA-256 `40d09d7cf3a0374a5debc933d268ccdc9ce0894304228d381e5e0657f88168fa`, and running PID 86439. The previous app backup is `/private/tmp/photostore-reinstall-0.8.0-20261011-115045/previous-PhotoStore-0.7.0.app`; the retained recovery sibling is `/Applications/PhotoStore-0.7.0-recovery-20261011-115045.app`. No artwork save or recovery is claimed.
 
 Further Photoshop backfill is the next pass and is outside this twelve-step count. Exact UI parity,
 mask copy/move/channel selection, unknown PSD filters, audio latency/master-clock behavior, and
@@ -94,7 +98,7 @@ broader acceptance remain unverified.
 
 ### Unverified or incomplete
 
-- Persisted audio tracks/clips, linked movie audio, editing commands, shared FFmpeg preview/export, and streamed playback are present in source. The locked offline native app/CLI HEIF compiler check passed in 7.88 seconds; its log is `/private/tmp/photostore-audio-clip-check-20261011-rerun2.log`. Full UI/audio acceptance remains unverified.
+- Persisted audio tracks/clips, linked movie audio, editing commands, shared FFmpeg preview/export, and streamed playback are present in the packaged 0.8.0 source. The locked offline native app/CLI HEIF compiler check passed in 7.88 seconds; its log is `/private/tmp/photostore-audio-clip-check-20261011-rerun2.log`. Sparse-track behavior, exact output latency/master-clock synchronization, and full UI/audio acceptance remain unverified.
 - Transitions are not implemented or accepted.
 - Stopwatches, transform tracks, clip groups, transitions, arbitrary split-segment replacement envelopes, and full Photoshop timeline/group/filter-mask scope remain pending.
 - Complex tween interpolation is configurable and carries position/opacity/effects properties, but required acceptance evidence is pending.
@@ -108,7 +112,7 @@ broader acceptance remain unverified.
 ### Exact next steps
 
 1. Complete acceptance of the native media boundary: verify decode ownership, cancellation, tiny MP4/MOV/WebM cases, range selection, fractional-FPS timestamps, and UI failure behavior. Record supported containers/codecs before calling import/export supported.
-2. Continue the integrated audio/clip milestone: finish body/trim commit controls, reload-footage and split-segment replacement behavior, then address exact audio latency and shared-clock acceptance; continue clip groups, transitions, loop counts, onion skins, work-area rendering, and long-video memory behavior.
+2. Continue the integrated audio/clip milestone: close arbitrary split-segment replacement envelopes, then address exact audio latency and shared-clock behavior; continue sparse tracks, clip groups, transitions, loop counts, onion skins, work-area rendering, and long-video memory behavior.
 3. Add deterministic timing fixtures covering mismatched FPS, explicit frame delays, seek/playback boundaries, nested animated Smart Objects, and frame-animation export.
 4. Add interaction acceptance for the Photoshop Video Timeline and Frame Animation panels after the engine contracts are stable.
 5. Keep the alternate `.kys` mapping optional. If supplied at `/Users/computer/Desktop/dev/tools/Animation/photoshop_keys.kys`, use the primary/alternate API with stable Japanese IDs and preserve PhotoStore defaults for unmapped shortcuts.
@@ -136,7 +140,7 @@ Official Photoshop references for future workflow comparison:
 ### Exact next steps
 
 1. Define source identity and contents-editing UX for embedded, linked, and shared sources, including stale/missing source behavior.
-2. Add direct filter-mask painting, editable parameter round trips, source refresh invalidation, and broader Smart appearance/animation coverage now that the targeted regression has passed.
+2. Add mask copy/move and channel selection, keyframe UI coverage, sparse-track handling, editable parameter round trips, source refresh invalidation, and broader Smart appearance/animation coverage now that the targeted regression has passed.
 3. Exercise the existing perspective/homography and transform-reset paths against source contents, masks, filters, identity, undo, and external-file round trips.
 4. Expand PSD acceptance fixtures for live Smart Objects, multiple instances, Smart Filters, masks, transforms, external sources, and Photoshop reopen/render checks.
 
