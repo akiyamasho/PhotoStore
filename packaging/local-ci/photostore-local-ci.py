@@ -8,6 +8,7 @@ for p in (HOME / ".cargo/bin", Path("/opt/homebrew/bin"), Path("/usr/local/bin")
     if str(p) not in os.environ.get("PATH", "").split(":"): os.environ["PATH"] = f"{p}:{os.environ.get('PATH','')}"
 ROOT = Path(os.environ.get("PHOTOSTORE_LOCAL_CI_ROOT", HOME / "Library/Application Support/PhotoStore/local-ci")); STATE=ROOT/"state"; CHECKOUTS=ROOT/"checkouts"; STAGE=ROOT/"staged"
 LOG=ROOT/"local-ci.log"; LOCK=ROOT/"poll.lock"; TARGET=Path("/Users/computer/Desktop/dev/PhotoStore/target")
+DEV_WATCH_LEASE=ROOT/"dev-watch.lease"
 PROD=Path("/Applications/PhotoStore.app"); DEV=Path("/Applications/PhotoStore-dev.app"); REPO="akiyamasho/PhotoStore"; DEV_KEYS=Path("/Users/computer/Desktop/dev/tools/Animation/photostore_keys.dev.json")
 SHA_RE=re.compile(r"^[0-9a-fA-F]{40}$"); TAG_RE=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
 
@@ -61,6 +62,12 @@ def procs(): return subprocess.run(["/bin/ps","-axo","pid=,command="],text=True,
 def running():
     p=re.compile(r"^/Applications/PhotoStore(?:-[0-9][^/]*)?\.app/Contents/MacOS/PhotoStore(?:\s|$)"); return any(len(x.split(None,1))==2 and p.match(x.split(None,1)[1]) for x in procs())
 def running_dev(): return any("/Applications/PhotoStore-dev.app/Contents/MacOS/PhotoStore-dev" in x for x in procs())
+def dev_watch_active():
+    d=jread(DEV_WATCH_LEASE,{}) or {}; pid=d.get("watcher_pid"); uid=d.get("uid")
+    if not isinstance(pid,int) or pid<=0 or uid!=os.getuid(): return False
+    try: os.kill(pid,0)
+    except OSError: return False
+    return any(line.split(None,2)[0]==str(pid) and "photostore-dev.py" in line for line in procs() if len(line.split(None,2))==3)
 def provenance(binary,s,dev=False):
     t=run([str(binary),"--version"],capture=True,timeout=15).stdout
     if s[:8].lower() not in t.lower(): raise RuntimeError("binary provenance mismatch")
@@ -111,7 +118,7 @@ def build_main(s):
     p=checkout("main",s); font_manifest(); e={"PHOTOSTORE_BUILD_SHA":s,"PHOTOSTORE_BUILD_DATE":datetime.date.today().isoformat(),"CARGO_TARGET_DIR":str(TARGET),"CARGO_BUILD_JOBS":"1","RAYON_NUM_THREADS":"1","CRAFT_FONTS_REQUIRED":"1","CRAFT_FONTS_DIR":os.environ.get("CRAFT_FONTS_DIR","")}; run(["nice","-n","10",tool("cargo"),"build","--locked","--offline","-p","photostore","--bin","photostore","--features","dev-install,heif"],cwd=p,env=e,timeout=None)
     f=STAGE/f"photostore-dev-{s}"; shutil.copy2(TARGET/"debug/photostore",f); provenance(f,s,True); a=bundle(p,f,s,True); pending={"sha":s,"app":str(a)}
     ajson(STATE/"dev.pending.json",pending)
-    if running_dev(): return
+    if running_dev() or dev_watch_active(): return
     if install(a,DEV,running_dev): seed_dev_preferences(); atext(STATE/"main.sha",s); (STATE/"dev.pending.json").unlink(missing_ok=True); (STATE/"main.failed").unlink(missing_ok=True)
 def build_release(rel,s):
     p=checkout("release",s); font_manifest(); e={"PHOTOSTORE_BUILD_SHA":s,"PHOTOSTORE_BUILD_DATE":datetime.date.today().isoformat(),"CARGO_TARGET_DIR":str(TARGET),"CARGO_BUILD_JOBS":"1","RAYON_NUM_THREADS":"1","CRAFT_FONTS_REQUIRED":"1","CRAFT_FONTS_DIR":os.environ["CRAFT_FONTS_DIR"]}; run(["nice","-n","10",tool("cargo"),"build","--release","--locked","-p","photostore","--features","heif"],cwd=p,env=e,timeout=None)
@@ -124,7 +131,7 @@ def discard(p,d):
 def finish_pending(m,rel):
     p=STATE/"dev.pending.json"; d=jread(p)
     if d and d.get("sha")!=m: discard(p,d); d=None
-    if d and Path(d.get("app","")).exists() and install(Path(d["app"]),DEV,running_dev): seed_dev_preferences(); atext(STATE/"main.sha",d["sha"]); p.unlink(missing_ok=True)
+    if d and not dev_watch_active() and Path(d.get("app","")).exists() and install(Path(d["app"]),DEV,running_dev): seed_dev_preferences(); atext(STATE/"main.sha",d["sha"]); p.unlink(missing_ok=True)
     p=STATE/"release.pending.json"; d=jread(p); ident=((rel or {}).get("id"),(rel or {}).get("tag"),(rel or {}).get("sha"))
     if d and (d.get("id"),d.get("tag"),d.get("sha"))!=ident: discard(p,d); d=None
     if d and not running() and Path(d.get("app","")).exists() and install(Path(d["app"]),PROD,running): ajson(STATE/"release.json",d); p.unlink(missing_ok=True)

@@ -957,7 +957,16 @@ fn dispatch(app: &mut PhotoStoreApp, ctx: &egui::Context, req: &ControlRequest) 
 
 #[cfg(feature = "dev-install")]
 fn dev_reload_blocker(app: &PhotoStoreApp) -> Option<&'static str> {
-    dev_reload_block_reason(app.session.documents().len(), app.session.has_jobs())
+    if let Some(reason) = dev_reload_block_reason(app.session.documents().len(), app.session.has_jobs()) {
+        return Some(reason);
+    }
+    if !app.jobs.saves.is_empty() {
+        return Some("dev reload deferred while documents are saving");
+    }
+    if !app.ui.dialogs.is_empty() || app.ui.shell.dialog.is_some() || app.camera_raw.is_some() || app.distort.active() || app.distort.gallery.is_some() {
+        return Some("dev reload deferred while a dialog or modal editing session is open");
+    }
+    None
 }
 
 #[cfg(feature = "dev-install")]
