@@ -2,6 +2,8 @@
 
 This is the working roadmap for the independent PhotoStore product. It records the implemented foundation and the next product work. It deliberately avoids percentage claims until PhotoStore has its own measurements.
 
+Current handoff and remaining priorities: [handoff.md](handoff.md). Current published receipt: [0.16.0 release notes](releases/0.16.0.md).
+
 ## Baseline
 
 - The native desktop shell, headless CLI, automation/MCP entry points, and WebAssembly shell already share a Rust command engine.
@@ -15,12 +17,11 @@ This is the working roadmap for the independent PhotoStore product. It records t
 
 ## Priorities
 
-1. The current PhotoStore development version remains 0.16.0. The source-stage Position pass is documented in [position-animation.md](position-animation.md), and video Position in [video-position.md](video-position.md). The `PhotoStore-dev-video-position` candidate uses bundle ID `ai.photostore.app.dev.video-position`, branch `codex/video-position`, and source `2c3fd1099d516587b5893d08f2734832cbcd8751`. Source authoring, compiler/package, install, and bounded native checks are complete; the corrected runtime recorded 107 requests, 107 responses, 106 successes, one expected legacy XY ownership rejection, and zero unexpected failures. Screenshot/UI-pixel, Smart visual, animated-parent, PSD, full-affine, release, and full-product parity acceptance remain pending.
-
-2. The current 0.16.0 development pass is on `/private/tmp/PhotoStore-video-opacity-20261011`, branch `codex/video-opacity`: independent owned video-opacity engine/native and timeline-UI source work is implemented; the coupled legacy XY/opacity behavior remains untouched and the ignored-alpha editor is hidden whenever an owned track exists. The baked source is `d66ddbcbed3989f66cb568b1f6d8f7f30fc9d464`. The combined compiler passed in 45.07 seconds with exit 0; log `/private/tmp/photostore-video-opacity-check-20261011.log` records 7 engine warnings and 1 existing UI warning with no errors. The development package completed in 6m13s and the candidate is installed at `/Applications/PhotoStore-dev-video-opacity.app` with bundle ID `ai.photostore.app.dev.video-opacity` and executable SHA-256 `597d2e4da6e32cbaf12f0bcfb6db592ac70dc5dfbcdd9670f82250d0bcad89c6`; installer verification matched the hash and confirmed signature, ARM64 architecture, no document association, no goal process, no default configuration, and no other applications touched. The focused native runtime receipt passed with 42 RPC responses, including one expected rejection (`id18`, `timeline.addKeyframe` with owned opacity) and 41 successful responses, plus clean quit/listener closure; screenshot, release, publication, promotion, and production install remain pending. The development branch checkpoint is prepared on `codex/video-opacity`. First enable preserves the legacy opacity curve and dense snapshots; sparse unique curves migrate Linear, while duplicate/dense curves use bounded exact integer-frame Hold migration with raw interpolation before integer clamping, restoring the legacy/static value at frame extent after the dense extent when the extent is at most 999,999. Candidate identity is `PhotoStore-dev-video-opacity` with bundle ID `ai.photostore.app.dev.video-opacity`. Full Photoshop Smart Object/PSD parity, audio acceptance, and visual interaction acceptance remain unverified.
-3. Deepen Smart Objects with contents editing, shared contents identity, smart-filter editing, linked-source workflows, and faithful PSD acceptance.
-4. Improve brush behavior and interaction: pressure/tilt/rotation dynamics, smoothing, presets, tablet edge cases, deterministic replay, and responsive large-document painting.
-5. Harden PSD and command coverage around the workflows PhotoStore promises. Add focused fixtures and measurements when a feature is implemented; avoid claiming parity before it is measured.
+1. Deepen Smart Object workflows: shared/embedded/linked contents editing and identity, missing/relink/update behavior, nested timing and cache ownership, transforms/styles, Smart Filters, and external PSD acceptance. The 0.11 contents-edit reliability work is implemented; broader acceptance remains open. A linked child “Save Contents” currently embeds native content instead of writing the external source.
+2. Continue timeline and media acceptance. Ordinary-layer and video Position/Opacity stopwatches are implemented; loop counts and onion skins are implemented. Remaining work includes full affine/style tracks, clip groups/transitions, arbitrary split-segment replacement envelopes, sparse audio, latency/master-clock synchronization, rational frame-rate persistence (currently `f32`), lazy long-video decode (eager RGBA8 surfaces capped at 512 MiB), and timing/UI acceptance.
+3. Measure remaining Photoshop workflow families with PhotoStore-specific evidence: color/depth/HDR; layers/masks/transforms; filters/RAW; vectors/text; retouch/tablet; formats/print; actions/plugins; native UI and reliability. The 627/627 menu-liveness result measures command dispatch only.
+4. Persist the APFS-safe packaging fix and add mounted-app inspection to release verification. The published artifact was regenerated and verified, while `package.sh` still creates an HFS hybrid image and `verify.sh` does not mount-check the bundled app.
+5. If selected for a future pass, finish shortcut sorting/import-cancel/alternate editing and broader interaction acceptance. Recording remains off by default; deterministic replay, tablet pressure, and parity acceptance remain open.
 
 The animation and Smart Object pass now preserves embedded child timelines, advances animated
 sources during parent playback, bounds decoded and flattened source caches, and exposes an
@@ -28,8 +29,8 @@ undoable Smart Object transform reset. Persisted audio tracks and clips, linked 
 mute/volume/fades, clip timing edits, shared preview/export, and streamed playback are now present
 in the pushed source. Remaining audio gaps include sparse-track handling, exact output latency and
 master-clock synchronization, and arbitrary split-segment replacement envelopes;
-transitions, stopwatches, transform tracks, clip groups, and
-full external-format export fidelity remain open. Eager decoded movie surfaces are capped at
+transitions, full affine/style tracks, clip groups, and
+full external-format export fidelity remain open. Ordinary-layer and video Position/Opacity stopwatches are implemented in 0.15.0–0.16.0. Eager decoded movie surfaces are capped at
 512 MiB, native range selection is currently command-parameter based, source rates are stored as
 `f32`, and movie decode/export transfers RGBA8 pixels.
 
@@ -47,8 +48,7 @@ Object, filtering/minimize/hide, and UI-only candidates were reported. This evid
 compiler and targeted function/integration behavior. It does not claim visual UI QA, Photoshop
 parity, or complete PSD/external-format compatibility.
 
-The action-recording, animation/smart-mask, and Smart Contents releases are historical. The current
-canonical installed release is the 0.12.0 `photostore-recording-default-off-2026-10-11` prerelease;
+Historical snapshot (pre-0.16.0): the action-recording, animation/smart-mask, and Smart Contents releases are historical. At that earlier point, the canonical installed release was the 0.12.0 `photostore-recording-default-off-2026-10-11` prerelease;
 the newer 0.13.0 `photostore-tool-shortcuts-2026-10-11` is installed side by side from source
 `94751b66e9683aec52276fed789fcd26f39fce01`. Broad
 native visual QA and UI parity remain unverified.
@@ -74,11 +74,6 @@ The inherited workflow recipes are retained for reference but are manual `workfl
 
 Keep the engine headless, the UI thin, and the document format explicit. Preserve MIT/Apache licensing and asset provenance. Use one Cargo build worker and the shared target directory on development machines. Heavy builds and discretionary QA require an explicit user request.
 
-## Current production candidate — 0.16.0 (2026-10-11)
+## Current production release — 0.16.0 (2026-10-11)
 
-The integrated candidate combines the historical 0.14.0 close/timeline work, 0.15.0 ordinary opacity
-animation, 0.16.0 raster Position and video Position/Opacity tracks, shortcut-file autosave, and the
-consolidated `./dev` workflow. The preview was built from source
-`8b07e3bfd067f27c396e5475646d33b0c58e2e59` as an isolated thin ARM64 bundle; the exact preview receipt
-and known limits are recorded in [the release notes](releases/0.16.0.md). Reviewed 0.16.0 preview captures now document raster Position/Opacity and video Position/Opacity; historical 0.13.1 and 0.14.0 captures keep their original version provenance. Status is source implemented, preview compiled, and screenshots legibility-reviewed; docs commit, immutable tag, final production build, publication, and production installation are pending. Smart Object animation/depth is the next product priority, and the full backfill remains
-unfinished with no completion percentage asserted. The planned final production pass uses Cargo opt level 2, LTO off, one job, and offline dependency resolution; the ad hoc macOS package will not be notarized.
+The immutable `v0.16.0` tag points to exact source `a87fd1049844a41d456cbdce9d5fb0fa5038ab3c`, published as [release v0.16.0](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.16.0) (release ID `409665038`) and installed at `/Applications/PhotoStore.app`. The ARM64 executable SHA-256 is `9bf8fea3b609532c6ef2e08959e17477166b4aa485701384e667945ab190faf6`; DMG SHA-256 is `396c880ec9b4c6a092a2dbee54b872e8f2936aac0f445758102e8ea5c143ccb8`; CLI ZIP SHA-256 is `5a6ab30230490c8b5e0c1b9df58126605a9b7cc96b0a28be9f3c46029ce143b5`. Mounted DMG app, CLI, signatures, full source, licenses, architecture, and checksums passed. Artifact-only APFS UDZO regeneration fixed synthesized HFS FinderInfo without source rebuild or retag. The app is ad hoc signed and not notarized. Previous bundle backup: `/Applications/.PhotoStore.backup.v0.16.0.1791723317.97155.app`; preferences, recovery, and artwork were untouched, and the app was not launched during promotion. See [release notes](releases/0.16.0.md) for preview provenance and [handoff.md](handoff.md) for remaining work. The full product backfill remains unfinished; no overall completion percentage is claimed.

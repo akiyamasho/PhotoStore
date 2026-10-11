@@ -2,6 +2,8 @@
 
 Updated 2026-10-11. This is an operational ledger for the independent PhotoStore fork. It records evidence and next actions; it does not convert inherited menu wiring into behavior parity or claim that the product is complete.
 
+Current handoff and remaining priorities: [handoff.md](handoff.md). Current published production receipt: [0.16.0 release notes](releases/0.16.0.md).
+
 ## Product and provenance
 
 - Origin source: `git@github.com:storytold/photocraft.git`; original history, licenses, `NOTICE`, attribution records, and provenance are retained.
@@ -397,19 +399,19 @@ tested for Smart hierarchy behavior.
 
 - Persisted audio tracks/clips, linked movie audio, editing commands, shared FFmpeg preview/export, and streamed playback are present in the packaged 0.8.0 source. The locked offline native app/CLI HEIF compiler check passed in 7.88 seconds; its log is `/private/tmp/photostore-audio-clip-check-20261011-rerun2.log`. Sparse-track behavior, exact output latency/master-clock synchronization, and full UI/audio acceptance remain unverified.
 - Transitions are not implemented or accepted.
-- Stopwatches, transform tracks, clip groups, transitions, arbitrary split-segment replacement envelopes, and full Photoshop timeline/group/filter-mask scope remain pending.
+- Position and Opacity stopwatches are implemented for ordinary layers and video (0.15.0–0.16.0); full affine/style tracks, clip groups, transitions, arbitrary split-segment replacement envelopes, and full Photoshop timeline/group/filter-mask scope remain open.
 - Complex tween interpolation is configurable and carries position/opacity/effects properties, but required acceptance evidence is pending.
 - Rational source rate is probed by the media backend but stored as `f32` in the existing document model (`crates/doc/src/video.rs`).
 - Eager decoded movie surfaces are capped at 512 MiB; the native import range is currently command parameters rather than a dedicated picker form.
 - Movie decode/export pixel transfer is RGBA8. Long-video lazy decode, sustained memory behavior, render work-area behavior, and source-rate fidelity need acceptance evidence.
-- Loop counts, onion skins, and advanced playback controls remain incomplete.
+- Loop counts and onion skins are implemented in 0.10.0; broader playback-control and UI acceptance remains open.
 - Photoshop Video Timeline and Frame Animation need broader interaction coverage beyond the current command-driven foundation.
 - Required integration checks passed: all-targets Cargo check, exact `.kys` API 3/3 plus library 4/4, 8×8 MP4/MOV/WebM smoke 1/1, Smart appearance regression 1/1, and the post-repair engine check. Broader tween, native UI, audio/timeline, and PSD acceptance remain unverified.
 
 ### Exact next steps
 
-1. Complete 0.13.0 tool-shortcut and marquee selection integration, then prioritize opacity stopwatches/key tracks and the unresolved save-frame closing/recovery investigation.
-2. Continue the integrated audio/clip milestone: close arbitrary split-segment replacement envelopes, then address exact audio latency and shared-clock behavior; continue sparse tracks, clip groups, transitions, loop counts, onion skins, work-area rendering, and long-video memory behavior.
+1. Prioritize Smart Object shared/embedded/linked contents editing and identity; linked child “Save Contents” currently embeds native content instead of updating the external file. Define missing/relink/update behavior, then verify nested animation, cache ownership, transforms/styles, Smart Filters, and external PSD workflows.
+2. Continue timeline/media acceptance: Position and Opacity stopwatches are implemented for ordinary layers and video, and loop counts/onion skins are implemented. Remaining work includes full affine/style tracks, clip groups/transitions, arbitrary split-segment replacement envelopes, sparse audio and latency/master-clock sync, rational frame-rate persistence, long-video lazy decode, and broader timing/UI acceptance.
 3. Add deterministic timing fixtures covering mismatched FPS, explicit frame delays, seek/playback boundaries, nested animated Smart Objects, and frame-animation export.
 4. Add interaction acceptance for the Photoshop Video Timeline and Frame Animation panels after the engine contracts are stable.
 5. Keep the alternate `.kys` mapping optional. If supplied at `/Users/computer/Desktop/dev/tools/Animation/photoshop_keys.kys`, use the primary/alternate API with stable Japanese IDs and preserve PhotoStore defaults for unmapped shortcuts.
@@ -501,17 +503,17 @@ with zero keys. Runtime cleanup confirmed the candidate process absent and liste
 screenshot/UI-pixel, Smart visual, animated-parent, PSD, full-affine, release, or full-product
 parity acceptance is claimed.
 
-## 0.16.0 production release candidate (2026-10-11)
+## 0.16.0 published production receipt (2026-10-11)
 
-The current release candidate integrates the 0.14.0 close guard and timeline persistence, 0.15.0
+The released integration combines the 0.14.0 close guard and timeline persistence, 0.15.0
 ordinary opacity animation, 0.16.0 raster and video Position animation, and independent video Opacity,
 with shortcut-file autosave and the consolidated development workflow already present in the source
 history. Historical captures retain their 0.13.1 and 0.14.0 provenance; they are not presented as
 0.16.0 UI evidence. Reviewed 0.16.0 preview screenshots now document raster Position/Opacity and video Position/Opacity; their exact capture provenance and known limits are recorded in [0.16.0 evidence](screenshots/0.16.0/evidence.md). The 0.15.0 hidden capture attempt produced no image and is not reused.
 
-The combined candidate source is `8b07e3bfd067f27c396e5475646d33b0c58e2e59`. Its thin ARM64 preview
+The combined candidate preview source was `8b07e3bfd067f27c396e5475646d33b0c58e2e59`. Its thin ARM64 preview
 bundle is `/private/tmp/photostore-production-preview-0.16.0-20261011/PhotoStore-dev-release-0-16.app`,
 bundle ID `ai.photostore.app.dev.release-0-16`, executable SHA-256
 `75e54f59bf87f1fc73fbba40055af2e97b65e80e7a70b9d930e2084b3e1b200b`. The preview build completed in
 13m14s; log: `/private/tmp/photostore-production-preview-build-20261011.log`. This is preview evidence
-only. Source behavior is implemented, the preview compiled, and the two required screenshots are captured and legibility-reviewed. The docs commit, tag, final production package, publication, and production installation remain pending. The production pass is planned with Cargo opt level 2, LTO off, one job, and offline dependency resolution to preserve system resources; the resulting ad hoc macOS package will not be notarized. The broader PhotoStore backfill is unfinished, with Smart Object depth and animation behavior the next product priority. No full-product completion percentage is claimed.
+only. The immutable tag `v0.16.0` points to exact source `a87fd1049844a41d456cbdce9d5fb0fa5038ab3c`, published as release ID `409665038` and installed at `/Applications/PhotoStore.app`. The release’s mounted DMG app, CLI, signatures, full source, licenses, architecture, and checksums passed. ARM64 executable SHA-256 is `9bf8fea3b609532c6ef2e08959e17477166b4aa485701384e667945ab190faf6`; DMG SHA-256 is `396c880ec9b4c6a092a2dbee54b872e8f2936aac0f445758102e8ea5c143ccb8`; CLI ZIP SHA-256 is `5a6ab30230490c8b5e0c1b9df58126605a9b7cc96b0a28be9f3c46029ce143b5`. The artifact-only APFS UDZO regeneration fixed synthesized HFS FinderInfo without source rebuild or retag. The bundle is ad hoc signed and not notarized. Previous backup: `/Applications/.PhotoStore.backup.v0.16.0.1791723317.97155.app`; preferences, recovery, and artwork were untouched, and the app was not launched during promotion. Packaging follow-up: `package.sh` still creates an HFS hybrid image and `verify.sh` does not mount-check its bundled app. See [handoff.md](handoff.md) for remaining priorities. The broader PhotoStore backfill remains unfinished; no full-product completion percentage is claimed.
