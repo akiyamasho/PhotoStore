@@ -41,12 +41,21 @@ Updated 2026-10-11. This is an operational ledger for the independent PhotoStore
 
 Action recording is the current 0.7.0 milestone, ahead of further animation backfill. Its scope and
 constraints are documented in [action-recording.md](action-recording.md). Compiler verification
-passed with the locked offline native targets; broad UI acceptance, parity, release, and install
-remain pending. The planned tag is `photostore-action-recording-2026-10-11`. The full Photoshop
-scope remains active and unfinished.
+passed with the locked offline native targets, and the prerelease is published and installed; broad UI
+acceptance, native visual QA, and parity remain pending. The full Photoshop scope remains active and
+unfinished.
 
 The compiler check passed with `cargo check --locked --offline -j1 -p photostore -p photostore-cli
---features heif`; the result was recorded in `/private/tmp/photostore-recording-check-20261011-rerun3.log`.
+--features heif`; the final result is recorded in `/private/tmp/photostore-recording-check-20261011-final.log`.
+
+The annotated tag `photostore-action-recording-2026-10-11` points to
+`56aede3295b1e344b709c79043ef608a1b21e855`. The [PhotoStore 0.7.0 prerelease](https://github.com/akiyamasho/PhotoStore/releases/tag/photostore-action-recording-2026-10-11) is published with the ARM64 HEIF DMG, CLI ZIP, and two-entry `SHA256SUMS`; artifacts are ad hoc signed and not notarized. Package integrity passed for bundle ID, version, exact SHA, icons, licenses, strict signatures, and checksums.
+
+The DMG is 26,112,401 bytes with SHA-256 `bb76f515c58434e7974db115ff9298893176d82179c543081d52b3ae76a9af2f`; the CLI ZIP is 16,145,049 bytes with SHA-256 `81f662080e85e988d41f69bdc38257a823db2651e9e5e4164ea961288f249d67`.
+
+Installation record: canonical `/Applications/PhotoStore.app` is version 0.7.0, bundle `ai.photostore.app`, binary SHA-256 `84103a6c087c2ee786e4b785f48e72e9fa3c2424a21b3abc5aa8e2ce4d5067f`, and source SHA `56aede3295b1e344b709c79043ef608a1b21e855`; strict signature validation passed, the canonical executable started as PID 36046, and startup was confirmed. The retained old bundle is `/Applications/PhotoStore-0.6.1-recovery-20261011-111423.app`; the previous-app backup is `/private/tmp/photostore-reinstall-0.7.0-20261011-111423/previous-PhotoStore-0.6.1.app`.
+
+The prior 0.6.1 process (PID 57432) remained alive with its artwork untouched after a native save stalled in the final directory. The attempted target `/Users/computer/Desktop/dev/PhotoStore/recovered-artwork/Untitled-1-before-0.7.0-20261011-110908.pcraft` has not appeared, so no artwork recovery or backup is claimed. The sample log is `/private/tmp/photostore-save-stall-20261011.sample.txt`; it shows the save blocked in `photostore-job-1 save_file → atomic_write_with → sync_dir → File.open → open`, with no TCC prompt.
 
 ## Animation and timeline
 

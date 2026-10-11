@@ -15,11 +15,10 @@ This is the working roadmap for the independent PhotoStore product. It records t
 
 ## Priorities
 
-1. Complete release and broad UI acceptance for the implemented 0.7.0 action-recording milestone described in [action-recording.md](action-recording.md), including bounded capture, privacy marking, replay, and export. The planned tag is `photostore-action-recording-2026-10-11`.
-2. Extend animation with audio, transitions, complex tween interpolation, and robust video import/export boundaries.
-3. Deepen Smart Objects with contents editing, shared contents identity, smart-filter editing, linked-source workflows, and faithful PSD acceptance.
-4. Improve brush behavior and interaction: pressure/tilt/rotation dynamics, smoothing, presets, tablet edge cases, deterministic replay, and responsive large-document painting.
-5. Harden PSD and command coverage around the workflows PhotoStore promises. Add focused fixtures and measurements when a feature is implemented; avoid claiming parity before it is measured.
+1. Extend animation with audio, transitions, complex tween interpolation, and robust video import/export boundaries. The unfinished audio backfill remains on `codex/animation-audio-backfill-wip` at `287f7c94c065d37d3bdc177c3e44f28719490e84`.
+2. Deepen Smart Objects with contents editing, shared contents identity, smart-filter editing, linked-source workflows, and faithful PSD acceptance.
+3. Improve brush behavior and interaction: pressure/tilt/rotation dynamics, smoothing, presets, tablet edge cases, deterministic replay, and responsive large-document painting.
+4. Harden PSD and command coverage around the workflows PhotoStore promises. Add focused fixtures and measurements when a feature is implemented; avoid claiming parity before it is measured.
 
 The animation and Smart Object pass now preserves embedded child timelines, advances animated
 sources during parent playback, bounds decoded and flattened source caches, and exposes an
@@ -43,11 +42,10 @@ Object, filtering/minimize/hide, and UI-only candidates were reported. This evid
 compiler and targeted function/integration behavior. It does not claim visual UI QA, Photoshop
 parity, or complete PSD/external-format compatibility.
 
-The branding release is complete: `photostore-branding-2026-10-11` is published at commit
-`e3703d4be2ceba37e04b81b2761f7b3acc27235b`, and PhotoStore 0.6.1 is installed locally. The
-unfinished audio backfill remains on `codex/animation-audio-backfill-wip` at
-`287f7c94c065d37d3bdc177c3e44f28719490e84`; restore and rebase it before continuing audio and
-timeline work.
+The action-recording release is complete: `photostore-action-recording-2026-10-11` is published
+and PhotoStore 0.7.0 is installed locally. Broad native visual QA and UI parity remain unverified.
+The old-workspace native-save issue remains a secondary reliability gap; the old process and artwork
+were preserved, but the attempted recovery target did not appear.
 
 ## CI and release follow-up
 
