@@ -8,6 +8,73 @@ use serde_json::{Value, json};
 use crate::theme::Tokens;
 use crate::{PhotoStoreApp, icons};
 
+/// Compact context bar shown while an Edit Contents document is active. The relationship is
+/// resolved from the session's public smart link table; the richer source/instance details are
+/// fetched only when the user opens Info.
+pub fn contents_bar(app: &mut PhotoStoreApp, ui: &mut egui::Ui, document: usize, canvas: egui::Rect) {
+    let Some(st) = app.session.documents().get(document) else { return };
+    let child = st.doc.id;
+    let Some(link) = app.session.smart_links.iter().find(|l| l.child == child).copied() else { return };
+    let parent = app.session.documents().iter().find(|d| d.doc.id == link.parent);
+    let (parent_name, layer_name) = match parent {
+        Some(d) => (
+            d.doc.name.clone(),
+            d.doc.layer(link.layer).map(|l| l.name.clone()).unwrap_or_else(|| tl!("Shared Smart Object contents").to_string()),
+        ),
+        None => (tl!("Missing parent").to_string(), tl!("Smart Object").to_string()),
+    };
+    let key = ui.id().with(("smart-contents-info", child.0));
+    let ctx = ui.ctx().clone();
+    egui::Area::new(ui.id().with(("smart-contents-bar", child.0)))
+        .order(egui::Order::Foreground)
+        .fixed_pos(egui::pos2(canvas.left() + 10.0, canvas.top() + 10.0))
+        .show(&ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new(tl!("Editing Smart Object contents")).strong());
+                    ui.label(format!("{} · {}", parent_name, layer_name));
+                    if ui.button(tl!("Save Contents")).clicked() {
+                        ui.ctx().data_mut(|d| d.insert_temp(pending_contents_action_key(), ("layer.smartObjects.saveContents".to_string(), child.0)));
+                    }
+                    if ui.button(tl!("Return to Parent")).clicked() {
+                        ui.ctx().data_mut(|d| d.insert_temp(pending_contents_action_key(), ("layer.smartObjects.returnToParent".to_string(), child.0)));
+                    }
+                    let info = ui.button(tl!("Info"));
+                    if info.clicked() {
+                        match app.run("layer.smartObjects.contentsInfo", json!({"document": child.0})) {
+                            Ok(value) => {
+                                ui.ctx().data_mut(|d| d.insert_temp(key, value));
+                            }
+                            Err(e) => {
+                                app.ui.status = e;
+                                app.ui.status_error = true;
+                            }
+                        }
+                    }
+                    if let Some(value) = ui.ctx().data(|d| d.get_temp::<Value>(key)) {
+                        egui::Popup::from_toggle_button_response(&info)
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                            .show(|ui| {
+                                ui.label(format!("{} · {}", value.get("sourceKind").and_then(Value::as_str).unwrap_or("unknown"), tl!("Smart Object source")));
+                                ui.label(format!("{}: {}", tl!("Shared instances"), value.get("sharedInstanceCount").and_then(Value::as_u64).unwrap_or(0)));
+                            });
+                    }
+                });
+            });
+        });
+}
+
+fn pending_contents_action_key() -> egui::Id { egui::Id::new("smart-contents-pending-action") }
+
+/// Run a structural Smart Contents action after the canvas has finished its frame.
+pub fn apply_contents_bar_action(app: &mut PhotoStoreApp, ctx: &egui::Context) {
+    let Some((id, document)) = ctx.data_mut(|d| d.remove_temp::<(String, u64)>(pending_contents_action_key())) else { return };
+    if let Err(e) = app.run(&id, json!({"document": document})) {
+        app.ui.status = e;
+        app.ui.status_error = true;
+    }
+}
+
 fn run_status(app: &mut PhotoStoreApp, id: &str, params: Value) {
     if let Err(e) = crate::menus::invoke(app, &egui::Context::default(), id, params) {
         app.ui.status = e;

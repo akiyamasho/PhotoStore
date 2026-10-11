@@ -166,6 +166,28 @@ validation, and running PID 24533. The previous-app backup is
 retained recovery sibling is `/Applications/PhotoStore-0.9.0-recovery-20261011-123258.app`.
 The old 0.9.0 window had no document or unsaved marker and quit cleanly without a prompt.
 
+## Current 0.11.0 Smart Contents reliability pass
+
+Version 0.11.0 is prepared in source; 0.10.0 remains the current installed release. The scope is
+documented in [smart-contents-editing.md](smart-contents-editing.md). Its twelve steps:
+
+1. Architecture and public specification — complete.
+2. Fallible close paths — implemented.
+3. Batch/discard validation and parent-child guards — implemented.
+4. Save/Don't Save/Cancel intent — implemented.
+5. Contents context and parent navigation — implemented.
+6. Integration — implemented in source.
+7. Compiler gate — complete; the required check passed in 12.13 seconds. Final log: `/private/tmp/photostore-smart-contents-check-20261011-final.log`.
+8. Version and documentation — prepared; implementation/compiler evidence is complete.
+9. Commit and push — pending.
+10. Tag — pending; planned `photostore-smart-contents-2026-10-11`.
+11. Build and publish — pending.
+12. Reinstall and confirmation — pending.
+
+The recording, audio, repeat/onion, New Document, mask, Channels, and keyframe milestones remain
+historical and preserved. Full Smart Object, linked external PSD, and Photoshop parity scope remains
+unfinished.
+
 ## Animation and timeline
 
 ### Implemented milestone

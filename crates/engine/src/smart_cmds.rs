@@ -1134,8 +1134,16 @@ fn edit_contents(s: &mut Session, p: &Value) -> Result<Value> {
 pub fn commit_child(s: &mut Session, index: usize) -> Result<bool> {
     let Some(st) = s.docs.get(index) else { return Ok(false) };
     let child = st.doc.clone();
+    let child_dirty = st.is_dirty();
     let Some(link) = s.smart_links.iter().find(|l| l.child == child.id).copied() else { return Ok(false) };
     let parent = s.docs.iter().position(|d| d.doc.id == link.parent).ok_or_else(|| other("the smart object's document was closed"))?;
+    if !child_dirty {
+        let parent_doc = &s.docs[parent].doc;
+        if instances(parent_doc, link.contents_id).is_empty() {
+            return Err(other("the smart object's instances were removed"));
+        }
+        return Ok(true);
+    }
     let bytes = Arc::new(encode_source(&child)?);
     let prev = s.active;
     s.active = Some(parent);
@@ -1166,18 +1174,118 @@ pub fn commit_child(s: &mut Session, index: usize) -> Result<bool> {
 }
 
 /// Called before a document closes: an edited Edit Contents document updates its parent.
-pub(crate) fn on_close(s: &mut Session, index: usize) {
-    let Some(st) = s.docs.get(index) else { return };
+pub(crate) fn on_close(s: &mut Session, index: usize, discard: bool) -> Result<()> {
+    let Some(st) = s.docs.get(index) else { return Ok(()) };
     let id = st.doc.id;
+    if s.smart_links.iter().any(|l| l.parent == id) {
+        let dirty_child = s.smart_links.iter().filter(|l| l.parent == id).find_map(|l| {
+            s.docs.iter().find(|d| d.doc.id == l.child).filter(|d| d.is_dirty()).map(|d| d.doc.name.clone())
+        });
+        if let Some(name) = dirty_child {
+            return Err(other(format!("can't close the smart object's document while Edit Contents document \"{name}\" has unsaved changes; save or close the contents first")));
+        }
+    }
     if st.is_dirty() && s.smart_links.iter().any(|l| l.child == id) {
-        let _ = commit_child(s, index);
+        if !discard {
+            commit_child(s, index)?;
+        }
     }
     s.smart_links.retain(|l| l.child != id && l.parent != id);
+    Ok(())
 }
 
 fn is_smart_child(s: &Session) -> std::result::Result<(), String> {
     let d = s.active().ok_or("no document open")?;
     if s.smart_links.iter().any(|l| l.child == d.doc.id) { Ok(()) } else { Err("this document isn't smart object contents".into()) }
+}
+
+fn document_guard(s: &Session, cmd: &str, p: &Value) -> Result<()> {
+    if p.is_null() {
+        return Ok(());
+    }
+    let Some(obj) = p.as_object() else { return Err(bad(cmd, "parameters must be an object")) };
+    for key in obj.keys() {
+        if key != "document" {
+            return Err(bad(cmd, format!("unknown parameter `{key}`")));
+        }
+    }
+    if let Some(v) = p.get("document") {
+        let expected = v.as_u64().ok_or_else(|| bad(cmd, "`document` must be a document id"))?;
+        let actual = s.active().ok_or(EngineError::NoDocument)?.doc.id.0;
+        if expected != actual {
+            return Err(bad(cmd, format!("document {expected} does not match the active document id")));
+        }
+    }
+    Ok(())
+}
+
+/// Validate the UI's explicit Smart Contents discard choices before any tab is closed.
+/// Entries for already closed documents are harmless; every live entry must be in `targets`.
+pub(crate) fn discard_ids(s: &Session, p: &Value, cmd: &str, targets: &[usize]) -> Result<Vec<DocId>> {
+    let Some(value) = p.get("discardSmartContents") else { return Ok(Vec::new()) };
+    let Value::Array(items) = value else { return Err(bad(cmd, "`discardSmartContents` must be an integer array")) };
+    if items.len() > 4096 { return Err(bad(cmd, "`discardSmartContents` has too many entries")); }
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let id = item.as_u64().map(DocId).ok_or_else(|| bad(cmd, "`discardSmartContents` entries must be document ids"))?;
+        if out.contains(&id) {
+            return Err(bad(cmd, format!("duplicate discardSmartContents document id {}", id.0)));
+        }
+        if let Some(index) = s.docs.iter().position(|d| d.doc.id == id) {
+            if !targets.contains(&index) {
+                return Err(bad(cmd, format!("discardSmartContents document id {} is not being closed", id.0)));
+            }
+        }
+        out.push(id);
+    }
+    Ok(out)
+}
+
+fn contents_info(s: &Session, p: &Value) -> Result<Value> {
+    document_guard(s, "layer.smartObjects.contentsInfo", p)?;
+    let child = s.active().ok_or(EngineError::NoDocument)?;
+    let link = s.smart_links.iter().find(|l| l.child == child.doc.id).copied()
+        .ok_or_else(|| other("the active document is not open Smart Object contents"))?;
+    let parent = s.docs.iter().find(|d| d.doc.id == link.parent)
+        .ok_or_else(|| other("the Smart Object parent document is no longer open"))?;
+    let representative = parent.doc.layer(link.layer)
+        .filter(|layer| matches!(&layer.content, LayerContent::Smart(sm) if sm.contents_id == link.contents_id))
+        .map(|layer| (layer.id, layer.name.clone(), layer.content.clone()))
+        .or_else(|| parent.doc.walk().into_iter().find_map(|(_, _, layer)| {
+            matches!(&layer.content, LayerContent::Smart(sm) if sm.contents_id == link.contents_id)
+                .then(|| (layer.id, layer.name.clone(), layer.content.clone()))
+        }))
+        .ok_or_else(|| other("the Smart Object source instances no longer exist; reopen Edit Contents"))?;
+    let (layer_id, layer_name, content) = representative;
+    let LayerContent::Smart(sm) = content else {
+        return Err(other("the Smart Object source layer no longer contains a Smart Object"));
+    };
+    let shared = instances(&parent.doc, link.contents_id).len();
+    let source_kind = match &sm.source {
+        SmartSource::Embedded { .. } => "embedded",
+        SmartSource::Linked { .. } => "linked",
+    };
+    Ok(json!({
+        "childDocId": child.doc.id.0,
+        "parentDocId": parent.doc.id.0,
+        "parentName": parent.doc.name,
+        "layerId": layer_id.0,
+        "layerName": layer_name,
+        "contentsId": link.contents_id.0,
+        "sharedInstanceCount": shared,
+        "sourceKind": source_kind,
+    }))
+}
+
+fn return_to_parent(s: &mut Session, p: &Value) -> Result<Value> {
+    document_guard(s, "layer.smartObjects.returnToParent", p)?;
+    let child = s.active().ok_or(EngineError::NoDocument)?.doc.id;
+    let link = s.smart_links.iter().find(|l| l.child == child).copied()
+        .ok_or_else(|| other("the active document is not open Smart Object contents"))?;
+    let parent = s.docs.iter().position(|d| d.doc.id == link.parent)
+        .ok_or_else(|| other("the Smart Object parent document is no longer open"))?;
+    s.set_active(parent);
+    Ok(json!({"document": parent, "parentDocId": link.parent.0}))
 }
 
 fn update_all(s: &mut Session) -> Result<Value> {
@@ -1498,6 +1606,11 @@ macro_rules! spec {
         CommandSpec { id: $id, label: $label, menu: $menu, shortcut: None, params: $params, enabled: $en, run: $run, journal: true }
     };
 }
+macro_rules! query_spec {
+    ($id:literal, $label:literal, $menu:expr, $params:literal, $en:expr, $run:expr) => {
+        CommandSpec { id: $id, label: $label, menu: $menu, shortcut: None, params: $params, enabled: $en, run: $run, journal: false }
+    };
+}
 
 const SO: &[&str] = &["Layer", "Smart Objects"];
 const SF: &[&str] = &["Layer", "Smart Filter"];
@@ -1530,10 +1643,13 @@ pub fn specs() -> Vec<CommandSpec> {
             has_smart,
             edit_contents
         ),
-        spec!("layer.smartObjects.saveContents", "Save Contents", &[], "{} (in an Edit Contents document)", is_smart_child, |s, _| {
+        spec!("layer.smartObjects.saveContents", "Save Contents", &[], r##"{"document":docId?} (in an Edit Contents document)"##, is_smart_child, |s, p| {
+            document_guard(s, "layer.smartObjects.saveContents", p)?;
             let i = s.active_index().ok_or(EngineError::NoDocument)?;
             Ok(json!({"updated": commit_child(s, i)?}))
         }),
+        query_spec!("layer.smartObjects.contentsInfo", "Contents Info", SO, r##"{"document":docId?}"##, is_smart_child, |s, p| contents_info(s, p)),
+        query_spec!("layer.smartObjects.returnToParent", "Return to Parent", SO, r##"{"document":docId?}"##, is_smart_child, |s, p| return_to_parent(s, p)),
         spec!("layer.smartObjects.replaceContents", "Replace Contents…", SO, r##"{"layer":id?,"path":str}"##, has_smart, replace_contents),
         spec!("layer.smartObjects.exportContents", "Export Contents…", SO, r##"{"layer":id?,"path":str}"##, has_smart, export_contents),
         spec!("layer.smartObjects.relinkToFile", "Relink to File…", SO, r##"{"layer":id?,"path":str}"##, has_smart, |s, p| {

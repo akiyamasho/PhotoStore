@@ -21,6 +21,9 @@ pub struct Prompt {
     /// The document the command was aimed at (`document` param, else the active one), if it has one.
     target: Option<DocId>,
     docs: Vec<DocId>,
+    /// Documents explicitly answered Don't Save, retained with their revision until the final
+    /// close command so Cancel leaves the editing relationship untouched.
+    discard_smart_contents: Vec<(DocId, u64)>,
 }
 
 fn index_of(app: &PhotoStoreApp, id: DocId) -> Option<usize> {
@@ -55,8 +58,20 @@ fn discarded(app: &PhotoStoreApp, id: &str, params: &Value) -> (Option<DocId>, V
         Some((_, Reach::All)) => (0..docs.len()).collect(),
         None => Vec::new(),
     };
-    let dirty = affected.into_iter().filter_map(|i| docs.get(i)).filter(|d| d.is_dirty()).map(|d| d.doc.id).collect();
+    let dirty: Vec<DocId> = affected.into_iter().filter_map(|i| docs.get(i)).filter(|d| d.is_dirty()).map(|d| d.doc.id).collect();
+    let dirty = order_dirty(app, dirty);
     (target.and_then(|i| docs.get(i)).map(|d| d.doc.id), dirty)
+}
+
+fn order_dirty(app: &PhotoStoreApp, mut dirty: Vec<DocId>) -> Vec<DocId> {
+    // A parent cannot be closed while one of its dirty Edit Contents documents is still open.
+    // Ask children first, so saving one can make its parent dirty and add it to the queue below.
+    let mut ordered = Vec::with_capacity(dirty.len());
+    while !dirty.is_empty() {
+        let pick = dirty.iter().position(|id| !app.session.smart_links.iter().any(|l| l.parent == *id && dirty.contains(&l.child))).unwrap_or(0);
+        ordered.push(dirty.remove(pick));
+    }
+    ordered
 }
 
 /// Park `id` behind a prompt if it would discard unsaved work. Returns whether it did.
@@ -65,7 +80,7 @@ pub fn intercept(app: &mut PhotoStoreApp, id: &str, params: &Value) -> bool {
     if docs.is_empty() {
         return false;
     }
-    let prompt = Prompt { id: id.to_string(), params: params.clone(), target, docs };
+    let prompt = Prompt { id: id.to_string(), params: params.clone(), target, docs, discard_smart_contents: Vec::new() };
     match &app.discard {
         None => app.discard = Some(prompt),
         // Quitting overrides whatever is pending: it covers every document, so nothing is lost.
@@ -124,7 +139,34 @@ fn advance(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     if !p.docs.is_empty() {
         return;
     }
-    let Some(Prompt { id, mut params, target, .. }) = app.discard.take() else { return };
+    // Saving a child writes its source into the parent, which may have been clean when the
+    // prompt started. Reconcile the action after every answer before allowing it to run.
+    let reconcile = app.discard.as_ref().map(|p| (p.id.clone(), p.target, p.discard_smart_contents.clone()));
+    if let Some((action, target, chosen)) = reconcile {
+        let dirty: Vec<DocId> = app
+            .session
+            .documents()
+            .iter()
+            .filter(|d| {
+                if !d.is_dirty() || chosen.iter().any(|(id, revision)| *id == d.doc.id && *revision == d.revision) { return false; }
+                match action.as_str() {
+                    "file.close" | "file.revert" => Some(d.doc.id) == target,
+                    "file.closeOthers" => Some(d.doc.id) != target,
+                    "file.closeAll" | EXIT => true,
+                    _ => false,
+                }
+            })
+            .map(|d| d.doc.id)
+            .collect();
+        let dirty = order_dirty(app, dirty);
+        if !dirty.is_empty() {
+            if let Some(p) = app.discard.as_mut() {
+                p.docs = dirty;
+            }
+            return;
+        }
+    }
+    let Some(Prompt { id, mut params, target, discard_smart_contents, .. }) = app.discard.take() else { return };
     if id == EXIT {
         app.allow_close = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -133,7 +175,18 @@ fn advance(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     if let Some(target) = target {
         // The tab may have moved since the command was issued; aim it at the same document.
         let Some(i) = index_of(app, target) else { return };
-        params = json!({"document": i});
+        if let Some(object) = params.as_object_mut() {
+            object.insert("document".into(), json!(i));
+        } else {
+            params = json!({"document": i});
+        }
+    }
+    if matches!(id.as_str(), "file.close" | "file.closeAll" | "file.closeOthers") && !discard_smart_contents.is_empty() {
+        if let Some(object) = params.as_object_mut() {
+            object.insert("discardSmartContents".into(), json!(discard_smart_contents.iter().map(|(id, _)| id.0).collect::<Vec<_>>()));
+        } else {
+            params = json!({"discardSmartContents": discard_smart_contents.iter().map(|(id, _)| id.0).collect::<Vec<_>>()});
+        }
     }
     if let Err(e) = crate::menus::invoke_unguarded(app, ctx, &id, params) {
         app.ui.status = e;
@@ -253,7 +306,15 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     }
     match answer {
         Some(Answer::Cancel) => app.discard = None,
-        Some(Answer::Discard) => advance(app, ctx),
+        Some(Answer::Discard) => {
+            if let Some(p) = app.discard.as_mut() {
+                if let Some(st) = app.session.documents().iter().find(|st| st.doc.id == doc) {
+                    p.discard_smart_contents.retain(|(id, _)| *id != doc);
+                    p.discard_smart_contents.push((doc, st.revision));
+                }
+            }
+            advance(app, ctx)
+        }
         Some(Answer::Save) if save(app, ctx, doc) => advance(app, ctx),
         _ => {}
     }

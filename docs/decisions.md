@@ -24,6 +24,14 @@ count, working resolution, buffers, and one composite texture; those preview pix
 exports or action recordings. The compiler, release, and install evidence are complete for this
 pass; broad UI acceptance and Photoshop parity remain unverified.
 
+## 2026-10-11: 0.11.0 Smart Contents reliability pass
+
+Close and contents-save flows are fallible and child-first: dirty child commits propagate errors
+before parent/tab cleanup, while Save/Don't Save/Cancel decisions retain document IDs and revisions.
+Batch discard is bounded and strictly validated. Contents context actions remain explicit, and linked
+child Save Contents embeds native contents without claiming external linked-file synchronization. The
+0.11.0 compiler gate passed; release and install evidence remain pending.
+
 ## 2026-10-10: Smart Object contents identity (#2163)
 
 Smart Object instances carry a document-scoped contents ID separately from their layer ID. Normal duplicates preserve it; New Smart Object via Copy creates a new one. Contents edits update the matching instances together, retaining their individual placement and filters. Copies into another document remap contents IDs as a batch, preserving sharing within the copied layers without joining existing destination objects.

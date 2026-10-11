@@ -293,27 +293,44 @@ pub(crate) fn flattened(doc: &Document, fmt: PixelFormat) -> Surface {
 
 // ---------- close / revert / save a copy / open as ----------
 
-fn close_all(s: &mut Session) -> Result<Value> {
-    let n = s.documents().len();
-    while !s.documents().is_empty() {
-        s.close(s.documents().len() - 1);
-    }
-    Ok(json!({"closed": n}))
+fn close_all(s: &mut Session, p: &Value) -> Result<Value> {
+    let targets: Vec<usize> = (0..s.documents().len()).collect();
+    let discard = crate::smart_cmds::discard_ids(s, p, "file.closeAll", &targets)?;
+    close_batch(s, targets, discard, "file.closeAll")
 }
 
 fn close_others(s: &mut Session, p: &Value) -> Result<Value> {
-    let keep = p.get("document").and_then(Value::as_u64).map(|v| v as usize).or(s.active_index()).ok_or(EngineError::NoDocument)?;
+    let keep = p.get("document").map(|v| v.as_u64().and_then(|v| usize::try_from(v).ok()).ok_or_else(|| EngineError::BadParams { cmd: "file.closeOthers".into(), msg: "`document` must be an index".into() })).transpose()?.or(s.active_index()).ok_or(EngineError::NoDocument)?;
     if keep >= s.documents().len() {
         return Err(EngineError::BadParams { cmd: "file.closeOthers".into(), msg: format!("no document {keep}") });
     }
-    let n = s.documents().len() - 1;
-    for i in (0..s.documents().len()).rev() {
-        if i != keep {
-            s.close(i);
-        }
+    let keep_id = s.documents()[keep].doc.id;
+    let targets: Vec<usize> = (0..s.documents().len()).filter(|&i| i != keep).collect();
+    let discard = crate::smart_cmds::discard_ids(s, p, "file.closeOthers", &targets)?;
+    let result = close_batch(s, targets, discard, "file.closeOthers")?;
+    if let Some(i) = s.documents().iter().position(|d| d.doc.id == keep_id) { s.set_active(i); }
+    Ok(result)
+}
+
+/// Close a set of documents in child-before-parent order. Each successful close is committed
+/// immediately; a later failure leaves the remaining tabs and links available to retry.
+fn close_batch(s: &mut Session, targets: Vec<usize>, discard: Vec<photostore_doc::DocId>, cmd: &str) -> Result<Value> {
+    let mut remaining: Vec<photostore_doc::DocId> = targets.iter().filter_map(|&i| s.documents().get(i).map(|d| d.doc.id)).collect();
+    let mut closed = 0usize;
+    while !remaining.is_empty() {
+        let candidate = remaining.iter().copied().find(|id| {
+            !s.smart_links.iter().any(|link| link.parent == *id && remaining.contains(&link.child))
+        });
+        let Some(id) = candidate else {
+            return Err(EngineError::BadParams { cmd: cmd.into(), msg: "cannot determine a safe Smart Contents close order (cyclic links)".into() });
+        };
+        let index = s.documents().iter().position(|d| d.doc.id == id).ok_or_else(|| EngineError::Other("document disappeared while closing".into()))?;
+        s.try_close_with_discard(index, discard.contains(&id))?
+            .ok_or_else(|| EngineError::Other("document disappeared while closing".into()))?;
+        remaining.retain(|item| *item != id);
+        closed += 1;
     }
-    s.set_active(0);
-    Ok(json!({"closed": n}))
+    Ok(json!({"closed": closed}))
 }
 
 /// File › Revert: reload the saved file as one history step (undoable, like Photoshop's
@@ -1229,13 +1246,13 @@ pub fn specs() -> Vec<CommandSpec> {
         };
     }
     vec![
-        spec!("file.closeAll", "Close All", &["File"], Some("Cmd+Alt+W"), "{}", has_doc, |s, _| close_all(s)),
+        spec!("file.closeAll", "Close All", &["File"], Some("Cmd+Alt+W"), r##"{"discardSmartContents":[documentDocId,...]?}"##, has_doc, close_all),
         spec!(
             "file.closeOthers",
             "Close Others",
             &["File"],
             Some("Cmd+Alt+P"),
-            r##"{"document":index? (the one to keep; default active)}"##,
+            r##"{"document":index? (the one to keep; default active),"discardSmartContents":[documentDocId,...]?}"##,
             has_doc,
             close_others
         ),

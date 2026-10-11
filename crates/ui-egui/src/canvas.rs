@@ -1625,10 +1625,12 @@ fn documents(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
             let stroke = if d == idx { Stroke::new(1.5, t.accent) } else { Stroke::new(1.0, Color32::from_black_alpha(160)) };
             ui.painter().rect_stroke(cell, 0, stroke, egui::StrokeKind::Inside);
         }
+        crate::smart_ui::apply_contents_bar_action(app, ui.ctx());
         return;
     }
     let view = app.ui.views[idx].clone();
     canvas_view(app, ui, idx, rect, view, true);
+    crate::smart_ui::apply_contents_bar_action(app, ui.ctx());
 }
 
 /// The tab strip; returns where its document tabs are.
@@ -2316,6 +2318,9 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
         crate::monitor_status::check_window(app, &ctx);
     }
     let full = rect;
+    if primary {
+        crate::smart_ui::contents_bar(app, ui, idx, full);
+    }
     let rect = if primary { crate::rulers::content_rect(app, rect) } else { rect };
     let doc = app.session.documents()[idx].doc.clone();
     let size = [doc.size.width, doc.size.height];

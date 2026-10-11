@@ -432,11 +432,17 @@ impl Session {
         i
     }
 
-    pub fn close(&mut self, index: usize) -> Option<DocState> {
+    pub fn try_close(&mut self, index: usize) -> Result<Option<DocState>> {
+        self.try_close_with_discard(index, false)
+    }
+
+    /// Close a document after committing its Edit Contents child, or explicitly discarding it.
+    /// The document and its links remain untouched when the close preparation fails.
+    pub fn try_close_with_discard(&mut self, index: usize, discard: bool) -> Result<Option<DocState>> {
         if index >= self.docs.len() {
-            return None;
+            return Ok(None);
         }
-        smart_cmds::on_close(self, index);
+        smart_cmds::on_close(self, index, discard)?;
         if let Some(id) = self.docs.get(index).map(|d| d.doc.id) {
             self.cancel_jobs_on(id);
         }
@@ -450,7 +456,13 @@ impl Session {
                 _ => index.min(self.docs.len() - 1),
             })
         };
-        Some(d)
+        Ok(Some(d))
+    }
+
+    /// Compatibility wrapper for callers that cannot surface a close error. A failed close leaves
+    /// the document and all Smart Contents links open.
+    pub fn close(&mut self, index: usize) -> Option<DocState> {
+        self.try_close(index).ok().flatten()
     }
 
     /// Run a command by id with JSON params. Returns a JSON result.

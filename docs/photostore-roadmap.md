@@ -15,7 +15,7 @@ This is the working roadmap for the independent PhotoStore product. It records t
 
 ## Priorities
 
-1. Continue the post-release pass after the completed 0.10.0 animation playback milestone. Source/tag `f3a749978f72c91c0f0d4b4aa5d3e5e79ce7ec3e` is published and installed; broad acceptance remains unverified. Next work is Smart Object failure-safe closing/Don't Save/parent navigation, sparse property stopwatches, full transform/style coverage, linked external PSD behavior, and broader fidelity.
+1. Complete the current 0.11.0 Smart Contents reliability pass: failure-safe closing, Save/Don't Save/Cancel intent, child-first parent navigation, and atomic contents commits. The 0.10.0 source/tag `f3a749978f72c91c0f0d4b4aa5d3e5e79ce7ec3e` remains published and installed; the 0.11.0 compiler gate passed and release/install gates remain pending. Sparse property stopwatches, full transform/style coverage, linked external PSD behavior, and broader fidelity remain future work.
 2. Deepen Smart Objects with contents editing, shared contents identity, smart-filter editing, linked-source workflows, and faithful PSD acceptance.
 3. Improve brush behavior and interaction: pressure/tilt/rotation dynamics, smoothing, presets, tablet edge cases, deterministic replay, and responsive large-document painting.
 4. Harden PSD and command coverage around the workflows PhotoStore promises. Add focused fixtures and measurements when a feature is implemented; avoid claiming parity before it is measured.

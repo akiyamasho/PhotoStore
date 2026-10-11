@@ -27,6 +27,11 @@ and orientation by clearing perspective and warp and placing the source unscaled
 The command does not unwrap the object or attempt full Photoshop transform-history parity.
 
 Finite timeline repeat counts now propagate to animated Smart Object children; legacy unbounded
-palindrome timing remains supported. Known gaps remain audio, transitions, complex transform/tween
+palindrome timing remains supported. Contents close/save now preserves dirty child and parent state
+through explicit discard intent, but linked-child Save Contents embeds native contents rather than
+writing an external linked file. Known gaps remain audio, transitions, complex transform/tween
 interpolation, export fidelity for all external animated formats, and exact Photoshop parity for
 unusual timeline metadata.
+
+The 0.11.0 native compiler gate passed in 12.13 seconds; release and install evidence remain
+pending. Null and empty Smart command parameters retain compatibility behavior.

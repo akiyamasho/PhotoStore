@@ -390,9 +390,12 @@ fn build() -> Vec<CommandSpec> {
                 Ok(json!({ "document": i }))
             }
         ),
-        cmd!("file.close", "Close", ["File"], Some("Cmd+W"), r##"{"document":index?}"##, has_doc, |s, p| {
-            let i = p.get("document").and_then(Value::as_u64).map(|v| v as usize).or(s.active_index()).ok_or(EngineError::NoDocument)?;
-            s.close(i).ok_or(EngineError::NoDocument)?;
+        cmd!("file.close", "Close", ["File"], Some("Cmd+W"), r##"{"document":index?,"discardSmartContents":[documentDocId,...]?}"##, has_doc, |s, p| {
+            let i = p.get("document").map(|v| v.as_u64().and_then(|v| usize::try_from(v).ok()).ok_or_else(|| bad("file.close", "`document` must be an index"))).transpose()?.or(s.active_index()).ok_or(EngineError::NoDocument)?;
+            if i >= s.documents().len() { return Err(EngineError::BadParams { cmd: "file.close".into(), msg: format!("no document {i}") }); }
+            let discard = crate::smart_cmds::discard_ids(s, p, "file.close", &[i])?;
+            let id = s.documents()[i].doc.id;
+            s.try_close_with_discard(i, discard.contains(&id))?.ok_or(EngineError::NoDocument)?;
             Ok(Value::Null)
         }),
         // Edit
