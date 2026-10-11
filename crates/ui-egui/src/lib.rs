@@ -1897,6 +1897,9 @@ impl PhotoStoreApp {
                 }
             }
         }
+        if let Some(serde_json::Value::Object(recording)) = f.get_mut("recording") {
+            recording.insert("enabled".into(), serde_json::Value::Bool(false));
+        }
         self.import_os_clipboard();
         if let Some(c) = self.session.clipboard.as_ref().filter(|c| !c.bounds.is_empty()) {
             crate::new_doc_ui::set_clipboard(&mut f, c.bounds.width(), c.bounds.height());

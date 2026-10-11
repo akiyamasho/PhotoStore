@@ -203,6 +203,34 @@ validation, and running PID 42277. The previous-app backup is
 `/private/tmp/photostore-reinstall-0.11.0-20261011-125054/previous-PhotoStore-0.10.0.app`; the
 retained recovery sibling is `/Applications/PhotoStore-0.10.0-recovery-20261011-125054.app`.
 
+## Current 0.12.0 recording default-off pass
+
+Version 0.12.0 is prepared in source; 0.11.0 remains the current installed and published release.
+The current recording policy defaults New Document recording off and resets the checkbox on each
+opening, while explicit API/preset opt-in and existing stored enabled documents remain supported.
+The twelve-step status is:
+
+1. Scope and plan — complete.
+2. Default-off source behavior — complete.
+3. Screenshot rules — complete.
+4. Version preparation — complete.
+5. Required compiler gate — complete; exit 0 in 33.99 seconds, log `/private/tmp/photostore-default-off-check-20261011.log`.
+6. Preview build and screenshot evidence — complete; marker `preview-0.12.0-default-off`, preview build 5m33s, log `/private/tmp/photostore-0.12.0-preview-build.log`.
+7. Actual screenshots — complete: approved compressed WebP captures and evidence are recorded under `docs/screenshots/0.12.0`.
+8. README and release evidence — complete for the pretag state; publication remains pending.
+9. Commit and push — pending.
+10. Tag — pending; planned `photostore-recording-default-off-2026-10-11`.
+11. Final build, exact SHA, and publish — pending.
+12. Reinstall and confirmation — pending.
+
+The approved captures are `new-document-recording-default-off.webp` (900×700, 51,972 bytes) and
+`recording-settings-zero-frames.webp` (530×320, 24,036 bytes), with accompanying `evidence.md`.
+Images show the unchecked New Document control and Settings Frames: 0. The capture flow confirmed
+successful Create and observed the unchecked Time-lapse Recording menu item in accessibility data.
+The global disable control is unchecked and is not evidence of per-document enabled state. The native preview instance quit normally without open user
+documents. No broad UI QA claim is made; the 0.11.0 Smart Contents release remains current until
+this pass is published and installed.
+
 ## Animation and timeline
 
 ### Implemented milestone

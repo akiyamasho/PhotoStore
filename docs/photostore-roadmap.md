@@ -15,7 +15,7 @@ This is the working roadmap for the independent PhotoStore product. It records t
 
 ## Priorities
 
-1. Continue the post-release pass after the completed 0.11.0 Smart Contents reliability milestone. Source/tag `3ebf38f77bd55bb57fc6c0f3cea3e9ead04667b9` is published and installed; broad acceptance remains unverified. Next work is non-video opacity stopwatches/key tracks, current save-frame persistence investigation, full transform/style and video property-track migrations, and linked external PSD fidelity.
+1. Finish the current 0.12.0 recording-default pass: default-off native recording and screenshot/release rules. The 0.11.0 source/tag `3ebf38f77bd55bb57fc6c0f3cea3e9ead04667b9` remains published and installed; compiler, preview, screenshot, and documentation evidence are complete, while commit, tag, final build/publish, and install remain pending. Non-video opacity stopwatches/key tracks, save-frame persistence, full transform/style and video property-track migrations, and linked external PSD fidelity remain future work.
 2. Deepen Smart Objects with contents editing, shared contents identity, smart-filter editing, linked-source workflows, and faithful PSD acceptance.
 3. Improve brush behavior and interaction: pressure/tilt/rotation dynamics, smoothing, presets, tablet edge cases, deterministic replay, and responsive large-document painting.
 4. Harden PSD and command coverage around the workflows PhotoStore promises. Add focused fixtures and measurements when a feature is implemented; avoid claiming parity before it is measured.

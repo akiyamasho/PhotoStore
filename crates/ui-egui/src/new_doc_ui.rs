@@ -528,10 +528,11 @@ pub fn body(app: &mut crate::PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<Strin
                 widgets::dropdown(ui, "nd-recording-quality", &mut quality, &[("low".into(), "Low"), ("good".into(), "Good"), ("studio".into(), "Studio"), ("lossless".into(), "Lossless")], 100.0);
             });
             ui.checkbox(&mut hevc, "HEVC");
+            let mut enabled = f.get("recording").and_then(Value::as_object).and_then(|r| r.get("enabled")).and_then(Value::as_bool).unwrap_or(false);
+            ui.checkbox(&mut enabled, "Record canvas actions");
             f.insert("__recordingResolution".into(), json!(resolution.clone()));
             f.insert("__recordingQuality".into(), json!(quality.clone()));
             f.insert("__recordingHevc".into(), json!(hevc));
-            let enabled = f.get("recording").and_then(Value::as_object).and_then(|r| r.get("enabled")).and_then(Value::as_bool).unwrap_or(true);
             f.insert("recording".into(), json!({"resolution": resolution, "quality": quality, "hevc": hevc, "enabled": enabled}));
             save_preset(app, ui, f);
         });

@@ -64,6 +64,6 @@ pub struct Recording {
 
 impl Default for Recording {
     fn default() -> Self {
-        Self { settings: RecordingSettings::default(), enabled: true, frames: Arc::new(Vec::new()), error: None }
+        Self { settings: RecordingSettings::default(), enabled: false, frames: Arc::new(Vec::new()), error: None }
     }
 }

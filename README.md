@@ -27,3 +27,15 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 ./target/release/photostore-cli --help
 open -a PhotoStore
 ```
+
+## Latest screenshots
+
+Recording starts off for new canvases. These screenshots were captured from the PhotoStore 0.12.0
+preview.
+
+![New Document with canvas recording off](docs/screenshots/0.12.0/new-document-recording-default-off.webp)
+
+![Recording settings with zero frames](docs/screenshots/0.12.0/recording-settings-zero-frames.webp)
+
+See the [screenshot evidence and gallery](docs/screenshots/0.12.0/evidence.md) for capture scope,
+demo-document details, and known limits.

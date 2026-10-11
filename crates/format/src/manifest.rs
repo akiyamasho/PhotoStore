@@ -116,7 +116,7 @@ pub struct RecordingFrameM {
 }
 
 fn recording_enabled() -> bool {
-    true
+    false
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

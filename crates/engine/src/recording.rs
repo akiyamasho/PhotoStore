@@ -47,7 +47,7 @@ fn parse_quality(v: Option<&Value>, cmd: &str) -> Result<RecordingQuality> {
 pub(crate) fn settings_from_new_params(p: &Value, cmd: &str) -> Result<Option<RecordingSettings>> {
     let Some(v) = p.get("recording") else { return Ok(None) };
     let Some(o) = v.as_object() else { return Err(bad(cmd, "`recording` must be an object")) };
-    let enabled = o.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+    let enabled = o.get("enabled").and_then(Value::as_bool).unwrap_or(false);
     if o.get("enabled").is_some() && o.get("enabled").and_then(Value::as_bool).is_none() { return Err(bad(cmd, "recording.enabled must be boolean")); }
     let hevc = o.get("hevc").and_then(Value::as_bool).unwrap_or(false);
     if o.get("hevc").is_some() && o.get("hevc").and_then(Value::as_bool).is_none() { return Err(bad(cmd, "recording.hevc must be boolean")); }
@@ -58,7 +58,7 @@ pub(crate) fn settings_from_new_params(p: &Value, cmd: &str) -> Result<Option<Re
 
 pub(crate) fn initialize_new_document(_s: &Session, doc: &mut Document, p: &Value) -> Result<()> {
     let settings = settings_from_new_params(p, "file.new")?.unwrap_or_default();
-    let enabled = p.get("recording").and_then(Value::as_object).and_then(|o| o.get("enabled")).and_then(Value::as_bool).unwrap_or(true);
+    let enabled = p.get("recording").and_then(Value::as_object).and_then(|o| o.get("enabled")).and_then(Value::as_bool).unwrap_or(false);
     doc.recording = Some(Recording { settings, enabled, frames: Arc::new(Vec::new()), error: None });
     Ok(())
 }

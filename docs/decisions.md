@@ -32,6 +32,14 @@ Batch discard is bounded and strictly validated. Contents context actions remain
 child Save Contents embeds native contents without claiming external linked-file synchronization. The
 0.11.0 compiler, release, and install evidence are complete; broad UI acceptance and Photoshop parity remain unverified.
 
+## 2026-10-11: 0.12.0 recording default-off policy
+
+New Document recording defaults off and resets its checkbox to false on each opening. Explicit API or
+preset opt-in remains available, and existing stored enabled documents retain their settings and
+frames. The source compiler gate and preview/screenshot evidence passed; commit, tag, final
+build/publish, and install remain separate pending gates. The global disable control is not proof of
+per-document enabled state.
+
 ## 2026-10-10: Smart Object contents identity (#2163)
 
 Smart Object instances carry a document-scoped contents ID separately from their layer ID. Normal duplicates preserve it; New Smart Object via Copy creates a new one. Contents edits update the matching instances together, retaining their individual placement and filters. Copies into another document remap contents IDs as a batch, preserving sharing within the copied layers without joining existing destination objects.
