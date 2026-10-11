@@ -62,3 +62,14 @@ KYS import remains supported; KYS export is not claimed.
 Smart Object instances carry a document-scoped contents ID separately from their layer ID. Normal duplicates preserve it; New Smart Object via Copy creates a new one. Contents edits update the matching instances together, retaining their individual placement and filters. Copies into another document remap contents IDs as a batch, preserving sharing within the copied layers without joining existing destination objects.
 
 Native files persist this ID. Legacy embedded objects without an ID remain independent: identical file bytes do not prove that two objects were intended to share edits. Legacy nonempty linked paths and PSD source identifiers retain their explicit sharing relationship. PSD export keys embedded sources by contents identity as well as bytes, so independent equal-content objects stay independent.
+
+## 2026-10-11: Native shortcut-file autosave (#4)
+
+`shortcutFile` is an optional stored preference (serialized as `shortcutFile`) with an empty
+default. The engine validates the path but performs no filesystem I/O; the native shell writes the
+existing version-1 `photostore-shortcuts` JSON only after accepted shortcut changes are saved. The
+native target must be absolute, end in `.json`, and use an existing parent directory. Export errors
+remain pending for the bounded preferences retry and report that preferences themselves were saved;
+the last successful `(path, encoded shortcuts)` snapshot is retained to avoid rewriting it for
+unrelated preference changes. Existing preference files remain compatible because the field is
+optional, and web shells leave the control unavailable when native persistence is unsupported.

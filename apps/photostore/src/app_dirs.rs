@@ -15,8 +15,14 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 /// Files beside the executable that switch on portable mode (either one; contents are ignored).
+#[cfg(feature = "dev-install")]
+pub const PORTABLE_MARKERS: [&str; 2] = ["portable-dev.txt", "PhotoStore-dev.portable"];
+#[cfg(not(feature = "dev-install"))]
 pub const PORTABLE_MARKERS: [&str; 2] = ["portable.txt", "PhotoStore.portable"];
 /// The data folder created beside the executable in portable mode.
+#[cfg(feature = "dev-install")]
+pub const PORTABLE_DATA_DIR: &str = "PhotoStoreDevData";
+#[cfg(not(feature = "dev-install"))]
 pub const PORTABLE_DATA_DIR: &str = "PhotoStoreData";
 
 /// How [`DataDir::dir`] was chosen.
@@ -85,12 +91,23 @@ pub fn resolve(env: impl Fn(&str) -> Option<OsString>, exe_dir: Option<&Path>) -
 pub fn platform_dir(env: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
     let home = env("HOME").filter(|h| !h.is_empty()).map(PathBuf::from);
     if cfg!(target_os = "macos") {
+        #[cfg(feature = "dev-install")]
+        return home.map(|h| h.join("Library/Application Support/PhotoStore-dev"));
+        #[cfg(not(feature = "dev-install"))]
         return home.map(|h| h.join("Library/Application Support/PhotoStore"));
     }
     if cfg!(windows) {
+        #[cfg(feature = "dev-install")]
+        return env("APPDATA").filter(|a| !a.is_empty()).map(|a| PathBuf::from(a).join("PhotoStore-dev"));
+        #[cfg(not(feature = "dev-install"))]
         return env("APPDATA").filter(|a| !a.is_empty()).map(|a| PathBuf::from(a).join("PhotoStore"));
     }
-    env("XDG_CONFIG_HOME").filter(|x| !x.is_empty()).map(PathBuf::from).or_else(|| home.map(|h| h.join(".config"))).map(|c| c.join("photostore"))
+    env("XDG_CONFIG_HOME").filter(|x| !x.is_empty()).map(PathBuf::from).or_else(|| home.map(|h| h.join(".config"))).map(|c| {
+        #[cfg(feature = "dev-install")]
+        return c.join("photostore-dev");
+        #[cfg(not(feature = "dev-install"))]
+        return c.join("photostore");
+    })
 }
 
 /// The first portable marker file in `exe_dir`, if any.

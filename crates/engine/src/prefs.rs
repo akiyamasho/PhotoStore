@@ -18,6 +18,7 @@
 //! ([`crate::color_cmds::ColorSettings`]) and persisted in the same document.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -905,6 +906,8 @@ pub struct Preferences {
     /// preference files and callers keep their primary binding semantics.
     #[serde(default)]
     pub shortcut_alternates: BTreeMap<String, Vec<String>>,
+    /// Native-only destination for the accepted shortcut set. Empty disables autosave.
+    pub shortcut_file: String,
     pub menus: MenuCustomization,
     pub toolbar: ToolbarCustomization,
     /// Edit › Check Spelling: words added to the dictionary ("Add").
@@ -1241,6 +1244,32 @@ fn check_value(path: &str, v: &Value) -> std::result::Result<(), String> {
             return Err(format!("`{s}` is not a valid shortcut (e.g. Cmd+Shift+N, F7)"));
         }
     }
+    if path == "shortcutFile" {
+        let s = v.as_str().ok_or("`shortcutFile` must be a string")?;
+        validate_shortcut_file(s)?;
+    }
+    Ok(())
+}
+
+/// Validate the user-selected native shortcut export target without touching the filesystem.
+/// Empty disables export; otherwise only absolute `.json` paths are accepted.
+pub fn validate_shortcut_file(path: &str) -> std::result::Result<(), String> {
+    if path.is_empty() {
+        return Ok(());
+    }
+    if path.contains('\0') {
+        return Err("`shortcutFile` must not contain NUL bytes".into());
+    }
+    if path.len() > 4096 {
+        return Err("`shortcutFile` is too long (maximum 4096 bytes)".into());
+    }
+    let p = Path::new(path);
+    if !p.is_absolute() {
+        return Err("`shortcutFile` must be an absolute path".into());
+    }
+    if p.extension().and_then(|e| e.to_str()).is_none_or(|e| !e.eq_ignore_ascii_case("json")) {
+        return Err("`shortcutFile` must use the .json extension".into());
+    }
     Ok(())
 }
 
@@ -1568,6 +1597,7 @@ impl Session {
         let color = v.as_object_mut().and_then(|m| m.remove("colorSettings"));
         let presets = v.as_object_mut().and_then(|m| m.remove("presets"));
         let prefs: Preferences = serde_json::from_value(v).map_err(|e| format!("preferences: {e}"))?;
+        validate_shortcut_file(&prefs.shortcut_file).map_err(|e| format!("preferences: {e}"))?;
         if let Some(c) = color {
             self.color.settings = serde_json::from_value(c).unwrap_or_default();
             photostore_compose::psblend::set_text_gamma(self.color.settings.blend_text_gamma);

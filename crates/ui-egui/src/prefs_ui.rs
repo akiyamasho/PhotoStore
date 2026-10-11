@@ -852,6 +852,7 @@ pub fn open_shortcuts(app: &mut PhotoStoreApp, tab: u64) -> u64 {
         "filter": "",
         "overrides": p.shortcuts,
         "alternates": p.shortcut_alternates,
+        "shortcutFile": p.shortcut_file,
         "hidden": p.menus.hidden,
         "colors": p.menus.colors,
         "toolbarHidden": p.toolbar.hidden,
@@ -1387,6 +1388,22 @@ fn shortcuts_body(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String
     });
     f.insert("tab".into(), json!(tab));
     ui.add_space(6.0);
+    if tab != 1 {
+        let mut shortcut_file = f.get("shortcutFile").and_then(Value::as_str).unwrap_or("").to_string();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(tl!("Automatically save shortcuts to")).color(t.text_dim));
+            #[cfg(target_arch = "wasm32")]
+            {
+                ui.label(RichText::new(tl!("Native PhotoStore only")).color(t.text_faint));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                ui.add(egui::TextEdit::singleline(&mut shortcut_file).desired_width(360.0).hint_text(tl!("absolute path to a native .json file")))
+                    .on_hover_text(tl!("Native PhotoStore JSON; accepted changes only. Empty disables automatic saving."));
+            }
+        });
+        f.insert("shortcutFile".into(), json!(shortcut_file));
+    }
     if tab == 2 {
         toolbar_tab(app, ui, f);
         return;
@@ -1627,6 +1644,7 @@ fn shortcuts_body(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String
 }
 
 fn toolbar_tab(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
+    let t = Tokens::get(ui.ctx());
     let mut hidden: Vec<String> = f.get("toolbarHidden").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
     let override_result = f.get("overrides").map(|v| serde_json::from_value::<BTreeMap<String, String>>(v.clone()));
     let overrides_ok = override_result.as_ref().is_none_or(Result::is_ok);
@@ -1664,7 +1682,14 @@ fn toolbar_tab(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, V
             for (_, tool) in rows {
                 let name = format!("{tool:?}");
                 let mut on = !hidden.contains(&name);
-                crate::widgets::checkbox(ui, &mut on, tl!(tool.label()));
+                ui.horizontal(|ui| {
+                    let checkbox = crate::widgets::checkbox(ui, &mut on, "");
+                    let (icon_rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                    crate::icons::paint(ui, icon_rect, crate::icons::tool_icon(tool), 14.0, t.icon);
+                    let label = ui.selectable_label(false, RichText::new(tl!(tool.label())).color(t.text_dim));
+                    if label.clicked() { on = !on; }
+                    checkbox.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), on, tl!(tool.label())));
+                });
                 if on {
                     hidden.retain(|h| *h != name);
                 } else if !hidden.contains(&name) {
@@ -1890,8 +1915,26 @@ pub fn confirm(app: &mut PhotoStoreApp, f: &Map<String, Value>) -> Result<Value,
             let hidden = f.get("hidden").cloned().unwrap_or(json!([]));
             let colors = f.get("colors").cloned().unwrap_or(json!({}));
             let toolbar = f.get("toolbarHidden").cloned().unwrap_or(json!([]));
+            let current_shortcut_file = app.session.prefs().shortcut_file.clone();
+            let requested_shortcut_file = f.get("shortcutFile").and_then(Value::as_str).map(str::to_owned);
+            let shortcut_file_changed = requested_shortcut_file.as_deref().is_some_and(|path| path != current_shortcut_file);
+            let mut candidate = app.session.prefs().clone();
+            candidate.set("menus", json!({"hidden": hidden, "colors": colors}))?;
+            candidate.set("toolbar", json!({"hidden": toolbar}))?;
+            if let Some(path) = requested_shortcut_file.as_deref() {
+                candidate.set("shortcutFile", json!(path))?;
+            }
+            let values = if shortcut_file_changed {
+                json!({"shortcutFile": requested_shortcut_file.as_deref().unwrap_or_default(), "menus": {"hidden": candidate.menus.hidden, "colors": candidate.menus.colors}, "toolbar": {"hidden": candidate.toolbar.hidden}})
+            } else {
+                json!({"menus": {"hidden": candidate.menus.hidden, "colors": candidate.menus.colors}, "toolbar": {"hidden": candidate.toolbar.hidden}})
+            };
+            if app.automation_input && shortcut_file_changed {
+                let authorize = app.services.automation_command.as_mut().ok_or("automation cannot change native shortcut file paths")?;
+                authorize("prefs.set", &json!({"values": values.clone()}))?;
+            }
             app.run("edit.keyboardShortcuts", json!({"reset": true, "set": ov, "alternates": alt, "allowUnknown": true, "removeConflicts": false}))?;
-            app.run("prefs.set", json!({"values": {"menus": {"hidden": hidden, "colors": colors}, "toolbar": {"hidden": toolbar}}}))
+            app.run("prefs.set", json!({"values": values}))
         }
         "presets" => Ok(Value::Null),
         "presetsIO" => {
@@ -2893,6 +2936,19 @@ mod tests {
         assert_eq!(h.state().ui.dialogs.iter().find(|d| d.id == id).unwrap().fields["overrides"], json!("bogus"));
         assert!(crate::dialogs::confirm(h.state_mut(), id).is_err());
         assert_eq!(h.state().session.prefs().shortcuts, before);
+    }
+
+    #[test]
+    fn shortcut_dialog_rejects_invalid_export_path_before_mutating_shortcuts() {
+        let (mut app, _) = app_with_store();
+        let ctx = egui::Context::default();
+        let id = crate::menus::invoke(&mut app, &ctx, "edit.keyboardShortcuts", json!({})).unwrap()["dialog"].as_u64().unwrap();
+        let before = app.session.prefs().shortcuts.clone();
+        let fields = &mut app.ui.dialog_mut(id).unwrap().fields;
+        fields.insert("shortcutFile".into(), json!("relative/keys.json"));
+        fields.insert("overrides".into(), json!({"file.new": "Ctrl+Shift+N"}));
+        assert!(crate::dialogs::confirm(&mut app, id).is_err());
+        assert_eq!(app.session.prefs().shortcuts, before);
     }
 
     #[test]
