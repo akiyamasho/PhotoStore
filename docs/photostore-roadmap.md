@@ -15,7 +15,7 @@ This is the working roadmap for the independent PhotoStore product. It records t
 
 ## Priorities
 
-1. Finish the current 0.9.0 source pass for mask transfer, Channels, and video keyframe controls. The 0.8.0 source/tag `711e73995ac23b5a408a6a07e458ebfc3df91d12` remains the published and installed release. The 0.9.0 engine/UI work is implemented and compiler-verified (final gate 3.71s, `/private/tmp/photostore-mask-channels-keyframes-check-20261011-final.log`); commit, tag, package, release, reinstall, and broad acceptance gates remain pending. Track the twelve steps in the goal ledger.
+1. Continue the post-release pass after the completed 0.9.0 mask transfer, Channels, and video keyframe milestone. Source/tag `3c905b47444cb71a9137572859d7a84cdffdb125` is published and installed; compiler evidence is recorded in `/private/tmp/photostore-mask-channels-keyframes-check-20261011-final.log`. Broad acceptance remains unverified. Next work is finite frame-animation repeat choices, configurable bounded onion skins, sparse property stopwatches, Smart transform/style coverage, and broader PSD fidelity.
 2. Deepen Smart Objects with contents editing, shared contents identity, smart-filter editing, linked-source workflows, and faithful PSD acceptance.
 3. Improve brush behavior and interaction: pressure/tilt/rotation dynamics, smoothing, presets, tablet edge cases, deterministic replay, and responsive large-document painting.
 4. Harden PSD and command coverage around the workflows PhotoStore promises. Add focused fixtures and measurements when a feature is implemented; avoid claiming parity before it is measured.
@@ -45,22 +45,22 @@ Object, filtering/minimize/hide, and UI-only candidates were reported. This evid
 compiler and targeted function/integration behavior. It does not claim visual UI QA, Photoshop
 parity, or complete PSD/external-format compatibility.
 
-The action-recording release is historical: `photostore-action-recording-2026-10-11` was published
-and PhotoStore 0.7.0 was installed locally. The current installed release is the 0.8.0
-`photostore-animation-smart-masks-2026-10-11` prerelease. Broad native visual QA and UI parity
-remain unverified.
+The action-recording and animation/smart-mask releases are historical: `photostore-action-recording-2026-10-11`
+and `photostore-animation-smart-masks-2026-10-11` were published and installed locally. The current
+installed release is the 0.9.0 `photostore-mask-channels-keyframes-2026-10-11` prerelease. Broad
+native visual QA and UI parity remain unverified.
 The old-workspace native-save issue remains a secondary reliability gap; the old process and artwork
 were preserved, but the attempted recovery target did not appear.
 
-The audio/clip source milestone is pushed, compiler-verified, packaged, and installed in 0.8.0.
-Its remaining integration status is tracked in [audio-timeline.md](audio-timeline.md); no broad UI
-or acceptance claim is made. The current installed source/tag is
-`711e73995ac23b5a408a6a07e458ebfc3df91d12`.
+The audio/clip source milestone is pushed, compiler-verified, packaged, and retained in the current
+0.9.0 install. Its remaining integration status is tracked in [audio-timeline.md](audio-timeline.md);
+no broad UI or acceptance claim is made. The current installed source/tag is
+`3c905b47444cb71a9137572859d7a84cdffdb125`.
 
 Smart Filter Masks and the New Document Fix are implemented, compiler-verified, packaged, and
-installed in the current 0.8.0 source. The targeted New Document confirmation passed; broad UI
-acceptance remains unverified. The 0.9.0 source pass adds mask transfer, Channels, and keyframe
-control repairs; its compiler and release gates remain pending. See [smart-filter-masks.md](smart-filter-masks.md).
+installed in the historical 0.8.0 source. The targeted New Document confirmation passed. The
+0.9.0 release adds mask transfer, Channels, and keyframe control repairs; broad UI acceptance
+remains unverified. See [smart-filter-masks.md](smart-filter-masks.md).
 
 ## CI and release follow-up
 

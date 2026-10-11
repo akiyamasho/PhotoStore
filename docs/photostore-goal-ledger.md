@@ -57,11 +57,11 @@ Installation record: canonical `/Applications/PhotoStore.app` is version 0.7.0, 
 
 The prior 0.6.1 process (PID 57432) remained alive with its artwork untouched after a native save stalled in the final directory. The attempted target `/Users/computer/Desktop/dev/PhotoStore/recovered-artwork/Untitled-1-before-0.7.0-20261011-110908.pcraft` has not appeared, so no artwork recovery or backup is claimed. The sample log is `/private/tmp/photostore-save-stall-20261011.sample.txt`; it shows the save blocked in `photostore-job-1 save_file → atomic_write_with → sync_dir → File.open → open`, with no TCC prompt.
 
-## Current 0.8.0 release pass
+## Historical 0.8.0 release pass
 
 The completed 0.8.0 release combined Audio, Smart Filter Masks, and the New Document Fix. Status is explicit:
 
-1. Recording release installed — complete as the historical 0.7.0 milestone; the current installed release is 0.8.0.
+1. Recording release installed — complete as the historical 0.7.0 milestone; the 0.8.0 release below is also historical, with 0.9.0 now current.
 2. Audio source integrated and pushed — complete (`405d102f1ddc8f13ed7ae8b6ce8779db0c0f28ec`).
 3. New Document Fix — implemented, compiler-verified, and confirmed after reinstall with a normal 64×64 recording document creation.
 4. Smart Filter mask engine — implemented, compiler-verified, and included in the 0.8.0 release.
@@ -84,8 +84,8 @@ the 0.9.0 mask transfer and Channels implementation is tracked below.
 
 ## Current 0.9.0 mask, Channels, and keyframe pass
 
-This source pass follows the installed and published 0.8.0 release. It does not claim a 0.9.0
-release. The twelve-step status is:
+This source pass follows the installed and published 0.8.0 release. The 0.9.0 release pass is now
+complete:
 
 1. Public specification and architecture — complete.
 2. Mask transfer engine — implemented: same-document ID guards, inherited locks, copy-on-write copy,
@@ -100,18 +100,35 @@ release. The twelve-step status is:
    timeline bounds, target and lock guards, atomic Set/Delete, and no-op handling.
 7. Compiler gate — complete; the initial rerun passed in 12.18 seconds and the final transfer-chooser gate passed in 3.71 seconds. Final log: `/private/tmp/photostore-mask-channels-keyframes-check-20261011-final.log`.
 8. Version and documentation — complete; version 0.9.0 is prepared.
-9. Commit and push — pending.
-10. Tag — pending.
-11. Build and publish — pending.
-12. Reinstall and confirmation — pending.
+9. Commit and push — complete at source commit `3c905b47444cb71a9137572859d7a84cdffdb125`.
+10. Tag — complete: `photostore-mask-channels-keyframes-2026-10-11`.
+11. Build and publish — complete as the published 0.9.0 prerelease.
+12. Reinstall and confirmation — complete; the canonical 0.9.0 app passed strict signature validation and started successfully. The prior 0.8.0 app was retained cleanly.
 
 Empty Copy/Move menus, the palette, and assigned shortcuts open the named-destination chooser. A
 captured document ID works across tabs; no-eligible-destination errors are explicit; transfer IDs
 are limited to known values; overwrite defaults false; failures retain the form with an inline
 `status_error`, and success closes it. Remaining scope includes general sparse tracks, stopwatches,
 full transform/style controls, transitions, groups, exact audio master-clock synchronization,
-coalesced external key-edit refresh, and broad UI/Photoshop acceptance. The 0.8.0
-recording/audio/mask release remains the current installed product.
+coalesced external key-edit refresh, and broad UI/Photoshop acceptance. The 0.9.0
+mask/Channels/keyframe release is the current installed product. No new broad QA or Photoshop
+parity claim is made. The prior 0.8.0 targeted 64×64 New Document confirmation remains historical
+evidence.
+
+The immutable 0.9.0 source/tag is `3c905b47444cb71a9137572859d7a84cdffdb125`. The [published
+prerelease](https://github.com/akiyamasho/PhotoStore/releases/tag/photostore-mask-channels-keyframes-2026-10-11)
+is an ARM64, ad hoc signed, not notarized build. The DMG is 26,334,832 bytes with SHA-256
+`6441ca5f6636b2f517cdda0a7eff3201b6a02627ffe5a06e1998db14a13c7c2d`; the CLI ZIP is 16,278,953
+bytes with SHA-256 `8662222462dcaf7d7bbdc0cab147f72badd07267864e57bc3c3c7405a50273f0`.
+`SHA256SUMS` is 206 bytes and contains exactly those two assets. The build log is
+`/private/tmp/photostore-0.9.0-build.log`.
+
+The canonical `/Applications/PhotoStore.app` is version 0.9.0 with bundle `ai.photostore.app`,
+binary SHA-256 `cecb44e45488e0f82c61c11b8579f1aef7a0a1655a00fa49872a955911b6d8bf`, strict signature
+validation, and running PID 11312. The previous-app backup is
+`/private/tmp/photostore-reinstall-0.9.0-20261011-121622/previous-PhotoStore-0.8.0.app`; the
+retained recovery sibling is `/Applications/PhotoStore-0.8.0-recovery-20261011-121622.app`.
+The old 0.8.0 `Untitled-1` was left cleanly and no artwork recovery is claimed.
 
 ## Animation and timeline
 
@@ -142,7 +159,7 @@ recording/audio/mask release remains the current installed product.
 
 ### Exact next steps
 
-1. Complete acceptance of the native media boundary: verify decode ownership, cancellation, tiny MP4/MOV/WebM cases, range selection, fractional-FPS timestamps, and UI failure behavior. Record supported containers/codecs before calling import/export supported.
+1. Author finite frame-animation repeat choices and configurable bounded onion skins; this is the next source pass and has no 0.10 compiler or release claim.
 2. Continue the integrated audio/clip milestone: close arbitrary split-segment replacement envelopes, then address exact audio latency and shared-clock behavior; continue sparse tracks, clip groups, transitions, loop counts, onion skins, work-area rendering, and long-video memory behavior.
 3. Add deterministic timing fixtures covering mismatched FPS, explicit frame delays, seek/playback boundaries, nested animated Smart Objects, and frame-animation export.
 4. Add interaction acceptance for the Photoshop Video Timeline and Frame Animation panels after the engine contracts are stable.
@@ -171,7 +188,7 @@ Official Photoshop references for future workflow comparison:
 ### Exact next steps
 
 1. Define source identity and contents-editing UX for embedded, linked, and shared sources, including stale/missing source behavior.
-2. Continue 0.9.0 keyframe UI coverage, sparse-track handling, editable parameter round trips, source refresh invalidation, and broader Smart appearance/animation coverage; retain mask transfer and Channels implementation as compiler/release-pending work.
+2. Continue post-0.9.0 keyframe UI coverage, sparse-track handling, editable parameter round trips, source refresh invalidation, and broader Smart appearance/animation coverage; retain mask transfer and Channels as implemented while broader acceptance remains open.
 3. Exercise the existing perspective/homography and transform-reset paths against source contents, masks, filters, identity, undo, and external-file round trips.
 4. Expand PSD acceptance fixtures for live Smart Objects, multiple instances, Smart Filters, masks, transforms, external sources, and Photoshop reopen/render checks.
 
