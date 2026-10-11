@@ -256,19 +256,22 @@ Dense-property runtime behavior remains unverified. The earlier consolidated dev
 exited 0; log `/private/tmp/photostore-0.14.0-dev-check-20261011.log`, but that gate predates and
 does not cover the new namespace. The goal-specific compiler exited 0; log
 `/private/tmp/photostore-0.14.0-goal-rc-check-20261011.log`. Three standard-only namespace tests
-passed with zero failures; log `/private/tmp/photostore-build-rs-test-20261011.log`. Five of nine RC
-delivery steps are complete: version/docs, preview, actual screenshots/docs, namespace authoring,
-and goal-specific compiler/tests. Local commit, push, exact-SHA package, background installation,
-and focused background runtime test remain pending. The RC namespace is `PhotoStore-dev-timeline-safety`, bundle ID
+passed with zero failures; log `/private/tmp/photostore-build-rs-test-20261011.log`. The local RC
+source is `08e285ea80ea160af9661596ceee9449b4122f8f`; its 5m22s development package is installed
+at `/Applications/PhotoStore-dev-timeline-safety.app` with binary SHA-256
+`5d677b261e2ddf7c281fbcf11fb4fd0458a3d5682db4cd4b219cabb439720168`. Focused runtime evidence is
+`/private/tmp/photostore-dev-timeline-safety-repair-20261011/runtime-evidence.json`. Eight of nine
+RC steps are complete: 1–6, 8, and 9; push remains pending explicit approval.
+There is no production tag, release, publication, or production reinstall. The RC namespace is `PhotoStore-dev-timeline-safety`, bundle ID
 `ai.photostore.app.dev.timeline-safety`, default macOS configuration
 `~/Library/Application Support/PhotoStore-dev-timeline-safety`. No production tag or release is
 planned.
 
 Milestones: close safeguards and timeline persistence are implemented for this checkpoint, with
 prior compiler/evidence recorded above. RC delivery has 9 steps: version/docs, preview, actual
-screenshots/docs, development namespace authoring, goal-specific compiler, local commit, push,
-exact-SHA package/background installation, and focused background runtime test; the first four are
-complete.
+screenshots/docs, development namespace authoring, goal-specific compiler/tests, local commit,
+push, exact-SHA package and local installation, and focused background runtime test; steps 1–6, 8,
+and 9 are complete, with push pending explicit approval.
 Stopwatches and full Photoshop parity remain future work.
 
 ## Animation and timeline
