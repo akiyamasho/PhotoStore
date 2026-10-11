@@ -166,9 +166,9 @@ validation, and running PID 24533. The previous-app backup is
 retained recovery sibling is `/Applications/PhotoStore-0.9.0-recovery-20261011-123258.app`.
 The old 0.9.0 window had no document or unsaved marker and quit cleanly without a prompt.
 
-## Current 0.11.0 Smart Contents reliability pass
+## Completed 0.11.0 Smart Contents reliability release pass
 
-Version 0.11.0 is prepared in source; 0.10.0 remains the current installed release. The scope is
+Version 0.11.0 is published and installed. The scope is
 documented in [smart-contents-editing.md](smart-contents-editing.md). Its twelve steps:
 
 1. Architecture and public specification — complete.
@@ -179,14 +179,29 @@ documented in [smart-contents-editing.md](smart-contents-editing.md). Its twelve
 6. Integration — implemented in source.
 7. Compiler gate — complete; the required check passed in 12.13 seconds. Final log: `/private/tmp/photostore-smart-contents-check-20261011-final.log`.
 8. Version and documentation — prepared; implementation/compiler evidence is complete.
-9. Commit and push — pending.
-10. Tag — pending; planned `photostore-smart-contents-2026-10-11`.
-11. Build and publish — pending.
-12. Reinstall and confirmation — pending.
+9. Commit and push — complete at source commit `3ebf38f77bd55bb57fc6c0f3cea3e9ead04667b9`.
+10. Tag — complete: `photostore-smart-contents-2026-10-11`.
+11. Build and publish — complete as the published 0.11.0 prerelease.
+12. Reinstall and confirmation — complete; the canonical 0.11.0 app passed strict signature validation and started successfully. The prior 0.10.0 app was retained with its unsaved workspace preserved.
 
 The recording, audio, repeat/onion, New Document, mask, Channels, and keyframe milestones remain
-historical and preserved. Full Smart Object, linked external PSD, and Photoshop parity scope remains
-unfinished.
+historical and preserved. The old 0.10.0 `Untitled-1` process remained alive after its quit prompt
+was canceled; no artwork save or recovery file is claimed. Full Smart Object, linked external PSD,
+and Photoshop parity scope remains unfinished.
+
+The immutable 0.11.0 source/tag is `3ebf38f77bd55bb57fc6c0f3cea3e9ead04667b9`. The [published
+prerelease](https://github.com/akiyamasho/PhotoStore/releases/tag/photostore-smart-contents-2026-10-11)
+is an ARM64, ad hoc signed, not notarized build. The DMG is 26,373,589 bytes with SHA-256
+`5921bf6b85934ecf82876dceb85c7086a74912eebb2ab4d04f10bf8d46252dd0`; the CLI ZIP is 16,299,958
+bytes with SHA-256 `0e7c15286128056b0849aed9c923d754094b4d5b33fe2ab785b6a5985392073f`.
+`SHA256SUMS` is 208 bytes and contains exactly those two assets. The UTC build log is
+`/private/tmp/photostore-0.11.0-build.log`.
+
+The canonical `/Applications/PhotoStore.app` is version 0.11.0 with bundle `ai.photostore.app`,
+binary SHA-256 `2f386c3daa780d69304163dbce2ad469b02b92eef63b97f87abce7b0df027037`, strict signature
+validation, and running PID 42277. The previous-app backup is
+`/private/tmp/photostore-reinstall-0.11.0-20261011-125054/previous-PhotoStore-0.10.0.app`; the
+retained recovery sibling is `/Applications/PhotoStore-0.10.0-recovery-20261011-125054.app`.
 
 ## Animation and timeline
 

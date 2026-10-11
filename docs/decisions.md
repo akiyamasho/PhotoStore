@@ -30,7 +30,7 @@ Close and contents-save flows are fallible and child-first: dirty child commits 
 before parent/tab cleanup, while Save/Don't Save/Cancel decisions retain document IDs and revisions.
 Batch discard is bounded and strictly validated. Contents context actions remain explicit, and linked
 child Save Contents embeds native contents without claiming external linked-file synchronization. The
-0.11.0 compiler gate passed; release and install evidence remain pending.
+0.11.0 compiler, release, and install evidence are complete; broad UI acceptance and Photoshop parity remain unverified.
 
 ## 2026-10-10: Smart Object contents identity (#2163)
 
