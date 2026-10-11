@@ -37,3 +37,7 @@ open -a PhotoStore
 ![Reopened video timeline](docs/screenshots/0.14.0/timeline-saved-reopened.webp)
 
 Current development status — [PhotoStore goal ledger](docs/photostore-goal-ledger.md).
+
+Current capture coverage shows the 0.14.0 close and timeline-persistence preview. Screenshot capture
+for the 0.15.0 and 0.16.0 candidate features remains pending; see the [0.16.0 candidate status](docs/releases/0.16.0.md).
+

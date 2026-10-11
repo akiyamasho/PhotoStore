@@ -47,16 +47,48 @@ Read the relevant crate and docs before editing. Keep manifests valid, preserve 
 
 ## Local development installation policy
 
-The consolidated `PhotoStore-dev` bundle tracks integrated main development. Goal work is delivered
-to `PhotoStore-dev-<goal>`, with its own bundle identifier, executable, configuration, recovery,
-presets, logs, portable data, UI state, and process identity. Goal candidates must never be
-relabeled into another goal or into the consolidated bundle.
+Deliver milestone changes through the consolidated `PhotoStore-dev` runtime; use the repository-root
+`./dev` watcher for local iteration, and reserve installed bundle refreshes for local CI/main
+promotion. The normal edit loop is documented in [`docs/dev-install.md`](docs/dev-install.md) and
+[`docs/dev-watch.md`](docs/dev-watch.md). It uses one shared Cargo target and incrementally builds
+changed inputs; it does not require a new pull request or a fresh application reinstall for each
+edit. An explicitly requested independent goal may use a separate `PhotoStore-dev-<goal>` identity,
+but goal bundles are never the default workflow.
 
-Both development variants preserve live unsaved documents and recovery data, never register
-document associations, and must be launched in the background without interrupting the user's
-active UI. Production `PhotoStore.app` remains untouched. Production installation, tagging,
-release, publication, or promotion happens only after an explicit user request.
+The watcher may close the owned, controlled dev app only when it has no open document tabs and no
+background jobs or dialogs. Any open tab, including a saved tab, defers the queued reload; save and
+close every tab to let it apply automatically. It never closes an unrelated owner process and never
+touches `/Applications/PhotoStore.app`. Source preferences and configuration are preserved. The
+loop is a safe process restart, not in-process hot module replacement. When launched by an agent,
+use background mode so the app opens behind the user's active UI without blocking, focusing, or
+raising that window.
 
-The repository's recording, screenshot evidence, resource, licensing, and release policies
-continue to apply to consolidated and goal-specific development work.
+## Local CI and release watcher
 
+Development and release automation is an opt-in local macOS LaunchAgent in
+`packaging/local-ci/`, never a generic GitHub self-hosted runner. It polls the fixed
+`akiyamasho/PhotoStore` repository's trusted `main` branch and GitHub Releases API at about
+60-second intervals (`RunAtLoad`); it records the current main/release baseline before first
+use so enabling it cannot replay stale work. A single queue/lock permits one heavy Rust job at
+a time, using persistent checkouts outside this changing worktree, the shared Cargo target
+`/Users/computer/Desktop/dev/PhotoStore/target`, `CARGO_BUILD_JOBS=1`, `RAYON_NUM_THREADS=1`,
+and `nice -n 10`. Polling uses `gh` authentication without copying or logging credentials and
+validates all refs before checkout.
+
+Every new main SHA builds and installs the isolated `PhotoStore-dev` bundle with the
+`dev-install` feature and the separate `/Users/computer/Desktop/dev/tools/Animation/photostore_keys.dev.json`
+export, unless a live owned dev watcher or its child process is active, in which case the CI install
+is deferred. A production build is triggered only by a published, non-draft, non-prerelease GitHub
+Release; the release tag is resolved to its exact commit SHA before building. A pushed tag,
+draft, prerelease, PR, or release creation alone never promotes production. The verified
+production bundle is staged and atomically installed at `/Applications/PhotoStore.app` only
+while the app is not running; otherwise it is deferred. The watcher never kills, restarts,
+focuses, closes, or overwrites an active production app, does not modify production
+preferences/recovery, preserves an old-bundle backup, and does not launch apps automatically.
+The existing native watcher file `/Users/computer/Desktop/dev/tools/Animation/photostore_keys.json`
+remains canonical.
+
+Do not enable the LaunchAgent until authoring/review and initial promotion are complete. Use
+`--bootstrap` or `--observe-only` for safe initialization. Human review remains required to
+create/publish releases and tags; automatic installation is authorized only for published
+stable releases. Every released feature/fix still requires the screenshot evidence rules above.
