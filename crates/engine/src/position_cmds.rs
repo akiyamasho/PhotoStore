@@ -294,6 +294,7 @@ pub(crate) fn author_moved(doc: &mut photostore_doc::Document, moves: &[(LayerId
             if a.enabled && video && a.keys.binary_search_by_key(&frame, |k| k.frame).is_err() {
                 *n = n.checked_add(1).ok_or_else(|| bad("layer.translate", "position animation key count overflow"))?;
             }
+            return Ok(());
         }
         if let Some(c) = l.children() {
             for x in c {
@@ -341,6 +342,7 @@ pub(crate) fn author_moved(doc: &mut photostore_doc::Document, moves: &[(LayerId
             } else if !a.enabled {
                 a.static_value = v;
             }
+            return Ok(());
         }
         if let Some(children) = l.children_mut() {
             for child in children {
