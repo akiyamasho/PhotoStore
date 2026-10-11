@@ -7,5 +7,9 @@ private, unsaved, or unrelated artwork.
 
 For each release, add a small evidence note beside the images covering the feature or fix, demo
 document, source version or SHA, visible verification, and known limits. Use lossless PNG or
-readable WebP. This index intentionally contains no image links until the corresponding captures
-exist.
+readable WebP. The 0.12.0 captures are available in [the release evidence](../releases/0.12.0.md)
+and the [0.12.0 evidence folder](0.12.0/).
+
+![0.12.0 New Document recording off](0.12.0/new-document-recording-default-off.webp)
+
+![0.12.0 recording settings with zero frames](0.12.0/recording-settings-zero-frames.webp)

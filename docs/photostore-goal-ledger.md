@@ -205,7 +205,7 @@ retained recovery sibling is `/Applications/PhotoStore-0.10.0-recovery-20261011-
 
 ## Current 0.12.0 recording default-off pass
 
-Version 0.12.0 is prepared in source; 0.11.0 remains the current installed and published release.
+Version 0.12.0 is published and installed; 0.11.0 is historical.
 The current recording policy defaults New Document recording off and resets the checkbox on each
 opening, while explicit API/preset opt-in and existing stored enabled documents remain supported.
 The twelve-step status is:
@@ -217,19 +217,26 @@ The twelve-step status is:
 5. Required compiler gate — complete; exit 0 in 33.99 seconds, log `/private/tmp/photostore-default-off-check-20261011.log`.
 6. Preview build and screenshot evidence — complete; marker `preview-0.12.0-default-off`, preview build 5m33s, log `/private/tmp/photostore-0.12.0-preview-build.log`.
 7. Actual screenshots — complete: approved compressed WebP captures and evidence are recorded under `docs/screenshots/0.12.0`.
-8. README and release evidence — complete for the pretag state; publication remains pending.
-9. Commit and push — pending.
-10. Tag — pending; planned `photostore-recording-default-off-2026-10-11`.
-11. Final build, exact SHA, and publish — pending.
-12. Reinstall and confirmation — pending.
+8. README and release evidence — complete; published prerelease and image embeds verified.
+9. Commit and push — complete at source commit `0ac6e812f1ded55e9a12c3a1fa0230c8fdbe3c6d`.
+10. Tag — complete: `photostore-recording-default-off-2026-10-11`.
+11. Final build, exact SHA, and publish — complete; reinstall is complete below.
+12. Reinstall and confirmation — complete; canonical `/Applications/PhotoStore.app` version 0.12.0 passed strict signature validation and started successfully. Targeted New Document creation for `0.12-install-demo` showed 64×64, recording off, canvas/background/timeline controls, and no error.
 
 The approved captures are `new-document-recording-default-off.webp` (900×700, 51,972 bytes) and
 `recording-settings-zero-frames.webp` (530×320, 24,036 bytes), with accompanying `evidence.md`.
 Images show the unchecked New Document control and Settings Frames: 0. The capture flow confirmed
 successful Create and observed the unchecked Time-lapse Recording menu item in accessibility data.
-The global disable control is unchecked and is not evidence of per-document enabled state. The native preview instance quit normally without open user
-documents. No broad UI QA claim is made; the 0.11.0 Smart Contents release remains current until
-this pass is published and installed.
+The global disable control is unchecked and is not evidence of per-document enabled state. The native preview instance quit normally without open user documents. The 0.12.0 reinstall backup is `/private/tmp/photostore-reinstall-0.12.0-20261011-132022/previous-PhotoStore-0.11.0.app`; the retained recovery sibling is `/Applications/PhotoStore-0.11.0-recovery-20261011-132022.app`.
+
+The old 0.11.0 unsaved `名称未設定のアートワーク.psd` quit prompt was canceled, then its process disappeared after bundle replacement; no force-kill or discard was used. No recovery artifact was found or compared. The existing `/Users/computer/Downloads/名称未設定のアートワーク.psd` is 964,199 bytes but was not opened or compared, so unsaved changes are not claimed recovered or preserved alive. This is an unresolved closing/recovery reliability limit, not a proven root cause. No broad UI QA claim is made; the full Photoshop goal remains active and unfinished.
+
+The final 0.12.0 build completed in 3m21s on 2026-10-11 UTC; log `/private/tmp/photostore-0.12.0-build.log`.
+The ARM64 DMG is 26,374,248 bytes with SHA-256
+`288f9fa82dcee66caea531f1b318d0e9bdce368877f56a32a2be0d578d1925ca`; the CLI ZIP is 16,301,062
+bytes with SHA-256 `a4dccee5fbd95b5eb061793bc1e61b5cfdb53a6addb5f185e380989a05fccf58`.
+`SHA256SUMS` is 208 bytes with exactly those two entries. The canonical app bundle is
+`ai.photostore.app`, binary SHA-256 `c26ed6afcf0577355bf51d88324f94d9d54bd281706e40ac29c2b7d66329a6b6`, strict signature validation passed, and it ran as PID 80169. The backup is `/private/tmp/photostore-reinstall-0.12.0-20261011-132022/previous-PhotoStore-0.11.0.app`; recovery sibling `/Applications/PhotoStore-0.11.0-recovery-20261011-132022.app`.
 
 ## Animation and timeline
 

@@ -20,4 +20,4 @@ Layers marked **Private Time-lapse Layer** are excluded from future captured fra
 
 The native encoders use JPEG quality 45, 75, or 94 for Low, Good, and Studio, PNG for Lossless, and HEVC export settings with CRF 28, 21, 16, or RGB lossless. A codec proof established one-frame 16×16 gbrp HEVC Lossless pixel equivalence. These are codec and compiler checks, not a claim of broad UI acceptance.
 
-The implementation is a native, action-driven recording path with bounded memory, deterministic replay/export, and explicit privacy behavior. The current 0.12.0 source pass defaults recording off and has approved preview captures; it is not yet published or installed. Full native visual QA, UI parity, and full Procreate parity remain unverified.
+The implementation is a native, action-driven recording path with bounded memory, deterministic replay/export, and explicit privacy behavior. The current 0.12.0 source pass defaults recording off, has approved preview captures, and is published and installed. Full native visual QA, UI parity, and full Procreate parity remain unverified.

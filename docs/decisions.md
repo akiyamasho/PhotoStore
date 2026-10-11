@@ -37,8 +37,16 @@ child Save Contents embeds native contents without claiming external linked-file
 New Document recording defaults off and resets its checkbox to false on each opening. Explicit API or
 preset opt-in remains available, and existing stored enabled documents retain their settings and
 frames. The source compiler gate and preview/screenshot evidence passed; commit, tag, final
-build/publish, and install remain separate pending gates. The global disable control is not proof of
+build/publish, and install evidence are complete. The global disable control is not proof of
 per-document enabled state.
+
+## 2026-10-11: 0.12.0 post-install closing limit
+
+The canonical 0.12.0 install passed the targeted default-off New Document flow. An older unsaved
+0.11.0 document's quit prompt was canceled, but its process later disappeared during bundle
+replacement; no force-kill or discard occurred, and no recovery artifact was found or compared.
+This is an unresolved closing/recovery reliability limit, not a proven cause or a claim of recovered
+artwork.
 
 ## 2026-10-10: Smart Object contents identity (#2163)
 
