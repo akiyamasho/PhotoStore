@@ -323,7 +323,7 @@ impl Default for Tools {
     fn default() -> Self {
         Self {
             show_tooltips: true,
-            use_shift_key_for_tool_switch: false,
+            use_shift_key_for_tool_switch: true,
             zoom_clicked_point_to_center: false,
             enable_flick_panning: true,
             vary_round_brush_hardness_on_hud: true,
@@ -928,6 +928,46 @@ pub struct Preferences {
     pub script_events: crate::automate_cmds::ScriptEvents,
 }
 
+/// Stable tool rows shared by the engine, keyboard-shortcut UI, and Photoshop `.kys` import.
+/// Keep this order aligned with the UI's `Tool::ALL` order.
+pub const TOOL_SHORTCUTS: &[(&str, &str, Option<&str>)] = &[
+    ("tools.tool.move", "Move Tool", Some("V")), ("tools.tool.rectMarquee", "Rectangular Marquee Tool", Some("M")),
+    ("tools.tool.ellipseMarquee", "Elliptical Marquee Tool", Some("M")), ("tools.tool.lasso", "Lasso Tool", Some("L")),
+    ("tools.tool.polygonLasso", "Polygonal Lasso Tool", Some("L")), ("tools.tool.magneticLasso", "Magnetic Lasso Tool", Some("L")),
+    ("tools.tool.magicWand", "Magic Wand Tool", Some("W")), ("tools.tool.crop", "Crop Tool", Some("C")),
+    ("tools.tool.eyedropper", "Eyedropper Tool", Some("I")), ("tools.tool.ruler", "Ruler Tool", Some("I")),
+    ("tools.tool.note", "Note Tool", Some("I")), ("tools.tool.count", "Count Tool", Some("I")),
+    ("tools.tool.brush", "Brush Tool", Some("B")), ("tools.tool.pencil", "Pencil Tool", Some("B")),
+    ("tools.tool.mixerBrush", "Mixer Brush Tool", Some("B")), ("tools.tool.eraser", "Eraser Tool", Some("E")),
+    ("tools.tool.backgroundEraser", "Background Eraser Tool", Some("E")), ("tools.tool.magicEraser", "Magic Eraser Tool", Some("E")),
+    ("tools.tool.gradient", "Gradient Tool", Some("G")), ("tools.tool.paintBucket", "Paint Bucket Tool", Some("G")),
+    ("tools.tool.type", "Horizontal Type Tool", Some("T")), ("tools.tool.verticalType", "Vertical Type Tool", Some("T")),
+    ("tools.tool.hand", "Hand Tool", Some("H")), ("tools.tool.rotateView", "Rotate View Tool", Some("R")),
+    ("tools.tool.zoom", "Zoom Tool", Some("Z")), ("tools.tool.remove", "Remove Tool", Some("J")),
+    ("tools.tool.spotHealing", "Spot Healing Brush Tool", Some("J")), ("tools.tool.healing", "Healing Brush Tool", Some("J")),
+    ("tools.tool.patch", "Patch Tool", Some("J")), ("tools.tool.contentAwareMove", "Content-Aware Move Tool", Some("J")),
+    ("tools.tool.redEye", "Red Eye Tool", Some("J")), ("tools.tool.cloneStamp", "Clone Stamp Tool", Some("S")),
+    ("tools.tool.patternStamp", "Pattern Stamp Tool", Some("S")), ("tools.tool.historyBrush", "History Brush Tool", Some("Y")),
+    ("tools.tool.blur", "Blur Tool", None), ("tools.tool.sharpen", "Sharpen Tool", None),
+    ("tools.tool.smudge", "Smudge Tool", None), ("tools.tool.dodge", "Dodge Tool", Some("O")),
+    ("tools.tool.burn", "Burn Tool", Some("O")), ("tools.tool.sponge", "Sponge Tool", Some("O")),
+    ("tools.tool.quickSelection", "Quick Selection Tool", Some("W")), ("tools.tool.objectSelection", "Object Selection Tool", Some("W")),
+    ("tools.tool.pen", "Pen Tool", Some("P")), ("tools.tool.pathSelection", "Path Selection Tool", Some("A")),
+    ("tools.tool.directSelection", "Direct Selection Tool", Some("A")), ("tools.tool.rectangle", "Rectangle Tool", Some("U")),
+    ("tools.tool.ellipseShape", "Ellipse Tool", Some("U")), ("tools.tool.triangle", "Triangle Tool", Some("U")),
+    ("tools.tool.polygon", "Polygon Tool", Some("U")), ("tools.tool.line", "Line Tool", Some("U")),
+    ("tools.tool.customShape", "Custom Shape Tool", Some("U")), ("tools.tool.slice", "Slice Tool", Some("C")),
+    ("tools.tool.sliceSelect", "Slice Select Tool", Some("C")),
+];
+
+pub fn tool_default_shortcut(id: &str) -> Option<&'static str> {
+    TOOL_SHORTCUTS.iter().find(|(tool, _, _)| *tool == id).and_then(|(_, _, key)| *key)
+}
+
+pub fn is_tool_shortcut_id(id: &str) -> bool {
+    TOOL_SHORTCUTS.iter().any(|(tool, _, _)| *tool == id)
+}
+
 /// Preferences dialog sections in Photoshop's order: (id, title).
 pub const SECTIONS: [(&str, &str); 18] = [
     ("general", "General"),
@@ -1382,8 +1422,51 @@ fn bindable() -> impl Iterator<Item = (&'static str, Option<&'static str>)> {
         "tools.colorPickerBackground", "tools.togglePreviewMode",
     ];
     crate::command_specs().iter().map(|c| (c.id, c.shortcut))
+        .chain(TOOL_SHORTCUTS.iter().map(|(id, _, key)| (*id, *key)))
         .chain(TOOL_COMMANDS.iter().copied().map(|id| (id, None)))
         .chain(TEMPORARY_TOOLS.iter().map(|t| (t.0, Some(t.2))))
+}
+
+/// Native, portable shortcut export format. Empty primary values are deliberate tombstones.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShortcutSet {
+    pub format: String,
+    pub version: u32,
+    pub overrides: BTreeMap<String, String>,
+    pub alternates: BTreeMap<String, Vec<String>>,
+}
+
+fn validate_shortcut_set(mut set: ShortcutSet) -> std::result::Result<ShortcutSet, String> {
+    if set.format != "photostore-shortcuts" || set.version != 1 {
+        return Err("shortcut set must use format `photostore-shortcuts` version 1".into());
+    }
+    let mut count = set.overrides.len().saturating_add(set.alternates.len());
+    for (id, key) in set.overrides.iter_mut() {
+        if id.is_empty() || id.len() > 256 { return Err("shortcut id must be 1..256 bytes".into()); }
+        if !key.is_empty() { *key = normalize_shortcut(key).ok_or_else(|| format!("invalid shortcut for `{id}`"))?; }
+    }
+    for (id, keys) in set.alternates.iter_mut() {
+        if id.is_empty() || id.len() > 256 { return Err("shortcut id must be 1..256 bytes".into()); }
+        if keys.len() > 32 { return Err(format!("too many alternate shortcuts for `{id}`")); }
+        count = count.saturating_add(keys.len());
+        for key in keys.iter_mut() { *key = normalize_shortcut(key).ok_or_else(|| format!("invalid alternate shortcut for `{id}`"))?; }
+    }
+    if count > 10_000 { return Err("shortcut set has more than 10000 bindings".into()); }
+    Ok(set)
+}
+
+pub fn encode_shortcut_set(overrides: &BTreeMap<String, String>, alternates: &BTreeMap<String, Vec<String>>) -> std::result::Result<String, String> {
+    let set = validate_shortcut_set(ShortcutSet { format: "photostore-shortcuts".into(), version: 1, overrides: overrides.clone(), alternates: alternates.clone() })?;
+    let text = serde_json::to_string(&set).map_err(|e| format!("could not encode shortcut set: {e}"))?;
+    if text.len() > 4 << 20 { return Err("shortcut set larger than 4 MiB".into()); }
+    Ok(text)
+}
+
+pub fn decode_shortcut_set(text: &str) -> std::result::Result<ShortcutSet, String> {
+    if text.len() > 4 << 20 { return Err("shortcut set larger than 4 MiB".into()); }
+    let set: ShortcutSet = serde_json::from_str(text).map_err(|e| format!("invalid shortcut set: {e}"))?;
+    validate_shortcut_set(set)
 }
 
 /// Shortcuts bound to more than one command: (shortcut, ids). `bindings` are (id, shortcut).
@@ -1682,6 +1765,21 @@ fn preferences_section(s: &mut Session, p: &Value) -> Result<Value> {
 /// Edit › Keyboard Shortcuts (engine part): list, change and reset application shortcuts.
 fn keyboard_shortcuts(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "edit.keyboardShortcuts";
+    // Export is deliberately handled before import/set/reset: callers can validate a draft
+    // without mutating the session, and receive the same canonical JSON accepted by importers.
+    if p.get("export").and_then(Value::as_bool).unwrap_or(false) {
+        let overrides = match p.get("overrides").or_else(|| p.get("set")) {
+            Some(v) => serde_json::from_value::<BTreeMap<String, String>>(v.clone()).map_err(|e| bad(cmd, format!("invalid shortcut overrides: {e}")))?,
+            None => s.prefs().shortcuts.clone(),
+        };
+        let alternates = match p.get("alternates") {
+            Some(v) => serde_json::from_value::<BTreeMap<String, Vec<String>>>(v.clone()).map_err(|e| bad(cmd, format!("invalid shortcut alternates: {e}")))?,
+            None => s.prefs().shortcut_alternates.clone(),
+        };
+        let text = encode_shortcut_set(&overrides, &alternates).map_err(|e| bad(cmd, e))?;
+        let set = decode_shortcut_set(&text).map_err(|e| bad(cmd, e))?;
+        return Ok(json!({"format": set.format, "version": set.version, "text": text, "overrides": set.overrides, "alternates": set.alternates}));
+    }
     // A Photoshop `.kys` set (`importKys`, its XML text) becomes `set` entries, matched by label
     // (`crate::kys`); a key equal to the command's default restores the default, and keys given
     // in `set` as well win over the file's.
@@ -1694,7 +1792,7 @@ fn keyboard_shortcuts(s: &mut Session, p: &Value) -> Result<Value> {
             let plan = crate::kys::plan(crate::kys::command_candidates(), &set);
             let mut merged = serde_json::Map::new();
             for (id, sc) in &plan.set {
-                let default = crate::command_specs().iter().find(|c| c.id == id).and_then(|c| c.shortcut).and_then(normalize_shortcut);
+                let default = crate::command_specs().iter().find(|c| c.id == id).and_then(|c| c.shortcut).or_else(|| tool_default_shortcut(id)).and_then(normalize_shortcut);
                 merged.insert(id.clone(), if default.as_deref() == Some(sc.as_str()) { Value::Null } else { json!(sc) });
             }
             merged.extend(p.get("set").and_then(Value::as_object).cloned().unwrap_or_default());
@@ -1747,6 +1845,9 @@ fn keyboard_shortcuts(s: &mut Session, p: &Value) -> Result<Value> {
                 return Err(bad(cmd, format!("unknown command `{id}`")));
             }
             next.set(&format!("shortcuts.{id}"), v.clone()).map_err(|e| bad(cmd, e))?;
+            if v.as_str() == Some("") {
+                next.shortcut_alternates.remove(id);
+            }
         }
         if let Some(alts) = p.get("alternates").and_then(Value::as_object) {
             for (id, value) in alts {
@@ -1766,17 +1867,17 @@ fn keyboard_shortcuts(s: &mut Session, p: &Value) -> Result<Value> {
                 for (owner, keys) in &assigned {
                     for key in keys {
                         for (other, default) in bindable() {
-                            if other != owner && !assigned.contains_key(other) && next.shortcut(other, default).and_then(normalize_shortcut).as_deref() == Some(key.as_str()) {
+                            if other != owner && !(is_tool_shortcut_id(other) && is_tool_shortcut_id(owner)) && !assigned.contains_key(other) && next.shortcut(other, default).and_then(normalize_shortcut).as_deref() == Some(key.as_str()) {
                                 next.shortcuts.insert(other.to_string(), String::new());
                             }
                         }
                         for (other, value) in next.shortcuts.iter_mut() {
-                            if other != owner && !assigned.contains_key(other) && normalize_shortcut(value).as_deref() == Some(key.as_str()) {
+                            if other != owner && !(is_tool_shortcut_id(other) && is_tool_shortcut_id(owner)) && !assigned.contains_key(other) && normalize_shortcut(value).as_deref() == Some(key.as_str()) {
                                 value.clear();
                             }
                         }
                         for (other, values) in next.shortcut_alternates.iter_mut() {
-                            if other != owner && !assigned.contains_key(other) {
+                            if other != owner && !(is_tool_shortcut_id(other) && is_tool_shortcut_id(owner)) && !assigned.contains_key(other) {
                                 values.retain(|value| normalize_shortcut(value).as_deref() != Some(key.as_str()));
                             }
                         }
@@ -1793,7 +1894,7 @@ fn keyboard_shortcuts(s: &mut Session, p: &Value) -> Result<Value> {
                     // two entries for one key are a clash inside the call, which
                     // the returned conflicts list reports (#719). Stripping
                     // each other here unbound both silently.
-                    if c == id || m.contains_key(c) {
+                    if c == id || m.contains_key(c) || (is_tool_shortcut_id(c) && is_tool_shortcut_id(id)) {
                         continue;
                     }
                     if next.shortcut(c, def).and_then(normalize_shortcut).as_deref() == Some(sc.as_str()) {
@@ -1824,6 +1925,7 @@ fn keyboard_shortcuts(s: &mut Session, p: &Value) -> Result<Value> {
     let list: Vec<Value> = crate::command_specs()
         .iter()
         .map(|c| (c.id, c.label, c.menu, c.shortcut, false))
+        .chain(TOOL_SHORTCUTS.iter().map(|(id, label, def)| (*id, *label, &["Tools"][..], *def, false)))
         .chain(temporary)
         .filter(|c| filter.as_ref().is_none_or(|f| c.0.to_ascii_lowercase().contains(f) || c.1.to_ascii_lowercase().contains(f)))
         .filter(|c| p.get("list").and_then(Value::as_bool).unwrap_or(false) || filter.is_some() || prefs.shortcuts.contains_key(c.0))

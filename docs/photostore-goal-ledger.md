@@ -238,6 +238,13 @@ bytes with SHA-256 `a4dccee5fbd95b5eb061793bc1e61b5cfdb53a6addb5f185e380989a05fc
 `SHA256SUMS` is 208 bytes with exactly those two entries. The canonical app bundle is
 `ai.photostore.app`, binary SHA-256 `c26ed6afcf0577355bf51d88324f94d9d54bd281706e40ac29c2b7d66329a6b6`, strict signature validation passed, and it ran as PID 80169. The backup is `/private/tmp/photostore-reinstall-0.12.0-20261011-132022/previous-PhotoStore-0.11.0.app`; recovery sibling `/Applications/PhotoStore-0.11.0-recovery-20261011-132022.app`.
 
+## Current 0.13.0 tool-shortcut and marquee pass
+
+Version 0.13.0 is prepared in source; 0.12.0 remains the current published and installed release.
+Issues [#1](https://github.com/akiyamasho/PhotoStore/issues/1) and [#2](https://github.com/akiyamasho/PhotoStore/issues/2) are bounded in this pass. Primary/alternate tool and subtool shortcuts, clear/default/sort behavior, shared keys, native JSON export/import drafts, existing KYS import, and rectangular marquee peer cycling are implemented and compiler-verified. Targeted captures cover the editor, selected rectangular flyout, live brush/eraser states, and E/K/M behavior; they do not claim full sorting, import-cancel, alternate-edit, or Photoshop parity. The required check passed in 34.02 seconds; log `/private/tmp/photostore-tool-shortcuts-check-20261011.log`. Preview, build, release, install, and broad acceptance evidence remain pending. Planned tag: `photostore-tool-shortcuts-2026-10-11`.
+
+The bounded twelve-step pass is: 1 Inventory+architecture; 2 Canonical bindings+dispatch; 3 Editable tool editor+sort; 4 Live labels+shared-key clearing; 5 Native JSON export/import; 6 Integration; 7 Compiler; 8 Version/docs (steps 1–8 complete); 9 Preview+actual core-editor, rectangular-flyout, live-eraser, live-brush, and JSON-export captures complete; 10 Commit/push/tag pending; 11 Final build+publish pending; 12 Safe install+issue outcomes pending. Sort and import-cancel behavior remain unverified; issues #1 and #2 remain open until push and runtime evidence.
+
 ## Animation and timeline
 
 ### Implemented milestone
@@ -267,7 +274,7 @@ bytes with SHA-256 `a4dccee5fbd95b5eb061793bc1e61b5cfdb53a6addb5f185e380989a05fc
 
 ### Exact next steps
 
-1. Author finite frame-animation repeat choices and configurable bounded onion skins; this is the next source pass and has no 0.10 compiler or release claim.
+1. Complete 0.13.0 tool-shortcut and marquee selection integration, then prioritize opacity stopwatches/key tracks and the unresolved save-frame closing/recovery investigation.
 2. Continue the integrated audio/clip milestone: close arbitrary split-segment replacement envelopes, then address exact audio latency and shared-clock behavior; continue sparse tracks, clip groups, transitions, loop counts, onion skins, work-area rendering, and long-video memory behavior.
 3. Add deterministic timing fixtures covering mismatched FPS, explicit frame delays, seek/playback boundaries, nested animated Smart Objects, and frame-animation export.
 4. Add interaction acceptance for the Photoshop Video Timeline and Frame Animation panels after the engine contracts are stable.

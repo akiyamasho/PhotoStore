@@ -65,7 +65,7 @@ pub fn bindings(app: &PhotoStoreApp) -> Vec<(String, KeyboardShortcut)> {
     let engine = photostore_engine::command_specs().iter().map(|c| (c.id, prefs.shortcut(c.id, c.shortcut)));
     let tools = crate::state::Tool::ALL.iter().map(|t| {
         let id = crate::shortcuts::tool_id(*t);
-        (id, prefs.shortcut(id, None))
+        (id, prefs.shortcut(id, photostore_engine::prefs::tool_default_shortcut(id)))
     });
     let own: std::collections::HashSet<&str> = crate::menus::UI_COMMANDS
         .iter()
@@ -216,16 +216,17 @@ pub fn dispatch_pressed(app: &mut PhotoStoreApp, ctx: &egui::Context, focus: Foc
     const TEXT_OWNED: [&str; 6] = ["edit.copy", "edit.cut", "edit.paste", "edit.copyMerged", "select.all", "edit.pasteSpecial.pasteInPlace"];
     let table: Vec<(String, KeyboardShortcut)> =
         bindings(app).into_iter().filter(|(id, sc)| focus.allows(sc) && !(editing && TEXT_OWNED.contains(&id.as_str()))).collect();
-    let command = |e: &egui::Event| match e {
-        egui::Event::Key { key, pressed: true, modifiers, .. } => {
-            table.iter().find(|(_, sc)| key_matches(sc, *key, *modifiers)).map(|(id, _)| (id.clone(), *key == Key::Tab))
-        }
-        _ => None,
-    };
     let mut ran = false;
     loop {
         let next = ctx.input_mut(|i| {
-            let (at, hit) = i.events.iter().enumerate().find_map(|(at, e)| Some((at, command(e)?)))?;
+            let (at, hit) = i.events.iter().enumerate().find_map(|(at, e)| {
+                let egui::Event::Key { key, pressed: true, repeat, modifiers, .. } = e else { return None };
+                let generic = table.iter().find(|(_, sc)| key_matches(sc, *key, *modifiers)).map(|(id, _)| id.clone());
+                let id = generic.as_deref().filter(|id| !photostore_engine::prefs::is_tool_shortcut_id(id)).map(str::to_owned)
+                    .or_else(|| tool_event_id(app, *key, *modifiers, *repeat, focus))
+                    .or(generic)?;
+                Some((at, (id, *key == Key::Tab)))
+            })?;
             i.events.remove(at);
             Some(hit)
         });
@@ -244,6 +245,55 @@ pub fn dispatch_pressed(app: &mut PhotoStoreApp, ctx: &egui::Context, focus: Foc
         }
     }
     ran
+}
+
+/// Resolve a tool key from the actual effective bindings. Shared default keys are intentional:
+/// plain input keeps the current bound member, or selects the first bound member; Shift cycles
+/// bound peers when configured.
+fn tool_event_id(app: &PhotoStoreApp, key: Key, mods: egui::Modifiers, repeat: bool, focus: Focus) -> Option<String> {
+    let prefs = app.session.prefs();
+    let mut peers = Vec::new();
+    let mut shifted_exact = false;
+    for tool in crate::state::Tool::ALL {
+        let id = crate::shortcuts::tool_id(tool);
+        let default = photostore_engine::prefs::tool_default_shortcut(id);
+        let shortcuts = prefs.shortcuts_for(id, default);
+        for raw in shortcuts {
+            let Some(sc) = crate::shortcuts::parse(&raw) else { continue };
+            if sc.modifiers.shift && key_matches(&sc, key, mods) { shifted_exact = true; }
+            if focus.allows(&sc) && key_matches(&sc, key, mods) { peers.push(tool); break; }
+        }
+    }
+    if peers.is_empty() && mods.shift && !shifted_exact {
+        let plain = egui::Modifiers { shift: false, ..mods };
+        for tool in crate::state::Tool::ALL {
+            let id = crate::shortcuts::tool_id(tool);
+            for raw in prefs.shortcuts_for(id, photostore_engine::prefs::tool_default_shortcut(id)) {
+                let Some(sc) = crate::shortcuts::parse(&raw) else { continue };
+                if !sc.modifiers.shift && focus.allows(&sc) && key_matches(&sc, key, plain) { peers.push(tool); break; }
+            }
+        }
+        if !prefs.tools.use_shift_key_for_tool_switch {
+            return None;
+        }
+        if peers.len() > 1 && !repeat && prefs.tools.use_shift_key_for_tool_switch {
+            if let Some(current) = peers.iter().position(|tool| *tool == app.ui.tool) {
+                return Some(crate::shortcuts::tool_id(peers[(current + 1) % peers.len()]).into());
+            }
+        }
+    }
+    let first = *peers.first()?;
+    if peers.len() > 1 && mods.shift && shifted_exact {
+        let selected = peers.iter().position(|tool| *tool == app.ui.tool).map_or(first, |i| peers[i]);
+        return Some(crate::shortcuts::tool_id(selected).into());
+    }
+    if peers.len() > 1 && !mods.shift && !prefs.tools.use_shift_key_for_tool_switch && !repeat {
+        if let Some(current) = peers.iter().position(|tool| *tool == app.ui.tool) {
+            return Some(crate::shortcuts::tool_id(peers[(current + 1) % peers.len()]).into());
+        }
+    }
+    let selected = peers.iter().position(|tool| *tool == app.ui.tool).map_or(first, |i| peers[i]);
+    Some(crate::shortcuts::tool_id(selected).into())
 }
 
 /// Clear's key (Delete / Backspace) with nothing selected deletes the selected layers, of any

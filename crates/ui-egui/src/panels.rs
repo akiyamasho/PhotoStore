@@ -135,7 +135,10 @@ pub fn toolbar(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                                 let key = egui::Id::new(("tool-slot", *slot_index));
                                 let tool = slot_tool(ui, app.ui.tool, slot, key);
                                 let sel = slot.contains(&app.ui.tool);
-                                let tip = if tool.key() == '\0' { tl!(tool.label()).to_string() } else { format!("{}  ({})", tl!(tool.label()), tool.key()) };
+                                let id = crate::shortcuts::tool_id(tool);
+                                let keys = app.session.prefs().shortcuts_for(id, photostore_engine::prefs::tool_default_shortcut(id));
+                                let shown_keys = keys.iter().map(|k| crate::shortcuts::pretty(k)).collect::<Vec<_>>().join(" / ");
+                                let tip = if shown_keys.is_empty() { tl!(tool.label()).to_string() } else { format!("{}  ({shown_keys})", tl!(tool.label())) };
                                 let resp = icons::button(ui, icons::tool_icon(tool), bx, sel, &tip);
                                 if slot.len() > 1 {
                                     paint_toolbar_flyout_indicator(ui, &t, &resp);
@@ -187,7 +190,13 @@ pub fn toolbar(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                                                             .x
                                                     })
                                                     .fold(0.0f32, f32::max);
-                                                let fw = (label_w + 42.0 + 40.0).max(180.0);
+                                                let key_w = slot.iter().map(|it| {
+                                                    let id = crate::shortcuts::tool_id(*it);
+                                                    let keys = app.session.prefs().shortcuts_for(id, photostore_engine::prefs::tool_default_shortcut(id));
+                                                    let text = keys.iter().map(|k| crate::shortcuts::pretty(k)).collect::<Vec<_>>().join(" / ");
+                                                    ui.painter().layout_no_wrap(text, egui::FontId::proportional(12.0), t.text_dim).size().x.min(140.0)
+                                                }).fold(0.0f32, f32::max);
+                                                let fw = (label_w + key_w + 56.0).max(180.0);
                                                 for &item in slot.iter() {
                                                     let (r, ir) = ui.allocate_exact_size(vec2(fw, 26.0), Sense::click());
                                                     if ir.hovered() {
@@ -214,11 +223,15 @@ pub fn toolbar(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                                                         egui::FontId::proportional(12.5),
                                                         t.text,
                                                     );
-                                                    if item.key() != '\0' {
-                                                        ui.painter().text(
+                                                    let item_keys = app.session.prefs().shortcuts_for(crate::shortcuts::tool_id(item), photostore_engine::prefs::tool_default_shortcut(crate::shortcuts::tool_id(item)));
+                                                    if !item_keys.is_empty() {
+                                                        let key_text = item_keys.iter().map(|k| crate::shortcuts::pretty(k)).collect::<Vec<_>>().join(" / ");
+                                                        let key_shown = if key_text.chars().count() > 18 { format!("{}…", key_text.chars().take(17).collect::<String>()) } else { key_text.clone() };
+                                                        ir.clone().on_hover_text(key_text);
+                                                        ui.painter().with_clip_rect(Rect::from_min_max(pos2(r.right() - 8.0 - key_w, r.top()), pos2(r.right() - 8.0, r.bottom()))).text(
                                                             pos2(r.right() - 8.0, r.center().y),
                                                             Align2::RIGHT_CENTER,
-                                                            item.key().to_string(),
+                                                            key_shown,
                                                             egui::FontId::proportional(12.0),
                                                             t.text_dim,
                                                         );

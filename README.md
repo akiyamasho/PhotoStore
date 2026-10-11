@@ -30,12 +30,14 @@ open -a PhotoStore
 
 ## Latest screenshots
 
-Recording starts off for new canvases. These screenshots were captured from the PhotoStore 0.12.0
-preview.
+The 0.13.0 preview documents editable per-tool and subtool shortcuts, clear bindings, native JSON
+export, and the fresh rectangular marquee configuration.
 
-![New Document with canvas recording off](docs/screenshots/0.12.0/new-document-recording-default-off.webp)
+![Fresh rectangular marquee flyout with rectangular selected](docs/screenshots/0.13.0/default-rect-flyout-crop.webp)
 
-![Recording settings with zero frames](docs/screenshots/0.12.0/recording-settings-zero-frames.webp)
+![Tool shortcut editor](docs/screenshots/0.13.0/tool-editor-crop.webp)
 
-See the [screenshot evidence and gallery](docs/screenshots/0.12.0/evidence.md) for capture scope,
-demo-document details, and known limits.
+![Live eraser flyout](docs/screenshots/0.13.0/live-eraser-flyout-crop.webp)
+
+See the [0.13.0 screenshot evidence and gallery](docs/screenshots/0.13.0/evidence.md) for capture
+scope, demo-document details, and known limits.

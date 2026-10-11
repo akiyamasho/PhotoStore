@@ -48,6 +48,15 @@ replacement; no force-kill or discard occurred, and no recovery artifact was fou
 This is an unresolved closing/recovery reliability limit, not a proven cause or a claim of recovered
 artwork.
 
+## 2026-10-11: 0.13.0 shortcut exchange draft
+
+The native JSON shortcut format is stable version 1; the current exchange draft is a UI working
+draft until accepted, not an unstable wire format. Exports may contain empty tombstones, imports are
+explicit and do not apply automatically, and limits are 10,000 combined map entries plus alternate
+keys, 32 alternate keys per binding, and 4 MiB. Shared tool keys are intentional; non-tool conflicts are
+reassigned. Shift switching defaults true while preserving explicit false and mouse choice. Existing
+KYS import remains supported; KYS export is not claimed.
+
 ## 2026-10-10: Smart Object contents identity (#2163)
 
 Smart Object instances carry a document-scoped contents ID separately from their layer ID. Normal duplicates preserve it; New Smart Object via Copy creates a new one. Contents edits update the matching instances together, retaining their individual placement and filters. Copies into another document remap contents IDs as a batch, preserving sharing within the copied layers without joining existing destination objects.

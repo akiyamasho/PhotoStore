@@ -260,30 +260,7 @@ impl Tool {
     }
     /// Photoshop default single-key shortcut (`'\0'` = none, e.g. the Blur group).
     pub fn key(self) -> char {
-        match self {
-            Tool::Move => 'V',
-            Tool::RectMarquee | Tool::EllipseMarquee => 'M',
-            Tool::Brush | Tool::Pencil | Tool::MixerBrush => 'B',
-            Tool::Eraser | Tool::BackgroundEraser | Tool::MagicEraser => 'E',
-            Tool::Eyedropper | Tool::Ruler | Tool::Note | Tool::Count => 'I',
-            Tool::Lasso | Tool::PolygonLasso | Tool::MagneticLasso => 'L',
-            Tool::MagicWand => 'W',
-            Tool::Crop | Tool::Slice | Tool::SliceSelect => 'C',
-            Tool::Gradient | Tool::PaintBucket => 'G',
-            Tool::Type | Tool::VerticalType => 'T',
-            Tool::Hand => 'H',
-            Tool::RotateView => 'R',
-            Tool::Zoom => 'Z',
-            Tool::Remove | Tool::SpotHealing | Tool::Healing | Tool::Patch | Tool::ContentAwareMove | Tool::RedEye => 'J',
-            Tool::CloneStamp | Tool::PatternStamp => 'S',
-            Tool::HistoryBrush => 'Y',
-            Tool::Blur | Tool::Sharpen | Tool::Smudge => '\0',
-            Tool::Dodge | Tool::Burn | Tool::Sponge => 'O',
-            Tool::QuickSelection | Tool::ObjectSelection => 'W',
-            Tool::Pen => 'P',
-            Tool::PathSelection | Tool::DirectSelection => 'A',
-            Tool::Rectangle | Tool::EllipseShape | Tool::Triangle | Tool::Polygon | Tool::Line | Tool::CustomShape => 'U',
-        }
+        photostore_engine::prefs::tool_default_shortcut(crate::shortcuts::tool_id(self)).and_then(|s| s.chars().next()).unwrap_or('\0')
     }
     /// Glyph drawn in the toolbar (vector icons come later).
     pub fn glyph(self) -> &'static str {

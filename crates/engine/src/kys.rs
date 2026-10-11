@@ -210,6 +210,14 @@ pub fn command_candidates() -> Vec<Candidate> {
     ] {
         if !out.iter().any(|c| c.id == id) { out.push(Candidate { id: id.into(), label: id.into(), default: None }); }
     }
+    for (id, label, default) in crate::prefs::TOOL_SHORTCUTS {
+        if let Some(candidate) = out.iter_mut().find(|c| c.id == *id) {
+            candidate.label = (*label).into();
+            candidate.default = default.map(str::to_string);
+        } else {
+            out.push(Candidate { id: (*id).into(), label: (*label).into(), default: default.map(str::to_string) });
+        }
+    }
     out
 }
 

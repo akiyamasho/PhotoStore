@@ -18,6 +18,18 @@ use serde_json::{Value, json};
 use crate::PhotoStoreApp;
 pub use photostore_engine::kys::{KysCommand, KysSet, MAX_BYTES, Plan, parse};
 
+/// Encode the dialog's working draft as the native PhotoStore JSON set. This is deliberately
+/// separate from Photoshop `.kys` export: native sets preserve clear tombstones and alternates.
+pub fn export_dialog(app: &mut PhotoStoreApp, overrides: &BTreeMap<String, String>, alternates: &BTreeMap<String, Vec<String>>) -> Result<Value, String> {
+    let text = photostore_engine::prefs::encode_shortcut_set(overrides, alternates)?;
+    app.pick_save("PhotoStore-shortcuts.json", move |app, path| {
+        let write = app.services.write.as_mut().ok_or("no writer configured")?;
+        write(&path, text.as_bytes())?;
+        app.ui.status = format!("Exported PhotoStore shortcuts to {path}");
+        Ok(json!({"path": path}))
+    })
+}
+
 /// Match the rows to our commands: the menus' items first, then engine commands the menus list
 /// under another label (Preferences › General… is the Settings… item).
 pub fn plan(app: &PhotoStoreApp, set: &KysSet) -> Plan {
@@ -97,6 +109,21 @@ pub fn open_bytes(app: &mut PhotoStoreApp, name: &str, bytes: &[u8]) -> Result<V
         return Err(format!("{name}: not a keyboard shortcut set (.kys): larger than 4 MiB"));
     }
     let text = std::str::from_utf8(bytes).map_err(|_| format!("{name}: not a keyboard shortcut set (.kys): not UTF-8"))?;
+    if text.trim_start().starts_with('{') {
+        let set = photostore_engine::prefs::decode_shortcut_set(text)?;
+        let id = match app.ui.dialogs.iter().find(|d| d.fields.get("__prefsui").and_then(Value::as_str) == Some("shortcuts")) {
+            Some(d) => d.id,
+            None => crate::prefs_ui::open_shortcuts(app, 0),
+        };
+        let f = &mut app.ui.dialog_mut(id).ok_or("the Keyboard Shortcuts dialog is gone")?.fields;
+        f.insert("overrides".into(), serde_json::to_value(set.overrides).map_err(|e| e.to_string())?);
+        f.insert("alternates".into(), serde_json::to_value(set.alternates).map_err(|e| e.to_string())?);
+        f.insert("selected".into(), json!(""));
+        f.insert("capture".into(), json!(false));
+        f.insert("message".into(), json!(format!("Imported native PhotoStore shortcuts from {}. Click OK to keep them.", std::path::Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or(name))));
+        f.insert("captureAlternate".into(), json!(false));
+        return Ok(json!({"dialog": id, "native": true}));
+    }
     import_text(app, name, text)
 }
 

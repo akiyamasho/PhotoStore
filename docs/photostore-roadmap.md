@@ -15,7 +15,7 @@ This is the working roadmap for the independent PhotoStore product. It records t
 
 ## Priorities
 
-1. Continue the post-release pass after the completed 0.12.0 recording-default milestone. Source/tag `0ac6e812f1ded55e9a12c3a1fa0230c8fdbe3c6d` is published and installed; targeted New Document confirmation passed. Prioritize the unresolved unsaved-document closing/recovery reliability limit before non-video opacity stopwatches/key tracks, save-frame persistence, full transform/style and video property-track migrations, and linked external PSD fidelity.
+1. Complete the current 0.13.0 tool-shortcut and marquee selection pass for issues [#1](https://github.com/akiyamasho/PhotoStore/issues/1) and [#2](https://github.com/akiyamasho/PhotoStore/issues/2). The 0.12.0 source/tag `0ac6e812f1ded55e9a12c3a1fa0230c8fdbe3c6d` remains published and installed; the 0.13.0 compiler gate passed in 34.02 seconds, while preview, build, release, install, and broad acceptance evidence remain pending. Then prioritize the unresolved unsaved-document closing/recovery limit, opacity stopwatches/key tracks, save-frame persistence, full transform/style and video property-track migrations, and linked external PSD fidelity.
 2. Deepen Smart Objects with contents editing, shared contents identity, smart-filter editing, linked-source workflows, and faithful PSD acceptance.
 3. Improve brush behavior and interaction: pressure/tilt/rotation dynamics, smoothing, presets, tablet edge cases, deterministic replay, and responsive large-document painting.
 4. Harden PSD and command coverage around the workflows PhotoStore promises. Add focused fixtures and measurements when a feature is implemented; avoid claiming parity before it is measured.
@@ -45,17 +45,17 @@ Object, filtering/minimize/hide, and UI-only candidates were reported. This evid
 compiler and targeted function/integration behavior. It does not claim visual UI QA, Photoshop
 parity, or complete PSD/external-format compatibility.
 
-The action-recording and animation/smart-mask releases are historical: `photostore-action-recording-2026-10-11`
-and `photostore-animation-smart-masks-2026-10-11` were published and installed locally. The current
-installed release is the 0.11.0 `photostore-smart-contents-2026-10-11` prerelease. Broad
+The action-recording, animation/smart-mask, and Smart Contents releases are historical. The current
+installed release is the 0.12.0 `photostore-recording-default-off-2026-10-11` prerelease. Broad
 native visual QA and UI parity remain unverified.
-The old-workspace native-save issue remains a secondary reliability gap; the old process and artwork
-were preserved, but the attempted recovery target did not appear.
+The old 0.11.0 unsaved-document process later disappeared after its canceled quit prompt and bundle
+replacement; the on-disk PSD exists but was not opened or compared, so unsaved memory or recovery
+is unknown.
 
 The audio/clip source milestone is pushed, compiler-verified, packaged, and retained in the current
-0.11.0 install. Its remaining integration status is tracked in [audio-timeline.md](audio-timeline.md);
+0.12.0 install. Its remaining integration status is tracked in [audio-timeline.md](audio-timeline.md);
 no broad UI or acceptance claim is made. The current installed source/tag is
-`3ebf38f77bd55bb57fc6c0f3cea3e9ead04667b9`.
+`0ac6e812f1ded55e9a12c3a1fa0230c8fdbe3c6d`.
 
 Smart Filter Masks and the New Document Fix are implemented, compiler-verified, packaged, and
 installed in the historical 0.8.0 source. The targeted New Document confirmation passed. The

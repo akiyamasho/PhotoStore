@@ -160,7 +160,10 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
                         }));
                         for tool in crate::state::Tool::ALL {
                             if let Some(s) = fuzzy_score(&q, &format!("{} {}", tl!(tool.label()), tool.label())) {
-                                hits.push((s + 2, format!("tool:{tool:?}"), tl!(tool.label()).into(), Some(format!("Tool   {}", tool.key())), true));
+                                let id = crate::shortcuts::tool_id(tool);
+                                let keys = app.session.prefs().shortcuts_for(id, photostore_engine::prefs::tool_default_shortcut(id));
+                                let detail = keys.iter().map(|k| crate::shortcuts::pretty(k)).collect::<Vec<_>>().join(" / ");
+                                hits.push((s + 2, format!("tool:{tool:?}"), tl!(tool.label()).into(), (!detail.is_empty()).then(|| format!("Tool   {detail}")), true));
                             }
                         }
                     }

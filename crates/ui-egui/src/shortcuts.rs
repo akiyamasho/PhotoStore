@@ -84,8 +84,8 @@ pub fn effective_shortcuts(app: &PhotoStoreApp, id: &str, default: Option<&str>)
 
 /// Default (unmodified) shortcut of a command id.
 pub fn default_shortcut(id: &str) -> Option<String> {
-    if let Some(tool) = crate::state::Tool::ALL.iter().find(|&&t| tool_id(t) == id) {
-        return (tool.key() != '\0').then(|| tool.key().to_string());
+    if photostore_engine::prefs::is_tool_shortcut_id(id) {
+        return photostore_engine::prefs::tool_default_shortcut(id).map(str::to_string);
     }
     crate::menus::UI_COMMANDS
         .iter()
@@ -440,23 +440,6 @@ pub fn handle(app: &mut PhotoStoreApp, ctx: &egui::Context) {
             app.ui.polygon.clear();
             app.ui.polygon_mode.clear();
             crate::crop_ui::cancel(app);
-            return;
-        }
-    }
-    // Tool keys; pressing the key of the current group cycles within it. With Preferences ›
-    // Tools › Use Shift Key for Tool Switch, only ⇧+key cycles and the plain key keeps the
-    // group's current tool.
-    let shift_switch = app.session.prefs().tools.use_shift_key_for_tool_switch;
-    for t in Tool::ALL {
-        let Some(k) = Key::from_name(&t.key().to_string()) else { continue };
-        let cycle_shift = ctx.input_mut(|i| i.consume_key(Modifiers::SHIFT, k));
-        if cycle_shift || pressed(k) {
-            let group: Vec<Tool> = Tool::ALL.iter().copied().filter(|x| x.key() == t.key()).collect();
-            app.ui.tool = match group.iter().position(|x| *x == app.ui.tool) {
-                Some(i) if shift_switch && !cycle_shift => group[i],
-                Some(i) => group[(i + 1) % group.len()],
-                None => group[0],
-            };
             return;
         }
     }
