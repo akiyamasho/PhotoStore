@@ -36,6 +36,4 @@ open -a PhotoStore
 
 ![Reopened video timeline](docs/screenshots/0.14.0/timeline-saved-reopened.webp)
 
-0.15.0 local development candidate — [opacity stopwatch evidence](docs/screenshots/0.15.0/evidence.md).
-
-0.16.0 local development candidate — [video-opacity delivery evidence](docs/screenshots/0.16.0/evidence.md).
+Current development status — [PhotoStore goal ledger](docs/photostore-goal-ledger.md).

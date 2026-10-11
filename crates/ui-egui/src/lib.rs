@@ -109,6 +109,7 @@ pub mod notices;
 mod numeric_expression;
 mod opacity_keys;
 mod opacity_ui;
+mod position_ui;
 pub mod outline;
 pub mod paint_mouse;
 pub mod palette;
@@ -1388,6 +1389,18 @@ impl eframe::App for PhotoStoreApp {
                 }
                 Err(error) => {
                     self.ui.timeline.opacity.error = error;
+                }
+            }
+        }
+        if let Some((cmd, params)) = position_ui::confirmation(self, &ctx) {
+            match self.run(cmd, params) {
+                Ok(_) => {
+                    self.ui.timeline.position.pending_disable = None;
+                    self.ui.timeline.position.confirmation_focus = None;
+                    self.ui.timeline.position.error.clear();
+                }
+                Err(error) => {
+                    self.ui.timeline.position.error = error;
                 }
             }
         }

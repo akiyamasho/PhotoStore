@@ -260,6 +260,7 @@ pub(crate) fn move_layers(doc: &mut Document, moves: &[(LayerId, i32, i32)]) -> 
         crate::commands::translate_layer(&snapshot, l, dx, dy);
         crate::vector_cmds::translate_vectors(&snapshot, l, dx as f64, dy as f64);
     }
+    crate::position_cmds::author_moved(doc, moves)?;
     Ok(())
 }
 

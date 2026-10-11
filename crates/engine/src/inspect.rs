@@ -10,6 +10,7 @@ pub fn session(s: &Session) -> Value {
         "active": s.active_index(),
         "documents": s.documents().iter().enumerate().map(|(i, d)| json!({
             "index": i,
+            "id": d.doc.id.0,
             "name": d.doc.name,
             "path": d.path,
             "width": d.doc.size.width,
@@ -26,6 +27,7 @@ pub fn document(d: &DocState) -> Value {
     let doc = &d.doc;
     let selected = d.selected_layers();
     json!({
+        "id": doc.id.0,
         "name": doc.name,
         "width": doc.size.width,
         "height": doc.size.height,
@@ -85,6 +87,14 @@ fn layer_sel(l: &Layer, selected: &[photostore_doc::LayerId]) -> Value {
         "selected": selected.contains(&l.id),
         "linkGroup": l.link_group,
     });
+    if let Some(a) = &l.position_animation {
+        v["positionAnimation"] = json!({
+            "enabled": a.enabled,
+            "staticValue": [a.static_value.0, a.static_value.1],
+            "appliedValue": [a.applied_value.0, a.applied_value.1],
+            "keyCount": a.keys.len(),
+        });
+    }
     match &l.content {
         LayerContent::Group(g) => {
             v["children"] = Value::Array(g.children.iter().rev().map(|c| layer_sel(c, selected)).collect());

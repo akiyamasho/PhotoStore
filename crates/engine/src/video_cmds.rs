@@ -100,6 +100,7 @@ pub fn sync_plain(doc: &mut Document) {
     // carries a track, including video layers copied or converted from ordinary layers.
     if doc.timeline.as_ref().is_some_and(|t| matches!(t.mode, photostore_doc::TimelineMode::Video)) {
         apply_owned_opacity(&mut doc.layers, cur);
+        apply_owned_position(doc, cur);
     }
 }
 
@@ -110,6 +111,29 @@ fn apply_owned_opacity(layers: &mut [Layer], frame: usize) {
         }
         if let Some(children) = layer.children_mut() { apply_owned_opacity(children, frame); }
     }
+}
+
+fn apply_owned_position(doc: &mut Document, frame: usize) {
+    fn has_owned(layers: &[Layer]) -> bool {
+        layers.iter().any(|layer| layer.position_animation.is_some() || layer.children().is_some_and(has_owned))
+    }
+    if !has_owned(&doc.layers) {
+        return;
+    }
+    let geometry = doc.clone();
+    fn visit(geometry: &Document, layers: &mut [Layer], frame: usize) {
+        for layer in layers {
+            if layer.position_animation.is_some() && layer.video.is_none() {
+                let Some(track) = layer.position_animation.as_ref() else { continue };
+                let desired = track.sampled_value(frame);
+                let (dx, dy) = (desired.0.saturating_sub(track.applied_value.0), desired.1.saturating_sub(track.applied_value.1));
+                if dx != 0 || dy != 0 { crate::layer_multi_cmds::shift_shown(geometry, layer, dx, dy); }
+                if let Some(track) = layer.position_animation.as_mut() { track.applied_value = desired; }
+            }
+            if let Some(children) = layer.children_mut() { visit(geometry, children, frame); }
+        }
+    }
+    visit(&geometry, &mut doc.layers, frame);
 }
 
 fn apply_ranges(layers: &mut [Layer], frame: usize, ranges: &[photostore_doc::LayerTimelineRange], states: Option<&Vec<FrameLayerState>>) {
@@ -138,7 +162,9 @@ fn apply_states(geometry: &Document, layers: &mut [Layer], states: &[FrameLayerS
             // Position snapshots are deltas from the current stable content bounds. Applying the
             // delta once per layer avoids accumulating transforms while seeking. Legacy states
             // have no position and retain the document's current geometry.
-            if let Some((x, y)) = state.position {
+            if let Some((x, y)) = state.position
+                && !(matches!(geometry.timeline.as_ref().map(|t| t.mode), Some(photostore_doc::TimelineMode::Video)) && layer.position_animation.is_some())
+            {
                 let bounds = photostore_doc::comps::position_bounds(layer);
                 let dx = x.saturating_sub(bounds.x0).clamp(-1_000_000, 1_000_000);
                 let dy = y.saturating_sub(bounds.y0).clamp(-1_000_000, 1_000_000);
@@ -150,6 +176,14 @@ fn apply_states(geometry: &Document, layers: &mut [Layer], states: &[FrameLayerS
                 layer.effects.enabled = effects.enabled;
                 layer.effects.items = effects.items;
                 layer.effects.reference = effects.reference;
+                if let Some((x, y)) = state.position
+                    && matches!(geometry.timeline.as_ref().map(|t| t.mode), Some(photostore_doc::TimelineMode::Video))
+                    && let Some(track) = layer.position_animation.as_ref()
+                    && let Some(reference) = layer.effects.reference.as_mut()
+                {
+                    reference.0 += f64::from(track.applied_value.0) - f64::from(x);
+                    reference.1 += f64::from(track.applied_value.1) - f64::from(y);
+                }
             }
         }
         if let Some(children) = layer.children_mut() { apply_states(geometry, children, states); }
@@ -385,6 +419,7 @@ fn canonicalize_states(before: &Document, after: &mut Document, current: usize) 
     let (Some(before_states), Some(after_states)) = (before_frames.get(current), after_frames.get(current)) else { return };
     if before_states.len() != after_states.len() || before_states.iter().zip(after_states.iter()).any(|(a, b)| a != b) { return; }
     let frame_animation = matches!(at.mode, photostore_doc::TimelineMode::FrameAnimation);
+    let video_mode = matches!(at.mode, photostore_doc::TimelineMode::Video);
     let after_layers = &after.layers;
     let Some(at) = after.timeline.as_mut() else { return };
     let states = if frame_animation { at.frame_states.get_mut(current) } else { at.property_frames.get_mut(current) };
@@ -396,7 +431,7 @@ fn canonicalize_states(before: &Document, after: &mut Document, current: usize) 
             if old.opacity != new.opacity { state.opacity = new.opacity; }
             let old_pos = photostore_doc::comps::layer_position(old);
             let new_pos = photostore_doc::comps::layer_position(new);
-            if old_pos != new_pos { state.position = new_pos; }
+            if old_pos != new_pos && !(video_mode && new.position_animation.is_some()) { state.position = new_pos; }
             if old.blend != new.blend { state.blend = Some(new.blend); }
             if old.fill_opacity != new.fill_opacity { state.fill_opacity = Some(new.fill_opacity); }
             if old.effects != new.effects { state.effects = Some(photostore_doc::FrameEffectsState { enabled: new.effects.enabled, items: new.effects.items.clone(), reference: new.effects.reference }); }

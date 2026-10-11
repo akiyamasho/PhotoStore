@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use photostore_doc::{FrameLayerState, LayerTimelineRange, Timeline, TimelineLoop, TimelineMode, LayerId, OnionSkinBlend, DocId};
+use photostore_doc::{DocId, FrameLayerState, Layer, LayerId, LayerTimelineRange, OnionSkinBlend, Timeline, TimelineLoop, TimelineMode};
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
@@ -91,6 +91,20 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
         Some("frameAnimation") | Some("frame-animation") => TimelineMode::FrameAnimation,
         _ => TimelineMode::Video,
     };
+    if s.active().is_some_and(|st| st.doc.walk().iter().any(|(_, _, l)| l.position_animation.is_some()))
+    {
+        s.edit("Create Timeline", |doc, _| {
+            let current = doc.timeline.as_ref().map_or(0, |t| t.current);
+            crate::video_cmds::sync(doc);
+            freeze_and_clear_owned_position(&mut doc.layers, current);
+            let mut next = Timeline::new(duration, fps);
+            next.mode = mode;
+            doc.timeline = Some(next);
+            crate::video_cmds::sync(doc);
+            Ok(())
+        })?;
+        return info(s);
+    }
     with_timeline(s, |t| { let mut next = Timeline::new(duration, fps); next.mode = mode; *t = Some(next); })
 }
 
@@ -187,6 +201,42 @@ fn freeze_and_clear_owned_opacity(layers: &mut [photostore_doc::Layer], frame: u
     }
 }
 
+fn clear_owned_position(layers: &mut [Layer]) {
+    for layer in layers {
+        layer.position_animation = None;
+        if let Some(children) = layer.children_mut() {
+            clear_owned_position(children);
+        }
+    }
+}
+
+fn freeze_and_clear_owned_position(layers: &mut [Layer], _frame: usize) {
+    for layer in layers {
+        if layer.position_animation.is_some() {
+            layer.position_animation = None;
+        }
+        if let Some(children) = layer.children_mut() {
+            freeze_and_clear_owned_position(children, _frame);
+        }
+    }
+}
+
+fn validate_owned_position_snapshot(layers: &[Layer], inherited_position: bool) -> Result<()> {
+    for layer in layers {
+        let positional = matches!(&layer.content, photostore_doc::LayerContent::Raster(_) | photostore_doc::LayerContent::Text(_) | photostore_doc::LayerContent::Shape(_) | photostore_doc::LayerContent::Smart(_));
+        if (inherited_position || layer.position_animation.is_some()) && positional && photostore_doc::comps::layer_position(layer).is_none() {
+            return Err(bad(
+                "timeline.setMode",
+                format!("position animation on layer {} cannot be represented in a frame snapshot because its displayed geometry is empty or clipped", layer.id.0),
+            ));
+        }
+        if let Some(children) = layer.children() {
+            validate_owned_position_snapshot(children, inherited_position || layer.position_animation.is_some())?;
+        }
+    }
+    Ok(())
+}
+
 fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
     let mode = match p.get("mode").and_then(Value::as_str) {
         Some("video") => TimelineMode::Video,
@@ -204,18 +254,13 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
             crate::video_cmds::store(doc);
             let duration = doc.timeline.as_ref().map_or(1, |t| t.duration).min(MAX_DURATION);
             let owned_tracks = doc.walk().iter().filter(|(_, _, l)| l.opacity_animation.is_some()).count();
-            if owned_tracks > 0 {
+            let owned_position_tracks = doc.walk().iter().filter(|(_, _, l)| l.position_animation.is_some()).count();
+            if owned_tracks > 0 || owned_position_tracks > 0 {
                 let dense_complete = doc.timeline.as_ref().is_some_and(|t| t.property_frames.len() >= duration);
-                let mut estimated = 0usize;
-                if dense_complete {
-                    if let Some(t) = doc.timeline.as_ref() {
-                    for row in t.property_frames.iter().take(duration) {
-                        estimated = estimated.saturating_add(row.iter().map(|state| std::mem::size_of::<FrameLayerState>() + state.effects.as_ref().map_or(0, |fx| fx.items.len().saturating_mul(512))).sum::<usize>());
-                    }
-                    }
-                } else {
-                    let per_snapshot = doc.walk().iter().map(|(_, _, l)| std::mem::size_of::<FrameLayerState>() + l.effects.items.len().saturating_mul(512)).sum::<usize>();
-                    estimated = duration.saturating_mul(per_snapshot);
+                let per_snapshot = doc.walk().iter().map(|(_, _, l)| std::mem::size_of::<FrameLayerState>() + l.effects.items.len().saturating_mul(512)).sum::<usize>();
+                let mut estimated = duration.saturating_mul(per_snapshot);
+                if dense_complete && owned_position_tracks == 0 {
+                    estimated = doc.timeline.as_ref().map(|t| t.property_frames.iter().take(duration).map(|row| row.iter().map(|state| std::mem::size_of::<FrameLayerState>() + state.effects.as_ref().map_or(0, |fx| fx.items.len().saturating_mul(512))).sum::<usize>()).sum()).unwrap_or(estimated);
                 }
                 let owned_ids: std::collections::HashSet<_> = doc.walk().iter().filter_map(|(_, _, l)| l.opacity_animation.as_ref().map(|_| l.id)).collect();
                 let missing = if let Some(t) = doc.timeline.as_ref() {
@@ -223,10 +268,10 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
                 } else { duration.saturating_mul(owned_ids.len()) };
                 let per_missing = doc.walk().iter().filter(|(_, _, l)| l.opacity_animation.is_some()).map(|(_, _, l)| std::mem::size_of::<FrameLayerState>() + l.effects.items.len().saturating_mul(512)).max().unwrap_or(0);
                 estimated = estimated.saturating_add(missing.saturating_mul(per_missing));
-                if estimated > 64 * 1024 * 1024 { return Err(bad("timeline.setMode", "opacity frame conversion exceeds 64 MiB property-track limit".into())); }
+                if estimated > 64 * 1024 * 1024 { return Err(bad("timeline.setMode", "property frame conversion exceeds 64 MiB snapshot limit".into())); }
             }
             let original = doc.timeline.as_ref().map_or(0, |t| t.current);
-            let states = if doc.timeline.as_ref().is_some_and(|t| t.property_frames.len() >= duration) {
+            let states = if owned_position_tracks == 0 && doc.timeline.as_ref().is_some_and(|t| t.property_frames.len() >= duration) {
                 doc.timeline.as_ref().map(|t| t.property_frames[..duration].to_vec()).unwrap_or_default()
             } else {
                 let mut states = Vec::with_capacity(duration);
@@ -234,6 +279,7 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
                     let mut sample = doc.clone();
                     if let Some(t) = &mut sample.timeline { t.current = frame; }
                     crate::video_cmds::sync(&mut sample);
+                    validate_owned_position_snapshot(&sample.layers, false)?;
                     let mut state = Vec::new();
                     collect_layer_states(&sample.layers, &mut state);
                     states.push(state);
@@ -242,12 +288,14 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
             };
             let mut states = states;
             bake_owned_opacity(&mut states, &doc.layers);
+            crate::video_cmds::sync(doc);
             if let Some(t) = &mut doc.timeline {
                 t.mode = mode;
                 t.frame_states = states;
                 t.current = original.min(t.duration.saturating_sub(1));
             }
             clear_owned_opacity(&mut doc.layers);
+            clear_owned_position(&mut doc.layers);
             crate::video_cmds::sync(doc);
             Ok(())
         })?;
@@ -256,6 +304,7 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let out = s.edit("Convert to Video Timeline", |doc, _| {
         crate::video_cmds::store(doc);
+        let current = doc.timeline.as_ref().map_or(0, |t| t.current);
         if let Some(t) = &mut doc.timeline {
             if !t.frame_states.is_empty() {
                 let source = std::mem::take(&mut t.frame_states);
@@ -306,6 +355,7 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
             // the video property track so variable-delay animation survives the round trip.
             if t.frame_delays_ms.len() < t.duration { t.frame_delays_ms.resize(t.duration, 0); }
         }
+        freeze_and_clear_owned_position(&mut doc.layers, current);
         crate::video_cmds::sync(doc);
         Ok(())
     })?;
@@ -363,6 +413,9 @@ fn set_onion_skin_settings(s: &mut Session, p: &Value) -> Result<Value> {
 fn make_frames_from_layers(s: &mut Session) -> Result<Value> {
     let id = s.edit("Make Frames From Layers", |doc, active| {
         let selected = (*active).ok_or(EngineError::NoDocument)?;
+        let current = doc.timeline.as_ref().map_or(0, |t| t.current);
+        crate::video_cmds::sync_plain(doc);
+        freeze_and_clear_owned_position(&mut doc.layers, current);
         let background = doc.layers.first().filter(|l| l.name == "Background" && l.locks.position).map(|l| l.id);
         let ids: Vec<_> = doc.layers.iter().map(|l| l.id).collect();
         let source_ids: Vec<_> = doc.layers.iter().filter(|l| Some(l.id) != background).map(|l| l.id).collect();
@@ -398,6 +451,7 @@ fn delete(s: &mut Session) -> Result<Value> {
         let current = doc.timeline.as_ref().map_or(0, |t| t.current);
         crate::video_cmds::sync_plain(doc);
         freeze_and_clear_owned_opacity(&mut doc.layers, current);
+        freeze_and_clear_owned_position(&mut doc.layers, current);
         crate::video_cmds::store(doc);
         doc.timeline = None;
         Ok(())

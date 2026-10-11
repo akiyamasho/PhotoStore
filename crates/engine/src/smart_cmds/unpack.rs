@@ -128,6 +128,7 @@ fn released(l: &mut Layer, f: impl FnOnce(&mut Layer) -> Result<()>) -> Result<(
 fn foldable(so: &Layer, c: &Layer) -> bool {
     so.mask.is_none()
         && so.opacity_animation.is_none()
+        && so.position_animation.is_none()
         && c.opacity_animation.is_none()
         && so.vector_mask.is_none()
         && (!so.effects.enabled || so.effects.items.is_empty())

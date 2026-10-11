@@ -2,21 +2,32 @@
 //! Video layers (Layer › Video Layers) show their content for the current frame; this type is the
 //! shared clock. Frame-animation and video-timeline modes both reduce to "which frame is current".
 
-use serde::{Deserialize, Serialize};
 use crate::{BlendMode, Effect, LayerId};
+use serde::{Deserialize, Serialize};
 
 use photostore_raster::Surface;
 
 pub const MAX_OPACITY_ANIMATION_KEYS: usize = 100_000;
 pub const MAX_OPACITY_ANIMATION_TRACKS: usize = 256;
 pub const MAX_OPACITY_ANIMATION_FRAME: usize = 999_999;
+pub const MAX_POSITION_ANIMATION_KEYS: usize = 100_000;
+pub const MAX_POSITION_ANIMATION_TRACKS: usize = 256;
+pub const MAX_POSITION_ANIMATION_FRAME: usize = 999_999;
+pub const MAX_POSITION_COORDINATE: i32 = 1_000_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum OpacityInterpolation { Linear, Hold }
+pub enum OpacityInterpolation {
+    Linear,
+    Hold,
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct OpacityKeyframe { pub frame: usize, pub value: f32, pub interpolation: OpacityInterpolation }
+pub struct OpacityKeyframe {
+    pub frame: usize,
+    pub value: f32,
+    pub interpolation: OpacityInterpolation,
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OpacityAnimation {
@@ -28,33 +39,140 @@ pub struct OpacityAnimation {
 impl OpacityAnimation {
     pub fn sampled_value(&self, frame: usize) -> f32 {
         let fallback = if self.static_value.is_finite() { self.static_value.clamp(0.0, 1.0) } else { 0.0 };
-        if !self.enabled || self.keys.is_empty() { return fallback; }
+        if !self.enabled || self.keys.is_empty() {
+            return fallback;
+        }
         let keys = self.keys.as_slice();
         let value = |v: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
-        if frame <= keys[0].frame { return value(keys[0].value); }
+        if frame <= keys[0].frame {
+            return value(keys[0].value);
+        }
         let last = &keys[keys.len() - 1];
-        if frame >= last.frame { return value(last.value); }
+        if frame >= last.frame {
+            return value(last.value);
+        }
         let upper = keys.partition_point(|k| k.frame < frame);
-        if keys[upper].frame == frame { return value(keys[upper].value); }
+        if keys[upper].frame == frame {
+            return value(keys[upper].value);
+        }
         let a = &keys[upper - 1];
         let b = &keys[upper];
         let av = value(a.value);
-        if matches!(a.interpolation, OpacityInterpolation::Hold) { return av; }
+        if matches!(a.interpolation, OpacityInterpolation::Hold) {
+            return av;
+        }
         let span = b.frame.saturating_sub(a.frame) as f32;
         let elapsed = frame.saturating_sub(a.frame) as f32;
         if span <= 0.0 { av } else { (av + (value(b.value) - av) * (elapsed / span)).clamp(0.0, 1.0) }
     }
 
     pub fn validate(&self) -> std::result::Result<(), String> {
-        if !self.static_value.is_finite() || !(0.0..=1.0).contains(&self.static_value) { return Err("opacity animation static_value must be finite and between 0 and 1".into()); }
-        if self.keys.len() > MAX_OPACITY_ANIMATION_KEYS { return Err(format!("opacity animation contains more than {MAX_OPACITY_ANIMATION_KEYS} keyframes")); }
-        if !self.enabled && !self.keys.is_empty() { return Err("disabled opacity animation must not contain keyframes".into()); }
-        if self.enabled && self.keys.is_empty() { return Err("enabled opacity animation must contain at least one keyframe".into()); }
+        if !self.static_value.is_finite() || !(0.0..=1.0).contains(&self.static_value) {
+            return Err("opacity animation static_value must be finite and between 0 and 1".into());
+        }
+        if self.keys.len() > MAX_OPACITY_ANIMATION_KEYS {
+            return Err(format!("opacity animation contains more than {MAX_OPACITY_ANIMATION_KEYS} keyframes"));
+        }
+        if !self.enabled && !self.keys.is_empty() {
+            return Err("disabled opacity animation must not contain keyframes".into());
+        }
+        if self.enabled && self.keys.is_empty() {
+            return Err("enabled opacity animation must contain at least one keyframe".into());
+        }
         let mut previous = None;
         for key in self.keys.iter() {
-            if key.frame > MAX_OPACITY_ANIMATION_FRAME { return Err(format!("opacity animation keyframe frame exceeds {MAX_OPACITY_ANIMATION_FRAME}")); }
-            if previous.is_some_and(|frame| frame >= key.frame) { return Err("opacity animation keyframes must be strictly ascending and unique".into()); }
-            if !key.value.is_finite() || !(0.0..=1.0).contains(&key.value) { return Err("opacity animation keyframe values must be finite and between 0 and 1".into()); }
+            if key.frame > MAX_OPACITY_ANIMATION_FRAME {
+                return Err(format!("opacity animation keyframe frame exceeds {MAX_OPACITY_ANIMATION_FRAME}"));
+            }
+            if previous.is_some_and(|frame| frame >= key.frame) {
+                return Err("opacity animation keyframes must be strictly ascending and unique".into());
+            }
+            if !key.value.is_finite() || !(0.0..=1.0).contains(&key.value) {
+                return Err("opacity animation keyframe values must be finite and between 0 and 1".into());
+            }
+            previous = Some(key.frame);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PositionInterpolation {
+    Linear,
+    Hold,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PositionKeyframe {
+    pub frame: usize,
+    pub x: i32,
+    pub y: i32,
+    pub interpolation: PositionInterpolation,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PositionAnimation {
+    pub enabled: bool,
+    pub static_value: (i32, i32),
+    pub applied_value: (i32, i32),
+    pub keys: std::sync::Arc<Vec<PositionKeyframe>>,
+}
+
+impl PositionAnimation {
+    pub fn sampled_value(&self, frame: usize) -> (i32, i32) {
+        let fallback = self.static_value;
+        if !self.enabled || self.keys.is_empty() {
+            return fallback;
+        }
+        let keys = self.keys.as_slice();
+        if frame <= keys[0].frame {
+            return (keys[0].x, keys[0].y);
+        }
+        let last = &keys[keys.len() - 1];
+        if frame >= last.frame {
+            return (last.x, last.y);
+        }
+        let upper = keys.partition_point(|k| k.frame < frame);
+        if keys[upper].frame == frame {
+            return (keys[upper].x, keys[upper].y);
+        }
+        let a = &keys[upper - 1];
+        let b = &keys[upper];
+        if matches!(a.interpolation, PositionInterpolation::Hold) {
+            return (a.x, a.y);
+        }
+        let span = (b.frame - a.frame) as f64;
+        let t = (frame - a.frame) as f64 / span;
+        let interp = |av: i32, bv: i32| (f64::from(av) + (f64::from(bv) - f64::from(av)) * t).round() as i32;
+        (interp(a.x, b.x), interp(a.y, b.y))
+    }
+
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        let valid_coord = |v: i32| (-MAX_POSITION_COORDINATE..=MAX_POSITION_COORDINATE).contains(&v);
+        if !valid_coord(self.static_value.0) || !valid_coord(self.static_value.1) || !valid_coord(self.applied_value.0) || !valid_coord(self.applied_value.1) {
+            return Err("position animation coordinates must be between -1000000 and 1000000".into());
+        }
+        if self.keys.len() > MAX_POSITION_ANIMATION_KEYS {
+            return Err(format!("position animation contains more than {MAX_POSITION_ANIMATION_KEYS} keyframes"));
+        }
+        if !self.enabled && !self.keys.is_empty() {
+            return Err("disabled position animation must not contain keyframes".into());
+        }
+        if self.enabled && self.keys.is_empty() {
+            return Err("enabled position animation must contain at least one keyframe".into());
+        }
+        let mut previous = None;
+        for key in self.keys.iter() {
+            if key.frame > MAX_POSITION_ANIMATION_FRAME {
+                return Err(format!("position animation keyframe frame exceeds {MAX_POSITION_ANIMATION_FRAME}"));
+            }
+            if previous.is_some_and(|frame| frame >= key.frame) {
+                return Err("position animation keyframes must be strictly ascending and unique".into());
+            }
+            if !valid_coord(key.x) || !valid_coord(key.y) {
+                return Err("position animation keyframe coordinates must be between -1000000 and 1000000".into());
+            }
             previous = Some(key.frame);
         }
         Ok(())
@@ -91,7 +209,15 @@ pub struct VideoData {
 impl VideoData {
     pub fn new(frames: Vec<Surface>, fps: f32) -> Self {
         let count = frames.len();
-        VideoData { frames: if frames.is_empty() { Vec::new() } else { frames }, frame_delays_ms: vec![0; count], keyframes: Vec::new(), source: VideoSource::Blank, fps, playback: VideoPlayback::default(), show_altered: true }
+        VideoData {
+            frames: if frames.is_empty() { Vec::new() } else { frames },
+            frame_delays_ms: vec![0; count],
+            keyframes: Vec::new(),
+            source: VideoSource::Blank,
+            fps,
+            playback: VideoPlayback::default(),
+            show_altered: true,
+        }
     }
     pub fn len(&self) -> usize {
         self.frames.len()
@@ -105,7 +231,13 @@ impl VideoData {
 // by shape, not contents — enough for change detection.
 impl PartialEq for VideoData {
     fn eq(&self, o: &Self) -> bool {
-        self.frames.len() == o.frames.len() && self.frame_delays_ms == o.frame_delays_ms && self.keyframes == o.keyframes && self.source == o.source && self.fps == o.fps && self.playback == o.playback && self.show_altered == o.show_altered
+        self.frames.len() == o.frames.len()
+            && self.frame_delays_ms == o.frame_delays_ms
+            && self.keyframes == o.keyframes
+            && self.source == o.source
+            && self.fps == o.fps
+            && self.playback == o.playback
+            && self.show_altered == o.show_altered
     }
 }
 
@@ -124,7 +256,9 @@ impl Default for VideoPlayback {
     }
 }
 
-fn default_playback_speed() -> f64 { 1.0 }
+fn default_playback_speed() -> f64 {
+    1.0
+}
 
 /// An audio clip placed on a document timeline. Time fields are output/document wall-clock
 /// seconds; source media consumed by a clip is `duration_seconds * speed`.
@@ -159,8 +293,12 @@ pub struct AudioClip {
     pub envelope_duration_seconds: Option<f64>,
 }
 
-fn default_clip_speed() -> f64 { 1.0 }
-fn default_clip_volume() -> f64 { 1.0 }
+fn default_clip_speed() -> f64 {
+    1.0
+}
+fn default_clip_volume() -> f64 {
+    1.0
+}
 
 /// An audio track containing ordered linked local audio clips.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -207,7 +345,9 @@ pub enum OnionSkinBlend {
 }
 
 impl Default for OnionSkinBlend {
-    fn default() -> Self { Self::Normal }
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 /// Timeline onion skin preview settings. Values are bounded when a document is loaded or edited.
@@ -228,9 +368,15 @@ pub struct OnionSkinSettings {
     pub blend: OnionSkinBlend,
 }
 
-fn default_onion_before() -> u32 { 1 }
-fn default_onion_spacing() -> u32 { 1 }
-fn default_onion_opacity() -> f32 { 0.3 }
+fn default_onion_before() -> u32 {
+    1
+}
+fn default_onion_spacing() -> u32 {
+    1
+}
+fn default_onion_opacity() -> f32 {
+    0.3
+}
 
 impl Default for OnionSkinSettings {
     fn default() -> Self {
@@ -245,7 +391,9 @@ impl OnionSkinSettings {
         self.spacing = self.spacing.clamp(1, 1000);
         self.min_opacity = if self.min_opacity.is_finite() { self.min_opacity.clamp(0.0, 1.0) } else { 0.3 };
         self.max_opacity = if self.max_opacity.is_finite() { self.max_opacity.clamp(0.0, 1.0) } else { 0.3 };
-        if self.min_opacity > self.max_opacity { self.max_opacity = self.min_opacity; }
+        if self.min_opacity > self.max_opacity {
+            self.max_opacity = self.min_opacity;
+        }
         self
     }
 }
@@ -290,7 +438,9 @@ pub struct LayerTimelineRange {
 }
 
 impl Default for TimelineLoop {
-    fn default() -> Self { Self::Loop }
+    fn default() -> Self {
+        Self::Loop
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -339,7 +489,23 @@ pub struct Timeline {
 impl Timeline {
     pub fn new(duration: usize, fps: f32) -> Self {
         let d = duration.max(1);
-        Timeline { fps: valid_fps(fps), duration: d, current: 0, work_start: 0, work_end: d, mode: TimelineMode::Video, loop_mode: TimelineLoop::Loop, loop_count: None, onion_skin: false, onion_settings: OnionSkinSettings::default(), frame_states: Vec::new(), property_frames: Vec::new(), frame_delays_ms: vec![0; d.min(1_000_000)], layer_ranges: Vec::new(), audio_tracks: Vec::new() }
+        Timeline {
+            fps: valid_fps(fps),
+            duration: d,
+            current: 0,
+            work_start: 0,
+            work_end: d,
+            mode: TimelineMode::Video,
+            loop_mode: TimelineLoop::Loop,
+            loop_count: None,
+            onion_skin: false,
+            onion_settings: OnionSkinSettings::default(),
+            frame_states: Vec::new(),
+            property_frames: Vec::new(),
+            frame_delays_ms: vec![0; d.min(1_000_000)],
+            layer_ranges: Vec::new(),
+            audio_tracks: Vec::new(),
+        }
     }
 
     /// Keep every index inside `0..duration` and the work area non-empty.
@@ -347,7 +513,9 @@ impl Timeline {
         self.duration = self.duration.max(1);
         self.fps = valid_fps(self.fps);
         self.loop_count = self.loop_count.map(|n| n.clamp(1, 65_536));
-        if self.loop_mode == TimelineLoop::Once { self.loop_count = None; }
+        if self.loop_mode == TimelineLoop::Once {
+            self.loop_count = None;
+        }
         self.onion_settings = self.onion_settings.normalized();
         self.current = self.current.min(self.duration - 1);
         self.work_start = self.work_start.min(self.duration - 1);
@@ -375,9 +543,8 @@ impl Timeline {
             TimelineMode::Video => frame as f64 / f64::from(valid_fps(self.fps)),
             TimelineMode::FrameAnimation => {
                 let fallback = 1.0 / f64::from(valid_fps(self.fps));
-                self.frame_delays_ms.iter().take(frame).fold(0.0, |total, delay| {
-                    total + if *delay > 0 { f64::from(*delay) / 1000.0 } else { fallback }
-                }) + frame.saturating_sub(self.frame_delays_ms.len()) as f64 * fallback
+                self.frame_delays_ms.iter().take(frame).fold(0.0, |total, delay| total + if *delay > 0 { f64::from(*delay) / 1000.0 } else { fallback })
+                    + frame.saturating_sub(self.frame_delays_ms.len()) as f64 * fallback
             }
         }
     }

@@ -8,12 +8,12 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod actions_cmds;
-pub mod audio_cmds;
 pub mod adjust_cmds;
 pub mod adjust_params;
 pub mod align_cmds;
 pub mod analysis_cmds;
 pub mod artboard_cmds;
+pub mod audio_cmds;
 pub mod automate_cmds;
 pub mod brush_cmds;
 pub mod brush_key_cmds;
@@ -74,16 +74,17 @@ pub mod photo_cmds;
 pub mod pick_cmds;
 mod pixels;
 pub mod plugin_cmds;
+pub mod position_cmds;
 pub mod prefs;
 pub mod preset_import_cmds;
 pub mod preset_store;
 pub mod presets;
 pub mod print_cmds;
 pub mod proof_sim;
-pub mod redeye_cmds;
-pub mod render_cmds;
 pub mod recording;
 pub mod recording_export;
+pub mod redeye_cmds;
+pub mod render_cmds;
 pub mod retouch_cmds;
 pub mod sample_cmds;
 pub mod select_extra_cmds;
@@ -119,8 +120,8 @@ use photostore_doc::{Document, LayerId};
 use photostore_ops::{History, LayerTarget};
 use serde_json::Value;
 
-pub use commands::{CommandSpec, command_specs};
 pub use audio_cmds::audio_mix_for_range;
+pub use commands::{CommandSpec, command_specs};
 pub use photostore_doc as doc;
 pub use photostore_paint as paint;
 pub use photostore_paint::BrushSettings;
@@ -511,6 +512,7 @@ impl Session {
             .or_else(|| channel_cmds::mask_target_enabled(self, spec.id, params))
             .or_else(|| video_cmds::keyframe_target_enabled(self, spec.id, params))
             .or_else(|| opacity_cmds::target_enabled(self, spec.id, params))
+            .or_else(|| position_cmds::target_enabled(self, spec.id, params))
             .unwrap_or_else(|| (spec.enabled)(self))
     }
 

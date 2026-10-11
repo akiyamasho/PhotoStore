@@ -340,6 +340,37 @@ Candidate development identity: `PhotoStore-dev-video-opacity`, bundle ID
 PSD parity, audio behavior, and visual interaction acceptance remain unverified. Screenshot evidence
 is required before any published release; the hidden 0.15.0 screenshot attempt produced no image.
 
+## Current 0.16.0 Position animation development pass
+
+The current candidate is documented in [position-animation.md](position-animation.md). It targets
+the separate `PhotoStore-dev-position-animation` identity with bundle ID
+`ai.photostore.app.dev.position-animation`, its own executable/settings/recovery process, and no
+registered file associations. Production and consolidated goal applications remain untouched.
+Development version remains 0.16.0. The source commit SHA is pending the root delivery record; the
+base planning reference is exactly `fd414d2ed15c27ff323b19fcf6ae84351b3a4557` and is not the
+candidate SHA.
+
+The implementation covers native `Layer.PositionAnimation` with backward-compatible missing data,
+applied Position anchors, signed whole-pixel XY keys through frame 999,999 with bounds of
+±1,000,000, Linear/Hold modes,
+100,000 total Position keys and 256 Position tracks, typed key commands, timeline guards, and
+actual-movement keying for layer operations. It includes first-enable migration, disable/delete
+freeze behavior, Smart Object curve ownership, Video-to-Frame and Frame-to-Video conversion rules,
+and atomic rejection for unrepresentable empty or clipped positional geometry. Independent video
+Position and full Smart affine transforms remain future work; legacy video XY and independent
+Opacity remain unchanged. See the design record for the complete contract and limits.
+
+The bounded pass has engine (2 steps), UI (2 steps), and delivery (4 steps) milestones. The source
+is frozen, implemented, and root-reviewed; engine and UI are complete, while delivery remains
+pending. Its four delivery steps are commit, mandatory `package-dev.sh` compile/package gate, own
+install, and focused background runtime plus receipt and private branch push. Standalone checks did
+not compile the candidate: the earlier check ended after 405.76 seconds on a foreign lock, and the
+final queued check was stopped with SIGTERM exit 143 without diagnostics. The required package-driven
+compile has not passed. Package, install, runtime, and UI visual evidence remain pending; no
+screenshot or release is claimed. The inspector exposes numeric `document.id` and
+`session.documents[].id`; document selectors use the documented index versus timeline `actualDocId`
+distinction in `control-protocol`.
+
 ## Animation and timeline
 
 ### Implemented milestone

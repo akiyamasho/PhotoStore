@@ -77,7 +77,9 @@ pub(crate) fn paint_surface<'a>(doc: &'a mut Document, id: LayerId, p: &Value) -
     if is_mask_target(p) {
         match p.get("target").and_then(Value::as_str) {
             Some("filterMask") => match &mut l.content {
-                LayerContent::Smart(sm) => sm.filter_mask.as_mut().map(|m| &mut m.surface).ok_or_else(|| EngineError::Other("smart object has no filter mask".into())),
+                LayerContent::Smart(sm) => {
+                    sm.filter_mask.as_mut().map(|m| &mut m.surface).ok_or_else(|| EngineError::Other("smart object has no filter mask".into()))
+                }
                 _ => Err(EngineError::Other("layer is not a smart object".into())),
             },
             _ => l.mask.as_mut().map(|m| &mut m.surface).ok_or_else(|| EngineError::Other("layer has no mask".into())),
@@ -391,8 +393,15 @@ fn build() -> Vec<CommandSpec> {
             }
         ),
         cmd!("file.close", "Close", ["File"], Some("Cmd+W"), r##"{"document":index?,"discardSmartContents":[documentDocId,...]?}"##, has_doc, |s, p| {
-            let i = p.get("document").map(|v| v.as_u64().and_then(|v| usize::try_from(v).ok()).ok_or_else(|| bad("file.close", "`document` must be an index"))).transpose()?.or(s.active_index()).ok_or(EngineError::NoDocument)?;
-            if i >= s.documents().len() { return Err(EngineError::BadParams { cmd: "file.close".into(), msg: format!("no document {i}") }); }
+            let i = p
+                .get("document")
+                .map(|v| v.as_u64().and_then(|v| usize::try_from(v).ok()).ok_or_else(|| bad("file.close", "`document` must be an index")))
+                .transpose()?
+                .or(s.active_index())
+                .ok_or(EngineError::NoDocument)?;
+            if i >= s.documents().len() {
+                return Err(EngineError::BadParams { cmd: "file.close".into(), msg: format!("no document {i}") });
+            }
             let discard = crate::smart_cmds::discard_ids(s, p, "file.close", &[i])?;
             let id = s.documents()[i].doc.id;
             s.try_close_with_discard(i, discard.contains(&id))?.ok_or(EngineError::NoDocument)?;
@@ -1202,6 +1211,7 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::trap_cmds::specs());
     v.extend(crate::timeline_cmds::specs());
     v.extend(crate::video_cmds::specs());
+    v.extend(crate::position_cmds::specs());
     v.extend(crate::recording::specs());
     v.extend(crate::audio_cmds::specs());
     v.extend(crate::jobs::specs());

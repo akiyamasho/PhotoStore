@@ -116,6 +116,39 @@ the last successful `(path, encoded shortcuts)` snapshot is retained to avoid re
 unrelated preference changes. Existing preference files remain compatible because the field is
 optional, and web shells leave the control unavailable when native persistence is unsupported.
 
+## 2026-10-11: 0.16.0 independent Position animation development
+
+Position animation uses a native optional `Layer.PositionAnimation` property. Missing data remains
+backward-compatible; stored state is an applied Position anchor and value rather than a bounding-box
+derivation. Keys use whole-pixel signed XY values bounded to ±1,000,000, frame indices through
+999,999, and Linear/Hold
+interpolation. Position has independent limits of 100,000 total keys and 256 tracks. Raster, Text,
+Shape, and Smart layers are authorable; independent video Position and full Smart affine transforms
+remain future work. Legacy video XY and independent Opacity behavior remain unchanged.
+
+Actual movement operations key at the playhead, while generic bounding-box painting does not
+auto-key. First enable migrates legacy dense Position snapshots to bounded Hold keys and reconciles
+the baseline/current pose; re-enabling an existing track is a no-op. Disable or delete-last-key
+freezes the playhead pose and clears owned keys. Smart conversion, Video-to-Frame, Frame-to-Video,
+and destructive timeline operations preserve or clear ownership according to
+[position-animation.md](position-animation.md), with atomic failure for unrepresentable empty or
+clipped positional geometry.
+
+The candidate uses the separate `PhotoStore-dev-position-animation` executable, settings, recovery
+process, and bundle ID `ai.photostore.app.dev.position-animation`, with no registered file
+associations. Development version remains 0.16.0. The source SHA is pending the root delivery
+record; `fd414d2ed15c27ff323b19fcf6ae84351b3a4557` is exactly the base planning reference. The pass
+has engine (2 steps), UI (2 steps), and delivery (4 steps) milestones. The source is frozen,
+implemented, and root-reviewed; engine and UI are complete, while delivery remains pending. Its four
+delivery steps are commit, mandatory `package-dev.sh` compile/package gate, own install, and focused
+background runtime plus receipt and private branch push. Standalone checks did not compile the
+candidate: the earlier check ended after 405.76 seconds on a foreign lock, and the final queued
+check was stopped with SIGTERM exit 143 without diagnostics. The required package-driven compile has
+not passed. No package, source-SHA, install, runtime, or visual claim is made; no screenshot or
+release is claimed. The inspector exposes numeric `document.id` and `session.documents[].id`;
+document selectors use the documented index versus timeline `actualDocId` distinction in
+`control-protocol`.
+
 ## 2026-10-11: 0.16.0 independent video-opacity migration
 
 Independent video opacity reuses existing owned tracks and leaves coupled video XY/opacity behavior

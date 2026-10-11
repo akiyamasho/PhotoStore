@@ -22,35 +22,104 @@ fn validate_opacity_animation(a: &photostore_doc::OpacityAnimation) -> Result<()
     a.validate().map_err(FormatError::corrupt)
 }
 
-pub(crate) fn validate_opacity_manifest_layers(layers: &[LayerM]) -> Result<()> {
+fn validate_position_animation(a: &photostore_doc::PositionAnimation) -> Result<()> {
+    a.validate().map_err(FormatError::corrupt)
+}
+
+fn validate_position_layers(layers: &[LayerM]) -> Result<()> {
     fn visit(layers: &[LayerM], tracks: &mut usize, keys: &mut usize) -> Result<()> {
         for layer in layers {
-            if let Some(animation) = &layer.opacity_animation {
-                *tracks = tracks.saturating_add(1); *keys = keys.saturating_add(animation.keys.len());
-                if *tracks > photostore_doc::MAX_OPACITY_ANIMATION_TRACKS { return Err(FormatError::LimitExceeded(format!("document contains more than {} opacity animation tracks", photostore_doc::MAX_OPACITY_ANIMATION_TRACKS))); }
-                if *keys > photostore_doc::MAX_OPACITY_ANIMATION_KEYS { return Err(FormatError::LimitExceeded(format!("document contains more than {} opacity animation keyframes", photostore_doc::MAX_OPACITY_ANIMATION_KEYS))); }
-                validate_opacity_animation(animation)?;
+            if let Some(animation) = &layer.position_animation {
+                *tracks = tracks.saturating_add(1);
+                *keys = keys.saturating_add(animation.keys.len());
+                if *tracks > photostore_doc::MAX_POSITION_ANIMATION_TRACKS {
+                    return Err(FormatError::LimitExceeded(format!(
+                        "document contains more than {} position animation tracks",
+                        photostore_doc::MAX_POSITION_ANIMATION_TRACKS
+                    )));
+                }
+                if *keys > photostore_doc::MAX_POSITION_ANIMATION_KEYS {
+                    return Err(FormatError::LimitExceeded(format!(
+                        "document contains more than {} position animation keyframes",
+                        photostore_doc::MAX_POSITION_ANIMATION_KEYS
+                    )));
+                }
+                validate_position_animation(animation)?;
             }
-            if let ContentM::Group { children, .. } = &layer.content { visit(children, tracks, keys)?; }
+            if let ContentM::Group { children, .. } = &layer.content {
+                visit(children, tracks, keys)?;
+            }
         }
         Ok(())
     }
     visit(layers, &mut 0, &mut 0)
 }
 
+pub(crate) fn validate_opacity_manifest_layers(layers: &[LayerM]) -> Result<()> {
+    fn visit(layers: &[LayerM], tracks: &mut usize, keys: &mut usize) -> Result<()> {
+        for layer in layers {
+            if let Some(animation) = &layer.opacity_animation {
+                *tracks = tracks.saturating_add(1);
+                *keys = keys.saturating_add(animation.keys.len());
+                if *tracks > photostore_doc::MAX_OPACITY_ANIMATION_TRACKS {
+                    return Err(FormatError::LimitExceeded(format!(
+                        "document contains more than {} opacity animation tracks",
+                        photostore_doc::MAX_OPACITY_ANIMATION_TRACKS
+                    )));
+                }
+                if *keys > photostore_doc::MAX_OPACITY_ANIMATION_KEYS {
+                    return Err(FormatError::LimitExceeded(format!(
+                        "document contains more than {} opacity animation keyframes",
+                        photostore_doc::MAX_OPACITY_ANIMATION_KEYS
+                    )));
+                }
+                validate_opacity_animation(animation)?;
+            }
+            if let ContentM::Group { children, .. } = &layer.content {
+                visit(children, tracks, keys)?;
+            }
+        }
+        Ok(())
+    }
+    visit(layers, &mut 0, &mut 0)?;
+    validate_position_layers(layers)
+}
+
 pub(crate) fn validate_opacity_document_layers(layers: &[Layer]) -> Result<()> {
     fn visit(layers: &[Layer], tracks: &mut usize, keys: &mut usize) -> Result<()> {
         for layer in layers {
             if let Some(animation) = &layer.opacity_animation {
-                *tracks = tracks.saturating_add(1); *keys = keys.saturating_add(animation.keys.len());
-                if *tracks > photostore_doc::MAX_OPACITY_ANIMATION_TRACKS || *keys > photostore_doc::MAX_OPACITY_ANIMATION_KEYS { return Err(FormatError::LimitExceeded("document opacity animation limits exceeded".into())); }
+                *tracks = tracks.saturating_add(1);
+                *keys = keys.saturating_add(animation.keys.len());
+                if *tracks > photostore_doc::MAX_OPACITY_ANIMATION_TRACKS || *keys > photostore_doc::MAX_OPACITY_ANIMATION_KEYS {
+                    return Err(FormatError::LimitExceeded("document opacity animation limits exceeded".into()));
+                }
                 validate_opacity_animation(animation)?;
             }
-            if let LayerContent::Group(group) = &layer.content { visit(&group.children, tracks, keys)?; }
+            if let LayerContent::Group(group) = &layer.content {
+                visit(&group.children, tracks, keys)?;
+            }
         }
         Ok(())
     }
-    visit(layers, &mut 0, &mut 0)
+    visit(layers, &mut 0, &mut 0)?;
+    fn positions(layers: &[Layer], tracks: &mut usize, keys: &mut usize) -> Result<()> {
+        for layer in layers {
+            if let Some(animation) = &layer.position_animation {
+                *tracks = tracks.saturating_add(1);
+                *keys = keys.saturating_add(animation.keys.len());
+                if *tracks > photostore_doc::MAX_POSITION_ANIMATION_TRACKS || *keys > photostore_doc::MAX_POSITION_ANIMATION_KEYS {
+                    return Err(FormatError::LimitExceeded("document position animation limits exceeded".into()));
+                }
+                validate_position_animation(animation)?;
+            }
+            if let LayerContent::Group(group) = &layer.content {
+                positions(&group.children, tracks, keys)?;
+            }
+        }
+        Ok(())
+    }
+    positions(layers, &mut 0, &mut 0)
 }
 
 fn too_deep() -> FormatError {
@@ -105,7 +174,13 @@ fn recording_dimensions(bytes: &[u8], format: photostore_codecs::Format) -> Resu
                 if marker == 0xd8 || (0xd0..=0xd7).contains(&marker) || marker == 0x01 {
                     continue;
                 }
-                let len = u16::from_be_bytes(bytes.get(i..i + 2).ok_or_else(|| FormatError::corrupt("recording JPEG has a truncated segment length"))?.try_into().map_err(|_| FormatError::corrupt("recording JPEG has a malformed segment length"))?) as usize;
+                let len = u16::from_be_bytes(
+                    bytes
+                        .get(i..i + 2)
+                        .ok_or_else(|| FormatError::corrupt("recording JPEG has a truncated segment length"))?
+                        .try_into()
+                        .map_err(|_| FormatError::corrupt("recording JPEG has a malformed segment length"))?,
+                ) as usize;
                 if len < 2 || i.checked_add(len).is_none_or(|end| end > bytes.len()) {
                     return Err(FormatError::corrupt("recording JPEG has a truncated segment"));
                 }
@@ -358,6 +433,7 @@ fn layer_m(l: &Layer, sink: &mut dyn Sink) -> LayerM {
         advanced: l.advanced,
         video: l.video.as_ref().map(|v| video_m(v, sink)),
         opacity_animation: l.opacity_animation.clone(),
+        position_animation: l.position_animation.clone(),
         private_recording: l.private_recording,
     }
 }
@@ -472,7 +548,15 @@ impl Loader<'_> {
         let frames = m.frames.iter().map(|f| self.surface(f)).collect::<Result<Vec<_>>>()?;
         let mut frame_delays_ms = m.frame_delays_ms.clone();
         frame_delays_ms.resize(frames.len(), 0);
-        Ok(photostore_doc::VideoData { frames, frame_delays_ms, keyframes: m.keyframes.clone(), source: m.source.clone(), fps: m.fps, playback: m.playback, show_altered: m.show_altered })
+        Ok(photostore_doc::VideoData {
+            frames,
+            frame_delays_ms,
+            keyframes: m.keyframes.clone(),
+            source: m.source.clone(),
+            fps: m.fps,
+            playback: m.playback,
+            show_altered: m.show_altered,
+        })
     }
 
     fn surface(&mut self, m: &SurfaceM) -> Result<Surface> {
@@ -682,6 +766,7 @@ impl Loader<'_> {
             advanced: m.advanced,
             video: m.video.as_ref().map(|v| self.video(v)).transpose()?,
             opacity_animation: m.opacity_animation.clone(),
+            position_animation: m.position_animation.clone(),
             private_recording: m.private_recording,
         })
     }

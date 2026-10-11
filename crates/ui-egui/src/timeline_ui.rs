@@ -66,6 +66,8 @@ pub struct TimelineUi {
     #[serde(skip)]
     pub(crate) opacity: crate::opacity_ui::State,
     #[serde(skip)]
+    pub(crate) position: crate::position_ui::State,
+    #[serde(skip)]
     loop_error: String,
 }
 
@@ -108,6 +110,7 @@ impl std::fmt::Debug for TimelineUi {
             .field("loop_editor_open", &self.loop_editor_open)
             .field("onion_editor_open", &self.onion_editor_open)
             .field("opacity_pending_disable", &self.opacity.pending_disable.is_some())
+            .field("position_pending_disable", &self.position.pending_disable.is_some())
             .finish()
     }
 }
@@ -176,7 +179,7 @@ pub fn checked(app: &PhotoStoreApp, id: &str) -> Option<bool> {
 
 /// Ids this module owns (for parity / enablement).
 pub fn handles(id: &str) -> bool {
-    matches!(id, "window.panel.timeline" | "timeline.playPause" | "timeline.stop" | "timeline.setLoop" | "timeline.setOnionSkinSettings" | "timeline.toggleOpacityAnimation" | "timeline.setOpacityKeyframe" | "timeline.deleteOpacityKeyframe")
+    matches!(id, "window.panel.timeline" | "timeline.playPause" | "timeline.stop" | "timeline.setLoop" | "timeline.setOnionSkinSettings" | "timeline.toggleOpacityAnimation" | "timeline.setOpacityKeyframe" | "timeline.deleteOpacityKeyframe" | "timeline.setPositionAnimation" | "timeline.togglePositionAnimation" | "timeline.setPositionKeyframe" | "timeline.deletePositionKeyframe" | "timeline.setPosition")
 }
 
 pub(crate) fn open_loop_editor(app: &mut PhotoStoreApp) -> Result<(), String> {
@@ -229,6 +232,31 @@ pub fn menu(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, params: &Val
     if matches!(id, "timeline.setOpacityKeyframe" | "timeline.deleteOpacityKeyframe") && empty_params {
         let Some((doc_id, layer_id, frame)) = app.session.active().and_then(|st| Some((st.doc.id, st.active_layer?, st.doc.timeline.as_ref()?.current))) else {
             return Some(Err("Select a layer in a timeline before editing an opacity keyframe".into()));
+        };
+        return Some(app.run(id, json!({"document": doc_id.0, "layer": layer_id.0, "frame": frame})));
+    }
+    if id == "timeline.togglePositionAnimation" && empty_params {
+        let Some((doc_id, layer_id, keyed)) = app.session.active().and_then(|st| {
+            let layer_id = st.active_layer?;
+            let layer = st.doc.layer(layer_id)?;
+            Some((st.doc.id, layer_id, layer.position_animation.as_ref().is_some_and(|a| a.enabled && !a.keys.is_empty())))
+        }) else { return Some(Err("Select a layer before toggling position animation".into())); };
+        let target = json!({"document": doc_id.0, "layer": layer_id.0});
+        if let Some(reason) = app.session.disabled_reason_with("timeline.togglePositionAnimation", &target) { return Some(Err(reason)); }
+        if keyed {
+            let frame = app.session.active().and_then(|st| st.doc.timeline.as_ref().map(|t| t.current)).unwrap_or(0);
+            let track = app.session.active().and_then(|st| st.doc.layer(layer_id)).and_then(|l| l.position_animation.as_ref());
+            let source = track.map_or((0, 0), |a| if a.enabled { a.sampled_value(frame) } else { a.applied_value });
+            let history = app.session.active().map(|st| (st.history.past_len(), st.history.future_len())).unwrap_or_default();
+            let signature = crate::position_ui::track_signature(track);
+            app.ui.timeline.position.pending_disable = Some(crate::position_ui::PendingDisable { doc: doc_id, layer: layer_id, frame, source, history, signature });
+            return Some(Ok(Value::Null));
+        }
+        return Some(app.run("timeline.togglePositionAnimation", target));
+    }
+    if matches!(id, "timeline.setPositionKeyframe" | "timeline.deletePositionKeyframe") && empty_params {
+        let Some((doc_id, layer_id, frame)) = app.session.active().and_then(|st| Some((st.doc.id, st.active_layer?, st.doc.timeline.as_ref()?.current))) else {
+            return Some(Err("Select a layer in a timeline before editing a position keyframe".into()));
         };
         return Some(app.run(id, json!({"document": doc_id.0, "layer": layer_id.0, "frame": frame})));
     }
@@ -488,6 +516,10 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                             for (_, _, layer) in doc.walk() {
                                 if layer.name == "Background" && layer.locks.position { continue; }
                                 if let Some(next) = crate::opacity_ui::row(app, ui, doc, layer, tl.current, tl.work_start, tl.work_end, !doc.effective_locks(layer.id).all) { act = Some(next); }
+                                if layer.video.is_none()
+                                    && !matches!(layer.content, photostore_doc::LayerContent::Group(_) | photostore_doc::LayerContent::Fill(_) | photostore_doc::LayerContent::Adjustment(_))
+                                    && let Some(next) = crate::position_ui::row(app, ui, doc, layer, tl.current, tl.work_start, tl.work_end, { let locks = doc.effective_locks(layer.id); !locks.all && !locks.position })
+                                { act = Some(next); }
                             }
                         }
                     });

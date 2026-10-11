@@ -99,7 +99,7 @@ store expose and persist the same setting; scripts keep using canonical command 
 | `layer.newAdjustmentLayer.hueSaturation` | `{"hue":30,"saturation":10}` |
 | `paint.stroke` | `{"points":[[x,y,pressure],…],"size":20,"color":"#ff0000"}` |
 | `select.rect` | `{"x":0,"y":0,"width":100,"height":50,"mode":"add","ellipse":false}` |
-| `document.inspect` | `{}`: layer tree, history, selection bounds |
+| `document.inspect` | `{}`: layer tree, history, selection bounds, and the document's actual numeric `id`. The `positionAnimation` object on an inspected layer is compact (`enabled`, `staticValue`, `appliedValue`, `keyCount`) and is omitted when no Position animation exists. The `document` selector on `document.inspect` is an open-document INDEX; timeline Position commands target the document's actual `id` (`DocId`). |
 | `document.pixel` | `{"x":10,"y":10}`: composite RGBA |
 | `document.presets.list` | `{}` → `{presets:[{name,settings}]}`: saved New Document configurations |
 | `document.presets.save` | `{"name":"Product square","settings":{"width":1600,"height":1600,"background":"transparent"}}`: save a snapshot; names are trimmed, 1–255 characters, and ASCII case-insensitive duplicates are rejected |
@@ -305,10 +305,10 @@ no MCP framing, no app start-up per command. Configure its file access with the 
 | `engine.execute` | `{command, params?, wait?}`: any engine command (`wait: false` starts a long one as a background job: `{job, pending}`) |
 | `jobs.list` / `jobs.cancel` | `{}` / `{job?}`: background jobs; cancel one or all. Every request (and MCP tool call) first applies the jobs that finished, so `doc.save`, `doc.inspect`, `doc.render` and `session.list` include a finished job's result without polling `jobs.list` first |
 | `engine.commands` | `{filter?}`: registry with params docs and enablement |
-| `session.list` | open documents and the active index |
+| `session.list` | open documents and the active index; each document includes both its open-document `index` and actual numeric `id` |
 | `doc.open` / `doc.new` | `{path}` / `file.new` params |
 | `doc.save` | `{path?, format?, quality?, index?, tiffLayers?}` (`.pcraft` native, else export by extension; set `tiffLayers: true` to preserve TIFF layers rather than exporting a flattened TIFF). Without `path` only a PSD, PSB or `.pcraft` document is written back to its own file, in its own format; anything else is an error and the file is left unchanged. A successful layered save (PSD, PSB or `.pcraft`) records the current revision as saved and makes the file the document's path, so `session.list` reports `dirty: false`; a flat export is a copy and leaves the document dirty |
-| `doc.inspect` | `{index?}`: same JSON as `document.inspect` |
+| `doc.inspect` | `{index?}`: same JSON as `document.inspect`, including the actual numeric document `id`; `index` selects an open-document INDEX, while timeline Position commands target that document `id` |
 | `doc.render` | `{index?, maxSide? (1024; 0 = full), path?}`: PNG to `path`, else `{mime, base64}` |
 | `doc.select` / `doc.close` | `{index}` / `{index?}` |
 | `batch` | `{steps: [{command, params?, wait?} \| {method, params?}], stopOnError? (true)}` → `{completed, failed, results}` (a step with `wait: false` starts a long command as a background job, like `engine.execute`) |

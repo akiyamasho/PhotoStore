@@ -261,6 +261,8 @@ pub struct LayerM {
     pub video: Option<VideoDataM>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity_animation: Option<photostore_doc::OpacityAnimation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_animation: Option<photostore_doc::PositionAnimation>,
     #[serde(default)]
     pub private_recording: bool,
 }

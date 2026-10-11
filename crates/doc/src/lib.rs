@@ -38,10 +38,10 @@ pub use effects::{
 };
 pub use mode::{ColorTable, Duotone, DuotoneInk, StackMode};
 pub use pattern::Pattern;
-pub use recording::{Recording, RecordingFrame, RecordingQuality, RecordingResolution, RecordingSettings};
 pub use photostore_color::{BlendMode, Color, ColorMode, PixelFormat, SampleType};
 pub use photostore_geom::{Affine, Rect, Size};
 pub use photostore_raster::Surface;
+pub use recording::{Recording, RecordingFrame, RecordingQuality, RecordingResolution, RecordingSettings};
 use serde::{Deserialize, Serialize};
 pub use slices::{Slice, SliceKind, SliceOrigin, Slices};
 pub use text_styles::TextStyles;
@@ -49,7 +49,12 @@ pub use variables::{DataSet, DataValue, PixelAlign, PixelMethod, VarKind, Variab
 pub use vector::{
     ClippingPath, FillRule, Knot, LineCap, LineJoin, LiveShape, NamedPath, Path, PathOp, ShapeLayer, ShapeStroke, StrokeAlign, Subpath, VectorMask,
 };
-pub use video::{AudioClip, AudioTrack, FrameEffectsState, FrameLayerState, LayerTimelineRange, OnionSkinBlend, OnionSkinSettings, OpacityAnimation, OpacityInterpolation, OpacityKeyframe, Timeline, TimelineLoop, TimelineMode, VideoData, VideoKeyframe, VideoPlayback, VideoSource, MAX_OPACITY_ANIMATION_FRAME, MAX_OPACITY_ANIMATION_KEYS, MAX_OPACITY_ANIMATION_TRACKS};
+pub use video::{
+    AudioClip, AudioTrack, FrameEffectsState, FrameLayerState, LayerTimelineRange, MAX_OPACITY_ANIMATION_FRAME, MAX_OPACITY_ANIMATION_KEYS,
+    MAX_OPACITY_ANIMATION_TRACKS, MAX_POSITION_ANIMATION_FRAME, MAX_POSITION_ANIMATION_KEYS, MAX_POSITION_ANIMATION_TRACKS, MAX_POSITION_COORDINATE,
+    OnionSkinBlend, OnionSkinSettings, OpacityAnimation, OpacityInterpolation, OpacityKeyframe, PositionAnimation, PositionInterpolation, PositionKeyframe,
+    Timeline, TimelineLoop, TimelineMode, VideoData, VideoKeyframe, VideoPlayback, VideoSource,
+};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -628,6 +633,8 @@ pub struct Layer {
     /// Layer › Video Layers frame stack (None for a normal layer).
     pub video: Option<VideoData>,
     pub opacity_animation: Option<OpacityAnimation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_animation: Option<PositionAnimation>,
     /// Excluded from native recording/export while remaining visible on the canvas.
     pub private_recording: bool,
 }
@@ -657,6 +664,7 @@ impl Layer {
             advanced: AdvancedBlending::default(),
             video: None,
             opacity_animation: None,
+            position_animation: None,
             private_recording: false,
         }
     }
