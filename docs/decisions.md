@@ -266,10 +266,14 @@ claim a stale-source or post-release shift fix. Issue #10 remains an off-by-defa
 enhancement: the current recording implementation is acceptable, and no capture, measurement,
 benchmark, or enablement is added by this sweep.
 
-Implementation, compiler evidence, runtime acceptance, and publication are separate statuses. This
-documentation checkpoint records source work in progress; the required compiler pass and `main`
-push are pending. No issue is closed from documentation alone, and no version bump, release,
-reinstall, or screenshot is implied.
+Implementation, compiler evidence, runtime acceptance, and publication are separate statuses. The
+integrated source commit `d4cd1c035d1e43a74ef4b594056e7cc71199b78e` passed the required command
+`cargo check --locked --offline -p photostore --features dev-install` with the shared target,
+single Cargo job, Rayon one, and `nice -n 10`; the receipt is
+`/tmp/photostore-sweep-check-final-20261012.log`. The documentation follow-up does not change
+compiled source and requires no rebuild. Manual runtime acceptance was not run. No issue is closed
+from documentation alone, and no version bump, release, reinstall, screenshot, or UI-verified claim
+is implied; live GitHub state is authoritative for source delivery and issue closure.
 
 ## 2026-10-11: 0.16.1 Free Transform pointer scaling
 

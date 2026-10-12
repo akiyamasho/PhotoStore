@@ -37,3 +37,6 @@ not establish negligible total memory overhead, and no representative RSS measur
 for this sweep. No new recording, measurement, benchmark,
 or default enablement is introduced until a future request supplies a memory budget and accepts
 representative measurement work.
+
+For this sweep, recording remains off by default and the conditional enhancement remains deferred.
+No runtime acceptance was run, and no automatic enablement or release verification is claimed.

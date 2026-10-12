@@ -9,16 +9,20 @@ comments.
 
 | Issue | Report | Disposition | Status at this checkpoint |
 | --- | --- | --- | --- |
-| [#7](https://github.com/akiyamasho/PhotoStore/issues/7) | Give Fill, Pen, and Lasso distinct recognizable toolbar icons | Dedicated original icons are in source work. | Implementation in progress; intended to close after the landed commit reaches `main`. |
-| [#8](https://github.com/akiyamasho/PhotoStore/issues/8) | Reset canvas rotation with Esc | Escape resets the active canvas view after ordinary cancel, modal, and text-edit precedence. | Implementation in progress; intended to close after the landed commit reaches `main`. |
-| [#9](https://github.com/akiyamasho/PhotoStore/issues/9) | Clone Stamp source marker and preview after stroke release | Selected/candidate source marker and transformed brush-region outline are implemented while hovering or selecting with Alt; destination overlay is hidden during Alt and engine mapping is canonical. | Source implementation complete; intended to close after the landed commit reaches `main`. The supplied reproduction has Aligned enabled, whose fixed source/destination offset intentionally makes the source region follow the pointer after release. Normal post-release slot math was equivalent before and after resolver cleanup; no stale-source fix is claimed. |
+| [#7](https://github.com/akiyamasho/PhotoStore/issues/7) | Give Fill, Pen, and Lasso distinct recognizable toolbar icons | Dedicated original icons are implemented, with tint and DPI-aware rasterization. | Source implementation complete; live GitHub state is authoritative for closure after main delivery. |
+| [#8](https://github.com/akiyamasho/PhotoStore/issues/8) | Reset canvas rotation with Esc | Normal idle canvas Escape routes through the existing UI reset while preserving cancel, text-edit, and modal priority; zoom and center are unchanged. | Source implementation complete; live GitHub state is authoritative for closure after main delivery. |
+| [#9](https://github.com/akiyamasho/PhotoStore/issues/9) | Clone Stamp source marker and preview after stroke release | Current hover/candidate sampled-region feedback is implemented with a canonical mapping and first-stroke source marker; destination overlay is hidden during Alt. | Source implementation complete; live GitHub state is authoritative for closure after main delivery. The user-confirmed reproduction has Aligned enabled, whose fixed source/destination offset intentionally makes the source region follow the pointer after release. Normal post-release slot math was equivalent before and after resolver cleanup; no changed Aligned behavior is claimed. |
 | [#10](https://github.com/akiyamasho/PhotoStore/issues/10) | Enable timelapse by default when memory overhead is low | Deferred. Recording stays off by default; no capture, measurement, benchmark, or enablement is added. | Open pending an explicit memory budget and representative measurement if the default should change. |
-| [#11](https://github.com/akiyamasho/PhotoStore/issues/11) | Persist Auto-select Layer on/off across restarts | `tools.moveAutoSelect` is serialized and restores the last value; the default is `true`. | Implementation in progress; intended to close after the landed commit reaches `main`. |
+| [#11](https://github.com/akiyamasho/PhotoStore/issues/11) | Persist Auto-select Layer on/off across restarts | `tools.moveAutoSelect` is serialized with default `true`, persists across both theme bars and Move tool presets, and loads the saved value. | Source implementation complete; live GitHub state is authoritative for closure after main delivery. |
 
-The source status is separate from verification and delivery. At this checkpoint the required
-compiler pass is pending and the `main` push is pending. No issue is closed, no version bump or
-release is created, and no reinstall or screenshot is implied. A later delivery update may revise
-this file's status lines after the compiler and push complete.
+The source status is separate from verification and delivery. The integrated source commit
+`d4cd1c035d1e43a74ef4b594056e7cc71199b78e` passed the required compiler command
+`cargo check --locked --offline -p photostore --features dev-install` with the shared target,
+single Cargo job, Rayon one, and `nice -n 10`; the receipt is
+`/tmp/photostore-sweep-check-final-20261012.log`. The documentation follow-up does not change
+compiled source and requires no rebuild. Manual runtime acceptance was not run. No version bump,
+release, reinstall, screenshot, or UI-verified claim is made; live GitHub state is authoritative
+for issue closure and source delivery.
 
 ## Manual acceptance instructions
 
