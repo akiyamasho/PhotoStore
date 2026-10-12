@@ -270,3 +270,10 @@ Implementation, compiler evidence, runtime acceptance, and publication are separ
 documentation checkpoint records source work in progress; the required compiler pass and `main`
 push are pending. No issue is closed from documentation alone, and no version bump, release,
 reinstall, or screenshot is implied.
+
+## 2026-10-11: 0.16.1 Free Transform pointer scaling
+
+Free Transform corner and edge drags resize freely by default; Shift constrains proportions for
+both handle types. The legacy scaling preference remains stored for compatibility but no longer
+changes the visible pointer gesture. Lasso selection state continues to receive transform pointer
+movement through drag and release.

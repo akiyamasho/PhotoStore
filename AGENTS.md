@@ -18,28 +18,69 @@ Input from files, commands, automation, and users is untrusted. Return actionabl
 
 Use `CARGO_BUILD_JOBS=1` for builds and tests. Use the shared Cargo target directory; do not create per-agent 10 GB target directories. Avoid fetching corpora or running heavy builds unless the task requires it. Do not run discretionary QA or validation passes unless the user explicitly opts in.
 
-## Recording and release documentation
+## Recording and release evidence
 
-Recording is off by default. Do not enable capture, tracing, or session recording as a
-side effect of normal startup, development, release, or screenshot work.
+Recording is off by default. Do not enable capture, tracing, or session recording as a side effect
+of normal startup, development, release, or screenshot work.
 
-Every release must document each released feature or fix with a real PhotoStore screenshot.
-Capture the relevant flow with disposable demo documents only; never include the owner's
-private, unsaved, or unrelated artwork. Store compressed, readable assets under
-`docs/screenshots/<version>/` as lossless PNG or readable WebP. The assets must be committed
-before the final release tag. Release Markdown and the README must reference the actual
-committed images using links that remain valid for this private GitHub repository. Keep a
-short evidence record for each image (feature/fix, demo document, source version, and known
-limits). Statuses must distinguish implemented, preview, verified, and published. Do not
-claim full Photoshop parity from menu wiring or an unverified UI path.
+Screenshots are captured when the user requests them or a specific product/evidence workflow
+requires them; they are not a gate for an ordinary bug-fix release. When requested, use real
+PhotoStore UI captures and disposable demo documents only. Never include private, unsaved, or
+unrelated artwork. Store readable PNG or WebP files under `docs/screenshots/<version>/`. Record the
+feature/fix, demo document, source version, capture method, and known limits. Release Markdown and
+the README should link to the actual repository images when they are available. Distinguish
+implemented, preview, verified, and published status, and do not claim full Photoshop parity from
+menu wiring or an unverified UI path.
 
-When a release needs new screenshots, use this order: implement and run the required
-compiler; make one provisional preview build, labeled as a preview and treated as one
-shared-target job; capture and legibility-check the UI screenshots; commit the docs and
-README image references; tag the exact source SHA; then perform the incremental final
-rebuild and verify its exact SHA and package integrity before publishing. Never retag or
-publish provisional binaries. Older immutable tags remain unchanged. A current release
-may be supplemented with a screenshot link only when its source version is verified.
+A requested screenshot may be captured from the final release binary and committed with the release
+documentation. Verified, source-version-specific screenshots and their documentation may also be
+added in a later documentation-only commit without retagging or rebuilding the binary. Documentation-
+or workflow-only commits may follow an immutable source tag; they do not move that tag or change the
+source SHA of its binary artifacts, and they do not require a binary rebuild or retag. Do not create
+a provisional preview build solely to satisfy a screenshot gate. State when synthetic automation
+input was used; it does not independently verify native OS input routing.
+
+## Authorized bug-fix release transaction
+
+When the user has explicitly authorized a stable release and production promotion in the active
+session, that authorization is sufficient; do not ask again. Before a release transaction, obtain an
+acknowledged scheduler-suppression handoff that prevents all redundant development/compiler jobs;
+a queue lock alone is insufficient. Suppress scheduling before the local build and keep suppression
+active through local installation, any authorized push/tag/publication, production-close waits, and
+documentation-only follow-up pushes. Resolve the production-close prerequisite before starting the
+final build; if an unexpected wait occurs, retain suppression throughout it.
+
+For an ordinary authorized bug-fix release, build the app and CLI locally once from one exact source
+SHA. That single local release build is the required compiler/build pass. Do not run a separate
+compiler check, preview build, second release build, or any extra check/test/QA after required
+verification. Check version, full source SHA, architecture, signature status, package integrity, and
+checksums once against the final artifacts. Immediately install locally from those same verified
+artifacts. A tag identifies the source SHA of the locally built package; tagging, pushing, or
+creating/publishing a GitHub release must never trigger another development or production build.
+There is no GitHub Actions or GitHub-hosted CI build. If GitHub publication is separately authorized,
+upload only the already-built and verified app/CLI artifacts; publication is delivery, not a build
+trigger.
+
+Queue ownership alone never justifies starting another development build. If an already queued or
+running job is proven to be a redundant build of the exact release SHA, narrowly and gracefully
+cancel or suppress only that duplicate; do not wait behind it. Never cancel or interrupt unrelated
+jobs or applications. If an unrelated job owns the shared queue, wait for it to finish or report that
+blocker without starting duplicate work. Never recompile identical executable inputs for
+documentation-only changes; follow-up commits retain the immutable tag as the artifact source SHA
+and require no binary rebuild or retag.
+
+If a mount or packaging verification step partially fails, retry only that owned step with the same
+artifacts; do not repeat a passed compiler or release build. Use a documented fallback after a hung
+tool failure, and report concrete blockers rather than retrying the same path indefinitely. Avoid
+narrating unchanged poll results while preserving higher-priority progress updates.
+
+Never replace, restart, close, or kill an active production app; never modify its private preferences
+or recovery state. Never resume the scheduler in a state that can replay already-built release
+source. Keep scheduler suppression active until a no-build acknowledgement/baseline confirms the
+final main, tag, release, and artifact state, including documentation-only pushes. If no supported
+suppression/acknowledgement handoff exists, pause scheduling safely and leave it paused with a clear
+report. Do not re-enable the local scheduler without an explicit user request and a proven no-replay
+handoff.
 
 ## Changes
 
@@ -75,20 +116,29 @@ a time, using persistent checkouts outside this changing worktree, the shared Ca
 and `nice -n 10`. Polling uses `gh` authentication without copying or logging credentials and
 validates all refs before checkout.
 
-Every new main SHA builds and installs the isolated `PhotoStore-dev` bundle with the
-`dev-install` feature and the separate `/Users/computer/Desktop/dev/tools/Animation/photostore_keys.dev.json`
-export, unless a live owned dev watcher or its child process is active, in which case the CI install
-is deferred. A production build is triggered only by a published, non-draft, non-prerelease GitHub
-Release; the release tag is resolved to its exact commit SHA before building. A pushed tag,
-draft, prerelease, PR, or release creation alone never promotes production. The verified
-production bundle is staged and atomically installed at `/Applications/PhotoStore.app` only
-while the app is not running; otherwise it is deferred. The watcher never kills, restarts,
-focuses, closes, or overwrites an active production app, does not modify production
-preferences/recovery, preserves an old-bundle backup, and does not launch apps automatically.
+Legacy implementation note: the watcher was configured to build a development bundle for each
+new `main` SHA and to build production after a published stable GitHub Release. Those legacy
+triggers are not permitted for manual releases or as a way to promote locally built artifacts. Keep
+the LaunchAgent paused; never let a push, tag, or release publication trigger a development or
+production rebuild. Re-enable only after a separately authorized watcher change removes those
+release rebuild triggers and a supported no-replay suppression/baseline handoff is proven. The prior
+installer was designed to stage and atomically install only while production is not running, without
+modifying production preferences/recovery or launching automatically; that behavior does not
+supersede this paused-scheduler policy.
 The existing native watcher file `/Users/computer/Desktop/dev/tools/Animation/photostore_keys.json`
 remains canonical.
 
-Do not enable the LaunchAgent until authoring/review and initial promotion are complete. Use
-`--bootstrap` or `--observe-only` for safe initialization. Human review remains required to
-create/publish releases and tags; automatic installation is authorized only for published
-stable releases. Every released feature/fix still requires the screenshot evidence rules above.
+The local CI LaunchAgent is paused by default and is not GitHub Actions or GitHub-hosted CI. The
+existing watcher may poll `main` and GitHub Releases and contains build/install triggers; do not
+reactivate it for a manual release. In particular, a `main` push, tag, or GitHub release must never
+trigger redundant development or production builds. Stable releases use the local app-plus-CLI build
+and immediate local installation described above; if publication is separately authorized, upload
+those exact artifacts only.
+
+Do not re-enable the scheduler without an explicit user request and a proven no-replay suppression
+handoff. `--bootstrap` is first-use-only and `--observe-only` does not advance an existing baseline;
+never claim either option suppresses or safely resumes the current watcher. Keep it paused if a
+supported handoff is unavailable. After a manual release, suppression must cover final `main`, tag,
+release, artifacts, and any documentation-only pushes through a no-build acknowledgement/baseline;
+never resume a scheduler that could replay already-built source. Do not edit watcher code as an ad hoc
+release workaround. This workflow does not imply a change to watcher code or its existing behavior.
