@@ -12,7 +12,7 @@ comments.
 | [#7](https://github.com/akiyamasho/PhotoStore/issues/7) | Give Fill, Pen, and Lasso distinct recognizable toolbar icons | Dedicated original icons are implemented, with tint and DPI-aware rasterization. | Source implementation complete; live GitHub state is authoritative for closure after main delivery. |
 | [#8](https://github.com/akiyamasho/PhotoStore/issues/8) | Reset canvas rotation with Esc | Normal idle canvas Escape routes through the existing UI reset while preserving cancel, text-edit, and modal priority; zoom and center are unchanged. | Source implementation complete; live GitHub state is authoritative for closure after main delivery. |
 | [#9](https://github.com/akiyamasho/PhotoStore/issues/9) | Clone Stamp source marker and preview after stroke release | Current hover/candidate sampled-region feedback is implemented with a canonical mapping and first-stroke source marker; destination overlay is hidden during Alt. | Source implementation complete; live GitHub state is authoritative for closure after main delivery. The user-confirmed reproduction has Aligned enabled, whose fixed source/destination offset intentionally makes the source region follow the pointer after release. Normal post-release slot math was equivalent before and after resolver cleanup; no changed Aligned behavior is claimed. |
-| [#10](https://github.com/akiyamasho/PhotoStore/issues/10) | Enable timelapse by default when memory overhead is low | Deferred. Recording stays off by default; no capture, measurement, benchmark, or enablement is added. | Open pending an explicit memory budget and representative measurement if the default should change. |
+| [#10](https://github.com/akiyamasho/PhotoStore/issues/10) | Enable timelapse recording by default when memory overhead is low | Closed after the accepted fallback review. Recording stays off by default; no capture, measurement, benchmark, or enablement is added. | Closed on GitHub with the memory assessment and accepted recording-off fallback. |
 | [#11](https://github.com/akiyamasho/PhotoStore/issues/11) | Persist Auto-select Layer on/off across restarts | `tools.moveAutoSelect` is serialized with default `true`, persists across both theme bars and Move tool presets, and loads the saved value. | Source implementation complete; live GitHub state is authoritative for closure after main delivery. |
 
 The source status is separate from verification and delivery. The integrated source commit
@@ -20,9 +20,11 @@ The source status is separate from verification and delivery. The integrated sou
 `cargo check --locked --offline -p photostore --features dev-install` with the shared target,
 single Cargo job, Rayon one, and `nice -n 10`; the receipt is
 `/tmp/photostore-sweep-check-final-20261012.log`. The documentation follow-up does not change
-compiled source and requires no rebuild. Manual runtime acceptance was not run. No version bump,
-release, reinstall, screenshot, or UI-verified claim is made; live GitHub state is authoritative
-for issue closure and source delivery.
+compiled source and requires no rebuild. Manual runtime acceptance was not run. No release,
+reinstall, screenshot, or UI-verified claim is made; live GitHub state is authoritative for issue
+closure and source delivery. The 0.16.2 version bump and final release transaction are
+documented separately; the prior 0.16.1 screenshots remain historical and are not new 0.16.2
+evidence.
 
 ## Manual acceptance instructions
 
@@ -43,5 +45,4 @@ manual pass; no checks were run while preparing this document.
    during this documentation pass.
 4. Change Auto-select Layer, quit PhotoStore normally, reopen it, and confirm the chosen on/off
    value is restored. On a fresh preference state, confirm the default is on.
-5. For timelapse, create a new document without opting in and confirm recording remains off. Do not
-   enable it automatically or infer a safe memory threshold from the pixel-size calculations alone.
+5. For timelapse, create a new document without opting in and confirm recording remains off. This accepted fallback closes the conditional request; do not enable it automatically or infer a safe memory threshold from the pixel-size calculations alone.

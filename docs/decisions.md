@@ -262,8 +262,8 @@ with the canonical engine mapping, and is intended to close after the landed com
 The supplied reproduction has Aligned enabled: that mode intentionally keeps a fixed
 source/destination offset, so the source region follows the pointer after release. Normal
 post-release slot math was equivalent before and after resolver cleanup, so this pass does not
-claim a stale-source or post-release shift fix. Issue #10 remains an off-by-default, deferred
-enhancement: the current recording implementation is acceptable, and no capture, measurement,
+claim a stale-source or post-release shift fix. Issue #10 is closed under the accepted fallback:
+the current recording implementation remains off by default, and no capture, measurement,
 benchmark, or enablement is added by this sweep.
 
 Implementation, compiler evidence, runtime acceptance, and publication are separate statuses. The
@@ -281,3 +281,21 @@ Free Transform corner and edge drags resize freely by default; Shift constrains 
 both handle types. The legacy scaling preference remains stored for compatibility but no longer
 changes the visible pointer gesture. Lasso selection state continues to receive transform pointer
 movement through drag and release.
+
+## 2026-10-12: 0.16.2 bug-fix release preparation
+
+The 0.16.2 source release carries the four delivered fixes from the open-issue sweep: dedicated
+Fill, Pen, and Lasso glyphs; Escape reset for an idle canvas view while preserving cancel, text-edit,
+and modal priority; Clone Stamp current hover/candidate sampled-region feedback with canonical
+first-stroke mapping and the user-confirmed Aligned fixed-offset behavior; and serialized
+`tools.moveAutoSelect` state with default `true` across the theme bars and Move tool presets.
+Timelapse remains off by default under the accepted fallback: encoded frames can retain up to
+256 MiB per document, raw RGBA8 frame sizes are approximately 7.91 MiB at 1920×1080 and 31.64 MiB
+at 3840×2160 before other allocations, and no representative RSS measurement was run. No automatic
+enablement is claimed.
+
+The release source is version 0.16.2 for the ARM64 app and CLI artifact pair. The prior 0.16.1
+screenshots remain historical and are not reused as 0.16.2 evidence. Source implementation,
+compiler/build, package verification, installation, runtime acceptance, and publication remain
+separate statuses; the final release transaction must produce the app and CLI once from one exact
+source SHA before local installation and any authorized publication.

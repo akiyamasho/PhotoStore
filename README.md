@@ -23,9 +23,17 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 ./target/release/photostore-cli --help
 ```
 
-## Latest preview screenshots
+## Current source release
 
-These 0.16.1 preview captures show a Lasso-selected pixel layer resized freely and then resized inward with Shift constraining its current aspect ratio. They document the candidate UI only; the preview is not a published release. See the [0.16.1 release notes](docs/releases/0.16.1.md) and [capture evidence](docs/screenshots/0.16.1/evidence.md).
+PhotoStore 0.16.2 contains the delivered toolbar icon, Escape view reset, Clone Stamp source
+feedback, and Auto-select persistence fixes. Timelapse recording remains off by default under the
+accepted memory fallback. The source release is prepared for the authorized ARM64 app and CLI
+artifacts; final compiler, package, installation, and publication evidence is tracked separately in
+the [0.16.2 release notes](docs/releases/0.16.2.md). Runtime acceptance is not claimed here.
+
+## Historical preview screenshots
+
+These 0.16.1 preview captures show a Lasso-selected pixel layer resized freely and then resized inward with Shift constraining its current aspect ratio. They remain historical preview evidence, not 0.16.2 release evidence. See the [0.16.1 release notes](docs/releases/0.16.1.md) and [capture evidence](docs/screenshots/0.16.1/evidence.md).
 
 ![Lasso selection resized freely](docs/screenshots/0.16.1/lasso-free-resize.png)
 
