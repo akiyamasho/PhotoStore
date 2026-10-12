@@ -25,11 +25,7 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 
 ## Current source release
 
-PhotoStore 0.16.2 contains the delivered toolbar icon, Escape view reset, Clone Stamp source
-feedback, and Auto-select persistence fixes. Timelapse recording remains off by default under the
-accepted memory fallback. The source release is prepared for the authorized ARM64 app and CLI
-artifacts; final compiler, package, installation, and publication evidence is tracked separately in
-the [0.16.2 release notes](docs/releases/0.16.2.md). Runtime acceptance is not claimed here.
+PhotoStore 0.16.2 is the [published stable ARM64 release](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.16.2), from source/tag SHA `a7a2dd6c306d2f4ce33bd3a6fe87044cac03d520`. It contains the delivered toolbar icon, Escape view reset, Clone Stamp source feedback, and Auto-select persistence fixes. Timelapse recording remains off by default under the accepted memory fallback. Build, installation, signature limits, and untested runtime status are recorded in the [0.16.2 release notes](docs/releases/0.16.2.md).
 
 ## Historical preview screenshots
 

@@ -299,3 +299,22 @@ screenshots remain historical and are not reused as 0.16.2 evidence. Source impl
 compiler/build, package verification, installation, runtime acceptance, and publication remain
 separate statuses; the final release transaction must produce the app and CLI once from one exact
 source SHA before local installation and any authorized publication.
+
+## 2026-10-12: 0.16.2 final delivery receipt
+
+The 0.16.2 source is delivered on `main` and immutable tag `v0.16.2` at
+`a7a2dd6c306d2f4ce33bd3a6fe87044cac03d520`. GitHub release
+`RE_kwDOVDxG7c4YeXjs` is published at
+https://github.com/akiyamasho/PhotoStore/releases/tag/v0.16.2. One combined ARM64 app-plus-CLI
+release build passed in 12m12s using the shared target, one Cargo job, Rayon one, and `nice -n 10`.
+The DMG SHA-256 is `c5750663625c9d1ad30986e8a98a0d15a0be781a670d919318b2df7e6e0fac8d`; the CLI ZIP
+SHA-256 is `e93ae784bed80553f8452f85f419f5fc514cf3fecad70b9d0e04cfbaa09ffeea`; GitHub asset
+metadata matched both digests and the checksum manifest.
+
+The app is installed at `/Applications/PhotoStore.app` with executable SHA-256
+`c6e2c3351e7685c3b23ff39e3c33cf6678c7d24dcfe01abb153f6efbfc6ad260`; the CLI is installed at
+`/Users/computer/tools_bin/photostore-cli` with executable SHA-256
+`26004fddb0e3ab810d5498740937f6fd5ab1d1fef5a61cf9b46e257a02e7dd85`. The previous app bundle is
+preserved at `/Applications/.PhotoStore.backup.v0.16.2.1791810390.app`. Artifacts are ad hoc signed
+and not notarized. The production app was not launched and no manual runtime, screenshot, or GUI
+acceptance was run.
