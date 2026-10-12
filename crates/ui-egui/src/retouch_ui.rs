@@ -272,27 +272,75 @@ pub fn set_source(app: &mut PhotoStoreApp, x: f64, y: f64) {
     app.ui.status_error = false;
 }
 
-/// Where the clone source is sampled from, shown only while a Clone Stamp or Healing Brush stroke
-/// is painted, as in Photoshop: setting the source (⌥-click) leaves nothing on the canvas (#668).
+/// Where the clone source is sampled from. While hovering, this keeps the source crosshair paired
+/// with the next stroke; while painting, it follows the stroke's first point and canonical map.
 pub fn source_marker_point(app: &PhotoStoreApp) -> Option<[f64; 2]> {
     if !matches!(app.active_tool(), Tool::CloneStamp | Tool::Healing) {
         return None;
     }
-    let at = app.drag.as_ref().filter(|d| matches!(d.tool, Tool::CloneStamp | Tool::Healing)).and_then(|d| d.points.last().map(|p| [p[0], p[1]]))?;
-    match (crate::preset_panels::clone_sample_point(app, Some(at)), app.ui.clone_offset, app.ui.clone_source) {
-        (Some(p), ..) => Some(p),
-        (None, Some(off), _) => Some([at[0] + off[0], at[1] + off[1]]),
-        (None, None, s) => s,
-    }
+    let at = app.drag.as_ref()
+        .filter(|d| matches!(d.tool, Tool::CloneStamp | Tool::Healing))
+        .and_then(|d| d.points.last().map(|p| [p[0], p[1]]))
+        .or(app.hover_doc)?;
+    crate::preset_panels::clone_sample_point(app, Some(at))
 }
 
-/// Crosshair at [`source_marker_point`].
-pub fn draw_source_marker(app: &PhotoStoreApp, painter: &egui::Painter, xf: &ViewXform) {
-    let Some(s) = source_marker_point(app) else { return };
+/// Crosshair and sampling outline at [`source_marker_point`]. During ⌥/Alt source selection the
+/// hovered document point is the candidate source, so the old saved source is not misleading.
+pub fn draw_source_marker(app: &PhotoStoreApp, painter: &egui::Painter, xf: &ViewXform, current: Option<[f64; 2]>) {
+    use photostore_engine::presets::clone_source::transform_matrix;
+    if !matches!(app.active_tool(), Tool::CloneStamp | Tool::Healing) {
+        return;
+    }
+    let selecting = painter.ctx().input(|i| i.modifiers.alt) || app.ui.shell.sticky_alt;
+    let (s, radius) = if selecting {
+        let Some(s) = current else { return };
+        let radius = f64::from(app.session.tools.brush.size) / 2.0;
+        (s, radius)
+    } else {
+        let at = app.drag.as_ref()
+            .filter(|d| matches!(d.tool, Tool::CloneStamp | Tool::Healing))
+            .and_then(|d| d.points.last().map(|p| [p[0], p[1]]))
+            .or(current);
+        let Some(at) = at else { return };
+        let Some(s) = crate::preset_panels::clone_sample_point(app, Some(at)) else { return };
+        let radius = app.session.tools.brush.size as f64 / 2.0;
+        (s, radius)
+    };
+    if !s.iter().all(|v| v.is_finite() && v.abs() < 1_000_000.0) || !radius.is_finite() || radius <= 0.0 {
+        return;
+    }
     let c = xf.to_screen(s[0] as f32, s[1] as f32);
+    let first = app.drag.as_ref()
+        .filter(|d| matches!(d.tool, Tool::CloneStamp | Tool::Healing))
+        .and_then(|d| d.points.first().map(|p| [p[0], p[1]]).or(Some(d.start)))
+        .or(current)
+        .unwrap_or(s);
+    let matrix = crate::preset_panels::clone_mapping(app, first)
+        .map(|m| m.m)
+        .or_else(|| {
+            let slot = app.session.presets.clone.active();
+            Some(transform_matrix(slot.scale, slot.rotation, slot.flip_h, slot.flip_v))
+        })
+        .unwrap_or([1.0, 0.0, 0.0, 1.0]);
+    let mut points = Vec::with_capacity(65);
+    let mut valid = true;
+    for i in 0..=64 {
+        let a = i as f64 * std::f64::consts::TAU / 64.0;
+        let (dx, dy) = (radius * a.cos(), radius * a.sin());
+        let (x, y) = (s[0] + matrix[0] * dx + matrix[1] * dy, s[1] + matrix[2] * dx + matrix[3] * dy);
+        if !x.is_finite() || !y.is_finite() || x.abs() >= 1_000_000.0 || y.abs() >= 1_000_000.0 {
+            valid = false;
+            break;
+        }
+        points.push(xf.to_screen(x as f32, y as f32));
+    }
     for (w, col) in [(3.0, Color32::from_black_alpha(160)), (1.0, Color32::WHITE)] {
         painter.line_segment([c - vec2(7.0, 0.0), c + vec2(7.0, 0.0)], Stroke::new(w, col));
         painter.line_segment([c - vec2(0.0, 7.0), c + vec2(0.0, 7.0)], Stroke::new(w, col));
+        if valid && points.len() == 65 {
+            painter.add(egui::Shape::line(points.clone(), Stroke::new(w, col)));
+        }
     }
 }
 

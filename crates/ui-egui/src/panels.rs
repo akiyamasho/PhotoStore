@@ -1130,7 +1130,8 @@ pub fn options_bar(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                     Tool::Type | Tool::VerticalType => crate::type_tool::options_bar(app, ui),
                     Tool::Move if t.pro => {
                         let o = &mut app.ui.tool_options;
-                        widgets::checkbox(ui, &mut o.move_auto_select, tl!("Auto-Select:"));
+                        let changed = widgets::checkbox(ui, &mut o.move_auto_select, tl!("Auto-Select:")).changed();
+                        let value = o.move_auto_select;
                         widgets::dropdown(
                             ui,
                             "move-target",
@@ -1140,6 +1141,9 @@ pub fn options_bar(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                         );
                         widgets::vline(ui, 22.0);
                         widgets::checkbox(ui, &mut o.move_show_transform, tl!("Show Transform Controls"));
+                        if changed {
+                            crate::prefs_ui::set_move_auto_select(app, value);
+                        }
                         widgets::vline(ui, 22.0);
                         ui.spacing_mut().item_spacing.x = 0.0;
                         for (icon, tip, cmd) in [
@@ -1181,7 +1185,13 @@ pub fn options_bar(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                     ),
                     Tool::Move => {
                         // The Studio themes keep Photoshop's Auto-Select toggle too (#1275).
-                        widgets::checkbox(ui, &mut app.ui.tool_options.move_auto_select, tl!("Auto-Select:"));
+                        let (changed, value) = {
+                            let option = &mut app.ui.tool_options.move_auto_select;
+                            (widgets::checkbox(ui, option, tl!("Auto-Select:")).changed(), *option)
+                        };
+                        if changed {
+                            crate::prefs_ui::set_move_auto_select(app, value);
+                        }
                         hint(ui, tl!("Drag to move the active layer"));
                     }
                     Tool::Eyedropper => crate::eyedropper_ui::options(app, ui),

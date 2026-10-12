@@ -21,3 +21,19 @@ Layers marked **Private Time-lapse Layer** are excluded from future captured fra
 The native encoders use JPEG quality 45, 75, or 94 for Low, Good, and Studio, PNG for Lossless, and HEVC export settings with CRF 28, 21, 16, or RGB lossless. A codec proof established one-frame 16×16 gbrp HEVC Lossless pixel equivalence. These are codec and compiler checks, not a claim of broad UI acceptance.
 
 The implementation is a native, action-driven recording path with bounded memory, deterministic replay/export, and explicit privacy behavior. The current 0.12.0 source pass defaults recording off, has approved preview captures, and is published and installed. Full native visual QA, UI parity, and full Procreate parity remain unverified.
+
+## Conditional default assessment (2026-10-12)
+
+Issue #10 asks whether recording could turn on automatically when memory overhead is low. The answer
+is currently deferred and recording remains off by default. Each recording stores encoded JPEG or PNG
+frames in `Arc<Vec<u8>>`, with a per-recording cap of 256 MiB and 100,000 frames. Capture composites
+synchronously on committed edits. The default settings are 1080p and Good quality.
+
+Raw RGBA8 storage alone is approximately 7.91 MiB per 1920×1080 frame and 31.64 MiB per
+3840×2160 frame, before f32 render buffers, RGB conversion, encoder allocations, existing frames,
+document state, history, and other process memory. The 256 MiB limit bounds encoded recording data;
+it is not a global or process RSS bound. These deterministic pixel-size calculations therefore do
+not establish negligible total memory overhead, and no representative RSS measurement was performed
+for this sweep. No new recording, measurement, benchmark,
+or default enablement is introduced until a future request supplies a memory budget and accepts
+representative measurement work.

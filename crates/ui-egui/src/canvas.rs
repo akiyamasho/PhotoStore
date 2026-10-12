@@ -155,21 +155,19 @@ fn composite_onion(dst: &mut photostore_compose::Buffer, src: &photostore_compos
 
 /// A transient source image beneath the brush outline; never part of the document render.
 fn draw_clone_preview(app: &mut PhotoStoreApp, painter: &egui::Painter, xf: &ViewXform, at: [f64; 2], output: Option<u32>) {
-    use photostore_engine::presets::clone_source::{Mapping, transform_matrix};
     let overlay = app.session.presets.clone.overlay.clone();
-    if app.ui.tool != Tool::CloneStamp || !overlay.show || (overlay.auto_hide && app.drag.is_some()) {
+    let selecting_source = painter.ctx().input(|i| i.modifiers.alt) || app.ui.shell.sticky_alt;
+    if app.ui.tool != Tool::CloneStamp || !overlay.show || selecting_source || (overlay.auto_hide && app.drag.is_some()) {
         return;
     }
-    let slot = app.session.presets.clone.active().clone();
-    let Some(source) = slot.source else { return };
     let radius = f64::from(app.session.tools.brush.size) / 2.0;
     if !radius.is_finite() || radius <= 0.0 || radius > 500.0 || !at.iter().all(|v| v.is_finite() && v.abs() < 1_000_000.0) {
         return;
     }
-    let stroke_start = app.drag.as_ref().map(|d| d.start);
-    let anchor = if app.ui.tool_options.clone_aligned { slot.anchor.or(stroke_start) } else { stroke_start }.unwrap_or(at);
-    let map =
-        Mapping { source: (source[0], source[1]), anchor: (anchor[0], anchor[1]), m: transform_matrix(slot.scale, slot.rotation, slot.flip_h, slot.flip_v) };
+    let first = app.drag.as_ref().filter(|d| matches!(d.tool, Tool::CloneStamp | Tool::Healing))
+        .and_then(|d| d.points.first().map(|p| [p[0], p[1]]).or(Some(d.start)))
+        .unwrap_or(at);
+    let Some(map) = crate::preset_panels::clone_mapping(app, first) else { return };
     let rect = DRect::new((at[0] - radius).floor() as i32, (at[1] - radius).floor() as i32, (at[0] + radius).ceil() as i32, (at[1] + radius).ceil() as i32);
     let Some(st) = app.session.active() else { return };
     let (display, display_key) = canvas_display(app, &st.doc, output);
@@ -2983,7 +2981,9 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
         crate::type_tool::draw_overlay(app, &painter, &xf);
         crate::transform_tool::draw_overlay(app, &painter, &xf);
         crate::distort_ui::draw_overlay(app, &painter, &xf);
-        crate::retouch_ui::draw_source_marker(app, &painter, &xf);
+        if primary && app.session.active_index() == Some(idx) {
+            crate::retouch_ui::draw_source_marker(app, &painter, &xf, response.hover_pos().map(|p| xf.to_doc(p)));
+        }
         crate::vector_ui::draw_overlay(app, &painter, &xf, &doc);
         crate::symmetry_ui::draw(app, &painter, &xf);
         crate::analysis_ui::draw_overlay(app, &painter, &xf);

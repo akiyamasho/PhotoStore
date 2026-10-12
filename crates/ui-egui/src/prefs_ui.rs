@@ -118,6 +118,23 @@ pub(crate) fn cycle_appearance(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     }
 }
 
+/// Keep the transient Move tool options bar in step with the durable Tools preference. This is
+/// also the bridge for control-channel `prefs.set` changes made while the Move tool is visible.
+pub(crate) fn sync_move_auto_select(app: &mut PhotoStoreApp) {
+    let saved = app.session.prefs().tools.move_auto_select;
+    if app.ui.tool_options.move_auto_select != saved {
+        app.ui.tool_options.move_auto_select = saved;
+    }
+}
+
+/// Persist an explicit change made by either Move tool options bar.
+pub(crate) fn set_move_auto_select(app: &mut PhotoStoreApp, value: bool) {
+    if let Err(e) = app.run("prefs.set", json!({"path": "tools.moveAutoSelect", "value": value})) {
+        app.ui.status = e;
+        app.ui.status_error = true;
+    }
+}
+
 fn system_theme(app: &PhotoStoreApp, ctx: &egui::Context) -> Option<egui::Theme> {
     app.services.system_theme.as_ref().and_then(|read| read(ctx)).or_else(|| ctx.system_theme())
 }
@@ -135,6 +152,7 @@ pub fn load(app: &mut PhotoStoreApp) {
     {
         app.ui.status = format!("Preferences were reset: {e}");
     }
+    sync_move_auto_select(app);
     crate::dock::restore(app);
     crate::brush_picker::restore(app);
     app.sync_recent();
@@ -316,6 +334,7 @@ pub fn tick(app: &mut PhotoStoreApp, ctx: &egui::Context) {
         load(app);
     }
     recovery(app);
+    sync_move_auto_select(app);
     sync_display_scale(app, ctx);
     sync_appearance(app, ctx);
     crate::theme::set_ui_font_size(ctx, app.session.prefs().interface.ui_font_size);

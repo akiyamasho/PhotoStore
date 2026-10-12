@@ -249,3 +249,24 @@ tag. Use Cargo opt level 2, LTO disabled, one Cargo job, and offline dependency 
 single required production package uses the existing local dependency cache and limits resource
 pressure. The ad hoc macOS package is not notarized. Preview-build and screenshot receipts remain
 separate from final source/package identity and publication evidence.
+
+## 2026-10-12: Open issue sweep scope and evidence boundary
+
+This sweep records five open issues from the complete repository inventory. Issues #7, #8, and #11
+are bounded source fixes intended for closure only after their landed commit is on `main`: #7 keeps
+the dedicated original toolbar icons for Fill, Pen, and Lasso; #8 gives Escape precedence to reset
+the active canvas view after ordinary cancel, modal, and text-edit handling; and #11 serializes the
+`tools.moveAutoSelect` preference, restoring the last on/off value with a default of `true`. Issue
+#9 implements its selected/candidate source marker and transformed brush-region preview feedback,
+with the canonical engine mapping, and is intended to close after the landed commit reaches `main`.
+The supplied reproduction has Aligned enabled: that mode intentionally keeps a fixed
+source/destination offset, so the source region follows the pointer after release. Normal
+post-release slot math was equivalent before and after resolver cleanup, so this pass does not
+claim a stale-source or post-release shift fix. Issue #10 remains an off-by-default, deferred
+enhancement: the current recording implementation is acceptable, and no capture, measurement,
+benchmark, or enablement is added by this sweep.
+
+Implementation, compiler evidence, runtime acceptance, and publication are separate statuses. This
+documentation checkpoint records source work in progress; the required compiler pass and `main`
+push are pending. No issue is closed from documentation alone, and no version bump, release,
+reinstall, or screenshot is implied.

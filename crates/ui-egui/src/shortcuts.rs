@@ -443,6 +443,21 @@ pub fn handle(app: &mut PhotoStoreApp, ctx: &egui::Context) {
             return;
         }
     }
+    // Escape resets a rotated canvas after the modal and in-progress gesture handlers above have
+    // had first refusal. Route through the shared command so menus and automation keep the same
+    // active-tab-only, view-state-only behaviour (zoom and centre are preserved).
+    let rotated_view = app.session.active_index().is_some_and(|i| app.ui.views.get(i).is_some_and(|v| v.rotation != 0.0));
+    if focus == Focus::None
+        && app.drag.is_none()
+        && rotated_view
+        && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
+    {
+        if let Err(e) = crate::menus::invoke(app, ctx, "view.resetView", json!({})) {
+            app.ui.status = e;
+            app.ui.status_error = true;
+        }
+        return;
+    }
     // 1–0 set opacity, ⇧1–0 flow or fill (`opacity_keys`).
     crate::opacity_keys::handle(app, ctx);
 }

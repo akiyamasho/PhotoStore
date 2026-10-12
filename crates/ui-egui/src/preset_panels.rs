@@ -867,6 +867,9 @@ pub fn select_tool_preset(app: &mut PhotoStoreApp, name: &str) {
         }
         if let Ok(opts) = serde_json::from_value(cur) {
             app.ui.tool_options = opts;
+            if app.ui.tool == Tool::Move {
+                crate::prefs_ui::set_move_auto_select(app, app.ui.tool_options.move_auto_select);
+            }
         }
     }
 }
@@ -1083,20 +1086,17 @@ pub fn clone_source_panel(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
 
 /// Where the active clone source samples for document point `at` (for the canvas marker).
 /// The first stroke anchors at its press, so the marker follows before the stroke commits.
+pub(crate) fn clone_mapping(app: &PhotoStoreApp, first: [f64; 2]) -> Option<photostore_engine::presets::clone_source::Mapping> {
+    let params = crate::retouch_ui::clone_params(app)?;
+    photostore_engine::presets::clone_source::resolve(&app.session, &params, (first[0], first[1]), "clone.preview").ok().map(|(m, _)| m)
+}
+
 pub fn clone_sample_point(app: &PhotoStoreApp, at: Option<[f64; 2]>) -> Option<[f64; 2]> {
-    use photostore_engine::presets::clone_source::{Mapping, transform_matrix};
-    let s = app.session.presets.clone.active();
-    let src = s.source?;
-    let stroking = app.drag.as_ref().filter(|d| matches!(d.tool, Tool::CloneStamp | Tool::Healing)).map(|d| d.start);
-    let anchor = if app.ui.tool_options.clone_aligned { s.anchor.or(stroking) } else { stroking };
-    match (anchor, at) {
-        (Some(a), Some(h)) => {
-            let m = Mapping { source: (src[0], src[1]), anchor: (a[0], a[1]), m: transform_matrix(s.scale, s.rotation, s.flip_h, s.flip_v) };
-            let (x, y) = m.map(h[0], h[1]);
-            Some([x, y])
-        }
-        _ => Some(src),
-    }
+    let at = at?;
+    clone_mapping(app, app.drag.as_ref().filter(|d| matches!(d.tool, Tool::CloneStamp | Tool::Healing))
+        .and_then(|d| d.points.first().map(|p| [p[0], p[1]]).or(Some(d.start)))
+        .unwrap_or(at))
+        .map(|m| { let (x, y) = m.map(at[0], at[1]); [x, y] })
 }
 
 #[cfg(test)]
@@ -1200,17 +1200,16 @@ mod tests {
     }
 
     #[test]
-    fn clone_marker_shows_only_while_painting() {
-        // #668: ⌥-click used to leave a "+" on the canvas until the next stroke.
+    fn clone_marker_tracks_hover_and_painting() {
         let (mut app, _) = app();
         app.ui.tool = Tool::CloneStamp;
         crate::retouch_ui::set_source(&mut app, 10.0, 10.0);
         app.hover_doc = Some([40.0, 40.0]);
-        assert_eq!(crate::retouch_ui::source_marker_point(&app), None, "hovering after ⌥-click shows nothing");
+        assert_eq!(crate::retouch_ui::source_marker_point(&app), Some([10.0, 10.0]), "hovering shows the selected source");
         app.drag = Some(crate::canvas::Drag::new(Tool::CloneStamp, [40.0, 40.0], vec![[40.0, 40.0, 1.0]], egui::Modifiers::NONE, false));
         assert!(crate::retouch_ui::source_marker_point(&app).is_some(), "painting shows where it samples");
         app.drag = None;
-        app.ui.tool = Tool::Brush;
-        assert_eq!(crate::retouch_ui::source_marker_point(&app), None);
+        app.hover_doc = None;
+        assert_eq!(crate::retouch_ui::source_marker_point(&app), None, "leaving the canvas hides the source marker");
     }
 }

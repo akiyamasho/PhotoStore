@@ -10,7 +10,8 @@ list (author, source, license) is in ATTRIBUTION.md.
 
 Inter font (assets/fonts/Inter-*.ttf) — SIL Open Font License 1.1. See assets/fonts/OFL-Inter.txt.
 JetBrains Mono font (assets/fonts/JetBrainsMono-Regular.ttf) — SIL Open Font License 1.1. See assets/fonts/OFL-JetBrainsMono.txt.
-Lucide icons (assets/icons/*.svg, except slice-knife.svg) — ISC; icons derived from Feather also MIT. See assets/icons/LICENSE-lucide.txt.
+Lucide icons (assets/icons/*.svg, except slice-knife.svg and tool-*.svg) — ISC; icons derived from Feather also MIT. See assets/icons/LICENSE-lucide.txt.
+PhotoStore tool glyphs (assets/icons/tool-*.svg) — original artwork, MIT OR Apache-2.0. See assets/icons/LICENSE-photostore-tools.txt.
 SCOWL English word list (assets/dict/en_US-scowl-50.txt.gz) — SCOWL license. See assets/dict/LICENSE-SCOWL.txt.
 
 Builds made with `CRAFT_FONTS_DIR` also embed the fonts listed in

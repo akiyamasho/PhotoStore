@@ -301,6 +301,10 @@ impl Default for Workspace {
 #[serde(default, rename_all = "camelCase")]
 pub struct Tools {
     pub show_tooltips: bool,
+    /// Move tool Auto-Select target layers or groups when clicking the canvas.
+    /// Kept in Preferences so the options-bar choice survives relaunches.
+    #[serde(default = "yes")]
+    pub move_auto_select: bool,
     /// Tool keys cycle a tool group only with ⇧ held (Photoshop's "Use Shift Key for Tool Switch").
     pub use_shift_key_for_tool_switch: bool,
     pub zoom_clicked_point_to_center: bool,
@@ -320,10 +324,15 @@ pub struct Tools {
     pub pressure_curve: Vec<[f32; 2]>,
 }
 
+fn yes() -> bool {
+    true
+}
+
 impl Default for Tools {
     fn default() -> Self {
         Self {
             show_tooltips: true,
+            move_auto_select: true,
             use_shift_key_for_tool_switch: true,
             zoom_clicked_point_to_center: false,
             enable_flick_panning: true,

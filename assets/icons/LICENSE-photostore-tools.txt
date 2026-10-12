@@ -1,0 +1,8 @@
+PhotoStore tool glyphs
+
+Copyright (c) 2026 PhotoStore contributors.
+
+These three SVG glyphs (`tool-paint-bucket.svg`, `tool-pen-nib.svg`, and
+`tool-lasso-loop.svg`) are original artwork created for PhotoStore. They are
+licensed under the MIT License or the Apache License, Version 2.0, at your
+option; see the repository's LICENSE-MIT and LICENSE-APACHE files.
