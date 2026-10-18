@@ -63,7 +63,7 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
         s,
         "Generative Fill",
         move |doc, active, ctx| {
-            let sel = doc.selection.as_ref().ok_or_else(|| EngineError::Other("make a non-empty selection first".into()))?;
+            let sel = doc.selection.clone().ok_or_else(|| EngineError::Other("make a non-empty selection first".into()))?;
             if doc.mode != ColorMode::Rgb {
                 return Err(EngineError::Other("Generative Fill currently supports RGB documents only".into()));
             }
