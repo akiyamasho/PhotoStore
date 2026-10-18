@@ -25,13 +25,23 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 
 ## Current source release
 
-PhotoStore 0.16.2 is the [published stable ARM64 release](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.16.2), from source/tag SHA `a7a2dd6c306d2f4ce33bd3a6fe87044cac03d520`. It contains the delivered toolbar icon, Escape view reset, Clone Stamp source feedback, and Auto-select persistence fixes. Timelapse recording remains off by default under the accepted memory fallback. Build, installation, signature limits, and untested runtime status are recorded in the [0.16.2 release notes](docs/releases/0.16.2.md).
+PhotoStore 0.17.0 adds configurable Generative Fill to the ARM64 macOS app and CLI. The packages
+are built and installed; publication status and artifact checksums are recorded in the
+[0.17.0 release notes](docs/releases/0.17.0.md).
 
 ## Generative Fill
 
 Select an area, choose **Edit → Generative Fill…**, and describe the change. Local Codex uses the
 full image and selection as context; custom adapters can connect other models and services.
-Results arrive as an undoable layer clipped to the selection. See [setup and provider contract](docs/generative-fill.md).
+Results arrive on an undoable layer, clipped to the selection and matched to surrounding colors
+and lighting. Matching can be disabled to preserve the provider's exact colors.
+
+![Codex-generated sailboat with context-matched boundaries](docs/screenshots/0.17.0/generative-fill-result.png)
+
+![Generative Fill prompt and provider settings](docs/screenshots/0.17.0/generative-fill-dialog.png)
+
+See [setup and provider contract](docs/generative-fill.md) and [capture evidence](docs/screenshots/0.17.0/evidence.md).
+Initial scope: sRGB RGB documents up to 25 million pixels, with 8-bit PNG provider interchange.
 
 ## Historical preview screenshots
 

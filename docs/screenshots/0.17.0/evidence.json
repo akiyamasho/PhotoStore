@@ -1,0 +1,33 @@
+{
+  "version": "0.17.0",
+  "source_sha": "7bcc810ace56320943da02c5c40b3dc4f72ecb4d",
+  "app_binary_sha256": "817e393b9390c6ff9f427e05f3660a01e1ef61dcc14d9b29caf7b352a0bc194e",
+  "capture": "PhotoStore ui.screenshot; synthetic setup via control protocol; final installed binary; isolated preferences; recording disabled",
+  "demo": {
+    "name": "Original seaside SVG; 1024x768 sRGB RGB/8",
+    "selection": [
+      400,
+      320,
+      320,
+      320
+    ],
+    "original_codex_patch_sha256": "b768bdb3734c420841c149038add4ed993d9f6941cbb8f46737e0b49f3c4d423",
+    "producer": "Local codex exec, codex-cli 0.162.1, actual image generation; saved patch replayed through final custom adapter with seamless=true",
+    "producer_candidate_source": "284283c03b3a8ebd0b8a6bdf0011c9cc200ce051"
+  },
+  "images": {
+    "generative-fill-dialog.png": {
+      "sha256": "5c879572b1de69e5948b627d9c1915664c7f2d4a0629cf58f4a7c05138cb8470",
+      "bytes": 157814
+    },
+    "generative-fill-result.png": {
+      "sha256": "d2ac7d2612383fb96f6801a95ab82932a4cab3259ac1149be7c1fd9ff3e37d07",
+      "bytes": 192949
+    }
+  },
+  "limits": [
+    "Not a general test-suite or native OS pointer-routing acceptance pass",
+    "Model content quality depends on provider; boundary matching does not guarantee every semantic transition",
+    "Only disposable original/generated demonstration material appears"
+  ]
+}

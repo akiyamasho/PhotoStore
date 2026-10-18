@@ -327,3 +327,12 @@ The app is installed at `/Applications/PhotoStore.app` with executable SHA-256
 preserved at `/Applications/.PhotoStore.backup.v0.16.2.1791810390.app`. Artifacts are ad hoc signed
 and not notarized. The production app was not launched and no manual runtime, screenshot, or GUI
 acceptance was run.
+
+
+## 2026-10-18: Generative Fill boundary matching
+
+Default gradient-domain boundary matching reuses the existing cancellable membrane solver. It
+matches generated colors to the original composite on the selected region's inner boundary,
+retaining generated texture and original selection coverage without touching preserved pixels.
+A `seamless` boolean in provider preferences and command parameters exposes direct provider colors
+when desired. Selecting the whole canvas has no preserved outer boundary and retains direct colors.

@@ -517,3 +517,14 @@ bundle ID `ai.photostore.app.dev.release-0-16`, executable SHA-256
 `75e54f59bf87f1fc73fbba40055af2e97b65e80e7a70b9d930e2084b3e1b200b`. The preview build completed in
 13m14s; log: `/private/tmp/photostore-production-preview-build-20261011.log`. This is preview evidence
 only. The immutable tag `v0.16.0` points to exact source `a87fd1049844a41d456cbdce9d5fb0fa5038ab3c`, published as release ID `409665038` and installed at `/Applications/PhotoStore.app`. The release’s mounted DMG app, CLI, signatures, full source, licenses, architecture, and checksums passed. ARM64 executable SHA-256 is `9bf8fea3b609532c6ef2e08959e17477166b4aa485701384e667945ab190faf6`; DMG SHA-256 is `396c880ec9b4c6a092a2dbee54b872e8f2936aac0f445758102e8ea5c143ccb8`; CLI ZIP SHA-256 is `5a6ab30230490c8b5e0c1b9df58126605a9b7cc96b0a28be9f3c46029ce143b5`. The artifact-only APFS UDZO regeneration fixed synthesized HFS FinderInfo without source rebuild or retag. The bundle is ad hoc signed and not notarized. Previous backup: `/Applications/.PhotoStore.backup.v0.16.0.1791723317.97155.app`; preferences, recovery, and artwork were untouched, and the app was not launched during promotion. Packaging follow-up: `package.sh` still creates an HFS hybrid image and `verify.sh` does not mount-check its bundled app. See [handoff.md](handoff.md) for remaining priorities. The broader PhotoStore backfill remains unfinished; no full-product completion percentage is claimed.
+
+
+## 2026-10-18: Generative Fill 0.17.0 delivery
+
+- Implemented: local Codex/default and custom argv providers; versioned full-image/mask/crop
+  contract; exact placement; undoable top-level result layer; default configurable boundary matching.
+- Final artifact source: `7bcc810ace56320943da02c5c40b3dc4f72ecb4d`, version 0.17.0, ARM64 app and CLI.
+- Package/version/SHA/architecture/signature/checksum checks passed; exact artifacts installed.
+- Requested screenshots and scoped Codex/replay capture evidence: [0.17.0 evidence](screenshots/0.17.0/evidence.md).
+- Publication pending. Scheduler remains disabled/unloaded; no supported no-replay handoff exists.
+- Stable-release receipt and limitations: [0.17.0 release notes](releases/0.17.0.md).
