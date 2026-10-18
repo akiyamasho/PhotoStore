@@ -68,7 +68,7 @@ pub fn service() -> photostore_engine::update_cmds::UpdateService {
                     let result = latest_release();
                     finish_check(&shared, result);
                 }) {
-                    let s = state.lock().map_err(|_| "update status is unavailable")?;
+                    let mut s = state.lock().map_err(|_| "update status is unavailable")?;
                     set_error(&mut s, &format!("could not start update check: {error}"));
                     return Ok(s.value());
                 }
