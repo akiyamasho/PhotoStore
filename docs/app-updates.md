@@ -1,9 +1,9 @@
 # In-app updates
 
-The source implementation described here is intended for the next macOS package; the published
-PhotoStore 0.17.1 app does not contain this updater. In that package, **Help → Check for Updates…**
-checks the fixed private repository `akiyamasho/PhotoStore` for its newest stable semantic
-version. GitHub authentication comes from the user's installed GitHub CLI (`gh`) and existing
+The updater is included in the 0.18.0 source, which is prepared but not yet built or published. The
+published PhotoStore 0.17.1 app does not contain it. In the 0.18.0 package, **Help → Check for
+Updates…** checks the fixed private repository `akiyamasho/PhotoStore` for its newest stable
+semantic version. GitHub authentication comes from the user's installed GitHub CLI (`gh`) and existing
 `gh auth login` session. The updater searches PATH and common Homebrew locations; it never stores,
 requests, prints, or sends a token itself. The current updater implementation supports the
 published Apple Silicon (`aarch64`) package only. A
@@ -36,5 +36,6 @@ access, or other OS-managed identity state; those permissions are controlled by 
 signing identity.
 
 Intel macOS, Windows, and Linux do not support in-app installation. The published PhotoStore
-0.17.1 package does not include the updater; this documentation describes the source change for a
-future macOS package.
+0.17.1 package does not include the updater. The 0.18.0 release build, package verification,
+local installation, and publication are pending. The live in-app replacement path has not been
+exercised; this page documents intended behavior and implementation limits, not runtime evidence.

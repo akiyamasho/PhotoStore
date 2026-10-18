@@ -367,3 +367,18 @@ metadata helper's standalone synthetic harness passed three focused tests, engin
 checks passed, and native app compilation passed. The live replacement path has not
 been verified against an installed app; no release, local installation, or runtime
 verification is claimed.
+
+## 2026-10-18: 0.18.0 source preparation
+
+Prepare PhotoStore 0.18.0 with the native in-app GitHub updater as the release scope. The updater
+uses authenticated `gh` access to stable releases, checks the release digest and strict app
+signature, and stages updates for the Apple Silicon macOS app. Preserve user xattrs, POSIX modes,
+ownership, flags, and ACLs for matching paths or abort before replacement; retain incoming signed
+contents, clean-quit/open-document safeguards, and a recoverable backup. TCC/privacy grants are not
+migrated and a signing identity change may require renewed consent.
+
+The workspace and lockfile now declare 0.18.0. The prior updater source passed its engine/UI and
+native compiler checks, and the metadata harness passed three focused tests before this version
+preparation. The version-bumped source still needs its single release build and final artifact
+verification. Local installation and publication remain pending; no tag, source SHA receipt,
+artifact hash, or runtime update claim is recorded here.

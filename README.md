@@ -10,8 +10,9 @@ PhotoStore is a Rust-native image editor maintained as a personal fork of PhotoC
 
 Download the macOS Apple Silicon package from [PhotoStore releases](https://github.com/akiyamasho/PhotoStore/releases). For a local install, use Rust stable 1.95+:
 
-The next macOS package will add stable-release checks under **Help → Check for Updates…**. It uses
-the GitHub CLI (`gh`) and your existing authentication; see [in-app update details](docs/app-updates.md).
+The 0.18.0 source adds stable-release checks under **Help → Check for Updates…** using your existing
+GitHub CLI (`gh`) authentication. The 0.18.0 package has not been built or published; the published
+0.17.1 app does not include the updater. See [in-app update details](docs/app-updates.md).
 
 ```sh
 CARGO_BUILD_JOBS=1 cargo install --path apps/photostore --bin photostore --locked
@@ -26,11 +27,15 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 ./target/release/photostore-cli --help
 ```
 
-## Current source release
+## Current published source release
 
 PhotoStore 0.17.1 adds a simple, configurable Generative Fill workflow to the ARM64 macOS app and
 CLI. [Download 0.17.1](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.17.1). The verified packages are installed locally; checksums and
 limitations are in the [release notes](docs/releases/0.17.1.md).
+
+The upcoming 0.18.0 source adds an in-app GitHub updater for the Apple Silicon macOS app. Its
+release build, package verification, local installation, and publication are pending; see the
+[0.18.0 release preparation](docs/releases/0.18.0.md).
 
 ## Generative Fill
 
