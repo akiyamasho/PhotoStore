@@ -526,5 +526,16 @@ only. The immutable tag `v0.16.0` points to exact source `a87fd1049844a41d456cbd
 - Final artifact source: `7bcc810ace56320943da02c5c40b3dc4f72ecb4d`, version 0.17.0, ARM64 app and CLI.
 - Package/version/SHA/architecture/signature/checksum checks passed; exact artifacts installed.
 - Requested screenshots and scoped Codex/replay capture evidence: [0.17.0 evidence](screenshots/0.17.0/evidence.md).
-- Publication pending. Scheduler remains disabled/unloaded; no supported no-replay handoff exists.
+- Source tag retained; publication superseded by 0.17.1. Scheduler remains disabled/unloaded.
 - Stable-release receipt and limitations: [0.17.0 release notes](releases/0.17.0.md).
+
+
+## 2026-10-18: Prompt-only Generative Fill 0.17.1
+
+- Provider setup, adapter arguments, timeout, and color matching moved to Preferences.
+- Prompt-only dialog links directly to Settings when local setup is incomplete; prompt preserved.
+- Bounded background setup check verifies executable availability and Codex sign-in without images.
+- Final artifact source: `9b96ad80ad2d5222ca6fa790754c62e48dc733a1`; exact verified ARM64 app/CLI installed.
+- Requested captures: [0.17.1 evidence](screenshots/0.17.1/evidence.md).
+- Publication pending; scheduler disabled/unloaded with no supported no-replay handoff.
+- Receipt/limitations: [release notes](releases/0.17.1.md).

@@ -1,0 +1,57 @@
+{
+  "version": "0.17.1",
+  "source_sha": "9b96ad80ad2d5222ca6fa790754c62e48dc733a1",
+  "app_binary_sha256": "0c13ae81827ac4bf121c561ecfcc35897fd96be0defa76be9afbd02dbc513e7d",
+  "capture": "PhotoStore ui.screenshot; control setup plus native accessibility input for provider Apply/OK; final installed release; isolated preferences; recording disabled",
+  "demo": {
+    "name": "Original seaside SVG; 1024x768 sRGB RGB/8",
+    "selection": [
+      400,
+      320,
+      320,
+      320
+    ],
+    "codex_patch_sha256": "b768bdb3734c420841c149038add4ed993d9f6941cbb8f46737e0b49f3c4d423",
+    "producer": "Real local codex exec image generation, codex-cli 0.162.1; saved patch replayed through final custom adapter with seamless=true",
+    "producer_candidate_source": "284283c03b3a8ebd0b8a6bdf0011c9cc200ce051"
+  },
+  "images": {
+    "generative-fill-dialog.png": {
+      "sha256": "f18c5a347a4d16e4f040c619e7307c1f1ae759a3ee8a8cc456bc7fa1f91cd7d0",
+      "bytes": 119069,
+      "dimensions": [
+        1440,
+        900
+      ]
+    },
+    "generative-fill-settings.png": {
+      "sha256": "eb007dc415c894e83dae569c61b1bc0b0a642e26db92c4f37a6f4febed52ec88",
+      "bytes": 143150,
+      "dimensions": [
+        1440,
+        900
+      ]
+    },
+    "generative-fill-setup.png": {
+      "sha256": "2be3d7ff418d531209f9cfb8eec8a2b4515e9d2c96c03f636dd3033d3f539cf7",
+      "bytes": 122016,
+      "dimensions": [
+        1440,
+        900
+      ]
+    },
+    "generative-fill-result.png": {
+      "sha256": "f975a2b20c8d3ea54eed804d72bb96c2b4c34c7057301762592928736a1e2e08",
+      "bytes": 194356,
+      "dimensions": [
+        1440,
+        900
+      ]
+    }
+  },
+  "limits": [
+    "Scoped generation/capture evidence; no general test suite",
+    "Synthetic input does not independently verify native OS input routing",
+    "Model quality and image-editing access depend on provider; matching does not guarantee every semantic transition"
+  ]
+}
