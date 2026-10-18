@@ -10,9 +10,9 @@ PhotoStore is a Rust-native image editor maintained as a personal fork of PhotoC
 
 Download the macOS Apple Silicon package from [PhotoStore releases](https://github.com/akiyamasho/PhotoStore/releases). For a local install, use Rust stable 1.95+:
 
-The 0.18.0 source adds stable-release checks under **Help → Check for Updates…** using your existing
-GitHub CLI (`gh`) authentication. The 0.18.0 package has not been built or published; the published
-0.17.1 app does not include the updater. See [in-app update details](docs/app-updates.md).
+The 0.18.0 Apple Silicon macOS app adds stable-release checks under **Help → Check for Updates…**
+using your existing GitHub CLI (`gh`) authentication. The app and CLI are ad-hoc signed, not
+notarized. See [in-app update details](docs/app-updates.md) and the [0.18.0 release record](docs/releases/0.18.0.md).
 
 ```sh
 CARGO_BUILD_JOBS=1 cargo install --path apps/photostore --bin photostore --locked
@@ -27,15 +27,9 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 ./target/release/photostore-cli --help
 ```
 
-## Current published source release
+## Current published release
 
-PhotoStore 0.17.1 adds a simple, configurable Generative Fill workflow to the ARM64 macOS app and
-CLI. [Download 0.17.1](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.17.1). The verified packages are installed locally; checksums and
-limitations are in the [release notes](docs/releases/0.17.1.md).
-
-The upcoming 0.18.0 source adds an in-app GitHub updater for the Apple Silicon macOS app. Its
-release build, package verification, local installation, and publication are pending; see the
-[0.18.0 release preparation](docs/releases/0.18.0.md).
+PhotoStore 0.18.0 adds an in-app GitHub updater for the Apple Silicon macOS app. [Download 0.18.0](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.18.0). The release artifacts were verified and installed locally; checksums, verification, and limitations are in the [release record](docs/releases/0.18.0.md). The previous [0.17.1 release](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.17.1) added Generative Fill.
 
 ## Generative Fill
 

@@ -364,9 +364,10 @@ network or install outside granted workspace authority; read-only status remains
 available. The updater does not migrate macOS TCC/privacy identity grants; signing
 changes may require renewed user consent. Source implementation is present; the
 metadata helper's standalone synthetic harness passed three focused tests, engine/UI
-checks passed, and native app compilation passed. The live replacement path has not
-been verified against an installed app; no release, local installation, or runtime
-verification is claimed.
+checks passed, and native app compilation passed before a post-check cleanup later
+removed a required mutable binding. The first release compile caught that regression;
+the binding was restored before the tagged source was built. The GitHub download and
+in-app updater UI remain untested; local artifact installation is documented below.
 
 ## 2026-10-18: 0.18.0 source preparation
 
@@ -377,8 +378,9 @@ ownership, flags, and ACLs for matching paths or abort before replacement; retai
 contents, clean-quit/open-document safeguards, and a recoverable backup. TCC/privacy grants are not
 migrated and a signing identity change may require renewed consent.
 
-The workspace and lockfile now declare 0.18.0. The prior updater source passed its engine/UI and
-native compiler checks, and the metadata harness passed three focused tests before this version
-preparation. The version-bumped source still needs its single release build and final artifact
-verification. Local installation and publication remain pending; no tag, source SHA receipt,
-artifact hash, or runtime update claim is recorded here.
+The workspace and lockfile declare 0.18.0. After correcting a missing mutable binding in the
+check-start error path, the source build succeeded once at
+`1da682ebd22981c39ef60b9df1d7ef12c3a4f04a`. The DMG, CLI ZIP, and checksum file were verified and
+published under `v0.18.0`; see [release receipt](releases/0.18.0.md). The local helper installation
+completed, metadata and strict signature checks passed, and a new app process was observed. The
+GitHub download and in-app self-update flow remain untested.

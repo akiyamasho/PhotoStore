@@ -1,8 +1,7 @@
 # In-app updates
 
-The updater is included in the 0.18.0 source, which is prepared but not yet built or published. The
-published PhotoStore 0.17.1 app does not contain it. In the 0.18.0 package, **Help → Check for
-Updates…** checks the fixed private repository `akiyamasho/PhotoStore` for its newest stable
+The updater is included in the published PhotoStore 0.18.0 Apple Silicon macOS app. **Help → Check
+for Updates…** checks the fixed private repository `akiyamasho/PhotoStore` for its newest stable
 semantic version. GitHub authentication comes from the user's installed GitHub CLI (`gh`) and existing
 `gh auth login` session. The updater searches PATH and common Homebrew locations; it never stores,
 requests, prints, or sends a token itself. The current updater implementation supports the
@@ -35,7 +34,10 @@ original bundle is renamed. The updater does not migrate macOS TCC privacy grant
 access, or other OS-managed identity state; those permissions are controlled by macOS and code
 signing identity.
 
-Intel macOS, Windows, and Linux do not support in-app installation. The published PhotoStore
-0.17.1 package does not include the updater. The 0.18.0 release build, package verification,
-local installation, and publication are pending. The live in-app replacement path has not been
-exercised; this page documents intended behavior and implementation limits, not runtime evidence.
+Intel macOS, Windows, and Linux do not support in-app installation. The published PhotoStore 0.17.1
+package does not include the updater. Version 0.18.0 was built, verified, installed locally, and
+published from source commit
+[`1da682ebd22981c39ef60b9df1d7ef12c3a4f04a`](https://github.com/akiyamasho/PhotoStore/tree/1da682ebd22981c39ef60b9df1d7ef12c3a4f04a).
+The install used the local release artifact; GitHub browser download and the in-app self-update
+flow have not been exercised. See the [0.18.0 release record](releases/0.18.0.md) for artifact
+digests and verification details.
