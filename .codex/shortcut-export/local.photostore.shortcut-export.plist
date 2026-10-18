@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>local.photostore.shortcut-export</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/opt/python@3.15/bin/python3.15</string>
+    <string>/Users/computer/Library/Application Support/PhotoStore/ShortcutExport/photostore_shortcut_export.py</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>WatchPaths</key>
+  <array>
+    <string>/Users/computer/Library/Application Support/PhotoStore</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/computer/Library/Application Support/PhotoStore/ShortcutExport/export.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/computer/Library/Application Support/PhotoStore/ShortcutExport/export.err.log</string>
+</dict>
+</plist>
