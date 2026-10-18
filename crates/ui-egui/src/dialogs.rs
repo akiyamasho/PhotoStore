@@ -322,8 +322,12 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
         {
             outcome = Some(false);
         }
+        let open_generative_settings = fields.remove("__openGenerativeSettings").and_then(|v| v.as_bool()) == Some(true);
         if let Some(dm) = app.ui.dialog_mut(d.id) {
             dm.fields = fields;
+        }
+        if open_generative_settings {
+            crate::prefs_ui::open_preferences(app, "generativeFill");
         }
         // A colour swatch (Edit › Fill, Edit › Stroke) opens the Color Picker over the dialog.
         if outcome.is_none() {

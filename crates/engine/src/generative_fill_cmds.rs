@@ -371,6 +371,60 @@ fn resolve_executable(provider: &str, executable: &str) -> PathBuf {
     executable.into()
 }
 
+/// Local UI readiness check. Does not send images or start an interactive login.
+/// Custom adapters are only checked for a runnable executable; their service auth is adapter-owned.
+pub fn check_setup(p: &crate::prefs::GenerativeFillPrefs) -> std::result::Result<(), String> {
+    if p.provider != "codex" && p.provider != "custom" {
+        return Err("Choose a provider in Settings.".into());
+    }
+    if p.executable.trim().is_empty() {
+        return Err("Choose an executable in Settings.".into());
+    }
+    let resolved = resolve_executable(&p.provider, &p.executable);
+    let runnable = |path: &std::path::Path| {
+        let Ok(metadata) = path.metadata() else { return false };
+        if !metadata.is_file() {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o111 == 0 {
+                return false;
+            }
+        }
+        true
+    };
+    let executable = if resolved.components().count() == 1 {
+        std::env::var_os("PATH").and_then(|path| std::env::split_paths(&path).map(|d| d.join(&resolved)).find(|p| runnable(p)))
+    } else {
+        runnable(&resolved).then_some(resolved)
+    };
+    let executable = executable.ok_or_else(|| "Local provider is not installed or its executable cannot be found.".to_owned())?;
+    if p.provider == "custom" {
+        return Ok(());
+    }
+    let mut child = Command::new(executable)
+        .args(["login", "status"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "Codex could not start. Check its executable in Settings.".to_owned())?;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return if status.success() { Ok(()) } else { Err("Codex is not signed in. Complete local setup in Settings.".into()) },
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("Codex setup check could not finish. Open Settings to try again.".into());
+            }
+        }
+    }
+}
+
 /// Match generated gradients to the existing image at the editable region's inner boundary.
 /// The boundary is on selected pixels, so even an arbitrary mask never changes preserved pixels.
 fn match_boundary(

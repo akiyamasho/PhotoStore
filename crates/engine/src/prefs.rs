@@ -999,7 +999,7 @@ pub fn is_tool_shortcut_id(id: &str) -> bool {
 }
 
 /// Preferences dialog sections in Photoshop's order: (id, title).
-pub const SECTIONS: [(&str, &str); 18] = [
+pub const SECTIONS: [(&str, &str); 19] = [
     ("general", "General"),
     ("interface", "Interface"),
     ("workspace", "Workspace"),
@@ -1018,6 +1018,7 @@ pub const SECTIONS: [(&str, &str); 18] = [
     ("enhancedControls", "Enhanced Controls"),
     ("rawDefaults", "Camera Raw Defaults"),
     ("integrations", "Integrations"),
+    ("generativeFill", "Generative Fill"),
 ];
 
 /// Preferences that nothing reads yet, so Edit › Preferences doesn't show them: a control that

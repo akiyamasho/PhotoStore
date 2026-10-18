@@ -5,14 +5,17 @@ Select part of an image, choose **Edit → Generative Fill…**, describe the ch
 and the selected bounding-box crop. PhotoStore adds the returned pixels as a new top-level
 **Generative Fill** layer, clipped by the original selection, in one undo step. Original layers
 remain editable. Feathered edges retain their selection coverage. **Match surrounding colors and
-lighting** defaults on: gradient-domain boundary matching removes color seams while keeping
+lighting** in **Preferences → Generative Fill** defaults on: gradient-domain boundary matching removes color seams while keeping
 generated texture. Turn it off when you want the provider’s exact colors.
 
 ## Local Codex
 
 The default provider runs the locally installed `codex` CLI using its existing sign-in and
-image-generation tools. Sign in with `codex login` before using it. Expand **Provider settings**
-to specify its executable, or choose a custom adapter. Credentials stay with the provider;
+image-generation tools. Sign in with `codex login` before using it. Open **Preferences → Generative Fill**
+to specify its executable or choose a custom adapter. The fill dialog contains only the prompt.
+If the executable is missing or Codex is not signed in, **Open Settings** opens that section without
+discarding the prompt. Use **Check setup** after installing or signing in; the check sends no image.
+It verifies executable availability and Codex sign-in, while image-editing access is checked during generation. Credentials stay with the provider;
 PhotoStore does not store API keys. Codex inference may use online services and account limits.
 The image context is shared only when Generate is chosen.
 
@@ -24,7 +27,7 @@ and [CLI reference](https://learn.chatgpt.com/docs/cli/reference).
 
 ## Custom providers
 
-Choose **Custom adapter**, set an executable, and enter its arguments as a JSON array of strings.
+In **Preferences → Generative Fill**, choose **Custom adapter**, set an executable, and enter its arguments as a JSON array of strings.
 For example, an adapter you implement in Python can receive:
 
 ```json

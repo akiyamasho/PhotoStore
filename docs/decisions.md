@@ -336,3 +336,12 @@ matches generated colors to the original composite on the selected region's inne
 retaining generated texture and original selection coverage without touching preserved pixels.
 A `seamless` boolean in provider preferences and command parameters exposes direct provider colors
 when desired. Selecting the whole canvas has no preserved outer boundary and retains direct colors.
+
+
+## 2026-10-18: Prompt-only Generative Fill and central setup
+
+Provider, executable, adapter arguments, timeout, and boundary matching live in Preferences →
+Generative Fill. The edit dialog contains only a prompt, plus an Open Settings link when setup
+is incomplete or generation fails. A bounded background check verifies executable availability
+and Codex sign-in without sending image data. Preferences opens over the prompt so returning
+retains the draft; Check setup refreshes readiness after installation/sign-in.
