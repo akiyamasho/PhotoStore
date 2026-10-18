@@ -10,6 +10,9 @@ PhotoStore is a Rust-native image editor maintained as a personal fork of PhotoC
 
 Download the macOS Apple Silicon package from [PhotoStore releases](https://github.com/akiyamasho/PhotoStore/releases). For a local install, use Rust stable 1.95+:
 
+The next macOS package will add stable-release checks under **Help → Check for Updates…**. It uses
+the GitHub CLI (`gh`) and your existing authentication; see [in-app update details](docs/app-updates.md).
+
 ```sh
 CARGO_BUILD_JOBS=1 cargo install --path apps/photostore --bin photostore --locked
 CARGO_BUILD_JOBS=1 cargo install --path apps/photostore-cli --bin photostore-cli --locked

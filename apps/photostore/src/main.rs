@@ -46,6 +46,7 @@ mod services;
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
 mod tablet;
 mod ui_state;
+mod updater;
 
 use photostore_engine::Session;
 use photostore_ui_egui::PhotoStoreApp;
@@ -150,6 +151,18 @@ fn main() -> eframe::Result {
     // First, so the panic hook and every start-up warning are recorded (`logging`).
     let logger = logging::install();
     crash_guard::install_hook();
+    #[cfg(target_os = "macos")]
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--apply-update")) {
+        let plan = std::env::args_os().nth(2).map(std::path::PathBuf::from);
+        let result = plan.ok_or_else(|| "missing update plan".to_string()).and_then(updater::apply_helper);
+        match result {
+            Ok(()) => std::process::exit(0),
+            Err(error) => {
+                eprintln!("PhotoStore update: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
     let mut control_port: Option<u16> = None;
     let mut control_arg_errors: Vec<String> = Vec::new();
     if let Some(value) = std::env::var("PHOTOSTORE_CONTROL_PORT").ok().filter(|v| !v.trim().is_empty()) {
@@ -360,6 +373,9 @@ fn main() -> eframe::Result {
                 }
             }
             let mut app = PhotoStoreApp::new(Session::new(), services);
+            {
+                app.session.update_service = Some(updater::service());
+            }
             app.integrated_titlebar = cfg!(target_os = "macos");
             app.custom_titlebar = custom_titlebar;
             // Only the title bar's free gap drags the window, never the menus (mac_window.rs).
