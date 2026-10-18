@@ -870,6 +870,7 @@ impl Default for Integrations {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct GenerativeFillPrefs {
+    pub seamless: bool,
     pub provider: String,
     pub executable: String,
     pub args: Vec<String>,
@@ -878,7 +879,7 @@ pub struct GenerativeFillPrefs {
 
 impl Default for GenerativeFillPrefs {
     fn default() -> Self {
-        Self { provider: "codex".into(), executable: "codex".into(), args: Vec::new(), timeout_seconds: 600 }
+        Self { seamless: true, provider: "codex".into(), executable: "codex".into(), args: Vec::new(), timeout_seconds: 600 }
     }
 }
 

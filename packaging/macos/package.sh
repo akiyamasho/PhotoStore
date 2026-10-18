@@ -134,12 +134,11 @@ ditto "$APP" "$STAGE/PhotoStore.app"
 ln -s /Applications "$STAGE/Applications"
 # Plain DMG layout: PhotoStore.app and an Applications symlink.
 rm -f "$DMG" "$WORK/raw.dmg"
-# makehybrid + convert builds the image without attaching a device, unlike `create -srcfolder`,
-# which is flaky on CI runners ("Resource busy") and hangs in sandboxed sessions.
-# Keep the volume name stable across releases.
-hdiutil makehybrid -hfs -hfs-volume-name "PhotoStore" -hfs-openfolder "$STAGE" -o "$WORK/raw.dmg" "$STAGE"
-hdiutil convert "$WORK/raw.dmg" -format UDZO -imagekey zlib-level=9 -o "$DMG"
-rm -f "$WORK/raw.dmg"
+# APFS avoids synthesized empty FinderInfo attributes on the mounted HFS hybrid,
+# which can make a clean bundle fail strict code-signature validation on current macOS.
+# APFS is available on every supported macOS version (minimum 11.0).
+hdiutil create -srcfolder "$STAGE" -fs APFS -format UDZO -imagekey zlib-level=9 \
+  -volname "PhotoStore" -o "$DMG"
 sign "$DMG"
 codesign --verify --strict --verbose=2 "$DMG"
 if [ "$NOTARIZE" = 1 ]; then

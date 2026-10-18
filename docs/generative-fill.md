@@ -4,7 +4,9 @@ Select part of an image, choose **Edit → Generative Fill…**, describe the ch
 **Generate**. The provider receives the entire visible canvas as context, the selection mask,
 and the selected bounding-box crop. PhotoStore adds the returned pixels as a new top-level
 **Generative Fill** layer, clipped by the original selection, in one undo step. Original layers
-remain editable. Feathered edges retain their selection coverage.
+remain editable. Feathered edges retain their selection coverage. **Match surrounding colors and
+lighting** defaults on: gradient-domain boundary matching removes color seams while keeping
+generated texture. Turn it off when you want the provider’s exact colors.
 
 ## Local Codex
 
@@ -33,7 +35,8 @@ Set Executable to the absolute Python interpreter path. Each array item is passe
 PhotoStore does not invoke a shell. Supported substitutions are `{request}`, `{output}`, `{context}`,
 `{mask}`, `{crop}`, and `{prompt}`. The adapter can wrap a local model, an HTTP service, or another
 image-editing tool. It owns service-specific authentication and model configuration. Provider
-settings persist in the normal PhotoStore preferences under `generativeFill`.
+settings persist in the normal PhotoStore preferences under `generativeFill`. The `seamless` boolean (default `true`) controls boundary matching in both
+preferences and `edit.generativeFill` parameters.
 
 The working directory contains a `request.json` with schema `photostore.generative-fill.v1`:
 
@@ -56,7 +59,8 @@ selected visible content; transparency in a patch reveals the original layers un
 
 Generation runs as a cancellable background job against a document snapshot. The document stays
 locked until the job completes, fails, or is cancelled. No result is committed on failure,
-timeout, cancellation, or a stale document. Temporary image files are deleted when the job ends.
+timeout, cancellation, or a stale document. PhotoStore’s temporary job directory is deleted when the job ends. Provider-managed caches follow
+the provider’s own retention settings.
 Custom adapters are trusted local executables and run with the user's normal process permissions.
 Untrusted MCP/control commands cannot launch providers or change their executable settings;
 trusted local CLI scripts use the same engine command `edit.generativeFill` as the UI.

@@ -26,6 +26,7 @@ pub fn open(app: &mut PhotoStoreApp) -> u64 {
     f.insert("executable".into(), json!(p.executable));
     f.insert("args".into(), json!(serde_json::to_string_pretty(&p.args).unwrap_or_else(|_| "[]".into())));
     f.insert("timeoutSeconds".into(), json!(p.timeout_seconds));
+    f.insert("seamless".into(), json!(p.seamless));
     app.ui.open_dialog(DialogKind::Command, f)
 }
 
@@ -49,6 +50,9 @@ pub fn body(app: &PhotoStoreApp, ui: &mut egui::Ui, fields: &mut Map<String, Val
     } else {
         "Create a selection first. Generative Fill needs a selected area to edit."
     });
+    let mut seamless = fields.get("seamless").and_then(Value::as_bool).unwrap_or(true);
+    ui.checkbox(&mut seamless, "Match surrounding colors and lighting");
+    fields.insert("seamless".into(), json!(seamless));
     ui.add_space(7.0);
     ui.label(egui::RichText::new("Creates an undoable layer, blended through your selection. Image context is sent to the selected provider. Codex requires sign-in and image-editing access.").small().color(crate::theme::Tokens::get(ui.ctx()).text_dim));
     ui.collapsing("Provider settings", |ui| {
@@ -122,7 +126,8 @@ pub fn confirm(app: &mut PhotoStoreApp, fields: &Map<String, Value>) -> Result<V
         return Err("enter an executable".into());
     }
     let timeout = fields.get("timeoutSeconds").and_then(Value::as_u64).unwrap_or(600).clamp(1, 3600);
-    let prefs = json!({ "provider": provider, "executable": executable, "args": args_value, "timeoutSeconds": timeout });
+    let seamless = fields.get("seamless").and_then(Value::as_bool).unwrap_or(true);
+    let prefs = json!({ "seamless": seamless, "provider": provider, "executable": executable, "args": args_value, "timeoutSeconds": timeout });
     app.run("prefs.set", json!({"path":"generativeFill", "value": prefs}))?;
-    app.run(COMMAND, json!({"prompt": prompt, "provider": provider, "executable": executable, "args": args, "timeoutSeconds": timeout}))
+    app.run(COMMAND, json!({"seamless": seamless, "prompt": prompt, "provider": provider, "executable": executable, "args": args, "timeoutSeconds": timeout}))
 }

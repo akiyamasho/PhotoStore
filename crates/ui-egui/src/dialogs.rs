@@ -188,7 +188,10 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
                     about_tab_body(app, ui, chosen);
                 }
                 DialogKind::Command if crate::fill_ui::owns(&fields) => crate::fill_ui::body(app, ui, &mut fields),
-                DialogKind::Command if crate::generative_fill_ui::owns(&fields) => crate::generative_fill_ui::body(app, ui, &mut fields),
+                DialogKind::Command if crate::generative_fill_ui::owns(&fields) => {
+                    let room = (ctx.content_rect().height() - DIALOG_CHROME).max(120.0);
+                    egui::ScrollArea::vertical().id_salt(id.with("generative-body")).max_height(room).show(ui, |ui| crate::generative_fill_ui::body(app, ui, &mut fields));
+                }
                 DialogKind::Command if crate::stroke_ui::owns(&fields) => crate::stroke_ui::body(ui, &mut fields),
                 DialogKind::Command if crate::shape_dialog::owns(&fields) => crate::shape_dialog::body(app, ui, &mut fields),
                 DialogKind::Command if crate::delete_layer_prompt::owns(&fields) => crate::delete_layer_prompt::body(ui, &mut fields),
@@ -299,7 +302,7 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
         // The picker has a larger frame margin; include that whole frame in the canvas hit guard.
         shown.push(if color_picker { modal.response.rect } else { modal.inner });
         // Pin once laid out at its real size (the first frame is an invisible sizing pass).
-        if !sizing && (pinned.is_none() || drag != egui::Vec2::ZERO) {
+        if !sizing && (pinned.is_none() || drag != egui::Vec2::ZERO || crate::generative_fill_ui::owns(&fields)) {
             let screen = ctx.content_rect();
             // Keep the whole dialog (and so its title bar) on screen.
             let room = (screen.size() - modal.response.rect.size()).max(egui::Vec2::ZERO);
@@ -529,6 +532,7 @@ pub fn cancel(app: &mut PhotoStoreApp, id: u64) -> Result<Value, String> {
 /// schema dialog for filters, the Color Range dialog for `select.colorRange`, otherwise a bare
 /// confirm dialog.
 pub fn open_command_dialog(app: &mut PhotoStoreApp, command: &str, label: &str) -> u64 {
+    if command == crate::generative_fill_ui::COMMAND { return crate::generative_fill_ui::open(app); }
     if command == crate::stroke_ui::COMMAND {
         return crate::stroke_ui::open(app);
     }

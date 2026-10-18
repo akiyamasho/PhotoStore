@@ -58,6 +58,10 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
     if args.len() > 256 || args.iter().any(|a| a.len() > 131_072 || a.contains('\0')) {
         return Err(bad("provider arguments exceed limits (256 arguments, 128 KiB each, no NUL bytes)"));
     }
+    let seamless = match p.get("seamless") {
+        Some(v) => v.as_bool().ok_or_else(|| bad("seamless must be a boolean"))?,
+        None => prefs.seamless,
+    };
     let result_provider = provider.clone();
     crate::jobs::edit_job(
         s,
@@ -268,22 +272,33 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
                         return Err(EngineError::Other("provider PNG must use sRGB color".into()));
                     }
                 }
-                let fmt = doc.pixel_format();
-                let mut data = Vec::with_capacity(pixels * fmt.channels());
-                let mut native = [0.0f32; 5];
+                let mut patch = Vec::with_capacity(pixels);
                 for y in 0..h {
+                    ctx.check()?;
                     for x in 0..w {
                         let (gx, gy) = if full { (x + (rect.x0 - canvas.x0) as u32, y + (rect.y0 - canvas.y0) as u32) } else { (x, y) };
                         let n = generated.layout().channels();
                         let base = (gy as usize * generated.width() as usize + gx as usize) * n;
-                        let mut px = [0u8; 4];
-                        px[..3].copy_from_slice(&generated.data()[base..base + 3]);
-                        px[3] = if n == 4 { generated.data()[base + 3] } else { 255 };
-                        let coverage = sel.sample_channel(x as i32 + rect.x0, y as i32 + rect.y0, 0).clamp(0., 1.);
-                        let n =
-                            from_rgba_into(&fmt, [px[0] as f32 / 255., px[1] as f32 / 255., px[2] as f32 / 255., px[3] as f32 / 255. * coverage], &mut native);
-                        data.extend_from_slice(&native[..n]);
+                        let rgba = [
+                            generated.data()[base] as f32 / 255.,
+                            generated.data()[base + 1] as f32 / 255.,
+                            generated.data()[base + 2] as f32 / 255.,
+                            if n == 4 { generated.data()[base + 3] as f32 / 255. } else { 1. },
+                        ];
+                        patch.push(rgba);
                     }
+                }
+                if seamless {
+                    match_boundary(&mut patch, context, canvas, rect, &sel, ctx)?;
+                }
+                ctx.check()?;
+                let fmt = doc.pixel_format();
+                let mut data = Vec::with_capacity(pixels * fmt.channels());
+                let mut native = [0.0f32; 5];
+                for (i, px) in patch.iter().enumerate() {
+                    let coverage = sel.sample_channel(rect.x0 + (i % w as usize) as i32, rect.y0 + (i / w as usize) as i32, 0).clamp(0., 1.);
+                    let n = from_rgba_into(&fmt, [px[0], px[1], px[2], px[3] * coverage], &mut native);
+                    data.extend_from_slice(&native[..n]);
                 }
                 let mut surface = Surface::new(fmt);
                 surface.write_region(Rect::new(rect.x0, rect.y0, rect.x1, rect.y1), &data);
@@ -321,7 +336,7 @@ pub fn specs() -> Vec<CommandSpec> {
         label: "Generative Fill…",
         menu: &["Edit"],
         shortcut: None,
-        params: r#"{"prompt":string,"provider":"codex"|"custom"?,"executable":string?,"args":[string]?,"timeoutSeconds":u64?} (requires a non-empty selection; background job)"#,
+        params: r#"{"prompt":string,"provider":"codex"|"custom"?,"executable":string?,"args":[string]?,"timeoutSeconds":u64?,"seamless":bool=true} (requires a non-empty selection; background job)"#,
         enabled,
         run,
         journal: true,
@@ -354,4 +369,44 @@ fn resolve_executable(provider: &str, executable: &str) -> PathBuf {
         }
     }
     executable.into()
+}
+
+/// Match generated gradients to the existing image at the editable region's inner boundary.
+/// The boundary is on selected pixels, so even an arbitrary mask never changes preserved pixels.
+fn match_boundary(
+    patch: &mut [[f32; 4]],
+    context: &photostore_codecs::Image,
+    canvas: Rect,
+    rect: Rect,
+    selection: &Surface,
+    ctx: &crate::jobs::JobCtx,
+) -> Result<()> {
+    let (w, h) = (rect.width() as usize, rect.height() as usize);
+    let mut domain = Vec::with_capacity(patch.len());
+    let selected = |x: i32, y: i32| selection.sample_channel(x, y, 0) > 0.;
+    for (i, px) in patch.iter().enumerate() {
+        let (x, y) = (rect.x0 + (i % w) as i32, rect.y0 + (i / w) as i32);
+        let boundary = [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)]
+            .iter()
+            .any(|&(nx, ny)| nx >= canvas.x0 && nx < canvas.x1 && ny >= canvas.y0 && ny < canvas.y1 && !selected(nx, ny));
+        domain.push(selected(x, y) && px[3] > 0. && !boundary);
+    }
+    for channel in 0..3 {
+        ctx.check()?;
+        let original = |i: usize| {
+            let (x, y) = (rect.x0 - canvas.x0 + (i % w) as i32, rect.y0 - canvas.y0 + (i / w) as i32);
+            let at = (y as usize * canvas.width() as usize + x as usize) * 4;
+            if patch[i][3] > 0. && context.sample_normalized(at + 3) > 0. { context.sample_normalized(at + channel) } else { patch[i][channel] }
+        };
+        let difference: Vec<f32> = patch.iter().enumerate().map(|(i, px)| original(i) - px[channel]).collect();
+        let correction = ctx
+            .stage(0.8 + channel as f32 * 0.05, 0.85 + channel as f32 * 0.05, "Matching image boundary", |ctl| {
+                photostore_algo::poisson::membrane_fill_with(w, h, 1, &difference, &domain, ctl)
+            })
+            .map_err(|_| EngineError::Cancelled)?;
+        for (px, value) in patch.iter_mut().zip(correction) {
+            px[channel] = (px[channel] + value).clamp(0., 1.);
+        }
+    }
+    Ok(())
 }
