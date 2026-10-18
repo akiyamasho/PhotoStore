@@ -188,6 +188,7 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
                     about_tab_body(app, ui, chosen);
                 }
                 DialogKind::Command if crate::fill_ui::owns(&fields) => crate::fill_ui::body(app, ui, &mut fields),
+                DialogKind::Command if crate::generative_fill_ui::owns(&fields) => crate::generative_fill_ui::body(app, ui, &mut fields),
                 DialogKind::Command if crate::stroke_ui::owns(&fields) => crate::stroke_ui::body(ui, &mut fields),
                 DialogKind::Command if crate::shape_dialog::owns(&fields) => crate::shape_dialog::body(app, ui, &mut fields),
                 DialogKind::Command if crate::delete_layer_prompt::owns(&fields) => crate::delete_layer_prompt::body(ui, &mut fields),
@@ -247,7 +248,9 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
                             outcome = Some(false);
                         }
                     } else {
-                        let ok_label = if crate::recording_ui::is_purge_dialog(&d.fields) {
+                        let ok_label = if crate::generative_fill_ui::owns(&d.fields) {
+                            "Generate"
+                        } else if crate::recording_ui::is_purge_dialog(&d.fields) {
                             "Purge"
                         } else if d.kind == DialogKind::NewDocument {
                             tl!("Create")
@@ -271,7 +274,9 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
                             tl!("Cancel")
                         };
                         let cancel = DialogButton::new(ButtonRole::Cancel, cancel_label, 84.0);
-                        let clicked = if d.kind == DialogKind::Command && crate::prefs_ui::is_preferences(&fields) {
+                        let clicked = if crate::generative_fill_ui::owns(&fields) {
+                            dialog_buttons(ui, &[ok.enabled(crate::generative_fill_ui::generate_enabled(&fields)), cancel])
+                        } else if d.kind == DialogKind::Command && crate::prefs_ui::is_preferences(&fields) {
                             let changed = crate::prefs_ui::preferences_changed(app, &fields);
                             dialog_buttons(ui, &[ok, cancel, DialogButton::new(ButtonRole::Apply, tl!("Apply"), 84.0).enabled(changed)])
                         } else {
@@ -427,6 +432,26 @@ pub fn confirm(app: &mut PhotoStoreApp, id: u64) -> Result<Value, String> {
     {
         let fields = d.fields.clone();
         match crate::smart_ui::confirm_mask_transfer(app, &fields) {
+            Ok(value) => {
+                let _ = app.ui.close_dialog(id);
+                return Ok(value);
+            }
+            Err(error) => {
+                app.ui.status = error.clone();
+                app.ui.status_error = true;
+                if let Some(dialog) = app.ui.dialog_mut(id) {
+                    dialog.fields.insert("__error".into(), json!(error));
+                }
+                return Err(error);
+            }
+        }
+    }
+    if let Some(d) = app.ui.dialogs.iter().find(|d| d.id == id)
+        && d.kind == DialogKind::Command
+        && crate::generative_fill_ui::owns(&d.fields)
+    {
+        let fields = d.fields.clone();
+        match crate::generative_fill_ui::confirm(app, &fields) {
             Ok(value) => {
                 let _ = app.ui.close_dialog(id);
                 return Ok(value);

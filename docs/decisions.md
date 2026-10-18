@@ -1,5 +1,14 @@
 # Implementation decisions
 
+## 2026-10-18: Provider-independent Generative Fill
+
+Generative Fill belongs to the shared engine command registry. A versioned file contract supplies
+the full composite, selection mask, crop, exact placement, and user prompt to a local Codex process
+or a trusted custom adapter. Only validated, correctly sized output reaches an undoable top-level
+raster layer; the original feathered selection is the final authority for coverage. Existing
+layers remain intact. The provider owns inference and authentication. Untrusted automation cannot
+launch providers or set executable preferences. See [the contract](generative-fill.md).
+
 ## 2026-10-11: Consolidated development watcher boundary
 
 The default local edit loop uses one isolated `PhotoStore-dev` installation with incremental

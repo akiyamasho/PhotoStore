@@ -166,6 +166,9 @@ pub(crate) fn invoke_unguarded(app: &mut PhotoStoreApp, ctx: &egui::Context, id:
     if id == "ui.symmetryTransform" {
         return crate::symmetry_ui::begin(app).map(|_| Value::Null);
     }
+    if id == crate::generative_fill_ui::COMMAND && params.as_object().is_none_or(|o| o.is_empty()) {
+        return Ok(json!({"dialog": crate::generative_fill_ui::open(app)}));
+    }
     // A pending Pen anchor is gesture state; Edit › Undo must match the keyboard.
     if id == "edit.undo" && crate::vector_ui::pen_undo_last_point(app) {
         return Ok(Value::Null);
@@ -615,6 +618,8 @@ pub fn is_enabled(app: &PhotoStoreApp, id: &str) -> bool {
         "recording.setPrivate" => app.session.active().and_then(|s| s.active_layer).is_some(),
         "recording.privateFile" | "recording.privatePhoto" => app.session.active().is_some(),
         "file.open" | "file.exit" | "file.clearRecent" | "help.about" | "help.systemInfo" | "edit.search" => true,
+        // Keep the dialog reachable without a selection so it can explain the requirement inline.
+        crate::generative_fill_ui::COMMAND => true,
         i if i.starts_with("file.openRecent.") => true,
         i if crate::links::url_for(i).is_some() => true,
         i if i.starts_with("window.theme.") => true,

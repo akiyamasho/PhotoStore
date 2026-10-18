@@ -182,6 +182,11 @@ fn file_error(operation: &str, path: &str, error: std::io::Error) -> AutomationE
 /// directory capabilities. Automation must use `doc.open`, `doc.save` and
 /// `doc.render` for file effects until those commands are migrated.
 pub fn authorize_engine_command(id: &str, params: &Value) -> Result<(), AutomationError> {
+    // A provider is a user-selected executable with ambient process/network authority.
+    // Document read/write capabilities do not grant permission to launch it.
+    if id == "edit.generativeFill" {
+        return Err(AutomationError::BadRequest("Generative Fill providers can only be launched from the local UI or trusted local CLI".into()));
+    }
     let safe_file_command = matches!(
         id,
         "file.new"
@@ -301,7 +306,7 @@ fn preference_uses_ambient_filesystem(path: &str) -> bool {
     // The engine skips empty segments (`.scriptEvents.enabled` sets `scriptEvents.enabled`), so
     // judge the first non-empty one; no segment at all is the whole-preferences update.
     let Some(section) = path.split('.').find(|segment| !segment.is_empty()) else { return true };
-    matches!(section, "colorSettings" | "scriptEvents" | "historyLog" | "plugIns" | "scratchDisks" | "shortcutFile")
+    matches!(section, "colorSettings" | "scriptEvents" | "historyLog" | "plugIns" | "scratchDisks" | "shortcutFile" | "generativeFill")
 }
 
 fn command_uses_ambient_path(id: &str, params: &Value) -> bool {
@@ -564,6 +569,9 @@ mod tests {
 
     #[test]
     fn filesystem_commands_fail_closed() {
+        assert!(authorize_engine_command("edit.generativeFill", &serde_json::json!({"prompt":"fill"})).is_err());
+        assert!(authorize_desktop_engine_command("edit.generativeFill", &serde_json::json!({"provider":"custom", "executable":"sh"})).is_err());
+        assert!(authorize_engine_command("prefs.set", &serde_json::json!({"path":"generativeFill.executable", "value":"sh"})).is_err());
         for id in [
             "file.open",
             "file.openAs",

@@ -27,6 +27,12 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 
 PhotoStore 0.16.2 is the [published stable ARM64 release](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.16.2), from source/tag SHA `a7a2dd6c306d2f4ce33bd3a6fe87044cac03d520`. It contains the delivered toolbar icon, Escape view reset, Clone Stamp source feedback, and Auto-select persistence fixes. Timelapse recording remains off by default under the accepted memory fallback. Build, installation, signature limits, and untested runtime status are recorded in the [0.16.2 release notes](docs/releases/0.16.2.md).
 
+## Generative Fill
+
+Select an area, choose **Edit → Generative Fill…**, and describe the change. Local Codex uses the
+full image and selection as context; custom adapters can connect other models and services.
+Results arrive as an undoable layer clipped to the selection. See [setup and provider contract](docs/generative-fill.md).
+
 ## Historical preview screenshots
 
 These 0.16.1 preview captures show a Lasso-selected pixel layer resized freely and then resized inward with Shift constraining its current aspect ratio. They remain historical preview evidence, not 0.16.2 release evidence. See the [0.16.1 release notes](docs/releases/0.16.1.md) and [capture evidence](docs/screenshots/0.16.1/evidence.md).

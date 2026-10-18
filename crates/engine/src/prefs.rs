@@ -866,6 +866,22 @@ impl Default for Integrations {
     }
 }
 
+/// Defaults for Edit › Generative Fill. Credentials remain owned by the provider's normal login.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct GenerativeFillPrefs {
+    pub provider: String,
+    pub executable: String,
+    pub args: Vec<String>,
+    pub timeout_seconds: u64,
+}
+
+impl Default for GenerativeFillPrefs {
+    fn default() -> Self {
+        Self { provider: "codex".into(), executable: "codex".into(), args: Vec::new(), timeout_seconds: 600 }
+    }
+}
+
 /// Edit › Menus: hidden items and item colours, by command id.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -908,6 +924,7 @@ pub struct Preferences {
     pub enhanced_controls: EnhancedControls,
     pub raw_defaults: RawDefaults,
     pub integrations: Integrations,
+    pub generative_fill: GenerativeFillPrefs,
     /// Edit › Keyboard Shortcuts: command id → shortcut (`Cmd+Shift+N` notation); an empty
     /// string removes the default shortcut.
     pub shortcuts: BTreeMap<String, String>,
