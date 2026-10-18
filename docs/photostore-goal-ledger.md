@@ -537,5 +537,6 @@ only. The immutable tag `v0.16.0` points to exact source `a87fd1049844a41d456cbd
 - Bounded background setup check verifies executable availability and Codex sign-in without images.
 - Final artifact source: `9b96ad80ad2d5222ca6fa790754c62e48dc733a1`; exact verified ARM64 app/CLI installed.
 - Requested captures: [0.17.1 evidence](screenshots/0.17.1/evidence.md).
-- Publication pending; scheduler disabled/unloaded with no supported no-replay handoff.
+- [Published stable/latest 0.17.1](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.17.1), release ID `416252633`; server asset sizes/digests match the local receipt.
+- Scheduler remains disabled/unloaded with no supported no-replay handoff; no publication build ran.
 - Receipt/limitations: [release notes](releases/0.17.1.md).

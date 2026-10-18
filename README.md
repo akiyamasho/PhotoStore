@@ -26,8 +26,8 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 ## Current source release
 
 PhotoStore 0.17.1 adds a simple, configurable Generative Fill workflow to the ARM64 macOS app and
-CLI. Packages are built and installed; publication status and checksums are in the
-[0.17.1 release notes](docs/releases/0.17.1.md).
+CLI. [Download 0.17.1](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.17.1). The verified packages are installed locally; checksums and
+limitations are in the [release notes](docs/releases/0.17.1.md).
 
 ## Generative Fill
 
