@@ -345,3 +345,25 @@ Generative Fill. The edit dialog contains only a prompt, plus an Open Settings l
 is incomplete or generation fails. A bounded background check verifies executable availability
 and Codex sign-in without sending image data. Preferences opens over the prompt so returning
 retains the draft; Check setup refreshes readiness after installation/sign-in.
+
+## 2026-10-18: Native app update flow (issue #12)
+
+The native app updater checks stable releases from the fixed `akiyamasho/PhotoStore`
+repository through GitHub's API, using the existing authenticated `gh` CLI without
+embedding credentials. Engine commands are `app.update.check`, `app.update.status`,
+`app.update.prepare`, and `app.update.install`; the Help menu opens an update dialog,
+where checks are user initiated. This implementation targets native macOS app installs.
+
+Before replacing the app, the updater verifies the release checksum and requires a
+strict signature check. It stages the incoming app, preserves user-set xattrs, modes,
+and ACLs from the installed app while retaining the incoming content and signature,
+then requests a clean quit before install. A recoverable backup supports rollback;
+installation is refused while document tabs or jobs remain open. Workspace-limited
+automation cannot invoke check, prepare, or install because those actions access the
+network or install outside granted workspace authority; read-only status remains
+available. The updater does not migrate macOS TCC/privacy identity grants; signing
+changes may require renewed user consent. Source implementation is present; the
+metadata helper's standalone synthetic harness passed three focused tests, engine/UI
+checks passed, and native app compilation passed. The live replacement path has not
+been verified against an installed app; no release, local installation, or runtime
+verification is claimed.

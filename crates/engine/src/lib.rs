@@ -100,6 +100,7 @@ pub mod swatch_cmds;
 pub mod symmetry_cmds;
 mod timeline_cmds;
 pub mod transform_cmds;
+pub mod update_cmds;
 mod trap_cmds;
 pub mod type_caret_cmds;
 pub mod type_cmds;
@@ -370,6 +371,8 @@ pub struct Session {
     pub authorize: Option<fn(&str, &serde_json::Value) -> Result<()>>,
     /// Background jobs (see [`jobs`]).
     jobs: jobs::Jobs,
+    /// Optional native application updater service. The web shell leaves this unset.
+    pub update_service: Option<update_cmds::UpdateService>,
 }
 
 /// Move item `i` of `v` to position `to`, clamped to the end. Returns where it went; `None` when

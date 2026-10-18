@@ -78,6 +78,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("help.releases", "PhotoStore Releases", &["Help"], None),
     ("help.reportIssue", "Report an Issue…", &["Help"], None),
     ("help.systemInfo", "System Info…", &["Help"], None),
+    ("app.update.check", "Check for Updates…", &["Help"], None),
     ("help.about", "About PhotoStore", &["Help"], None),
     // Procreate-style time-lapse controls live in Actions › Video. These are shell commands so
     // the menu remains available while the engine owns recording state and export jobs.
@@ -168,6 +169,9 @@ pub(crate) fn invoke_unguarded(app: &mut PhotoStoreApp, ctx: &egui::Context, id:
     }
     if id == crate::generative_fill_ui::COMMAND && params.as_object().is_none_or(|o| o.is_empty()) {
         return Ok(json!({"dialog": crate::generative_fill_ui::open(app)}));
+    }
+    if id == "app.update.check" && params.as_object().is_none_or(|o| o.is_empty()) {
+        return Ok(json!({"dialog": crate::update_ui::open(app)}));
     }
     // A pending Pen anchor is gesture state; Edit › Undo must match the keyboard.
     if id == "edit.undo" && crate::vector_ui::pen_undo_last_point(app) {

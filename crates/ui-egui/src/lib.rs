@@ -171,6 +171,7 @@ pub mod type_panels_ui;
 pub mod type_tool;
 mod type_transform;
 mod variables_ui;
+mod update_ui;
 pub mod vector_ui;
 pub mod view_cmds;
 pub mod wheel_nav;

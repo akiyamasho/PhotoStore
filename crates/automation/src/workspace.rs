@@ -182,6 +182,14 @@ fn file_error(operation: &str, path: &str, error: std::io::Error) -> AutomationE
 /// directory capabilities. Automation must use `doc.open`, `doc.save` and
 /// `doc.render` for file effects until those commands are migrated.
 pub fn authorize_engine_command(id: &str, params: &Value) -> Result<(), AutomationError> {
+    // Checking and applying app updates reach GitHub and install files outside
+    // the granted workspace. Keep these actions in the trusted in-app updater
+    // flow; status is read-only and does not initiate network or filesystem work.
+    if matches!(id, "app.update.check" | "app.update.prepare" | "app.update.install") {
+        return Err(AutomationError::BadRequest(
+            "App updates can only be checked or installed from the trusted in-app update dialog".into(),
+        ));
+    }
     // A provider is a user-selected executable with ambient process/network authority.
     // Document read/write capabilities do not grant permission to launch it.
     if id == "edit.generativeFill" {
@@ -619,6 +627,17 @@ mod tests {
         assert!(session.execute("file.automate.conditionalModeChange", params).is_err());
         assert_eq!(session.active().unwrap().doc.mode, photostore_engine::doc::ColorMode::Rgb);
         assert!(authorize_desktop_engine_step("file.saveACopy", &serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn updater_network_and_install_commands_are_denied_to_automation() {
+        for id in ["app.update.check", "app.update.prepare", "app.update.install"] {
+            let error = authorize_engine_command(id, &serde_json::json!({})).unwrap_err().to_string();
+            assert!(error.contains("trusted in-app update dialog"), "{id}: {error}");
+            assert!(authorize_desktop_engine_command(id, &serde_json::json!({})).is_err(), "{id}");
+        }
+        assert!(authorize_engine_command("app.update.status", &serde_json::json!({})).is_ok());
+        assert!(authorize_desktop_engine_command("app.update.status", &serde_json::json!({})).is_ok());
     }
 
     #[test]

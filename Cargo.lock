@@ -4203,6 +4203,7 @@ dependencies = [
  "photostore-ui-egui",
  "rfd",
  "ron",
+ "semver",
  "serde_json",
  "winit",
  "winresource",

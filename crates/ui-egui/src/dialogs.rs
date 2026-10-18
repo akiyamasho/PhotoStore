@@ -188,6 +188,7 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
                     about_tab_body(app, ui, chosen);
                 }
                 DialogKind::Command if crate::fill_ui::owns(&fields) => crate::fill_ui::body(app, ui, &mut fields),
+                DialogKind::Command if crate::update_ui::owns(&fields) => crate::update_ui::body(app, ctx, ui, &mut fields),
                 DialogKind::Command if crate::generative_fill_ui::owns(&fields) => {
                     let room = (ctx.content_rect().height() - DIALOG_CHROME).max(120.0);
                     egui::ScrollArea::vertical().id_salt(id.with("generative-body")).max_height(room).show(ui, |ui| crate::generative_fill_ui::body(app, ui, &mut fields));
@@ -236,6 +237,7 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
                     ui.label(fields.get("message").and_then(Value::as_str).unwrap_or("Error"));
                 }
             }
+            if fields.get("__dismiss").and_then(Value::as_bool) == Some(true) { outcome = Some(false); }
             if crate::color_picker_ui::owns(&fields) {
                 if interactive && outcome.is_none() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     outcome = Some(true);
@@ -246,7 +248,9 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
                 // (larger) size, so a dialog whose body gets shorter would never shrink back.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
-                    if matches!(d.kind, DialogKind::About | DialogKind::Error) {
+                    if crate::update_ui::owns(&fields) {
+                        // The update dialog owns its actions and dismiss control.
+                    } else if matches!(d.kind, DialogKind::About | DialogKind::Error) {
                         if dialog_buttons(ui, &[DialogButton::new(ButtonRole::Default, tl!("OK"), 84.0)]).is_some() {
                             outcome = Some(false);
                         }
