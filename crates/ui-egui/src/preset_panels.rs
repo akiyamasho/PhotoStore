@@ -262,6 +262,8 @@ pub(crate) enum Ev {
     Rename(String, String),
     Delete(String),
     Move(String, String),
+    /// Swatches only: insert an item at this position in the target group.
+    Reorder(String, String, usize),
     RenameGroup(String, String),
     DeleteGroup(String),
     NewGroup,
@@ -320,6 +322,7 @@ pub(crate) fn browser(
         }
     }
     let mut headers: Vec<(Rect, String)> = Vec::new();
+    let mut item_rects: Vec<(Rect, String, usize)> = Vec::new();
     let mut dropped: Option<(String, Pos2)> = None;
     let group_names: Vec<String> = groups.iter().map(|g| g.name.clone()).collect();
     egui::ScrollArea::vertical().id_salt(("preset-scroll", panel)).max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
@@ -369,6 +372,7 @@ pub(crate) fn browser(
             for (ii, it) in g.items.iter().enumerate() {
                 let (cx, cy) = ((ii % cols) as f32, (ii / cols) as f32);
                 let r = Rect::from_min_size(area.min + vec2(pad + cx * (cell.x + gap), cy * (cell.y + gap)), cell);
+                item_rects.push((r, g.name.clone(), ii));
                 let resp = ui.interact(r, ui.id().with((panel, gi, ii)), Sense::click_and_drag());
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &it.name));
                 let is_sel = selected.as_deref() == Some(&it.key);
@@ -436,7 +440,19 @@ pub(crate) fn browser(
         }
     });
     if let Some((key, pos)) = dropped {
-        if let Some((_, g)) = headers.iter().find(|(r, _)| r.contains(pos)) {
+        if panel == crate::swatches_ui::PANEL
+            && let Some((r, group, target_index)) = item_rects.iter().find(|(r, _, _)| r.contains(pos))
+        {
+            let mut position = target_index + usize::from(drop_after_item(*r, pos, list));
+            if let Some((source_group, source_index)) =
+                groups.iter().enumerate().find_map(|(gi, g)| g.items.iter().position(|item| item.key == key).map(|ii| (gi, ii)))
+                && groups.get(source_group).is_some_and(|g| g.name == *group)
+                && source_index < position
+            {
+                position = position.saturating_sub(1);
+            }
+            ev.push(Ev::Reorder(key, group.clone(), position));
+        } else if let Some((_, g)) = headers.iter().find(|(r, _)| r.contains(pos)) {
             ev.push(Ev::Move(key, g.clone()));
         } else if canvas.contains(pos) {
             ev.push(Ev::Drop(key, pos));
@@ -466,6 +482,13 @@ pub(crate) fn browser(
         });
     });
     ev
+}
+
+/// Return whether a drop on a swatch inserts after it. List rows use their vertical midpoint;
+/// grid cells use the closest edge so drops follow reading order.
+fn drop_after_item(rect: Rect, pos: Pos2, list: bool) -> bool {
+    let center = rect.center();
+    if list || (pos.x - center.x).abs() <= (pos.y - center.y).abs() { pos.y >= center.y } else { pos.x >= center.x }
 }
 
 /// Shared handling of the generic events through `<prefix>.edit` / `.new`.
@@ -501,7 +524,7 @@ fn generic(app: &mut PhotoStoreApp, panel: &str, prefix: &str, e: &Ev, new_param
                 }
             }
         }
-        _ => return false,
+        Ev::Reorder(..) | Ev::Select(_) | Ev::Activate(_) | Ev::Drop(..) => return false,
     }
     true
 }
@@ -1093,10 +1116,18 @@ pub(crate) fn clone_mapping(app: &PhotoStoreApp, first: [f64; 2]) -> Option<phot
 
 pub fn clone_sample_point(app: &PhotoStoreApp, at: Option<[f64; 2]>) -> Option<[f64; 2]> {
     let at = at?;
-    clone_mapping(app, app.drag.as_ref().filter(|d| matches!(d.tool, Tool::CloneStamp | Tool::Healing))
-        .and_then(|d| d.points.first().map(|p| [p[0], p[1]]).or(Some(d.start)))
-        .unwrap_or(at))
-        .map(|m| { let (x, y) = m.map(at[0], at[1]); [x, y] })
+    clone_mapping(
+        app,
+        app.drag
+            .as_ref()
+            .filter(|d| matches!(d.tool, Tool::CloneStamp | Tool::Healing))
+            .and_then(|d| d.points.first().map(|p| [p[0], p[1]]).or(Some(d.start)))
+            .unwrap_or(at),
+    )
+    .map(|m| {
+        let (x, y) = m.map(at[0], at[1]);
+        [x, y]
+    })
 }
 
 #[cfg(test)]
@@ -1184,6 +1215,19 @@ mod tests {
         // The ruler strip is no longer a drop target; the canvas proper still is.
         assert!(!canvas_drop_rect(&app).contains(egui::pos2(5.0, 300.0)));
         assert!(canvas_drop_rect(&app).contains(p));
+    }
+
+    #[test]
+    fn swatch_drop_side_uses_row_order_for_grid_and_list() {
+        let cell = Rect::from_min_size(Pos2::ZERO, vec2(24.0, 24.0));
+        assert!(!drop_after_item(cell, pos2(2.0, 12.0), false));
+        assert!(drop_after_item(cell, pos2(22.0, 12.0), false));
+        assert!(!drop_after_item(cell, pos2(12.0, 2.0), false));
+        assert!(drop_after_item(cell, pos2(12.0, 22.0), false));
+
+        let row = Rect::from_min_size(Pos2::ZERO, vec2(220.0, 24.0));
+        assert!(!drop_after_item(row, pos2(215.0, 2.0), true));
+        assert!(drop_after_item(row, pos2(5.0, 22.0), true));
     }
 
     #[test]

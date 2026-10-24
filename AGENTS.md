@@ -43,23 +43,25 @@ input was used; it does not independently verify native OS input routing.
 ## Authorized bug-fix release transaction
 
 When the user has explicitly authorized a stable release and production promotion in the active
-session, that authorization is sufficient; do not ask again. Before a release transaction, obtain an
-acknowledged scheduler-suppression handoff that prevents all redundant development/compiler jobs;
-a queue lock alone is insufficient. Suppress scheduling before the local build and keep suppression
-active through local installation, any authorized push/tag/publication, production-close waits, and
-documentation-only follow-up pushes. Resolve the production-close prerequisite before starting the
-final build; if an unexpected wait occurs, retain suppression throughout it.
+session, that authorization is sufficient; do not ask again. Before a release transaction, suppress
+the local scheduler and verify the handoff: `launchctl print-disabled gui/$(id -u)` must report
+`ai.photostore.local-ci` disabled, `launchctl list` must show no loaded local-ci job, and
+`photostore-local-ci.py --status` must show no pending development or release job. A queue lock alone
+is insufficient. Keep the LaunchAgent disabled and suppression active through the local build,
+installation, push/tag/publication, and documentation-only follow-up pushes. Recheck all three signals
+after delivery; with the scheduler still disabled and no pending work, this is the no-replay
+acknowledgement. Do not wait for or close a running production app before building or installing.
 
 For an ordinary authorized bug-fix release, build the app and CLI locally once from one exact source
 SHA. That single local release build is the required compiler/build pass. Do not run a separate
 compiler check, preview build, second release build, or any extra check/test/QA after required
 verification. Check version, full source SHA, architecture, signature status, package integrity, and
-checksums once against the final artifacts. Immediately install locally from those same verified
-artifacts. A tag identifies the source SHA of the locally built package; tagging, pushing, or
-creating/publishing a GitHub release must never trigger another development or production build.
-There is no GitHub Actions or GitHub-hosted CI build. If GitHub publication is separately authorized,
-upload only the already-built and verified app/CLI artifacts; publication is delivery, not a build
-trigger.
+checksums once against the final artifacts. Push the reviewed source, publish a GitHub release
+targeting that exact source SHA (the release creates its version tag), then immediately install
+locally from those same verified artifacts. Tagging, pushing, or creating/publishing a GitHub release
+must never trigger another development or production build. There is no GitHub Actions or
+GitHub-hosted CI build. Upload only the already-built and verified app/CLI artifacts; publication is
+delivery, not a build trigger.
 
 Queue ownership alone never justifies starting another development build. If an already queued or
 running job is proven to be a redundant build of the exact release SHA, narrowly and gracefully
@@ -74,11 +76,15 @@ artifacts; do not repeat a passed compiler or release build. Use a documented fa
 tool failure, and report concrete blockers rather than retrying the same path indefinitely. Avoid
 narrating unchanged poll results while preserving higher-priority progress updates.
 
-Never replace, restart, close, or kill an active production app; never modify its private preferences
-or recovery state. Never resume the scheduler in a state that can replay already-built release
-source. Keep scheduler suppression active until a no-build acknowledgement/baseline confirms the
-final main, tag, release, and artifact state, including documentation-only pushes. If no supported
-suppression/acknowledgement handoff exists, pause scheduling safely and leave it paused with a clear
+An explicitly requested reinstall may replace the installed app bundle while PhotoStore is running.
+Stage and validate the replacement first, then install it atomically; do not force-quit PhotoStore or
+delete files from a bundle its process may still use. Keep the previous bundle as a rollback copy
+until its process has exited and the backup identity is verified. The running session may continue
+using code already loaded in memory until restarted. Never modify the app's private preferences or
+recovery state. Never resume the scheduler in a state that can replay already-built release source.
+Keep scheduler suppression active until a no-build acknowledgement/baseline confirms the final main,
+tag, release, and artifact state, including documentation-only pushes. If the LaunchAgent cannot be
+proven disabled or a pending job remains, pause scheduling safely and leave it paused with a clear
 report. Do not re-enable the local scheduler without an explicit user request and a proven no-replay
 handoff.
 
@@ -132,8 +138,9 @@ The local CI LaunchAgent is paused by default and is not GitHub Actions or GitHu
 existing watcher may poll `main` and GitHub Releases and contains build/install triggers; do not
 reactivate it for a manual release. In particular, a `main` push, tag, or GitHub release must never
 trigger redundant development or production builds. Stable releases use the local app-plus-CLI build
-and immediate local installation described above; if publication is separately authorized, upload
-those exact artifacts only.
+and immediate local installation described above. Keep downloadable assets for the three newest
+published releases; the retention workflow deletes older release assets while preserving release
+records and tags. Do not prune release assets manually.
 
 Do not re-enable the scheduler without an explicit user request and a proven no-replay suppression
 handoff. `--bootstrap` is first-use-only and `--observe-only` does not advance an existing baseline;

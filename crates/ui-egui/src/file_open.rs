@@ -43,6 +43,13 @@ pub fn display_name(path: &str) -> String {
     std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| path.to_string())
 }
 
+fn is_media_file(path: &str) -> bool {
+    let Some(ext) = std::path::Path::new(path).extension().and_then(|ext| ext.to_str()) else { return false };
+    let ext = ext.to_ascii_lowercase();
+    photostore_engine::media_backend::supported_video_extensions().contains(&ext.as_str())
+        || photostore_engine::media_backend::supported_audio_extensions().contains(&ext.as_str())
+}
+
 impl PhotoStoreApp {
     /// Open `bytes` read from the file at `path`: the document is named after the file, keeps
     /// `path` for File › Save unless it is a derivative preview, and `path` goes to the top of Open Recent. Returns the import
@@ -51,6 +58,16 @@ impl PhotoStoreApp {
         // Brushes/gradients go to the preset libraries (no document, no Open Recent entry).
         if let Some(r) = crate::preset_files_ui::open(self, path, bytes) {
             return r.map(|()| Vec::new());
+        }
+        if is_media_file(path) {
+            if cfg!(target_arch = "wasm32") {
+                return Err("video and audio timeline import is available in the desktop app only".into());
+            }
+            if !std::path::Path::new(path).is_file() {
+                return Err("opening video and audio media requires a local file path on the desktop".into());
+            }
+            crate::jobs_ui::start_open(self, &display_name(path), Some(path.to_string()), photostore_engine::jobs::OpenSource::Path(path.to_string()))?;
+            return Ok(Vec::new());
         }
         if self.background_jobs {
             // The path and Open Recent are recorded when the background open finishes.
@@ -89,6 +106,10 @@ impl PhotoStoreApp {
         // Documents opening in the background are read on the worker too (a 2 GB PSB read
         // would block the window). Preset files (brushes, gradients) go the usual way.
         let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        if is_media_file(path) {
+            crate::jobs_ui::start_open(self, &display_name(path), Some(path.to_string()), photostore_engine::jobs::OpenSource::Path(path.to_string()))?;
+            return Ok(Vec::new());
+        }
         if self.background_jobs && !crate::preset_files_ui::PRESET_EXTS.contains(&ext.as_str()) {
             crate::jobs_ui::start_open(self, &display_name(path), Some(path.to_string()), photostore_engine::jobs::OpenSource::Path(path.to_string()))?;
             return Ok(Vec::new());
@@ -139,7 +160,7 @@ impl PhotoStoreApp {
         };
         for f in files {
             let name = dropped_name(&f);
-            if target == DropTarget::Canvas && !crate::preset_files_ui::is_preset_file(&name) {
+            if target == DropTarget::Canvas && !crate::preset_files_ui::is_preset_file(&name) && !is_media_file(&name) {
                 self.drop_places.push_back(f);
                 continue;
             }
@@ -174,7 +195,7 @@ impl PhotoStoreApp {
         if f.path().is_absolute() {
             self.open_path(&f.path().to_string_lossy())?;
         } else {
-            self.open_bytes(name, &crate::read_dropped(&**f)?)?;
+            self.open_file(name, &crate::read_dropped(&**f)?)?;
         }
         let Some(slot) = slot else { return Ok(false) };
         if let Some(tab) = self.jobs.opens.get_mut(opens) {

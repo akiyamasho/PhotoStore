@@ -22,7 +22,9 @@ use std::any::Any;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
-use photostore_doc::{DocId, Document, LayerId};
+use photostore_color::{ColorMode, SampleType};
+use photostore_doc::{AudioClip, AudioTrack, DocId, Document, Layer, LayerContent, LayerId, Timeline, VideoData, VideoSource};
+use photostore_geom::Size;
 use photostore_raster::Interrupt;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -394,6 +396,116 @@ pub enum OpenSource {
 /// The command id open jobs report (there is no engine command: opening is the shell's).
 pub const OPEN_JOB: &str = "file.open";
 
+const MAX_OPEN_MEDIA_FRAMES: usize = 1_000_000;
+const OPEN_AUDIO_FPS: f64 = 30.0;
+
+#[derive(Clone, Copy)]
+enum MediaKind {
+    Video,
+    Audio,
+}
+
+fn media_kind(name: &str) -> Option<MediaKind> {
+    let ext = std::path::Path::new(name).extension()?.to_str()?.to_ascii_lowercase();
+    if crate::media_backend::supported_video_extensions().contains(&ext.as_str()) {
+        Some(MediaKind::Video)
+    } else if crate::media_backend::supported_audio_extensions().contains(&ext.as_str()) {
+        Some(MediaKind::Audio)
+    } else {
+        None
+    }
+}
+
+fn movie_frame_count(info: &crate::media_backend::MediaInfo) -> Result<usize> {
+    let count = info.frame_count.map(|count| count as f64).unwrap_or_else(|| (info.duration_seconds * info.fps.as_f64()).ceil());
+    if !count.is_finite() || count < 1.0 || count > MAX_OPEN_MEDIA_FRAMES as f64 {
+        return Err(EngineError::Other(format!("movie frame count must be between 1 and {MAX_OPEN_MEDIA_FRAMES}")));
+    }
+    Ok(count as usize)
+}
+
+fn media_path(path: &str) -> Result<String> {
+    std::fs::canonicalize(path)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| EngineError::Other(format!("media path `{path}` is not readable: {error}")))
+}
+
+fn open_video_document(name: &str, path: &str, ctx: &JobCtx) -> Result<Document> {
+    let path = media_path(path)?;
+    let info = crate::media_backend::probe(&path).map_err(|error| EngineError::Other(error.to_string()))?;
+    let frame_count = movie_frame_count(&info)?;
+    let fps = if info.fps.valid() { info.fps.as_f64() as f32 } else { 30.0 };
+    let mut doc = Document::new(name, Size::new(info.width, info.height), ColorMode::Rgb, SampleType::U8);
+    let (frames, decoded_fps) =
+        crate::video_cmds::decode_movie_frames(&path, doc.pixel_format(), Some(0), Some((frame_count - 1) as u64), Some(f64::from(fps)), ctx)?;
+    if frames.len() != frame_count {
+        return Err(EngineError::Other(format!("movie decoder returned {} frames; expected {frame_count}", frames.len())));
+    }
+    let source_fps = if decoded_fps.is_finite() && decoded_fps > 0.0 { decoded_fps } else { fps };
+    let mut timeline = Timeline::new(frame_count, source_fps);
+    let layer_name = std::path::Path::new(&path).file_stem().and_then(|stem| stem.to_str()).unwrap_or("Movie").chars().take(256).collect::<String>();
+    let mut layer = Layer::raster(layer_name, doc.pixel_format());
+    let layer_id = layer.id;
+    let mut video = VideoData::new(frames, source_fps);
+    video.source = VideoSource::File { path: path.clone() };
+    layer.content = LayerContent::Raster(video.frames.first().cloned().ok_or_else(|| EngineError::Other("movie decoder returned no first frame".into()))?);
+    layer.video = Some(video);
+    doc.layers.push(layer);
+
+    if info.has_audio {
+        let audio = crate::media_backend::probe_audio(&path).map_err(|error| EngineError::Other(error.to_string()))?;
+        let video_duration = frame_count as f64 / f64::from(source_fps.max(0.001));
+        let duration = video_duration.min(audio.duration_seconds);
+        if duration > 0.0 {
+            crate::audio_cmds::add_linked_movie_audio(&mut timeline, layer_id, path, audio.duration_seconds, 0.0, duration, 0.0, 1.0)?;
+        }
+    }
+    doc.timeline = Some(timeline);
+    Ok(doc)
+}
+
+fn open_audio_document(name: &str, path: &str) -> Result<Document> {
+    let path = media_path(path)?;
+    let audio = crate::media_backend::probe_audio(&path).map_err(|error| EngineError::Other(error.to_string()))?;
+    let timeline_frames = (audio.duration_seconds * OPEN_AUDIO_FPS).ceil();
+    if !timeline_frames.is_finite() || timeline_frames < 1.0 || timeline_frames > MAX_OPEN_MEDIA_FRAMES as f64 {
+        return Err(EngineError::Other(format!("audio duration exceeds the {MAX_OPEN_MEDIA_FRAMES}-frame timeline limit")));
+    }
+    let duration = timeline_frames as usize;
+    let mut timeline = Timeline::new(duration, OPEN_AUDIO_FPS as f32);
+    let clip_name = std::path::Path::new(&path).file_stem().and_then(|stem| stem.to_str()).unwrap_or("Audio").chars().take(256).collect::<String>();
+    timeline.audio_tracks.push(AudioTrack {
+        id: 1,
+        name: "Audio".into(),
+        muted: false,
+        clips: vec![AudioClip {
+            id: 1,
+            name: clip_name,
+            path,
+            start_seconds: 0.0,
+            trim_in_seconds: 0.0,
+            duration_seconds: audio.duration_seconds,
+            source_duration_seconds: audio.duration_seconds,
+            speed: 1.0,
+            volume: 1.0,
+            fade_in_seconds: 0.0,
+            fade_out_seconds: 0.0,
+            muted: false,
+            linked_video: None,
+            envelope_offset_seconds: 0.0,
+            envelope_duration_seconds: Some(audio.duration_seconds),
+        }],
+    });
+    let mut doc = Document::new(name, Size::new(1920, 1080), ColorMode::Rgb, SampleType::U8);
+    doc.timeline = Some(timeline);
+    Ok(doc)
+}
+
+enum OpenedContent {
+    Raster(photostore_io::ImportResult),
+    Media(Document),
+}
+
 impl Session {
     /// Run the heavy part of inline (not background) job commands under `ctx`, so another thread
     /// can cancel them: a live preview whose parameters changed stops its stale computation
@@ -418,6 +530,16 @@ impl Session {
         let name_w = name.to_string();
         let name_a = name.to_string();
         let max_svg_group_depth = self.prefs().file_handling.rasterize_svg_groups_deeper_than as usize;
+        let media_source = match (&source, media_kind(name)) {
+            (_, None) => None,
+            (OpenSource::Path(path), Some(kind)) if !cfg!(target_arch = "wasm32") => Some((path.clone(), kind)),
+            (OpenSource::Bytes(_), Some(_)) => {
+                return Err(EngineError::Other("opening video and audio media requires a local file path on the desktop".into()));
+            }
+            (OpenSource::Path(_), Some(_)) => {
+                return Err(EngineError::Other("video and audio media import is available in the desktop app only".into()));
+            }
+        };
         self.start_job(
             OPEN_JOB,
             json!({"name": name}),
@@ -425,6 +547,14 @@ impl Session {
             false,
             move |ctx| {
                 ctx.progress(0.0, "Reading");
+                if let Some((path, kind)) = media_source {
+                    let doc = match kind {
+                        MediaKind::Video => open_video_document(&name_w, &path, ctx)?,
+                        MediaKind::Audio => open_audio_document(&name_w, &path)?,
+                    };
+                    ctx.check()?;
+                    return Ok(OpenedContent::Media(doc));
+                }
                 let bytes = match source {
                     OpenSource::Bytes(b) => b,
                     OpenSource::Path(p) => Arc::new(read_path(&p)?),
@@ -432,17 +562,22 @@ impl Session {
                 ctx.check()?;
                 ctx.progress(0.02, "Decoding");
                 ctx.stage(0.02, 1.0, "Decoding", |ctl| photostore_io::import_with_svg_group_depth_and_interrupt(&name_w, &bytes, max_svg_group_depth, ctl))
+                    .map(OpenedContent::Raster)
                     .map_err(|e| match e {
                         photostore_io::IoError::Cancelled => EngineError::Cancelled,
                         e => EngineError::Other(e.to_string()),
                     })
             },
-            move |s, r: photostore_io::ImportResult| {
-                let (index, color) = s.open_document(r.document, None);
+            move |s, opened: OpenedContent| {
+                let (doc, source_read_only, warnings, is_media) = match opened {
+                    OpenedContent::Raster(r) => (r.document, r.source_read_only, r.warnings, false),
+                    OpenedContent::Media(doc) => (doc, true, Vec::<String>::new(), true),
+                };
+                let (index, color) = s.open_document(doc, None);
                 if let Some(st) = s.active_mut() {
-                    st.source_read_only = r.source_read_only;
+                    st.source_read_only = source_read_only;
                 }
-                Ok(json!({"document": index, "name": name_a, "warnings": r.warnings, "color": color}))
+                Ok(json!({"document": index, "name": name_a, "warnings": warnings, "color": color, "media": is_media}))
             },
         )
     }

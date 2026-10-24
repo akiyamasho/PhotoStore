@@ -23,7 +23,7 @@ mod recovery_tests;
 const OPEN_EXTS: &[&str] = &[
     "pcraft", "pdn", "ora", "psd", "psb", "psdt", "png", "jpg", "jpeg", "tif", "tiff", "webp", "gif", "bmp", "tga", "ico", "qoi", "exr", "hdr", "pbm", "pgm",
     "ppm", "pam", "pfm", "heic", "heif", "hif", "dng", "cr2", "cr3", "nef", "nrw", "arw", "pef", "orf", "rw2", "raf", "abr", "grd", "svg", "svgz", "aco",
-    "ase", "kys", "af", "afdesign", "afphoto", "afpub",
+    "ase", "kys", "af", "afdesign", "afphoto", "afpub", "mp4", "mov", "webm", "avi", "mkv", "m4v", "mpg", "mpeg", "wav", "aif", "aiff", "mp3", "m4a", "aac", "flac", "ogg", "opus",
 ];
 const SVG_EXTS: &[&str] = &["svg", "svgz"];
 

@@ -1,0 +1,25 @@
+# Remove downloadable assets from older published releases without deleting their records or tags.
+name: Release asset retention
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-asset-retention
+  cancel-in-progress: false
+
+jobs:
+  retain-assets:
+    name: Keep the newest three published releases' assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove assets from older releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 scripts/prune-release-assets.py

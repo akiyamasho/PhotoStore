@@ -1,5 +1,10 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::{
+    path::PathBuf,
+    process::Command,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use serde_json::json;
 
@@ -51,6 +56,19 @@ fn job(r: Started) -> JobId {
         Started::Job(id) => id,
         Started::Done(v) => panic!("expected a background job, ran inline: {v}"),
     }
+}
+
+static MEDIA_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
+
+fn media_fixture(ext: &str, codec: &str) -> Option<PathBuf> {
+    let id = MEDIA_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!("photostore-open-media-{}-{id}.{ext}", std::process::id()));
+    let status = Command::new("ffmpeg").args(["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5", "-c:a", codec]).arg(&path).status();
+    if !status.is_ok_and(|status| status.success()) {
+        let _ = std::fs::remove_file(&path);
+        return None;
+    }
+    Some(path)
 }
 
 #[test]
@@ -407,6 +425,80 @@ fn open_runs_as_a_job_and_cancel_adds_nothing() {
 
     let id = job(s.start_open("missing.psd", OpenSource::Path("/no/such/file.psd".into())).unwrap());
     assert!(matches!(wait_event(&mut s, id).outcome, JobOutcome::Failed(_)));
+}
+
+#[test]
+fn opening_video_and_audio_files_builds_timeline_documents() {
+    if !crate::media_backend::software_availability().0 || !crate::media_backend::software_availability().1 {
+        return;
+    }
+
+    for ext in ["mp4", "mov"] {
+        let movie = std::env::temp_dir().join(format!("photostore-open-movie-{}.{}", std::process::id(), ext));
+        let encoded = Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=32x32:r=2:d=1",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=0.5",
+                "-frames:v",
+                "2",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+            ])
+            .arg(&movie)
+            .status();
+        if !encoded.is_ok_and(|status| status.success()) {
+            let _ = std::fs::remove_file(&movie);
+            return;
+        }
+        let mut session = Session::new();
+        let movie_name = movie.file_name().and_then(|name| name.to_str()).unwrap_or("sample.mp4");
+        let job_id = job(session.start_open(movie_name, OpenSource::Path(movie.to_string_lossy().into_owned())).unwrap());
+        let event = wait_event(&mut session, job_id);
+        let JobOutcome::Done(result) = event.outcome else { panic!("{event:?}") };
+        assert_eq!(result["media"], true);
+        let opened = session.active().unwrap();
+        let timeline = opened.doc.timeline.as_ref().unwrap();
+        assert_eq!(timeline.duration, 2);
+        assert_eq!(timeline.audio_tracks.len(), 1, "embedded movie audio is added to the timeline");
+        let video = opened.doc.layers.first().and_then(|layer| layer.video.as_ref()).unwrap();
+        assert_eq!(video.frames.len(), 2);
+        let _ = std::fs::remove_file(&movie);
+    }
+
+    for (ext, codec) in [("mp3", "libmp3lame"), ("wav", "pcm_s16le")] {
+        let Some(path) = media_fixture(ext, codec) else { continue };
+        let mut session = Session::new();
+        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("sample.wav");
+        let job_id = job(session.start_open(name, OpenSource::Path(path.to_string_lossy().into_owned())).unwrap());
+        let event = wait_event(&mut session, job_id);
+        let JobOutcome::Done(result) = event.outcome else { panic!("{event:?}") };
+        assert_eq!(result["media"], true);
+        let timeline = session.active().unwrap().doc.timeline.as_ref().unwrap();
+        assert_eq!(timeline.audio_tracks.len(), 1);
+        assert_eq!(timeline.audio_tracks[0].clips.len(), 1);
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+#[test]
+fn opening_media_from_memory_returns_a_local_path_error() {
+    for name in ["sample.mp4", "sample.mov", "sample.mp3", "sample.wav"] {
+        let result = Session::new().start_open(name, OpenSource::Bytes(Arc::new(Vec::new())));
+        assert!(result.as_ref().is_err_and(|error| error.to_string().contains("local file path")), "{name}: {result:?}");
+    }
 }
 
 #[test]

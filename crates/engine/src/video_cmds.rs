@@ -45,7 +45,7 @@ fn export_range(p: &Value, total: usize, work_start: usize, work_end: usize, cmd
     Ok((start, end))
 }
 
-fn decode_movie_frames(path: &str, fmt: photostore_color::PixelFormat, start: Option<u64>, end: Option<u64>, fps_override: Option<f64>, ctx: &crate::jobs::JobCtx) -> Result<(Vec<Surface>, f32)> {
+pub(crate) fn decode_movie_frames(path: &str, fmt: photostore_color::PixelFormat, start: Option<u64>, end: Option<u64>, fps_override: Option<f64>, ctx: &crate::jobs::JobCtx) -> Result<(Vec<Surface>, f32)> {
     let info = crate::media_backend::probe(path).map_err(media_error)?;
     let fps = movie_fps(&info, fps_override)?;
     let count = info.frame_count.or_else(|| {

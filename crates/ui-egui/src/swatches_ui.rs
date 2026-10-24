@@ -96,6 +96,7 @@ fn handle(app: &mut PhotoStoreApp, e: Ev, background: bool) {
         }
         // Swatches don't drop onto the canvas.
         Ev::Drop(..) => {}
+        Ev::Reorder(k, g, position) => drop(run(app, "swatches.move", json!({"swatch": k, "to": g, "position": position}))),
         Ev::Rename(k, n) => {
             if run(app, "swatches.rename", json!({"swatch": k, "name": n})).is_some() && app.ui.presets_ui.selected.get(PANEL) == Some(&k) {
                 sel(app, &n);
@@ -337,6 +338,21 @@ mod tests {
         add_from_picker(&mut app, &f);
         let s = app.session.presets.swatches[0].items.last().unwrap();
         assert_eq!(s.color, photostore_engine::presets::swatches::SwatchColor::Cmyk([1.0, 0.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn dragging_reorders_within_a_group_and_can_move_between_groups() {
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
+        let first_group = app.session.presets.swatches.first().expect("default swatch group").name.clone();
+        let before: Vec<String> = app.session.presets.swatches[0].items.iter().take(2).map(|swatch| swatch.name.clone()).collect();
+        assert_eq!(before.len(), 2);
+        handle(&mut app, Ev::Reorder(before[0].clone(), first_group.clone(), 1), false);
+        let after: Vec<String> = app.session.presets.swatches[0].items.iter().take(2).map(|swatch| swatch.name.clone()).collect();
+        assert_eq!(after, vec![before[1].clone(), before[0].clone()]);
+
+        let second_group = app.session.presets.swatches.get(1).expect("second default group").name.clone();
+        handle(&mut app, Ev::Move(before[0].clone(), second_group.clone()), false);
+        assert!(app.session.presets.swatches[1].items.iter().any(|swatch| swatch.name == before[0]));
     }
 
     #[test]
