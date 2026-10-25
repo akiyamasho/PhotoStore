@@ -540,3 +540,13 @@ only. The immutable tag `v0.16.0` points to exact source `a87fd1049844a41d456cbd
 - [Published stable/latest 0.17.1](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.17.1), release ID `416252633`; server asset sizes/digests match the local receipt.
 - Scheduler remains disabled/unloaded with no supported no-replay handoff; no publication build ran.
 - Receipt/limitations: [release notes](releases/0.17.1.md).
+
+## 2026-10-25: PhotoStore 0.18.2 release preparation
+
+- Prepared stable version 0.18.2 metadata for the linked movie-footage and Brush curve fixes.
+- Planned source base: `f2a3fe86e8c29f040537b5374ffecf47eb8d7d1b` on `main`; release tag and exact
+  source commit will be recorded after review and commit.
+- Source evidence: the linked large-movie contract test and two focused Brush tests passed against
+  that source. Native tablet/mouse input and the reporter's exact media/drag timing remain unverified.
+- Release build, package verification, publication, and production installation are pending; see the
+  [0.18.2 release record](releases/0.18.2.md).

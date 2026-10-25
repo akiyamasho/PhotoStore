@@ -29,7 +29,7 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 
 ## Current published release
 
-PhotoStore 0.18.0 adds an in-app GitHub updater for the Apple Silicon macOS app. [Download 0.18.0](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.18.0). The release artifacts were verified and installed locally; checksums, verification, and limitations are in the [release record](docs/releases/0.18.0.md). The previous [0.17.1 release](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.17.1) added Generative Fill.
+PhotoStore 0.18.2 adds linked, lazy movie footage and smoother sparse brush curves to the Apple Silicon macOS app. [Download 0.18.2](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.18.2). The [0.18.2 release record](docs/releases/0.18.2.md) documents verification, artifacts, and known limits. The previous [0.18.1 release](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.18.1) added desktop media import and swatch improvements.
 
 ## Generative Fill
 
