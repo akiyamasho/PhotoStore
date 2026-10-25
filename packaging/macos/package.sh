@@ -6,10 +6,11 @@
 #
 # Usage: packaging/macos/package.sh [--arch universal|aarch64|x86_64] [--skip-build]
 #
-# Signing (env):
-#   MACOS_SIGN_IDENTITY   codesign identity (name or SHA-1). Default "-" = ad-hoc (local testing;
-#                         Gatekeeper will reject the result on other Macs). In CI, import-cert.sh sets it.
-#   MACOS_KEYCHAIN        keychain holding the identity (optional)
+# Signing:
+#   Production defaults to the persistent local identity in
+#   ~/Library/Application Support/PhotoStore/signing/release-signing.json.
+#   MACOS_SIGN_IDENTITY / MACOS_KEYCHAIN may override it with a valid certificate-backed identity.
+#   Ad-hoc signing is available only through package-dev.sh.
 # Notarization (env; all three needed, and a real identity):
 #   APPLE_ID, APPLE_PASSWORD (app-specific password), APPLE_TEAM_ID
 set -euo pipefail
@@ -36,7 +37,17 @@ esac
 
 # Keep in sync with LSMinimumSystemVersion in Info.plist.in.
 export MACOSX_DEPLOYMENT_TARGET=11.0
-IDENTITY="${MACOS_SIGN_IDENTITY:--}"
+
+# Resolve and validate signing before any Cargo work. The resolver checks the persisted public
+# certificate fingerprints and that the certificate has a usable code-signing identity; it never
+# creates or imports keys. NUL-delimited fields preserve keychain paths containing spaces.
+exec 3< <(python3 "$HERE/resolve-signing.py")
+if ! IFS= read -r -d '' IDENTITY <&3 || ! IFS= read -r -d '' MACOS_KEYCHAIN <&3 || ! IFS= read -r -d '' SIGNING_KIND <&3; then
+  exec 3<&-
+  echo "error: could not resolve a certificate-backed production signing identity" >&2
+  exit 2
+fi
+exec 3<&-
 SHORT_VERSION="${VERSION%%-*}"
 WORK="$CARGO_TARGET_DIR/macos-package"
 APP="$WORK/PhotoStore.app"
@@ -44,10 +55,10 @@ DMG="$DIST/photostore-$VERSION-macos-$ARCH.dmg"
 CLI_ZIP="$DIST/photostore-cli-$VERSION-macos-$ARCH.zip"
 
 NOTARIZE=0
-if [ "$IDENTITY" = "-" ]; then
-  warn "macOS: ad-hoc signing (no MACOS_SIGN_IDENTITY); artifacts are not notarized"
-elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+if [ "$SIGNING_KIND" = "developer_id" ] && [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
   NOTARIZE=1
+elif [ "$SIGNING_KIND" != "developer_id" ]; then
+  warn "macOS: certificate-backed signing (not Developer ID); artifacts are not notarized"
 else
   warn "macOS: APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID incomplete; signed but not notarized"
 fi
@@ -72,9 +83,9 @@ done
 
 # ---- signing helpers ---------------------------------------------------------------------------
 sign() {
-  # Hardened runtime + secure timestamp for a real identity; ad-hoc can't be timestamped.
+  # Hardened runtime is used for both identities. Only Developer ID gets Apple's secure timestamp.
   local ts=(--timestamp)
-  [ "$IDENTITY" = "-" ] && ts=(--timestamp=none)
+  [ "$SIGNING_KIND" != "developer_id" ] && ts=(--timestamp=none)
   local kc=()
   [ -n "${MACOS_KEYCHAIN:-}" ] && kc=(--keychain "$MACOS_KEYCHAIN")
   codesign --force --sign "$IDENTITY" ${kc[@]+"${kc[@]}"} "${ts[@]}" "$@"

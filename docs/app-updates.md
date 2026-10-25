@@ -32,7 +32,18 @@ owner and group, file flags, ACL state, and extended attributes, including the a
 signed files. If it cannot establish or preserve metadata safely, installation stops before the
 original bundle is renamed. The updater does not migrate macOS TCC privacy grants, keychain
 access, or other OS-managed identity state; those permissions are controlled by macOS and code
-signing identity.
+signing identity. Production packages now use the persistent PhotoStore signing identity by
+default, so updates and reinstalls can retain the same code-signing identity and designated
+requirement. macOS still decides whether a privacy prompt is needed; moving from an older ad-hoc
+signed installation to the persistent identity may require consent again for individual protected
+folders or services. Native prompt behavior was not manually tested for this migration. Keep the
+same certificate, bundle identifier, and designated requirement for later releases. Replacing the
+certificate can cause macOS to treat the app as a different requester and ask for access again.
+
+The default local certificate is a stable signing identity, not a Developer ID certificate. Local
+packages signed with it are not notarized and are intended for this machine. The release packager
+does not create or rotate the certificate automatically; it fails before building if its public
+configuration or code-signing identity is unavailable.
 
 Intel macOS, Windows, and Linux do not support in-app installation. The published PhotoStore 0.17.1
 package does not include the updater. Version 0.18.0 was built, verified, installed locally, and

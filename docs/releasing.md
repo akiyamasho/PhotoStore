@@ -33,11 +33,21 @@ version is verified; this procedure does not rewrite older tags retroactively.
 3. Build with the shared target directory, low resource settings, one job, and the locked offline
    dependency set when available. For the current macOS scope, package ARM64 with
    [`packaging/macos/package.sh`](../packaging/macos/package.sh).
+   Production packaging uses the persistent local signing identity configured at
+   `~/Library/Application Support/PhotoStore/signing/release-signing.json` by default. The public
+   JSON has `schemaVersion: 1`, `kind: "local"`, `identitySha1`, `certificateSha256`, and
+   `keychainPath`. The packager verifies the configured certificate and keychain identity before
+   starting Cargo. It never creates or rotates a key. A missing or invalid identity is an error;
+   use `MACOS_SIGN_IDENTITY` and optional `MACOS_KEYCHAIN` only to select another valid
+   certificate-backed identity. `package-dev.sh` remains the ad-hoc path.
 4. Inspect package contents and verify bundle identifier `ai.photostore.app`, version, baked
    source SHA/date, canonical icons, `NOTICE`, `ATTRIBUTION.md`, and license files. Generate
    `SHA256SUMS` and verify the listed artifact bytes and hashes.
-5. Verify signatures with strict local checks. Local packages may be ad hoc signed and are not
-   notarized; do not describe them as notarized or universally signed.
+5. Verify signatures with strict local checks. The default local certificate uses hardened runtime
+   and a stable signing identity, but is not Developer ID and cannot be notarized; describe those
+   packages as locally signed and not notarized. A valid Developer ID identity retains Apple's
+   secure timestamp and may be notarized when the Apple credentials are configured. Do not
+   describe a local-certificate package as notarized or universally trusted.
 6. Publish a GitHub release targeting the exact source SHA with `gh`, including the DMG, CLI archive,
    and checksum file. Publishing creates the version tag for that source. Record the tag, commit,
    artifact hashes, and limitations in the goal ledger. The asset-retention workflow keeps assets for

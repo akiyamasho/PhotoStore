@@ -1,8 +1,8 @@
 # PhotoStore goal ledger
 
-Updated 2026-10-11. This is an operational ledger for the independent PhotoStore fork. It records evidence and next actions; it does not convert inherited menu wiring into behavior parity or claim that the product is complete.
+Updated 2026-10-25. This is an operational ledger for the independent PhotoStore fork. It records evidence and next actions; it does not convert inherited menu wiring into behavior parity or claim that the product is complete.
 
-Current handoff and remaining priorities: [handoff.md](handoff.md). Current published production receipt: [0.16.0 release notes](releases/0.16.0.md).
+Current handoff and remaining priorities: [handoff.md](handoff.md). Current published production receipt: [0.18.2 release notes](releases/0.18.2.md).
 
 ## Product and provenance
 
@@ -541,12 +541,11 @@ only. The immutable tag `v0.16.0` points to exact source `a87fd1049844a41d456cbd
 - Scheduler remains disabled/unloaded with no supported no-replay handoff; no publication build ran.
 - Receipt/limitations: [release notes](releases/0.17.1.md).
 
-## 2026-10-25: PhotoStore 0.18.2 release preparation
+## 2026-10-25: PhotoStore 0.18.2 published stable release
 
-- Prepared stable version 0.18.2 metadata for the linked movie-footage and Brush curve fixes.
-- Planned source base: `f2a3fe86e8c29f040537b5374ffecf47eb8d7d1b` on `main`; release tag and exact
-  source commit will be recorded after review and commit.
-- Source evidence: the linked large-movie contract test and two focused Brush tests passed against
-  that source. Native tablet/mouse input and the reporter's exact media/drag timing remain unverified.
-- Release build, package verification, publication, and production installation are pending; see the
-  [0.18.2 release record](releases/0.18.2.md).
+- Published stable ARM64 macOS app and CLI from immutable source/tag `142f4704f5f9645d56d35208e75fdae12aa27246` / `v0.18.2`; source was pushed to `main`.
+- The app and CLI were compiled once; package signing and verification reused those binaries. The uploaded DMG and CLI ZIP match the [release receipt](releases/0.18.2.md).
+- Installed app and CLI both report 0.18.2 and the exact source SHA. Previous 0.18.1 app and CLI bundles remain at the rollback paths recorded in the receipt.
+- The release adds linked movie import with a bounded asynchronous 160 MiB preview cache, and Brush curve reconstruction that preserves pressure and timing. Native format v2 readers support v1 files; v1-only builds refuse v2 documents. The source file must remain available; Frames to Layers retains its 512 MiB eager-conversion limit.
+- The local certificate is persistent and certificate-bound designated-requirement matching passed across disposable 0.18.1 and 0.18.2 copies. It is not Developer ID or notarized. Migration from the previous ad-hoc identity may trigger consent again for protected folders/services; native consent behavior and native tablet/mouse input were not manually tested.
+- Three focused tests passed against pre-version-bump source `f2a3fe86e8c29f040537b5374ffecf47eb8d7d1b`; see the release receipt for exact scope and limits.

@@ -403,3 +403,12 @@ and before dab placement. This addresses polygonal joins left by sparse mouse or
 increasing smoothing lag. The aliased Pencil and zero-smoothing paths remain unchanged. Curve
 flattening targets 0.25 screen pixels and emits no more than 256 chords per sample interval; the
 live finish preview and committed stroke share the same generator.
+
+## 2026-10-25: Stable macOS release signing identity
+
+Production macOS packaging defaults to a persistent local PhotoStore certificate configured by
+public metadata outside the repository. The package guard verifies the certificate fingerprints
+and usable code-signing identity before Cargo runs; it does not create or rotate keys. Stable
+certificate-backed signing and the unchanged bundle identifier/designated requirement give macOS a
+consistent app identity across updates and reinstalls. The local certificate is not Developer ID
+and does not provide notarization; ad-hoc signing remains limited to the development packager.
