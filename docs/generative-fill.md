@@ -1,6 +1,6 @@
 # Generative Fill
 
-Select part of an image, choose **Edit → Generative Fill…**, describe the change, and choose
+Select part of an image, choose **Edit → Generative Fill…** (or press **Cmd+K**), describe the change in the compact canvas context bar, and choose
 **Generate**. The provider receives the entire visible canvas as context, the selection mask,
 and the selected bounding-box crop. PhotoStore adds the returned pixels as a new top-level
 **Generative Fill** layer, clipped by the original selection, in one undo step. Original layers
@@ -18,6 +18,13 @@ discarding the prompt. Use **Check setup** after installing or signing in; the c
 It verifies executable availability and Codex sign-in, while image-editing access is checked during generation. Credentials stay with the provider;
 PhotoStore does not store API keys. Codex inference may use online services and account limits.
 The image context is shared only when Generate is chosen.
+
+The command is selection-scoped: the bar appears only when the active document has a non-empty
+selection intersecting the canvas. It is transient and tied to that document, so changing to another
+active document or removing the selection closes it and its prompt is not carried elsewhere. Opening the bar does not
+start generation or send image data; the full canvas, mask, crop, and prompt are shared only after
+you choose **Generate**. While a generation job is running, Generate is disabled. Provider setup
+errors are shown inline with an **Open Settings** link.
 
 PhotoStore invokes `codex exec` in a private temporary job directory, attaches `context.png`,
 `mask.png`, and `crop.png`, and requests `$imagegen` to write `output.png`. A Codex installation

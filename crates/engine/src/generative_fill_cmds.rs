@@ -335,7 +335,7 @@ pub fn specs() -> Vec<CommandSpec> {
         id: CMD,
         label: "Generative Fill…",
         menu: &["Edit"],
-        shortcut: None,
+        shortcut: Some("Cmd+K"),
         params: r#"{"prompt":string,"provider":"codex"|"custom"?,"executable":string?,"args":[string]?,"timeoutSeconds":u64?,"seamless":bool=true} (requires a non-empty selection; background job)"#,
         enabled,
         run,

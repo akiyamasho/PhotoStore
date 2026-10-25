@@ -2316,9 +2316,12 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
         crate::monitor_status::check_window(app, &ctx);
     }
     let full = rect;
-    if primary {
+    let bar_active = if primary {
         crate::smart_ui::contents_bar(app, ui, idx, full);
-    }
+        crate::generative_fill_ui::context_bar(app, ui, idx, full)
+    } else {
+        false
+    };
     let rect = if primary { crate::rulers::content_rect(app, rect) } else { rect };
     let doc = app.session.documents()[idx].doc.clone();
     let size = [doc.size.width, doc.size.height];
@@ -2344,6 +2347,7 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
     let point_zoom = view.zoom / ppp;
     let xf = ViewXform { rect, zoom: point_zoom, center: view.center, flip, rotation: view.rotation };
     let pixel_grid = app.ui.view.shows(app.ui.view.show.pixel_grid);
+    // Only the foreground bar rect owns pointer input; the rest of the canvas remains usable.
     let response = ui.allocate_rect(rect, Sense::click_and_drag());
     let painter = ui.painter_at(rect);
 
@@ -2696,7 +2700,7 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
         view.center[1] -= d.y;
         // The tool cursors below are skipped while panning: the fist is set here (#2196).
         ctx.set_cursor_icon(crate::tool_cursor::hand(&ctx, true));
-    } else if primary {
+    } else if primary && !bar_active {
         let mods = ui.input(|i| i.modifiers);
         // An ⌥-click the window manager took never arrives; say so (alt_grab.rs).
         crate::alt_grab::watch(app, &ctx, egui::Id::new(("pc-alt-grab", idx)), rect, tool, !under_dialog);

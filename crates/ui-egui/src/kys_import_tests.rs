@@ -136,7 +136,7 @@ fn import_button_fills_the_dialog_and_ok_applies_the_set() {
     assert_eq!(h.state().ui.status, "", "the import failed");
     let overrides = field(&h, "overrides");
     assert_eq!(overrides["filter.blur.gaussianBlur"], json!("Cmd+Ctrl+Alt+G"));
-    assert!(overrides.get("edit.preferences.general").is_none(), "Cmd+K is Preferences' default: {overrides}");
+    assert_eq!(overrides.get("edit.preferences.general").and_then(Value::as_str), Some("Cmd+K"), "Cmd+K is an explicit Settings override: {overrides}");
     assert_eq!(overrides["filter.lastFilter"], json!("Cmd+F"));
     assert!(overrides.get("edit.undo").is_none(), "Cmd+Z is the default again: {overrides}");
     assert!(overrides.get("select.all").is_none(), "already the default: {overrides}");

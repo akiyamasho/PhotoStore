@@ -1,5 +1,14 @@
 # Implementation decisions
 
+## 2026-10-25: Selection-scoped Generative Fill context bar
+
+The Generative Fill command keeps generation and provider validation in the shared engine, while
+the native UI opens a compact, non-modal context bar anchored inside the active canvas. Cmd+K is
+owned by Generative Fill; Settings remains available from its menu. The bar is transient per
+document and closes when the selection is removed or the active document changes. Opening it may
+check local setup, but does not start generation or send image data; sharing happens only after
+Generate is explicitly chosen.
+
 ## 2026-10-25: File-backed linked movie storage
 
 Movie imports retain the original canonical file source and persist source frame count, source FPS,

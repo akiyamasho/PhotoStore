@@ -2107,8 +2107,8 @@ pub fn specs() -> Vec<CommandSpec> {
             false
         ),
         spec!("prefs.reset", "Reset Preferences", [], None, r##"{"path":"section|section.key"?=everything}"##, prefs_reset, false),
-        // Photoshop: ⌘K opens Preferences › General (⌘, is Layer › Hide Layers).
-        section!("edit.preferences.general", "General…", Some("Cmd+K")),
+        // Settings remains available from the menu; ⌘K belongs to Generative Fill.
+        section!("edit.preferences.general", "General…"),
         section!("edit.preferences.interface", "Interface…"),
         section!("edit.preferences.workspace", "Workspace…"),
         section!("edit.preferences.tools", "Tools…"),

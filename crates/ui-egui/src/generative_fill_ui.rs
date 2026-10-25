@@ -5,6 +5,133 @@ use serde_json::{Map, Value, json};
 
 pub const COMMAND: &str = "edit.generativeFill";
 const MARK: &str = "__generativeFill";
+const BAR_KEY: &str = "generative-fill-context-bar";
+
+#[derive(Clone, Default)]
+struct ContextBar {
+    document: u64,
+    prompt: String,
+    error: Option<String>,
+    focus_prompt: bool,
+}
+
+fn bar_id() -> egui::Id { egui::Id::new(BAR_KEY) }
+
+/// Open the compact, selection-scoped canvas bar used by the menu and Cmd+K.
+pub fn open_bar(app: &mut PhotoStoreApp, ctx: &egui::Context) -> Result<Value, String> {
+    if !app.session.is_enabled(COMMAND) {
+        return Err("Generative Fill requires a non-empty selection".into());
+    }
+    let document = app.session.active().map(|s| s.doc.id.0).ok_or("open a document first")?;
+    let existing = ctx.data(|d| d.get_temp::<ContextBar>(bar_id()));
+    let prompt = existing.filter(|bar| bar.document == document).map(|bar| bar.prompt).unwrap_or_default();
+    ctx.data_mut(|d| {
+        d.remove::<SetupProbe>(setup_id(&app.session.prefs().generative_fill));
+        d.insert_temp(bar_id(), ContextBar { document, prompt, focus_prompt: true, ..ContextBar::default() });
+    });
+    Ok(json!({"contextBar": true, "document": document}))
+}
+
+fn close_bar(ctx: &egui::Context) {
+    ctx.data_mut(|d| {
+        d.remove::<ContextBar>(bar_id());
+    });
+}
+
+/// Paint and handle the non-modal bar. It is laid out before canvas routing so its current rect can
+/// own pointer input; foreground ordering keeps it above the later canvas paint.
+pub fn context_bar(app: &mut PhotoStoreApp, ui: &egui::Ui, document: usize, canvas: egui::Rect) -> bool {
+    let Some(st) = app.session.documents().get(document) else { close_bar(ui.ctx()); return false };
+    let doc_id = st.doc.id.0;
+    let Some(mut bar) = ui.ctx().data(|d| d.get_temp::<ContextBar>(bar_id())) else { return false };
+    if bar.document != doc_id || app.session.active_index() != Some(document) || !app.session.is_enabled(COMMAND) {
+        close_bar(ui.ctx());
+        return false;
+    }
+    let bounds = canvas.shrink(8.0);
+    let width = bounds.width().min(680.0).max(1.0);
+    let narrow = width < 480.0;
+    let mut submit = false;
+    let mut close = false;
+    let mut open_settings = false;
+    let area = egui::Area::new(ui.id().with((BAR_KEY, doc_id)))
+        .order(egui::Order::Foreground)
+        .constrain_to(canvas)
+        .pivot(egui::Align2::CENTER_BOTTOM)
+        .fixed_pos(egui::pos2(bounds.center().x, bounds.bottom()))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_max_width(width);
+                let mut controls = |ui: &mut egui::Ui| {
+                    ui.label(egui::RichText::new("Generative Fill").strong());
+                    let response = ui.add_sized([if narrow { (width - 16.0).max(1.0) } else { (width - 250.0).max(120.0) }, 30.0], egui::TextEdit::singleline(&mut bar.prompt).hint_text("Describe what to add or change…"));
+                    if bar.focus_prompt { response.request_focus(); bar.focus_prompt = false; }
+                    if response.changed() { bar.error = None; }
+                    let ready = matches!(setup_status(ui, &app.session.prefs().generative_fill), Some(Ok(())));
+                    let enabled = ready && !bar.prompt.trim().is_empty() && !app.session.has_jobs();
+                    submit = ui.add_enabled(enabled, egui::Button::new("Generate")).clicked();
+                    close = ui.button("Close").clicked();
+                };
+                if narrow { ui.vertical(&mut controls); } else { ui.horizontal(&mut controls); }
+                if let Some(error) = &bar.error {
+                    ui.colored_label(crate::theme::Tokens::get(ui.ctx()).danger, error);
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("Check setup").clicked() {
+                            ui.ctx().data_mut(|d| d.remove::<SetupProbe>(setup_id(&app.session.prefs().generative_fill)));
+                        }
+                        if ui.link("Open Settings").clicked() { open_settings = true; }
+                    });
+                } else if let Some(status) = setup_status(ui, &app.session.prefs().generative_fill) {
+                    if let Err(reason) = status {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.small(reason);
+                            if ui.button("Check setup").clicked() {
+                                ui.ctx().data_mut(|d| d.remove::<SetupProbe>(setup_id(&app.session.prefs().generative_fill)));
+                            }
+                            if ui.link("Open Settings").clicked() { open_settings = true; }
+                        });
+                    }
+                } else {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.small("Checking provider setup…");
+                        if ui.button("Check setup").clicked() {
+                            ui.ctx().data_mut(|d| d.remove::<SetupProbe>(setup_id(&app.session.prefs().generative_fill)));
+                        }
+                        if ui.link("Open Settings").clicked() { open_settings = true; }
+                    });
+                }
+            });
+        });
+    let pointer_inside = ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| area.response.rect.contains(p));
+    if app.ui.dialogs.is_empty() && ui.input(|i| i.key_pressed(egui::Key::Escape)) { close = true; }
+    if close {
+        close_bar(ui.ctx());
+    } else if open_settings {
+        crate::prefs_ui::open_preferences(app, "generativeFill");
+    } else if submit {
+        // Re-check both document identity and selection immediately before dispatch: selection
+        // edits and tab switches can happen between the opening frame and this click.
+        let valid = app.session.active().is_some_and(|s| s.doc.id.0 == doc_id) && app.session.is_enabled(COMMAND);
+        if !valid {
+            close_bar(ui.ctx());
+        } else if app.session.has_jobs() {
+            bar.error = Some("Wait for the current background job to finish.".into());
+        } else {
+            match app.run(COMMAND, json!({"prompt": bar.prompt.trim()})) {
+                Ok(_) => close_bar(ui.ctx()),
+                Err(error) => bar.error = Some(error),
+            }
+        }
+    }
+    if !close_bar_is_gone(ui.ctx()) {
+        ui.ctx().data_mut(|d| d.insert_temp(bar_id(), bar));
+    }
+    pointer_inside
+}
+
+fn close_bar_is_gone(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<ContextBar>(bar_id())).is_none()
+}
 
 pub fn owns(fields: &Map<String, Value>) -> bool {
     fields.contains_key(MARK)
