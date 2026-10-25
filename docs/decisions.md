@@ -1,5 +1,16 @@
 # Implementation decisions
 
+## 2026-10-25: File-backed linked movie storage
+
+Movie imports retain the original canonical file source and persist source frame count, source FPS,
+and trim bounds in native format version 2. The resident video frame vector holds at most the first
+preview frame for this backing; logical timeline length comes from the source metadata. Requested
+frames are decoded on demand through a bounded cache, with asynchronous UI preview and blocking
+worker decoding for exports. Linked movie pixels are read-only in this pass so preview frames can
+never be mistaken for authored edits; unsupported pixel/frame-stack edits require rasterizing or
+converting first. Eager Frames to Layers remains capped at 512 MiB. This does not add proxy controls
+or hardware acceleration. See [large video import](large-video-import.md).
+
 ## 2026-10-18: Provider-independent Generative Fill
 
 Generative Fill belongs to the shared engine command registry. A versioned file contract supplies

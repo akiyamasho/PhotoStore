@@ -15,7 +15,7 @@ use photostore_geom::{Affine, Size};
 use serde::{Deserialize, Serialize};
 
 /// Current manifest version written by this build.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 /// Hex-encoded BLAKE3 hash (64 chars).
 pub type Hash = String;
@@ -188,6 +188,8 @@ pub struct SurfaceM {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VideoDataM {
     pub frames: Vec<SurfaceM>,
+    #[serde(default)]
+    pub movie_backing: Option<photostore_doc::MovieBacking>,
     #[serde(default)]
     pub frame_delays_ms: Vec<u32>,
     #[serde(default)]

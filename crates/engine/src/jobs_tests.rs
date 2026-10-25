@@ -494,6 +494,104 @@ fn opening_video_and_audio_files_builds_timeline_documents() {
 }
 
 #[test]
+#[ignore = "requires local ffmpeg and ffprobe"]
+fn linked_large_movie_stays_lazy_roundtrips_and_export_rejects_missing_source() {
+    assert!(
+        crate::media_backend::software_availability().0 && crate::media_backend::software_availability().1,
+        "the ignored media contract requires ffmpeg and ffprobe"
+    );
+    let movie = std::env::temp_dir().join(format!("photostore-linked-large-{}.mp4", std::process::id()));
+    let encoded = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-v",
+            "error",
+            "-threads",
+            "1",
+            "-filter_threads",
+            "1",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:size=1024x1024:rate=30:duration=4.3,hue=h=60*t",
+            "-frames:v",
+            "129",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "45",
+            "-pix_fmt",
+            "yuv420p",
+        ])
+        .arg(&movie)
+        .status();
+    assert!(encoded.is_ok_and(|status| status.success()), "failed to encode large linked-movie regression fixture");
+
+    let mut session = Session::new();
+    let name = movie.file_name().and_then(|n| n.to_str()).unwrap_or("large.mp4");
+    let id = job(session.start_open(name, OpenSource::Path(movie.to_string_lossy().into_owned())).unwrap());
+    let event = wait_event(&mut session, id);
+    let JobOutcome::Done(_) = event.outcome else { panic!("{event:?}") };
+    let source_doc = session.active().unwrap().doc.clone();
+    let video = source_doc.layers.first().and_then(|l| l.video.as_ref()).unwrap();
+    assert_eq!(video.frames.len(), 1, "only the preview frame is resident");
+    assert_eq!(video.len(), 129, "logical duration comes from linked source metadata");
+
+    let bytes = photostore_format::save_to_bytes(&source_doc, &photostore_format::SaveOptions::default()).unwrap();
+    let mut loaded = photostore_format::load_from_bytes(&bytes).unwrap();
+    let video = loaded.layers.first().and_then(|l| l.video.as_ref()).unwrap();
+    assert_eq!(video.frames.len(), 1);
+    assert_eq!(video.len(), 129);
+    assert_eq!(video.movie_backing.as_ref().map(|m| m.source_fps), Some(30.0));
+
+    let mut first = [[0u8; 4]; 1];
+    loaded.layers[0].surface().unwrap().read_rgba8_into(photostore_geom::Rect::from_xywh(512, 512, 1, 1), &mut first);
+    loaded.timeline.as_mut().unwrap().current = 128;
+    crate::video_cmds::sync(&mut loaded);
+    let mut later = [[0u8; 4]; 1];
+    loaded.layers[0].surface().unwrap().read_rgba8_into(photostore_geom::Rect::from_xywh(512, 512, 1, 1), &mut later);
+    assert_ne!(first, later, "later source frames decode on demand");
+
+    loaded.timeline.as_mut().unwrap().current = 0;
+    crate::video_cmds::sync(&mut loaded);
+    let mut source_session = Session::new();
+    source_session.add_document(loaded, None);
+    source_session.execute("layer.smartObjects.convertToSmartObject", json!({})).unwrap();
+    let smart_bytes = photostore_format::save_to_bytes(&source_session.active().unwrap().doc, &photostore_format::SaveOptions::default()).unwrap();
+    let reopened = photostore_format::load_from_bytes(&smart_bytes).unwrap();
+    let mut export_session = Session::new();
+    export_session.add_document(reopened, None);
+    export_session
+        .edit("seek", |doc, _| {
+            if let Some(t) = &mut doc.timeline {
+                t.current = 128;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let mut export_bytes = Vec::new();
+    crate::video_cmds::render_video_with(
+        &export_session,
+        &json!({"format":"png","start":128,"end":128}),
+        |_, b| {
+            export_bytes = b.to_vec();
+            Ok(())
+        },
+        |_, _| true,
+    )
+    .unwrap();
+    let decoded = photostore_codecs::decode(&export_bytes).unwrap().convert(photostore_codecs::ChannelLayout::Rgba, photostore_codecs::SampleType::U8);
+    let later_png = &decoded.data()[(512 * 1024 + 512) * 4..(512 * 1024 + 512) * 4 + 4];
+    assert_ne!(later_png, &first[0], "exported PNG contains the later source frame, not the first-frame preview");
+    assert!(later_png.iter().zip(later[0]).all(|(actual, expected)| actual.abs_diff(expected) <= 2), "Smart Object export matches source frame 128: {later_png:?} vs {:?}", later[0]);
+    std::fs::remove_file(&movie).unwrap();
+    let missing = crate::video_cmds::render_video_with(&export_session, &json!({"format":"png","start":128,"end":128}), |_, _| Ok(()), |_, _| true);
+    assert!(missing.is_err(), "missing linked source must not export a frozen preview");
+}
+
+#[test]
 fn opening_media_from_memory_returns_a_local_path_error() {
     for name in ["sample.mp4", "sample.mov", "sample.mp3", "sample.wav"] {
         let result = Session::new().start_open(name, OpenSource::Bytes(Arc::new(Vec::new())));

@@ -596,6 +596,7 @@ fn clip_layer_param(s: &Session, p: &Value, cmd: &str) -> Result<LayerId> {
 
 fn video_source_duration(v: &photostore_doc::VideoData) -> f64 {
     let fps = f64::from(v.fps.max(0.001));
+    if v.movie_backing.is_some() { return v.len() as f64 / fps; }
     v.frames.iter().enumerate().map(|(i, _)| f64::from(v.frame_delays_ms.get(i).copied().unwrap_or(0)).max(if v.frame_delays_ms.get(i).copied().unwrap_or(0) == 0 { 1000.0 / fps } else { 0.0 }) / 1000.0).sum()
 }
 

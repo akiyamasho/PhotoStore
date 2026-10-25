@@ -22,6 +22,7 @@ pub mod adjust_ui;
 mod alt_grab;
 pub mod analysis_ui;
 pub mod artboard_ui;
+mod audio_ui;
 pub(crate) mod blend_preview;
 mod brand;
 pub mod brush_panel;
@@ -71,10 +72,10 @@ pub mod filter_dialog;
 mod filter_preview_worker;
 mod font_preview;
 pub mod gallery_ui;
+pub mod generative_fill_ui;
 pub mod gpu_canvas;
 pub mod gpu_status;
 pub mod gradient_ui;
-pub mod generative_fill_ui;
 pub mod hold_keys;
 pub mod i18n;
 mod icon_data;
@@ -99,18 +100,16 @@ pub mod menu_catalog;
 pub mod menu_nav;
 pub mod menus;
 pub mod monitor_status;
-pub mod recording_ui;
-pub mod movie_ui;
 pub mod move_lock;
 pub mod move_mods;
 pub mod move_ui;
+pub mod movie_ui;
 pub mod native_menu;
 pub mod new_doc_ui;
 pub mod notices;
 mod numeric_expression;
 mod opacity_keys;
 mod opacity_ui;
-mod position_ui;
 pub mod outline;
 pub mod paint_mouse;
 pub mod palette;
@@ -121,6 +120,7 @@ pub mod perspective_ui;
 pub mod pixel_grid;
 pub mod plugin_ui;
 pub mod point_curve;
+mod position_ui;
 pub mod prefs_ui;
 pub mod preset_files_ui;
 pub mod preset_panels;
@@ -131,6 +131,7 @@ pub mod proxy;
 pub mod puppet_ui;
 pub mod quick_pick;
 pub mod rasterize_prompt;
+pub mod recording_ui;
 pub mod retouch_ui;
 mod rgb_histogram;
 pub mod rotate_view;
@@ -157,10 +158,8 @@ pub mod symmetry_ui;
 mod tab_strip;
 pub mod theme;
 pub mod tiff_options_ui;
-mod timeline_ui;
 mod timeline_playback;
-mod video_clip_ui;
-mod audio_ui;
+mod timeline_ui;
 mod titlebar;
 pub mod tone;
 mod tool_cursor;
@@ -170,9 +169,10 @@ pub mod transform_tool;
 pub mod type_panels_ui;
 pub mod type_tool;
 mod type_transform;
-mod variables_ui;
 mod update_ui;
+mod variables_ui;
 pub mod vector_ui;
+mod video_clip_ui;
 pub mod view_cmds;
 pub mod wheel_nav;
 pub mod wide_angle_ui;
@@ -377,6 +377,7 @@ pub struct PhotoStoreApp {
     /// Transient Timeline transport clock and native preview process. Kept out of UiState so
     /// playback handles and caches never enter saved UI snapshots or clone operations.
     timeline_playback: timeline_playback::Runtime,
+    movie_preview_generation: u64,
     pub services: Services,
     /// Canvas caches per (document, display): CPU textures hold monitor values; the GPU
     /// canvas state is shared (`canvas::GPU_OUTPUT`).
@@ -587,6 +588,7 @@ impl PhotoStoreApp {
             session,
             ui: UiState::default(),
             timeline_playback: timeline_playback::Runtime::default(),
+            movie_preview_generation: photostore_engine::movie_cache::completion_generation(),
             services,
             canvases: HashMap::new(),
             navigator_textures: HashMap::new(),
@@ -1233,6 +1235,34 @@ impl PhotoStoreApp {
 
 impl eframe::App for PhotoStoreApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let _movie_preview_scope = photostore_engine::movie_cache::PreviewScope::enter();
+        if let Some(error) = photostore_engine::movie_cache::take_preview_error() {
+            if self.ui.timeline.movie_preview_error.as_deref() != Some(error.as_str()) {
+                self.ui.timeline.movie_preview_error = Some(error.clone());
+                self.ui.status = error;
+                self.ui.status_error = true;
+            }
+        }
+        let movie_generation = photostore_engine::movie_cache::completion_generation();
+        if movie_generation != self.movie_preview_generation {
+            let has_linked_movie = self.session.active().is_some_and(|st| {
+                st.doc.walk().into_iter().any(|(_, _, layer)| {
+                    layer.video.as_ref().is_some_and(|v| v.movie_backing.is_some()) || matches!(&layer.content, photostore_doc::LayerContent::Smart(_))
+                })
+            });
+            if !has_linked_movie {
+                self.movie_preview_generation = movie_generation;
+            } else if self.session.refresh_linked_movie_preview() {
+                self.movie_preview_generation = movie_generation;
+                ctx.request_repaint();
+            } else {
+                // A background edit owns the active document; retry the refresh after it settles.
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            }
+        }
+        if photostore_engine::movie_cache::pending_count() > 0 {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
         i18n::set_current(i18n::Lang::from_pref(&self.session.prefs().interface.language));
         // Caps Lock state read from the OS once per frame (see `Services::caps_lock`): the canvas
         // cursor block needs it before the frame renders. `None` (Wayland/web) keeps `false`.
@@ -1328,6 +1358,7 @@ impl eframe::App for PhotoStoreApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let _movie_preview_scope = photostore_engine::movie_cache::PreviewScope::enter();
         let ctx = ui.ctx().clone();
         i18n::set_current(i18n::Lang::from_pref(&self.session.prefs().interface.language));
         // Fonts registered via set_fonts only take effect next frame; named families would panic now.
@@ -1484,14 +1515,19 @@ impl PhotoStoreApp {
         }
         if self.filter_mask_targeted() {
             let Some((_, layer)) = self.ui.filter_mask_target else { return params };
-            let mut out = match params { Value::Object(m) => m, _ => serde_json::Map::new() };
+            let mut out = match params {
+                Value::Object(m) => m,
+                _ => serde_json::Map::new(),
+            };
             if out.get("layer").and_then(Value::as_u64).is_some_and(|explicit| explicit != layer) {
                 return Value::Object(out);
             }
             out.insert("target".into(), Value::from("filterMask"));
             return Value::Object(out);
         }
-        if !self.layer_mask_targeted() { return params; }
+        if !self.layer_mask_targeted() {
+            return params;
+        }
         match params {
             Value::Object(mut m) => {
                 m.insert("target".into(), Value::from("mask"));
@@ -1518,10 +1554,14 @@ impl PhotoStoreApp {
             && st.channel_view.target == photostore_engine::channel_cmds::ChannelTarget::Composite
             && st.doc.quick_mask.is_none()
             && st.active_layer == Some(photostore_doc::LayerId(layer))
-            && st.doc.layer(photostore_doc::LayerId(layer)).and_then(|l| match &l.content {
-                photostore_doc::LayerContent::Smart(sm) => sm.filter_mask.as_ref(),
-                _ => None,
-            }).is_some()
+            && st
+                .doc
+                .layer(photostore_doc::LayerId(layer))
+                .and_then(|l| match &l.content {
+                    photostore_doc::LayerContent::Smart(sm) => sm.filter_mask.as_ref(),
+                    _ => None,
+                })
+                .is_some()
     }
 
     /// Viewing a layer mask (#196) targets it; a vector-mask target needs a vector mask on the

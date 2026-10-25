@@ -436,17 +436,15 @@ fn open_video_document(name: &str, path: &str, ctx: &JobCtx) -> Result<Document>
     let frame_count = movie_frame_count(&info)?;
     let fps = if info.fps.valid() { info.fps.as_f64() as f32 } else { 30.0 };
     let mut doc = Document::new(name, Size::new(info.width, info.height), ColorMode::Rgb, SampleType::U8);
-    let (frames, decoded_fps) =
-        crate::video_cmds::decode_movie_frames(&path, doc.pixel_format(), Some(0), Some((frame_count - 1) as u64), Some(f64::from(fps)), ctx)?;
-    if frames.len() != frame_count {
-        return Err(EngineError::Other(format!("movie decoder returned {} frames; expected {frame_count}", frames.len())));
-    }
+    let (preview, backing, decoded_fps) =
+        crate::video_cmds::open_linked_movie(&path, doc.pixel_format(), Some(0), Some((frame_count - 1) as u64), Some(f64::from(fps)), ctx)?;
     let source_fps = if decoded_fps.is_finite() && decoded_fps > 0.0 { decoded_fps } else { fps };
     let mut timeline = Timeline::new(frame_count, source_fps);
     let layer_name = std::path::Path::new(&path).file_stem().and_then(|stem| stem.to_str()).unwrap_or("Movie").chars().take(256).collect::<String>();
     let mut layer = Layer::raster(layer_name, doc.pixel_format());
     let layer_id = layer.id;
-    let mut video = VideoData::new(frames, source_fps);
+    let mut video = VideoData::new(vec![preview], source_fps);
+    video.movie_backing = Some(backing);
     video.source = VideoSource::File { path: path.clone() };
     layer.content = LayerContent::Raster(video.frames.first().cloned().ok_or_else(|| EngineError::Other("movie decoder returned no first frame".into()))?);
     layer.video = Some(video);

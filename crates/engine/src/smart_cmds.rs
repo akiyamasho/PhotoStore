@@ -138,7 +138,11 @@ static SOURCE_CACHE: Mutex<Vec<CacheEntry>> = Mutex::new(Vec::new());
 const CACHE_ENTRIES: usize = 32;
 const CACHE_BYTES: usize = 1 << 30;
 
-struct DecodedEntry { key: [u8; 32], doc: Arc<Document>, bytes: usize }
+struct DecodedEntry {
+    key: [u8; 32],
+    doc: Arc<Document>,
+    bytes: usize,
+}
 static DECODE_CACHE: Mutex<Vec<DecodedEntry>> = Mutex::new(Vec::new());
 const DECODE_ENTRIES: usize = 8;
 const DECODE_BYTES: usize = 512 << 20;
@@ -155,10 +159,16 @@ fn decoded_size(doc: &Document, source_bytes: usize) -> usize {
             total = total.saturating_add(b.width().max(0) as usize * b.height().max(0) as usize * surface.format().channels() * 4);
         }
         if let Some(video) = &layer.video {
-            total = total.saturating_add(video.frames.iter().map(|f| {
-                let b = f.content_bounds();
-                b.width().max(0) as usize * b.height().max(0) as usize * f.format().channels() * 4
-            }).sum());
+            total = total.saturating_add(
+                video
+                    .frames
+                    .iter()
+                    .map(|f| {
+                        let b = f.content_bounds();
+                        b.width().max(0) as usize * b.height().max(0) as usize * f.format().channels() * 4
+                    })
+                    .sum(),
+            );
         }
     }
     total
@@ -183,10 +193,28 @@ fn decode_cached(file_name: &str, bytes: &[u8]) -> Result<Arc<Document>> {
         }
         let doc = Arc::new(doc);
         c.push(DecodedEntry { key, doc: doc.clone(), bytes: size });
-        while c.len() > DECODE_ENTRIES || c.iter().map(|e| e.bytes).sum::<usize>() > DECODE_BYTES { c.remove(0); }
+        while c.len() > DECODE_ENTRIES || c.iter().map(|e| e.bytes).sum::<usize>() > DECODE_BYTES {
+            c.remove(0);
+        }
         return Ok(doc);
     }
     Ok(Arc::new(doc))
+}
+
+/// Detect linked movies at any depth in embedded or linked Smart Object contents. The content
+/// hash prevents cycles and repeated decoding; depth matches the Smart Object render limit.
+fn has_linked_movie_dependency(doc: &Document, depth: usize, visited: &mut std::collections::HashSet<[u8; 32]>) -> Result<bool> {
+    if depth >= 16 { return Err(other("smart object nesting exceeds the safe render depth (16)")); }
+    if doc.walk().iter().any(|(_, _, layer)| layer.video.as_ref().is_some_and(|video| video.movie_backing.is_some())) { return Ok(true); }
+    for (_, _, layer) in doc.walk() {
+        let LayerContent::Smart(smart) = &layer.content else { continue };
+        let Some((name, bytes)) = source_bytes(&doc.metadata, &smart.source) else { continue };
+        let hash = *blake3::hash(&bytes).as_bytes();
+        if !visited.insert(hash) { continue; }
+        let child = decode_cached(&name, &bytes)?;
+        if has_linked_movie_dependency(&child, depth + 1, visited)? { return Ok(true); }
+    }
+    Ok(false)
 }
 
 fn cache_get(key: &CacheKey) -> Option<SourceImage> {
@@ -284,7 +312,9 @@ fn timeline_frame_at_time(doc: &Document, time: f64) -> usize {
             photostore_doc::TimelineLoop::Loop => {
                 let cycle = duration as f64 / t.fps.max(1e-3) as f64;
                 if let Some(n) = loop_count {
-                    if seconds >= cycle * f64::from(n) { return duration - 1; }
+                    if seconds >= cycle * f64::from(n) {
+                        return duration - 1;
+                    }
                 }
                 frame % duration
             }
@@ -292,7 +322,9 @@ fn timeline_frame_at_time(doc: &Document, time: f64) -> usize {
                 let span = duration.saturating_mul(2).saturating_sub(2).max(1);
                 let cycle = span as f64 / t.fps.max(1e-3) as f64;
                 if let Some(n) = loop_count {
-                    if seconds >= cycle * f64::from(n) { return 0; }
+                    if seconds >= cycle * f64::from(n) {
+                        return 0;
+                    }
                 }
                 let p = frame % span;
                 if p < duration { p } else { span - p }
@@ -307,7 +339,9 @@ fn timeline_frame_at_time(doc: &Document, time: f64) -> usize {
     match t.loop_mode {
         photostore_doc::TimelineLoop::Loop => {
             if let Some(n) = loop_count {
-                if at >= total_ms * f64::from(n) { return duration - 1; }
+                if at >= total_ms * f64::from(n) {
+                    return duration - 1;
+                }
             }
             at %= total_ms.max(1.0)
         }
@@ -318,20 +352,30 @@ fn timeline_frame_at_time(doc: &Document, time: f64) -> usize {
     let mut acc = 0.0f64;
     for i in 0..duration {
         acc = (acc + delay(i)).min(f64::MAX / 2.0);
-        if at < acc + 1e-9 { frame = i; break; }
+        if at < acc + 1e-9 {
+            frame = i;
+            break;
+        }
     }
     if t.loop_mode == photostore_doc::TimelineLoop::PingPong && duration > 1 {
         let span = (total_ms * 2.0 - delay(duration - 1) - delay(0)).max(1.0);
         let elapsed = seconds * 1000.0;
         if let Some(n) = loop_count {
-            if elapsed >= span * f64::from(n) { return 0; }
+            if elapsed >= span * f64::from(n) {
+                return 0;
+            }
         }
         let mut p = elapsed % span;
-        if p >= total_ms { p = (span - p - f64::EPSILON).max(0.0); }
+        if p >= total_ms {
+            p = (span - p - f64::EPSILON).max(0.0);
+        }
         acc = 0.0;
         for i in 0..duration {
             acc = (acc + delay(i)).min(f64::MAX / 2.0);
-            if p < acc { frame = i; break; }
+            if p < acc {
+                frame = i;
+                break;
+            }
         }
     }
     frame
@@ -361,11 +405,25 @@ pub fn source_image_at_time(file_name: &str, bytes: &[u8], fmt: PixelFormat, tim
 fn source_image_at_time_inner(file_name: &str, bytes: &[u8], fmt: PixelFormat, time: Option<f64>, depth: usize) -> Result<SourceImage> {
     if time.is_none() {
         let key = cache_key(bytes, fmt);
-        if let Some(img) = cache_get(&key) { return Ok(img); }
-        let doc = decode_cached(file_name, bytes)?;
+        let cached_doc = decode_cached(file_name, bytes)?;
+        let has_linked_movie = has_linked_movie_dependency(&cached_doc, depth, &mut std::collections::HashSet::new())?;
+        if !has_linked_movie && let Some(img) = cache_get(&key) {
+            return Ok(img);
+        }
+        let mut doc = (*cached_doc).clone();
+        if has_linked_movie {
+            crate::video_cmds::sync_plain(&mut doc);
+            if !crate::video_cmds::linked_frames_ready(&doc) {
+                return Err(other("linked movie source frame is unavailable or still loading"));
+            }
+            let local_time = document_time(&doc).unwrap_or(0.0);
+            refresh_document_animated(&mut doc, local_time, depth.saturating_add(1))?;
+        }
         let buf = photostore_compose::flatten(&doc);
         let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds: doc.bounds() };
-        cache_put(key, img.clone());
+        if !has_linked_movie {
+            cache_put(key, img.clone());
+        }
         return Ok(img);
     }
     let cached_doc = decode_cached(file_name, bytes)?;
@@ -373,26 +431,50 @@ fn source_image_at_time_inner(file_name: &str, bytes: &[u8], fmt: PixelFormat, t
     // composite cache so such Smart Objects keep their fast path during playback.
     if cached_doc.timeline.is_none() {
         let key = cache_key(bytes, fmt);
-        if let Some(img) = cache_get(&key) { return Ok(img); }
-        let buf = photostore_compose::flatten(&cached_doc);
-        let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds: cached_doc.bounds() };
-        cache_put(key, img.clone());
+        let has_linked_movie = has_linked_movie_dependency(&cached_doc, depth, &mut std::collections::HashSet::new())?;
+        if !has_linked_movie && let Some(img) = cache_get(&key) {
+            return Ok(img);
+        }
+        let mut doc = (*cached_doc).clone();
+        if has_linked_movie {
+            crate::video_cmds::sync_plain(&mut doc);
+            if !crate::video_cmds::linked_frames_ready(&doc) {
+                return Err(other("linked movie source frame is unavailable or still loading"));
+            }
+            let local_time = document_time(&doc).unwrap_or(0.0);
+            refresh_document_animated(&mut doc, local_time, depth.saturating_add(1))?;
+        }
+        let buf = photostore_compose::flatten(&doc);
+        let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds: doc.bounds() };
+        if !has_linked_movie {
+            cache_put(key, img.clone());
+        }
         return Ok(img);
     }
     let Some(time) = time.filter(|t| t.is_finite() && *t >= 0.0) else {
         return Err(other("animated smart object rendering requires a finite timeline time"));
     };
     let frame = timeline_frame_at_time(&cached_doc, time);
-    let key = timed_cache_key(bytes, fmt, frame);
-    if let Some(img) = cache_get(&key) { return Ok(img); }
     let mut doc = (*cached_doc).clone();
-    if let Some(t) = &mut doc.timeline { t.current = frame; }
+    if let Some(t) = &mut doc.timeline {
+        t.current = frame;
+    }
     crate::video_cmds::sync_plain(&mut doc);
+    if !crate::video_cmds::linked_frames_ready(&doc) {
+        return Err(other("linked movie source frame is unavailable or still loading"));
+    }
+    let has_linked_movie = has_linked_movie_dependency(&doc, depth, &mut std::collections::HashSet::new())?;
+    let key = timed_cache_key(bytes, fmt, frame);
+    if !has_linked_movie && let Some(img) = cache_get(&key) {
+        return Ok(img);
+    }
     let local_time = document_time(&doc).unwrap_or(time);
-    refresh_document_animated(&mut doc, local_time, depth.saturating_add(1));
+    refresh_document_animated(&mut doc, local_time, depth.saturating_add(1))?;
     let buf = photostore_compose::flatten(&doc);
     let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds: doc.bounds() };
-    cache_put(key, img.clone());
+    if !has_linked_movie {
+        cache_put(key, img.clone());
+    }
     Ok(img)
 }
 
@@ -592,23 +674,32 @@ fn refresh_layer_at_time(doc: &Document, l: &mut Layer, time: Option<f64>, depth
 /// intact so a malformed/missing nested source cannot blank the document.
 pub fn refresh_animated(doc: &mut Document, id: LayerId) -> Result<bool> {
     let mut l = doc.layer(id).cloned().ok_or(EngineError::NoLayer(id))?;
-    if !matches!(l.content, LayerContent::Smart(_)) { return Ok(false); }
+    if !matches!(l.content, LayerContent::Smart(_)) {
+        return Ok(false);
+    }
     let time = document_time(doc);
     let ok = refresh_layer_at_time(doc, &mut l, time, 0)?;
-    if ok && let Some(dst) = doc.layer_mut(id) { dst.content = l.content; }
+    if ok && let Some(dst) = doc.layer_mut(id) {
+        dst.content = l.content;
+    }
     Ok(ok)
 }
 
-fn refresh_document_animated(doc: &mut Document, time: f64, depth: usize) {
-    if depth >= 16 { return; }
+fn refresh_document_animated(doc: &mut Document, time: f64, depth: usize) -> Result<()> {
+    if depth >= 16 {
+        return Err(other("smart object nesting exceeds the safe render depth (16)"));
+    }
     let ids: Vec<_> = doc.walk().into_iter().filter_map(|(_, _, l)| matches!(l.content, LayerContent::Smart(_)).then_some(l.id)).collect();
     for id in ids {
         if let Some(mut l) = doc.layer(id).cloned() {
-            if refresh_layer_at_time(doc, &mut l, Some(time), depth).unwrap_or(false) {
-                if let Some(dst) = doc.layer_mut(id) { dst.content = l.content; }
+            if refresh_layer_at_time(doc, &mut l, Some(time), depth)? {
+                if let Some(dst) = doc.layer_mut(id) {
+                    dst.content = l.content;
+                }
             }
         }
     }
+    Ok(())
 }
 
 /// Re-renders the smart object `id` of `doc`.
@@ -649,49 +740,75 @@ fn mask_from_selection(sel: &Surface) -> LayerMask {
 fn white_mask(doc: &Document) -> LayerMask {
     let mut m = LayerMask::reveal_all();
     let r = doc.bounds();
-    if !r.is_empty() { let v = m.surface.read_region(r); m.surface.write_region(r, &v); m.surface.prune(); }
+    if !r.is_empty() {
+        let v = m.surface.read_region(r);
+        m.surface.write_region(r, &v);
+        m.surface.prune();
+    }
     m
 }
 
 fn surfaces_same(a: &Surface, b: &Surface) -> bool {
-    a.format() == b.format() && a.default_pixel() == b.default_pixel() && a.tile_count() == b.tile_count()
+    a.format() == b.format()
+        && a.default_pixel() == b.default_pixel()
+        && a.tile_count() == b.tile_count()
         && a.tiles().zip(b.tiles()).all(|((ca, ta), (cb, tb))| ca == cb && std::sync::Arc::ptr_eq(ta, tb))
 }
 
 fn masks_same(a: &Option<LayerMask>, b: &Option<LayerMask>) -> bool {
     match (a, b) {
         (None, None) => true,
-        (Some(a), Some(b)) => a.enabled == b.enabled && a.linked == b.linked && a.density == b.density && a.feather == b.feather && surfaces_same(&a.surface, &b.surface),
+        (Some(a), Some(b)) => {
+            a.enabled == b.enabled && a.linked == b.linked && a.density == b.density && a.feather == b.feather && surfaces_same(&a.surface, &b.surface)
+        }
         _ => false,
     }
 }
 
 fn caches_same(a: &Option<Surface>, b: &Option<Surface>) -> bool {
-    match (a, b) { (None, None) => true, (Some(a), Some(b)) => surfaces_same(a, b), _ => false }
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => surfaces_same(a, b),
+        _ => false,
+    }
 }
 
 pub(crate) fn filter_mask_changed(before: &Document, after: &Document) -> bool {
     before.walk().into_iter().any(|(_, _, l)| {
         let LayerContent::Smart(a) = &l.content else { return false };
-        if a.smart_filters.is_empty() { return false; }
+        if a.smart_filters.is_empty() {
+            return false;
+        }
         let Some(n) = after.layer(l.id) else { return false };
         match (&l.content, &n.content) {
-            (LayerContent::Smart(a), LayerContent::Smart(b)) => a.smart_filters == b.smart_filters && caches_same(&a.cache, &b.cache) && !masks_same(&a.filter_mask, &b.filter_mask),
+            (LayerContent::Smart(a), LayerContent::Smart(b)) => {
+                a.smart_filters == b.smart_filters && caches_same(&a.cache, &b.cache) && !masks_same(&a.filter_mask, &b.filter_mask)
+            }
             _ => false,
         }
     })
 }
 
 pub(crate) fn refresh_changed_filter_masks(doc: &mut Document, before: &Document) -> Result<()> {
-    let ids: Vec<_> = before.walk().into_iter().filter_map(|(_, _, l)| {
-        let LayerContent::Smart(a) = &l.content else { return None };
-        if a.smart_filters.is_empty() { return None; }
-        let n = doc.layer(l.id)?;
-        match (&l.content, &n.content) {
-            (LayerContent::Smart(a), LayerContent::Smart(b)) if a.smart_filters == b.smart_filters && caches_same(&a.cache, &b.cache) && !masks_same(&a.filter_mask, &b.filter_mask) => Some(l.id),
-            _ => None,
-        }
-    }).collect();
+    let ids: Vec<_> = before
+        .walk()
+        .into_iter()
+        .filter_map(|(_, _, l)| {
+            let LayerContent::Smart(a) = &l.content else { return None };
+            if a.smart_filters.is_empty() {
+                return None;
+            }
+            let n = doc.layer(l.id)?;
+            match (&l.content, &n.content) {
+                (LayerContent::Smart(a), LayerContent::Smart(b))
+                    if a.smart_filters == b.smart_filters && caches_same(&a.cache, &b.cache) && !masks_same(&a.filter_mask, &b.filter_mask) =>
+                {
+                    Some(l.id)
+                }
+                _ => None,
+            }
+        })
+        .collect();
     for id in ids {
         refresh_or_fail(doc, id)?;
     }
@@ -703,14 +820,13 @@ pub(crate) fn refresh_changed_filter_masks(doc: &mut Document, before: &Document
 /// pixels (and still recorded).
 pub(crate) fn add_smart_filter(doc: &mut Document, id: LayerId, sf: photostore_doc::SmartFilter, selection: Option<&Surface>) -> Result<()> {
     let renderable = source_bytes(&doc.metadata, &smart(doc, id)?.source).is_some();
-    let initial_mask = if renderable && smart(doc, id)?.filter_mask.is_none() {
-        Some(selection.map(mask_from_selection).unwrap_or_else(|| white_mask(doc)))
-    } else {
-        None
-    };
+    let initial_mask =
+        if renderable && smart(doc, id)?.filter_mask.is_none() { Some(selection.map(mask_from_selection).unwrap_or_else(|| white_mask(doc))) } else { None };
     let sm = smart_mut(doc, id)?;
     if renderable {
-        if let Some(mask) = initial_mask { sm.filter_mask = Some(mask); }
+        if let Some(mask) = initial_mask {
+            sm.filter_mask = Some(mask);
+        }
         sm.smart_filters.push(sf);
         return refresh_or_fail(doc, id);
     }
@@ -852,7 +968,9 @@ fn layer_to_smart_with_options(doc: &Document, l: &Layer, single_existing_root: 
     }
     if owned_opacity.is_some() {
         if let Some(video) = inner.video.as_mut() {
-            for key in &mut video.keyframes { key.opacity = 1.0; }
+            for key in &mut video.keyframes {
+                key.opacity = 1.0;
+            }
         }
     }
     inner.clipped = false;
@@ -875,7 +993,8 @@ fn layer_to_smart_with_options(doc: &Document, l: &Layer, single_existing_root: 
     // state; for a single selected root its visibility/opacity are moved to the replacement
     // smart layer so normalisation above does not double-apply them.
     if let Some(mut timeline) = doc.timeline.clone() {
-        let selected_ids: std::collections::HashSet<_> = l.children().map_or_else(|| vec![l.id], |children| children.iter().map(|c| c.id).collect()).into_iter().collect();
+        let selected_ids: std::collections::HashSet<_> =
+            l.children().map_or_else(|| vec![l.id], |children| children.iter().map(|c| c.id).collect()).into_iter().collect();
         timeline.frame_states.iter_mut().for_each(|states| states.retain(|s| selected_ids.contains(&s.layer) || any_layer(l, &|x| x.id == s.layer)));
         timeline.property_frames.iter_mut().for_each(|states| states.retain(|s| selected_ids.contains(&s.layer) || any_layer(l, &|x| x.id == s.layer)));
         timeline.layer_ranges.retain(|r| selected_ids.contains(&r.layer) || any_layer(l, &|x| x.id == r.layer));
@@ -885,7 +1004,9 @@ fn layer_to_smart_with_options(doc: &Document, l: &Layer, single_existing_root: 
                     // The parent Smart Object owns frame-animation geometry/blend state; the
                     // embedded root stays in source coordinates with its fill/effects contents
                     // after the full-canvas conversion.
-                    if !video_owns_opacity || owned_position.is_some() { state.position = None; }
+                    if !video_owns_opacity || owned_position.is_some() {
+                        state.position = None;
+                    }
                     state.blend = Some(child_root_blend);
                     if owned_opacity.is_some() || !video_owns_opacity {
                         state.visible = true;
@@ -901,7 +1022,9 @@ fn layer_to_smart_with_options(doc: &Document, l: &Layer, single_existing_root: 
             }
             for states in &mut timeline.property_frames {
                 if let Some(state) = states.iter_mut().find(|s| s.layer == l.id) {
-                    if !video_owns_opacity || owned_position.is_some() { state.position = None; }
+                    if !video_owns_opacity || owned_position.is_some() {
+                        state.position = None;
+                    }
                     state.blend = Some(child_root_blend);
                     if owned_opacity.is_some() || !video_owns_opacity {
                         state.visible = true;
@@ -1016,17 +1139,23 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
                         state.effects = None;
                     }
                 }
-                for range in t.layer_ranges.iter_mut().filter(|range| range.layer == top) { range.layer = new_id; }
+                for range in t.layer_ranges.iter_mut().filter(|range| range.layer == top) {
+                    range.layer = new_id;
+                }
             } else {
                 t.frame_states.iter_mut().for_each(|states| {
                     let had_selected = states.iter().any(|state| ids.contains(&state.layer));
                     states.retain(|state| !ids.contains(&state.layer));
-                    if had_selected { states.push(photostore_doc::FrameLayerState::legacy(new_id, true, 1.0)); }
+                    if had_selected {
+                        states.push(photostore_doc::FrameLayerState::legacy(new_id, true, 1.0));
+                    }
                 });
                 t.property_frames.iter_mut().for_each(|states| {
                     let had_selected = states.iter().any(|state| ids.contains(&state.layer));
                     states.retain(|state| !ids.contains(&state.layer));
-                    if had_selected { states.push(photostore_doc::FrameLayerState::legacy(new_id, true, 1.0)); }
+                    if had_selected {
+                        states.push(photostore_doc::FrameLayerState::legacy(new_id, true, 1.0));
+                    }
                 });
                 t.layer_ranges.retain(|range| !ids.contains(&range.layer));
             }
@@ -1197,11 +1326,15 @@ pub(crate) fn on_close(s: &mut Session, index: usize, discard: bool) -> Result<(
     let Some(st) = s.docs.get(index) else { return Ok(()) };
     let id = st.doc.id;
     if s.smart_links.iter().any(|l| l.parent == id) {
-        let dirty_child = s.smart_links.iter().filter(|l| l.parent == id).find_map(|l| {
-            s.docs.iter().find(|d| d.doc.id == l.child).filter(|d| d.is_dirty()).map(|d| d.doc.name.clone())
-        });
+        let dirty_child = s
+            .smart_links
+            .iter()
+            .filter(|l| l.parent == id)
+            .find_map(|l| s.docs.iter().find(|d| d.doc.id == l.child).filter(|d| d.is_dirty()).map(|d| d.doc.name.clone()));
         if let Some(name) = dirty_child {
-            return Err(other(format!("can't close the smart object's document while Edit Contents document \"{name}\" has unsaved changes; save or close the contents first")));
+            return Err(other(format!(
+                "can't close the smart object's document while Edit Contents document \"{name}\" has unsaved changes; save or close the contents first"
+            )));
         }
     }
     if st.is_dirty() && s.smart_links.iter().any(|l| l.child == id) {
@@ -1243,7 +1376,9 @@ fn document_guard(s: &Session, cmd: &str, p: &Value) -> Result<()> {
 pub(crate) fn discard_ids(s: &Session, p: &Value, cmd: &str, targets: &[usize]) -> Result<Vec<DocId>> {
     let Some(value) = p.get("discardSmartContents") else { return Ok(Vec::new()) };
     let Value::Array(items) = value else { return Err(bad(cmd, "`discardSmartContents` must be an integer array")) };
-    if items.len() > 4096 { return Err(bad(cmd, "`discardSmartContents` has too many entries")); }
+    if items.len() > 4096 {
+        return Err(bad(cmd, "`discardSmartContents` has too many entries"));
+    }
     let mut out = Vec::with_capacity(items.len());
     for item in items {
         let id = item.as_u64().map(DocId).ok_or_else(|| bad(cmd, "`discardSmartContents` entries must be document ids"))?;
@@ -1263,17 +1398,19 @@ pub(crate) fn discard_ids(s: &Session, p: &Value, cmd: &str, targets: &[usize]) 
 fn contents_info(s: &Session, p: &Value) -> Result<Value> {
     document_guard(s, "layer.smartObjects.contentsInfo", p)?;
     let child = s.active().ok_or(EngineError::NoDocument)?;
-    let link = s.smart_links.iter().find(|l| l.child == child.doc.id).copied()
-        .ok_or_else(|| other("the active document is not open Smart Object contents"))?;
-    let parent = s.docs.iter().find(|d| d.doc.id == link.parent)
-        .ok_or_else(|| other("the Smart Object parent document is no longer open"))?;
-    let representative = parent.doc.layer(link.layer)
+    let link = s.smart_links.iter().find(|l| l.child == child.doc.id).copied().ok_or_else(|| other("the active document is not open Smart Object contents"))?;
+    let parent = s.docs.iter().find(|d| d.doc.id == link.parent).ok_or_else(|| other("the Smart Object parent document is no longer open"))?;
+    let representative = parent
+        .doc
+        .layer(link.layer)
         .filter(|layer| matches!(&layer.content, LayerContent::Smart(sm) if sm.contents_id == link.contents_id))
         .map(|layer| (layer.id, layer.name.clone(), layer.content.clone()))
-        .or_else(|| parent.doc.walk().into_iter().find_map(|(_, _, layer)| {
-            matches!(&layer.content, LayerContent::Smart(sm) if sm.contents_id == link.contents_id)
-                .then(|| (layer.id, layer.name.clone(), layer.content.clone()))
-        }))
+        .or_else(|| {
+            parent.doc.walk().into_iter().find_map(|(_, _, layer)| {
+                matches!(&layer.content, LayerContent::Smart(sm) if sm.contents_id == link.contents_id)
+                    .then(|| (layer.id, layer.name.clone(), layer.content.clone()))
+            })
+        })
         .ok_or_else(|| other("the Smart Object source instances no longer exist; reopen Edit Contents"))?;
     let (layer_id, layer_name, content) = representative;
     let LayerContent::Smart(sm) = content else {
@@ -1299,10 +1436,8 @@ fn contents_info(s: &Session, p: &Value) -> Result<Value> {
 fn return_to_parent(s: &mut Session, p: &Value) -> Result<Value> {
     document_guard(s, "layer.smartObjects.returnToParent", p)?;
     let child = s.active().ok_or(EngineError::NoDocument)?.doc.id;
-    let link = s.smart_links.iter().find(|l| l.child == child).copied()
-        .ok_or_else(|| other("the active document is not open Smart Object contents"))?;
-    let parent = s.docs.iter().position(|d| d.doc.id == link.parent)
-        .ok_or_else(|| other("the Smart Object parent document is no longer open"))?;
+    let link = s.smart_links.iter().find(|l| l.child == child).copied().ok_or_else(|| other("the active document is not open Smart Object contents"))?;
+    let parent = s.docs.iter().position(|d| d.doc.id == link.parent).ok_or_else(|| other("the Smart Object parent document is no longer open"))?;
     s.set_active(parent);
     Ok(json!({"document": parent, "parentDocId": link.parent.0}))
 }
@@ -1426,7 +1561,9 @@ fn reset_transform(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit("Reset Smart Object Transform", |doc, _| {
         let (source_bounds, current_bounds) = {
             let sm = smart(doc, id)?;
-            let source_bounds = source_bytes(&doc.metadata, &sm.source).and_then(|(name, bytes)| decode_source(&name, &bytes).ok().map(|d| d.bounds())).ok_or_else(|| other("the smart object's source is unavailable, so its transform can't be reset"))?;
+            let source_bounds = source_bytes(&doc.metadata, &sm.source)
+                .and_then(|(name, bytes)| decode_source(&name, &bytes).ok().map(|d| d.bounds()))
+                .ok_or_else(|| other("the smart object's source is unavailable, so its transform can't be reset"))?;
             let h = placement(sm);
             let pts = [
                 h.apply(source_bounds.x0 as f64, source_bounds.y0 as f64),
@@ -1505,21 +1642,32 @@ fn has_filter_mask(s: &Session) -> std::result::Result<(), String> {
 
 fn add_filter_mask(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "layer.smartFilter.addFilterMask";
-    if !p.is_object() { return Err(bad(CMD, "params must be an object")); }
+    if !p.is_object() {
+        return Err(bad(CMD, "params must be an object"));
+    }
     if let Some(document) = p.get("document") {
         let st = s.active().ok_or(EngineError::NoDocument)?;
-        if document.as_u64() != Some(st.doc.id.0) { return Err(bad(CMD, "the target document is no longer active")); }
+        if document.as_u64() != Some(st.doc.id.0) {
+            return Err(bad(CMD, "the target document is no longer active"));
+        }
     }
-    let source = match p.get("source") { None => "white", Some(Value::String(s)) => s.as_str(), Some(_) => return Err(bad(CMD, "`source` must be `white` or `selection`")) };
-    if !matches!(source, "white" | "selection") { return Err(bad(CMD, "`source` must be `white` or `selection`")); }
+    let source = match p.get("source") {
+        None => "white",
+        Some(Value::String(s)) => s.as_str(),
+        Some(_) => return Err(bad(CMD, "`source` must be `white` or `selection`")),
+    };
+    if !matches!(source, "white" | "selection") {
+        return Err(bad(CMD, "`source` must be `white` or `selection`"));
+    }
     let id = layer_param(s, p)?;
     let selection = s.active().and_then(|d| d.doc.selection.clone());
     s.edit("Add Smart Filter Mask", |doc, _| {
-        let mask = if source == "selection" {
-            selection.clone().map(|s| mask_from_selection(&s)).ok_or_else(|| bad(CMD, "no selection"))?
-        } else { white_mask(doc) };
+        let mask =
+            if source == "selection" { selection.clone().map(|s| mask_from_selection(&s)).ok_or_else(|| bad(CMD, "no selection"))? } else { white_mask(doc) };
         let sm = smart_mut(doc, id)?;
-        if sm.filter_mask.is_some() { return Err(bad(CMD, "the smart object already has a filter mask")); }
+        if sm.filter_mask.is_some() {
+            return Err(bad(CMD, "the smart object already has a filter mask"));
+        }
         sm.filter_mask = Some(mask);
         Ok(json!({"layer": id.0, "source": source}))
     })
@@ -1527,14 +1675,41 @@ fn add_filter_mask(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn edit_filter_mask(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "layer.smartFilter.editFilterMask";
-    if !p.is_object() { return Err(bad(CMD, "params must be an object")); }
-    let density = p.get("density").map(|v| v.as_f64().filter(|x| x.is_finite() && (0.0..=100.0).contains(x)).map(|x| x as f32 / 100.0).ok_or_else(|| bad(CMD, "`density` must be a finite number within 0..100"))).transpose()?;
-    let feather = p.get("feather").map(|v| v.as_f64().filter(|x| x.is_finite() && (0.0..=1000.0).contains(x)).map(|x| x as f32).ok_or_else(|| bad(CMD, "`feather` must be a finite number within 0..1000"))).transpose()?;
-    if density.is_none() && feather.is_none() { return Err(bad(CMD, "density or feather is required")); }
+    if !p.is_object() {
+        return Err(bad(CMD, "params must be an object"));
+    }
+    let density = p
+        .get("density")
+        .map(|v| {
+            v.as_f64()
+                .filter(|x| x.is_finite() && (0.0..=100.0).contains(x))
+                .map(|x| x as f32 / 100.0)
+                .ok_or_else(|| bad(CMD, "`density` must be a finite number within 0..100"))
+        })
+        .transpose()?;
+    let feather = p
+        .get("feather")
+        .map(|v| {
+            v.as_f64()
+                .filter(|x| x.is_finite() && (0.0..=1000.0).contains(x))
+                .map(|x| x as f32)
+                .ok_or_else(|| bad(CMD, "`feather` must be a finite number within 0..1000"))
+        })
+        .transpose()?;
+    if density.is_none() && feather.is_none() {
+        return Err(bad(CMD, "density or feather is required"));
+    }
     let st = s.active().ok_or(EngineError::NoDocument)?;
-    if let Some(document) = p.get("document") && document.as_u64() != Some(st.doc.id.0) { return Err(bad(CMD, "the target document is no longer active")); }
+    if let Some(document) = p.get("document")
+        && document.as_u64() != Some(st.doc.id.0)
+    {
+        return Err(bad(CMD, "the target document is no longer active"));
+    }
     let id = layer_param(s, p)?;
-    let old = match &st.doc.layer(id).ok_or(EngineError::NoLayer(id))?.content { LayerContent::Smart(sm) => sm.filter_mask.as_ref().ok_or_else(|| bad(CMD, "the smart object has no filter mask"))?, _ => return Err(other("the layer is not a smart object")) };
+    let old = match &st.doc.layer(id).ok_or(EngineError::NoLayer(id))?.content {
+        LayerContent::Smart(sm) => sm.filter_mask.as_ref().ok_or_else(|| bad(CMD, "the smart object has no filter mask"))?,
+        _ => return Err(other("the layer is not a smart object")),
+    };
     let next = (density.unwrap_or(old.density), feather.unwrap_or(old.feather));
     if (old.density, old.feather) != next {
         s.edit("Edit Smart Filter Mask", |doc, _| {
@@ -1547,25 +1722,35 @@ fn edit_filter_mask(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn invert_filter_mask(s: &mut Session, p: &Value) -> Result<Value> {
-    if !p.is_object() { return Err(bad("layer.smartFilter.invertFilterMask", "params must be an object")); }
+    if !p.is_object() {
+        return Err(bad("layer.smartFilter.invertFilterMask", "params must be an object"));
+    }
     if let Some(document) = p.get("document") {
         let st = s.active().ok_or(EngineError::NoDocument)?;
-        if document.as_u64() != Some(st.doc.id.0) { return Err(bad("layer.smartFilter.invertFilterMask", "the target document is no longer active")); }
+        if document.as_u64() != Some(st.doc.id.0) {
+            return Err(bad("layer.smartFilter.invertFilterMask", "the target document is no longer active"));
+        }
     }
     let id = layer_param(s, p)?;
     s.edit("Invert Smart Filter Mask", |doc, _| {
         let r = doc.bounds();
         let m = smart_mut(doc, id)?.filter_mask.as_mut().ok_or_else(|| other("the smart object has no filter mask"))?;
         let mut v = m.surface.read_region(r);
-        for x in &mut v { *x = 1.0 - *x; }
-        m.surface.write_region(r, &v); m.surface.prune(); Ok(json!({"layer": id.0}))
+        for x in &mut v {
+            *x = 1.0 - *x;
+        }
+        m.surface.write_region(r, &v);
+        m.surface.prune();
+        Ok(json!({"layer": id.0}))
     })
 }
 
 /// Copy or move the single mask shared by a smart object's filter stack.
 fn transfer_filter_mask(s: &mut Session, p: &Value, move_mask: bool) -> Result<Value> {
     let cmd = if move_mask { "layer.smartFilter.moveFilterMask" } else { "layer.smartFilter.copyFilterMask" };
-    if !p.is_object() { return Err(bad(cmd, "params must be an object")); }
+    if !p.is_object() {
+        return Err(bad(cmd, "params must be an object"));
+    }
     let source = p.get("source").and_then(Value::as_u64).map(LayerId).ok_or_else(|| bad(cmd, "`source` must be a layer id"))?;
     let destination = p.get("destination").and_then(Value::as_u64).map(LayerId).ok_or_else(|| bad(cmd, "`destination` must be a layer id"))?;
     let overwrite = match p.get("overwrite") {
@@ -1581,9 +1766,17 @@ fn transfer_filter_mask(s: &mut Session, p: &Value, move_mask: bool) -> Result<V
     let st = s.active().ok_or(EngineError::NoDocument)?;
     let src = st.doc.layer(source).ok_or(EngineError::NoLayer(source))?;
     let dst = st.doc.layer(destination).ok_or(EngineError::NoLayer(destination))?;
-    let sm = match &src.content { LayerContent::Smart(sm) => sm, _ => return Err(bad(cmd, "the source layer is not a smart object")) };
-    let dm = match &dst.content { LayerContent::Smart(sm) => sm, _ => return Err(bad(cmd, "the destination layer is not a smart object")) };
-    if sm.filter_mask.is_none() { return Err(bad(cmd, "the source smart object has no filter mask")); }
+    let sm = match &src.content {
+        LayerContent::Smart(sm) => sm,
+        _ => return Err(bad(cmd, "the source layer is not a smart object")),
+    };
+    let dm = match &dst.content {
+        LayerContent::Smart(sm) => sm,
+        _ => return Err(bad(cmd, "the destination layer is not a smart object")),
+    };
+    if sm.filter_mask.is_none() {
+        return Err(bad(cmd, "the source smart object has no filter mask"));
+    }
     if let Some(mask) = &sm.filter_mask {
         if !mask.density.is_finite() || !(0.0..=1.0).contains(&mask.density) {
             return Err(bad(cmd, "the source filter mask density is invalid"));
@@ -1592,13 +1785,23 @@ fn transfer_filter_mask(s: &mut Session, p: &Value, move_mask: bool) -> Result<V
             return Err(bad(cmd, "the source filter mask feather is invalid"));
         }
     }
-    if dm.smart_filters.is_empty() { return Err(bad(cmd, "the destination smart object has no smart filters")); }
+    if dm.smart_filters.is_empty() {
+        return Err(bad(cmd, "the destination smart object has no smart filters"));
+    }
     let dst_locks = st.doc.effective_locks(destination);
     let src_locks = st.doc.effective_locks(source);
-    if dst_locks.all || dst_locks.pixels { return Err(bad(cmd, "the destination layer is locked")); }
-    if move_mask && (src_locks.all || src_locks.pixels) { return Err(bad(cmd, "the source layer is locked")); }
-    if source == destination { return Ok(json!({"changed": false, "source": source.0, "destination": destination.0})); }
-    if dm.filter_mask.is_some() && !overwrite { return Err(bad(cmd, "the destination smart object already has a filter mask; pass `overwrite`: true")); }
+    if dst_locks.all || dst_locks.pixels {
+        return Err(bad(cmd, "the destination layer is locked"));
+    }
+    if move_mask && (src_locks.all || src_locks.pixels) {
+        return Err(bad(cmd, "the source layer is locked"));
+    }
+    if source == destination {
+        return Ok(json!({"changed": false, "source": source.0, "destination": destination.0}));
+    }
+    if dm.filter_mask.is_some() && !overwrite {
+        return Err(bad(cmd, "the destination smart object already has a filter mask; pass `overwrite`: true"));
+    }
     let mask = sm.filter_mask.clone().ok_or_else(|| bad(cmd, "the source smart object has no filter mask"))?;
     s.edit(if move_mask { "Move Smart Filter Mask" } else { "Copy Smart Filter Mask" }, |doc, _| {
         if move_mask {
@@ -1702,7 +1905,14 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(SmartSource::Embedded { file_name, bytes })
             })
         }),
-        spec!("layer.smartObjects.resetTransform", "Reset Transform", SO, r##"{"layer":id?} (restore source scale/orientation, preserve current centre)"##, has_smart, reset_transform),
+        spec!(
+            "layer.smartObjects.resetTransform",
+            "Reset Transform",
+            SO,
+            r##"{"layer":id?} (restore source scale/orientation, preserve current centre)"##,
+            has_smart,
+            reset_transform
+        ),
         spec!(
             "layer.smartObjects.convertToLinked",
             "Convert to Linked…",
@@ -1738,11 +1948,39 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(())
             })
         }),
-        spec!("layer.smartFilter.addFilterMask", "Add Filter Mask", SF, r##"{"layer":id?,"document":id?,"source":"white"|"selection"="white"}"##, has_smart, add_filter_mask),
-        spec!("layer.smartFilter.editFilterMask", "Edit Smart Filter Mask", SF, r##"{"layer":id?,"document":id?,"density":0..100?,"feather":0..1000?}"##, has_filter_mask, edit_filter_mask),
+        spec!(
+            "layer.smartFilter.addFilterMask",
+            "Add Filter Mask",
+            SF,
+            r##"{"layer":id?,"document":id?,"source":"white"|"selection"="white"}"##,
+            has_smart,
+            add_filter_mask
+        ),
+        spec!(
+            "layer.smartFilter.editFilterMask",
+            "Edit Smart Filter Mask",
+            SF,
+            r##"{"layer":id?,"document":id?,"density":0..100?,"feather":0..1000?}"##,
+            has_filter_mask,
+            edit_filter_mask
+        ),
         spec!("layer.smartFilter.invertFilterMask", "Invert Smart Filter Mask", SF, r##"{"layer":id?,"document":id?}"##, has_filter_mask, invert_filter_mask),
-        spec!("layer.smartFilter.copyFilterMask", "Copy Smart Filter Mask", SF, r##"{"source":layerId,"destination":layerId,"document":id?,"overwrite":bool=false}"##, |s| s.active().map(|_| ()).ok_or_else(|| "no document open".into()), |s, p| transfer_filter_mask(s, p, false)),
-        spec!("layer.smartFilter.moveFilterMask", "Move Smart Filter Mask", SF, r##"{"source":layerId,"destination":layerId,"document":id?,"overwrite":bool=false}"##, |s| s.active().map(|_| ()).ok_or_else(|| "no document open".into()), |s, p| transfer_filter_mask(s, p, true)),
+        spec!(
+            "layer.smartFilter.copyFilterMask",
+            "Copy Smart Filter Mask",
+            SF,
+            r##"{"source":layerId,"destination":layerId,"document":id?,"overwrite":bool=false}"##,
+            |s| s.active().map(|_| ()).ok_or_else(|| "no document open".into()),
+            |s, p| transfer_filter_mask(s, p, false)
+        ),
+        spec!(
+            "layer.smartFilter.moveFilterMask",
+            "Move Smart Filter Mask",
+            SF,
+            r##"{"source":layerId,"destination":layerId,"document":id?,"overwrite":bool=false}"##,
+            |s| s.active().map(|_| ()).ok_or_else(|| "no document open".into()),
+            |s, p| transfer_filter_mask(s, p, true)
+        ),
         spec!(
             "layer.smartFilter.disableFilterMask",
             "Disable Filter Mask",

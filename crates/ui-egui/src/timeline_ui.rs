@@ -34,7 +34,11 @@ pub struct TimelineUi {
     #[serde(skip)]
     pub thumb_last_signature: Option<u64>,
     #[serde(skip)]
+    thumb_last_movie_generation: Option<u64>,
+    #[serde(skip)]
     pub thumb_page: usize,
+    #[serde(skip)]
+    pub(crate) movie_preview_error: Option<String>,
     #[serde(default)]
     pub tween_from: String,
     #[serde(default)]
@@ -93,8 +97,33 @@ struct PendingOnionSettings {
     blend: photostore_doc::OnionSkinBlend,
 }
 
-fn default_tween_additions() -> u64 { 1 }
-fn default_true() -> bool { true }
+fn default_tween_additions() -> u64 {
+    1
+}
+fn default_true() -> bool {
+    true
+}
+
+fn linked_movie_thumbnail(surface: &photostore_raster::Surface, bounds: photostore_geom::Rect) -> egui::ColorImage {
+    let (width, height) = (bounds.width().max(0) as usize, bounds.height().max(0) as usize);
+    if width == 0 || height == 0 {
+        return egui::ColorImage::new([1, 1], vec![egui::Color32::TRANSPARENT]);
+    }
+    let step = width.max(height).div_ceil(64).max(1);
+    let (thumb_width, thumb_height) = (width.div_ceil(step), height.div_ceil(step));
+    let mut rgba = vec![0u8; thumb_width * thumb_height * 4];
+    for y in 0..thumb_height {
+        for x in 0..thumb_width {
+            let sx = bounds.x0 + (x * step + step / 2).min(width - 1) as i32;
+            let sy = bounds.y0 + (y * step + step / 2).min(height - 1) as i32;
+            let mut pixel = [[0u8; 4]; 1];
+            surface.read_rgba8_into(photostore_geom::Rect::new(sx, sy, sx + 1, sy + 1), &mut pixel);
+            let offset = (y * thumb_width + x) * 4;
+            rgba[offset..offset + 4].copy_from_slice(&pixel[0]);
+        }
+    }
+    egui::ColorImage::from_rgba_unmultiplied([thumb_width, thumb_height], &rgba)
+}
 
 impl std::fmt::Debug for TimelineUi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -106,6 +135,7 @@ impl std::fmt::Debug for TimelineUi {
             .field("frame_thumbs_len", &self.frame_thumbs.len())
             .field("thumb_generation", &self.thumb_generation)
             .field("thumb_page", &self.thumb_page)
+            .field("movie_preview_error", &self.movie_preview_error)
             .field("pending_keyframe", &self.pending_keyframe.is_some())
             .field("loop_editor_open", &self.loop_editor_open)
             .field("onion_editor_open", &self.onion_editor_open)
@@ -122,51 +152,109 @@ fn frame_thumbnails(app: &mut PhotoStoreApp, ctx: &egui::Context, tl: &photostor
     let signature = {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         st.doc.layers.iter().for_each(|layer| {
-            (layer.id, layer.video.as_ref().map(|v| v.frames.len())).hash(&mut hasher);
+            layer.id.hash(&mut hasher);
+            if let Some(video) = &layer.video {
+                video.len().hash(&mut hasher);
+                match &video.source {
+                    photostore_doc::VideoSource::Blank => 0u8.hash(&mut hasher),
+                    photostore_doc::VideoSource::File { path } => { 1u8.hash(&mut hasher); path.hash(&mut hasher); }
+                }
+                if let Some(backing) = &video.movie_backing {
+                    (backing.frame_count, backing.source_fps.to_bits(), backing.trim_in_frame, backing.trim_out_frame).hash(&mut hasher);
+                }
+            } else {
+                0usize.hash(&mut hasher);
+            }
         });
-        (matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation), tl.duration, tl.frame_states.len(), tl.layer_ranges.len(), tl.frame_delays_ms.len()).hash(&mut hasher);
+        (matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation), tl.duration, tl.frame_states.len(), tl.layer_ranges.len(), tl.frame_delays_ms.len())
+            .hash(&mut hasher);
         hasher.finish()
     };
+    let linked_movie = video.is_some_and(|v| v.movie_backing.is_some());
+    let movie_generation = photostore_engine::movie_cache::completion_generation();
+    let preview_completed = linked_movie && app.ui.timeline.thumb_last_movie_generation.is_some_and(|old| old != movie_generation);
     let content_changed = app.ui.timeline.thumb_last_history != Some(history)
         || app.ui.timeline.thumb_last_signature != Some(signature)
-        || (app.ui.timeline.thumb_last_current == Some(tl.current) && app.ui.timeline.thumb_last_revision != Some(st.revision));
+        || (app.ui.timeline.thumb_last_current == Some(tl.current)
+            && app.ui.timeline.thumb_last_revision != Some(st.revision)
+            && !preview_completed);
     if content_changed {
         app.ui.timeline.thumb_generation = app.ui.timeline.thumb_generation.wrapping_add(1);
         app.ui.timeline.frame_thumbs.clear();
     }
     app.ui.timeline.thumb_last_history = Some(history);
     app.ui.timeline.thumb_last_signature = Some(signature);
+    app.ui.timeline.thumb_last_movie_generation = Some(movie_generation);
     app.ui.timeline.thumb_last_current = Some(tl.current);
     app.ui.timeline.thumb_last_revision = Some(st.revision);
-    let key_prefix = format!("{}:{}:{}", st.doc.id.0, app.ui.timeline.thumb_generation, video.map_or(tl.duration, |v| v.frames.len()));
+    let key_prefix = format!("{}:{}:{}", st.doc.id.0, app.ui.timeline.thumb_generation, video.map_or(tl.duration, |v| v.len()));
     app.ui.timeline.frame_thumbs.retain(|(key, _)| key.starts_with(&key_prefix));
     const PAGE: usize = 48;
-    let total = video.map_or(tl.duration, |v| v.frames.len());
+    let total = video.map_or(tl.duration, |v| v.len());
     let page = app.ui.timeline.thumb_page.min(total.saturating_sub(1) / PAGE);
     app.ui.timeline.thumb_page = page;
     let start = page * PAGE;
     let frame_count = total.saturating_sub(start).min(PAGE);
     let mut ids = Vec::with_capacity(frame_count);
     let mut misses = 0usize;
+    let mut preview_error = None;
+    let mut preview_succeeded = false;
     for local in 0..frame_count {
         let frame = start + local;
         let key = format!("{key_prefix}:{frame}");
-        if let Some((_, texture)) = app.ui.timeline.frame_thumbs.iter().find(|(k, _)| k == &key) { ids.push(Some(texture.id())); continue; }
-        if misses >= 8 { ids.push(None); continue; }
+        if let Some((_, texture)) = app.ui.timeline.frame_thumbs.iter().find(|(k, _)| k == &key) {
+            ids.push(Some(texture.id()));
+            continue;
+        }
+        if misses >= 8 {
+            ids.push(None);
+            continue;
+        }
         misses += 1;
-        let image = if let Some(surface) = video.and_then(|v| v.frames.get(frame)) {
-            crate::transform_tex::read_surface(surface, None, st.doc.bounds(), 64).0
+        let linked = video.and_then(|v| v.movie_backing.as_ref().map(|_| v));
+        let image = if let Some(v) = linked {
+            let source_index = v.movie_backing.as_ref().map_or(frame, |m| m.trim_in_frame.saturating_add(frame).min(m.trim_out_frame));
+            let surface = match &v.source {
+                photostore_doc::VideoSource::File { path } => {
+                    match photostore_engine::movie_cache::frame_thumbnail(path, source_index, st.doc.pixel_format()) {
+                        Ok(surface) => surface,
+                        Err(error) => {
+                            ctx.request_repaint();
+                            preview_error = Some(error);
+                            None
+                        }
+                    }
+                }
+                _ => None,
+            };
+            surface.map(|surface| linked_movie_thumbnail(&surface, st.doc.bounds()))
+        } else if let Some(surface) = video.and_then(|v| v.frames.get(frame)) {
+            Some(crate::transform_tex::read_surface(surface, None, st.doc.bounds(), 64).0)
         } else {
             let mut snapshot = (*st.doc).clone();
-            if let Some(timeline) = &mut snapshot.timeline { timeline.current = frame; }
+            if let Some(timeline) = &mut snapshot.timeline {
+                timeline.current = frame;
+            }
             photostore_engine::sync_video(&mut snapshot);
             let reduced = photostore_compose::render_reduced(&snapshot, 64.min(snapshot.size.width.max(1)), 64.min(snapshot.size.height.max(1)));
             let pixels: Vec<u8> = reduced.px.iter().flat_map(|p| p.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)).collect();
-            egui::ColorImage::from_rgba_unmultiplied([reduced.rect.width() as usize, reduced.rect.height() as usize], &pixels)
+            Some(egui::ColorImage::from_rgba_unmultiplied([reduced.rect.width() as usize, reduced.rect.height() as usize], &pixels))
         };
+        let Some(image) = image else {
+            ids.push(None);
+            continue;
+        };
+        preview_succeeded = true;
         let texture = ctx.load_texture(format!("timeline-frame-{key}"), image, egui::TextureOptions::LINEAR);
         ids.push(Some(texture.id()));
         app.ui.timeline.frame_thumbs.push((key, texture));
+    }
+    if let Some(error) = preview_error {
+        app.ui.timeline.movie_preview_error = Some(error);
+    } else if preview_succeeded {
+        // A successful or pending request should not erase an earlier actionable decoder error;
+        // clear it only when a cached movie frame is actually available.
+        app.ui.timeline.movie_preview_error = None;
     }
     let _ = tl;
     (start, ids)
@@ -179,12 +267,31 @@ pub fn checked(app: &PhotoStoreApp, id: &str) -> Option<bool> {
 
 /// Ids this module owns (for parity / enablement).
 pub fn handles(id: &str) -> bool {
-    matches!(id, "window.panel.timeline" | "timeline.playPause" | "timeline.stop" | "timeline.setLoop" | "timeline.setOnionSkinSettings" | "timeline.toggleOpacityAnimation" | "timeline.setOpacityKeyframe" | "timeline.deleteOpacityKeyframe" | "timeline.setPositionAnimation" | "timeline.togglePositionAnimation" | "timeline.setPositionKeyframe" | "timeline.deletePositionKeyframe" | "timeline.setPosition")
+    matches!(
+        id,
+        "window.panel.timeline"
+            | "timeline.playPause"
+            | "timeline.stop"
+            | "timeline.setLoop"
+            | "timeline.setOnionSkinSettings"
+            | "timeline.toggleOpacityAnimation"
+            | "timeline.setOpacityKeyframe"
+            | "timeline.deleteOpacityKeyframe"
+            | "timeline.setPositionAnimation"
+            | "timeline.togglePositionAnimation"
+            | "timeline.setPositionKeyframe"
+            | "timeline.deletePositionKeyframe"
+            | "timeline.setPosition"
+    )
 }
 
 pub(crate) fn open_loop_editor(app: &mut PhotoStoreApp) -> Result<(), String> {
-    let Some(st) = app.session.active() else { return Err("Open a document before editing timeline loop settings".into()); };
-    let Some(t) = st.doc.timeline.as_ref() else { return Err("Create a timeline before editing loop settings".into()); };
+    let Some(st) = app.session.active() else {
+        return Err("Open a document before editing timeline loop settings".into());
+    };
+    let Some(t) = st.doc.timeline.as_ref() else {
+        return Err("Create a timeline before editing loop settings".into());
+    };
     app.ui.timeline.pending_loop_count = t.loop_count.unwrap_or(3).to_string();
     app.ui.timeline.pending_loop_origin = Some(st.doc.id);
     app.ui.timeline.loop_error.clear();
@@ -194,13 +301,25 @@ pub(crate) fn open_loop_editor(app: &mut PhotoStoreApp) -> Result<(), String> {
 }
 
 pub(crate) fn open_onion_editor(app: &mut PhotoStoreApp) -> Result<(), String> {
-    let Some(st) = app.session.active() else { return Err("Open a document before editing onion skin settings".into()); };
-    let Some(t) = st.doc.timeline.as_ref() else { return Err("Create a timeline before editing onion skin settings".into()); };
-            let s = t.onion_settings.normalized();
-            app.ui.timeline.pending_onion = Some(PendingOnionSettings { doc: st.doc.id, frames_before: s.frames_before, frames_after: s.frames_after, spacing: s.spacing, min_opacity: s.min_opacity, max_opacity: s.max_opacity, blend: s.blend });
-            app.ui.timeline.onion_error.clear();
-            app.ui.timeline.open = true;
-            app.ui.timeline.onion_editor_open = true;
+    let Some(st) = app.session.active() else {
+        return Err("Open a document before editing onion skin settings".into());
+    };
+    let Some(t) = st.doc.timeline.as_ref() else {
+        return Err("Create a timeline before editing onion skin settings".into());
+    };
+    let s = t.onion_settings.normalized();
+    app.ui.timeline.pending_onion = Some(PendingOnionSettings {
+        doc: st.doc.id,
+        frames_before: s.frames_before,
+        frames_after: s.frames_after,
+        spacing: s.spacing,
+        min_opacity: s.min_opacity,
+        max_opacity: s.max_opacity,
+        blend: s.blend,
+    });
+    app.ui.timeline.onion_error.clear();
+    app.ui.timeline.open = true;
+    app.ui.timeline.onion_editor_open = true;
     Ok(())
 }
 
@@ -218,7 +337,9 @@ pub fn menu(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, params: &Val
             let layer_id = st.active_layer?;
             let layer = st.doc.layer(layer_id)?;
             Some((st.doc.id, layer_id, layer.opacity_animation.as_ref().is_some_and(|a| a.enabled && !a.keys.is_empty())))
-        }) else { return Some(Err("Select a layer before toggling opacity animation".into())); };
+        }) else {
+            return Some(Err("Select a layer before toggling opacity animation".into()));
+        };
         let target = json!({"document": doc_id.0, "layer": layer_id.0});
         if let Some(reason) = app.session.disabled_reason_with("timeline.toggleOpacityAnimation", &target) {
             return Some(Err(reason));
@@ -240,21 +361,37 @@ pub fn menu(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, params: &Val
             let layer_id = st.active_layer?;
             let layer = st.doc.layer(layer_id)?;
             Some((st.doc.id, layer_id, layer.position_animation.as_ref().is_some_and(|a| a.enabled && !a.keys.is_empty())))
-        }) else { return Some(Err("Select a layer before toggling position animation".into())); };
+        }) else {
+            return Some(Err("Select a layer before toggling position animation".into()));
+        };
         let target = json!({"document": doc_id.0, "layer": layer_id.0});
-        if let Some(reason) = app.session.disabled_reason_with("timeline.togglePositionAnimation", &target) { return Some(Err(reason)); }
+        if let Some(reason) = app.session.disabled_reason_with("timeline.togglePositionAnimation", &target) {
+            return Some(Err(reason));
+        }
         if keyed {
             let frame = app.session.active().and_then(|st| st.doc.timeline.as_ref().map(|t| t.current)).unwrap_or(0);
             let track = app.session.active().and_then(|st| st.doc.layer(layer_id)).and_then(|l| l.position_animation.as_ref());
             let source = track.map_or_else(
-                || app.session.active().and_then(|st| st.doc.layer(layer_id).map(|layer| {
-                    if layer.video.is_some() { photostore_engine::sample_layer_position(&st.doc, layer, frame) } else { photostore_doc::comps::layer_position(layer).unwrap_or((0, 0)) }
-                })).unwrap_or((0, 0)),
+                || {
+                    app.session
+                        .active()
+                        .and_then(|st| {
+                            st.doc.layer(layer_id).map(|layer| {
+                                if layer.video.is_some() {
+                                    photostore_engine::sample_layer_position(&st.doc, layer, frame)
+                                } else {
+                                    photostore_doc::comps::layer_position(layer).unwrap_or((0, 0))
+                                }
+                            })
+                        })
+                        .unwrap_or((0, 0))
+                },
                 |a| if a.enabled { a.sampled_value(frame) } else { a.applied_value },
             );
             let history = app.session.active().map(|st| (st.history.past_len(), st.history.future_len())).unwrap_or_default();
             let signature = crate::position_ui::track_signature(track);
-            app.ui.timeline.position.pending_disable = Some(crate::position_ui::PendingDisable { doc: doc_id, layer: layer_id, frame, source, history, signature });
+            app.ui.timeline.position.pending_disable =
+                Some(crate::position_ui::PendingDisable { doc: doc_id, layer: layer_id, frame, source, history, signature });
             return Some(Ok(Value::Null));
         }
         return Some(app.run("timeline.togglePositionAnimation", target));
@@ -276,8 +413,12 @@ pub fn menu(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, params: &Val
         return Some(Ok(json!({ "open": app.ui.timeline.open })));
     }
     if id == "timeline.playPause" {
-        if app.timeline_playback.playing { let mut runtime = std::mem::take(&mut app.timeline_playback); runtime.stop(); app.timeline_playback = runtime; app.ui.timeline.playing = false; }
-        else {
+        if app.timeline_playback.playing {
+            let mut runtime = std::mem::take(&mut app.timeline_playback);
+            runtime.stop();
+            app.timeline_playback = runtime;
+            app.ui.timeline.playing = false;
+        } else {
             app.ui.timeline.playing = true;
             let mut runtime = std::mem::take(&mut app.timeline_playback);
             runtime.play(app, ctx.input(|i| i.time));
@@ -305,8 +446,13 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
     let timeline_history = app.session.active().map(|st| (st.history.past_len(), st.history.future_len())).unwrap_or_default();
     let tl = doc_snapshot.as_ref().and_then(|(doc, _)| doc.timeline.as_ref());
     let have_doc = doc_snapshot.is_some();
-    let layer_rows: Vec<(u64, String, bool)> = doc_snapshot.as_ref().map(|(doc, _)| doc.layers.iter().map(|l| (l.id.0, l.name.clone(), l.video.is_some())).collect()).unwrap_or_default();
-    let active_delay = doc_snapshot.as_ref().and_then(|(doc, active)| active.and_then(|id| doc.layer(id))).and_then(|l| l.video.as_ref()).and_then(|v| v.frame_delays_ms.get(tl.map_or(0, |t| t.current)).copied());
+    let layer_rows: Vec<(u64, String, bool)> =
+        doc_snapshot.as_ref().map(|(doc, _)| doc.layers.iter().map(|l| (l.id.0, l.name.clone(), l.video.is_some())).collect()).unwrap_or_default();
+    let active_delay = doc_snapshot
+        .as_ref()
+        .and_then(|(doc, active)| active.and_then(|id| doc.layer(id)))
+        .and_then(|l| l.video.as_ref())
+        .and_then(|v| v.frame_delays_ms.get(tl.map_or(0, |t| t.current)).copied());
     let active_video_id = doc_snapshot.as_ref().and_then(|(_, active)| *active).map(|id| id.0);
     let animation_delay = tl.and_then(|t| t.frame_delays_ms.get(t.current).copied());
     let (thumb_start, frame_thumb_ids) = tl.map_or((0, Vec::new()), |timeline| frame_thumbnails(app, &ctx, timeline));
@@ -494,6 +640,9 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                             }
                         });
                     });
+                    if let Some(error) = app.ui.timeline.movie_preview_error.as_deref() {
+                        ui.colored_label(egui::Color32::RED, error);
+                    }
                 }
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -591,20 +740,30 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
         egui::Window::new(tl!("Loop count")).collapsible(false).resizable(false).open(&mut open).show(&ctx, |ui| {
             ui.label(tl!("Total plays (1–65536)"));
             ui.text_edit_singleline(&mut count);
-            if !app.ui.timeline.loop_error.is_empty() { ui.colored_label(egui::Color32::RED, &app.ui.timeline.loop_error); }
+            if !app.ui.timeline.loop_error.is_empty() {
+                ui.colored_label(egui::Color32::RED, &app.ui.timeline.loop_error);
+            }
             ui.horizontal(|ui| {
                 if ui.button(tl!("OK")).clicked() {
                     if let Ok(value) = count.trim().parse::<u32>() {
                         if (1..=65_536).contains(&value) && origin == active_doc_id {
                             act = Some(("timeline.setLoop", json!({"mode":"count","count":value,"document":active_doc_id.map(|id| id.0)})));
                             close_requested = true;
-                        } else { app.ui.timeline.loop_error = tl!("Enter a whole number from 1 to 65536 for this document").into(); }
-                    } else { app.ui.timeline.loop_error = tl!("Enter a whole number from 1 to 65536").into(); }
+                        } else {
+                            app.ui.timeline.loop_error = tl!("Enter a whole number from 1 to 65536 for this document").into();
+                        }
+                    } else {
+                        app.ui.timeline.loop_error = tl!("Enter a whole number from 1 to 65536").into();
+                    }
                 }
-                if ui.button(tl!("Cancel")).clicked() { close_requested = true; }
+                if ui.button(tl!("Cancel")).clicked() {
+                    close_requested = true;
+                }
             });
         });
-        if close_requested { open = false; }
+        if close_requested {
+            open = false;
+        }
         app.ui.timeline.pending_loop_count = count;
         app.ui.timeline.loop_editor_open = open;
     }
@@ -641,7 +800,9 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                 });
             }
         });
-        if close_requested { open = false; }
+        if close_requested {
+            open = false;
+        }
         app.ui.timeline.pending_onion = draft;
         app.ui.timeline.onion_editor_open = open;
     }
@@ -663,19 +824,31 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
     if toggle_play {
         app.ui.timeline.playing = !app.ui.timeline.playing;
         let mut runtime = std::mem::take(&mut app.timeline_playback);
-        if app.ui.timeline.playing { runtime.play(app, ctx.input(|i| i.time)); } else { runtime.stop(); }
+        if app.ui.timeline.playing {
+            runtime.play(app, ctx.input(|i| i.time));
+        } else {
+            runtime.stop();
+        }
         app.timeline_playback = runtime;
     }
     if let Some((cmd, p)) = act {
-        let stale_target = cmd == "layer.setProps" && p.get("document").and_then(Value::as_u64).is_some_and(|doc| {
-            app.session.active().is_none_or(|st| st.doc.id.0 != doc || p.get("layer").and_then(Value::as_u64).is_none_or(|layer| st.doc.layer(photostore_doc::LayerId(layer)).is_none()))
-        });
+        let stale_target = cmd == "layer.setProps"
+            && p.get("document").and_then(Value::as_u64).is_some_and(|doc| {
+                app.session.active().is_none_or(|st| {
+                    st.doc.id.0 != doc || p.get("layer").and_then(Value::as_u64).is_none_or(|layer| st.doc.layer(photostore_doc::LayerId(layer)).is_none())
+                })
+            });
         let result = if stale_target { Err("The document or layer changed; opacity edit was cancelled".to_string()) } else { app.run(cmd, p) };
         if let Err(error) = result {
             app.ui.status = error.clone();
             app.ui.status_error = true;
-            if cmd == "timeline.setLoop" { app.ui.timeline.loop_editor_open = true; app.ui.timeline.loop_error = error; }
-            else if cmd == "timeline.setOnionSkinSettings" { app.ui.timeline.onion_editor_open = true; app.ui.timeline.onion_error = error; }
+            if cmd == "timeline.setLoop" {
+                app.ui.timeline.loop_editor_open = true;
+                app.ui.timeline.loop_error = error;
+            } else if cmd == "timeline.setOnionSkinSettings" {
+                app.ui.timeline.onion_editor_open = true;
+                app.ui.timeline.onion_error = error;
+            }
         } else if cmd == "timeline.setOnionSkinSettings" {
             app.ui.timeline.pending_onion = None;
             app.ui.timeline.onion_error.clear();

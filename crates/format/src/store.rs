@@ -507,6 +507,7 @@ impl PcraftWriter {
         convert::check_nesting(&doc.layers)?;
         convert::validate_opacity_document_layers(&doc.layers)?;
         convert::validate_timeline_positions(doc.timeline.as_ref())?;
+        convert::validate_movie_backings(&doc.layers)?;
         if let Some(recording) = &doc.recording {
             convert::validate_recording(recording)?;
         }

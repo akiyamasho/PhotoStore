@@ -160,7 +160,7 @@ fn layer_sel(l: &Layer, selected: &[photostore_doc::LayerId]) -> Value {
             photostore_doc::VideoSource::Blank => Value::String("blank".into()),
             photostore_doc::VideoSource::File { path } => json!({ "file": path }),
         };
-        v["video"] = json!({"frames": vid.frames.len(), "fps": vid.fps, "showAltered": vid.show_altered, "source": source});
+        v["video"] = json!({"frames": vid.len(), "residentFrames": vid.frames.len(), "fps": vid.fps, "showAltered": vid.show_altered, "movieBacking": &vid.movie_backing, "source": source});
     }
     v
 }

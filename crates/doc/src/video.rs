@@ -188,6 +188,16 @@ pub enum VideoSource {
     File { path: String },
 }
 
+/// Metadata for file-backed movies whose frames are decoded on demand. `frames` contains only
+/// authored overrides and the currently resident preview; this record defines the source timeline.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MovieBacking {
+    pub frame_count: usize,
+    pub source_fps: f32,
+    pub trim_in_frame: usize,
+    pub trim_out_frame: usize,
+}
+
 /// A video layer's frame stack (Layer › Video Layers). The layer's displayed content surface is a
 /// cache of `frames[timeline.current]`, which the engine keeps in sync as the playhead moves.
 ///
@@ -195,6 +205,8 @@ pub enum VideoSource {
 #[derive(Clone, Debug)]
 pub struct VideoData {
     pub frames: Vec<Surface>,
+    /// Logical length of a linked movie. `None` preserves the legacy in-memory frame stack.
+    pub movie_backing: Option<MovieBacking>,
     /// Per-frame display duration in milliseconds. Missing entries use the layer fps.
     pub frame_delays_ms: Vec<u32>,
     pub keyframes: Vec<VideoKeyframe>,
@@ -216,6 +228,7 @@ impl VideoData {
         let count = frames.len();
         VideoData {
             frames: if frames.is_empty() { Vec::new() } else { frames },
+            movie_backing: None,
             frame_delays_ms: vec![0; count],
             keyframes: Vec::new(),
             source: VideoSource::Blank,
@@ -227,10 +240,10 @@ impl VideoData {
         }
     }
     pub fn len(&self) -> usize {
-        self.frames.len()
+        self.movie_backing.as_ref().map_or(self.frames.len(), |m| m.trim_out_frame.saturating_sub(m.trim_in_frame).saturating_add(1))
     }
     pub fn is_empty(&self) -> bool {
-        self.frames.is_empty()
+        self.len() == 0
     }
 }
 
@@ -238,7 +251,8 @@ impl VideoData {
 // by shape, not contents — enough for change detection.
 impl PartialEq for VideoData {
     fn eq(&self, o: &Self) -> bool {
-        self.frames.len() == o.frames.len()
+        self.len() == o.len()
+            && self.movie_backing == o.movie_backing
             && self.frame_delays_ms == o.frame_delays_ms
             && self.keyframes == o.keyframes
             && self.source == o.source

@@ -43,8 +43,8 @@ mod frame_cmds;
 pub mod fx_view_cmds;
 pub mod fx_visibility_cmds;
 pub mod gallery_cmds;
-pub mod gradient_fill_cmds;
 pub mod generative_fill_cmds;
+pub mod gradient_fill_cmds;
 pub mod group_view_cmds;
 pub mod hidden_target;
 pub mod history_cmds;
@@ -65,6 +65,7 @@ pub mod mask_view_cmds;
 pub mod media_backend;
 mod migrate_cmds;
 pub mod mode_cmds;
+pub mod movie_cache;
 pub mod multichannel_cmds;
 pub mod notes_cmds;
 mod opacity_cmds;
@@ -100,18 +101,18 @@ pub mod swatch_cmds;
 pub mod symmetry_cmds;
 mod timeline_cmds;
 pub mod transform_cmds;
-pub mod update_cmds;
 mod trap_cmds;
 pub mod type_caret_cmds;
 pub mod type_cmds;
 pub mod type_extra_cmds;
 pub mod type_spell_cmds;
 pub mod type_styles_cmds;
+pub mod update_cmds;
 mod variables_cmds;
 pub mod vector_cmds;
 mod video_cmds;
-pub use video_cmds::{render_video_with, sample_keyframe_transform, sync as sync_video};
 pub use position_cmds::sample_layer_position;
+pub use video_cmds::{render_video_with, sample_keyframe_transform, sync as sync_video};
 pub mod vp_cmds;
 pub mod warp_cmds;
 pub mod web_cmds;
@@ -533,6 +534,7 @@ impl Session {
         let mut doc = (*before).clone();
         let mut active = st.active_layer;
         let r = f(&mut doc, &mut active)?;
+        video_cmds::validate_linked_movie_edits(label, &before, &doc)?;
         // Painting or adjusting a smart filter mask changes the rendered layer cache. Refresh
         // inside this transaction so an unavailable linked source aborts the edit atomically.
         if smart_cmds::filter_mask_changed(&before, &doc) {
@@ -640,6 +642,27 @@ impl Session {
             }
         }
         busy
+    }
+
+    /// Refresh the active document's displayed linked-movie frame after a nonblocking cache
+    /// completion. Preview surfaces are view state, so this preserves history and clean/dirty state.
+    pub fn refresh_linked_movie_preview(&mut self) -> bool {
+        let Some(id) = self.active().map(|st| st.doc.id) else { return false };
+        if self.job_on(id).is_some() {
+            return false;
+        }
+        let Some(st) = self.active_mut() else { return false };
+        let snapshot = st.doc.clone();
+        let mut doc = (*snapshot).clone();
+        video_cmds::sync(&mut doc);
+        let clean = st.saved_revision == st.revision;
+        st.doc = Arc::new(doc);
+        st.revision = st.revision.wrapping_add(1);
+        if clean {
+            st.saved_revision = st.revision;
+        }
+        st.last_damage = None;
+        true
     }
 
     pub fn undo(&mut self) -> bool {

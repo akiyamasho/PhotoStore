@@ -52,8 +52,8 @@ pub use vector::{
 pub use video::{
     AudioClip, AudioTrack, FrameEffectsState, FrameLayerState, LayerTimelineRange, MAX_OPACITY_ANIMATION_FRAME, MAX_OPACITY_ANIMATION_KEYS,
     MAX_OPACITY_ANIMATION_TRACKS, MAX_POSITION_ANIMATION_FRAME, MAX_POSITION_ANIMATION_KEYS, MAX_POSITION_ANIMATION_TRACKS, MAX_POSITION_COORDINATE,
-    OnionSkinBlend, OnionSkinSettings, OpacityAnimation, OpacityInterpolation, OpacityKeyframe, PositionAnimation, PositionInterpolation, PositionKeyframe,
-    Timeline, TimelineLoop, TimelineMode, VideoData, VideoKeyframe, VideoPlayback, VideoSource,
+    MovieBacking, OnionSkinBlend, OnionSkinSettings, OpacityAnimation, OpacityInterpolation, OpacityKeyframe, PositionAnimation, PositionInterpolation,
+    PositionKeyframe, Timeline, TimelineLoop, TimelineMode, VideoData, VideoKeyframe, VideoPlayback, VideoSource,
 };
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);

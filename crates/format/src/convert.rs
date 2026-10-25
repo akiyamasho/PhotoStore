@@ -40,8 +40,11 @@ fn validate_video_keyframes(keys: &[photostore_doc::VideoKeyframe]) -> Result<()
         return Err(FormatError::LimitExceeded("video keyframe track exceeds 100000 keyframes".into()));
     }
     for key in keys {
-        if key.frame > photostore_doc::MAX_POSITION_ANIMATION_FRAME || !key.x.is_finite() || !key.y.is_finite()
-            || key.x.abs() > photostore_doc::MAX_POSITION_COORDINATE as f32 || key.y.abs() > photostore_doc::MAX_POSITION_COORDINATE as f32
+        if key.frame > photostore_doc::MAX_POSITION_ANIMATION_FRAME
+            || !key.x.is_finite()
+            || !key.y.is_finite()
+            || key.x.abs() > photostore_doc::MAX_POSITION_COORDINATE as f32
+            || key.y.abs() > photostore_doc::MAX_POSITION_COORDINATE as f32
         {
             return Err(FormatError::corrupt("video keyframe position is invalid"));
         }
@@ -386,6 +389,7 @@ fn opt_blob(b: &Option<Arc<Vec<u8>>>, sink: &mut dyn Sink) -> Option<Hash> {
 fn video_m(v: &photostore_doc::VideoData, sink: &mut dyn Sink) -> crate::manifest::VideoDataM {
     crate::manifest::VideoDataM {
         frames: v.frames.iter().map(|f| surface_m(f, sink)).collect(),
+        movie_backing: v.movie_backing.clone(),
         frame_delays_ms: v.frame_delays_ms.clone(),
         keyframes: v.keyframes.clone(),
         source: v.source.clone(),
@@ -395,6 +399,35 @@ fn video_m(v: &photostore_doc::VideoData, sink: &mut dyn Sink) -> crate::manifes
         base_translation: v.base_translation,
         applied_translation: v.applied_translation,
     }
+}
+
+pub(crate) fn validate_movie_backings(layers: &[Layer]) -> Result<()> {
+    for layer in layers {
+        if let Some(video) = &layer.video
+            && let Some(m) = &video.movie_backing
+        {
+            if !matches!(&video.source, photostore_doc::VideoSource::File { path } if !path.is_empty() && std::path::Path::new(path).is_absolute()) {
+                return Err(FormatError::corrupt("linked movie backing requires an absolute file source path"));
+            }
+            if m.frame_count == 0
+                || m.frame_count > 1_000_000
+                || m.trim_in_frame > m.trim_out_frame
+                || m.trim_out_frame >= m.frame_count
+                || !m.source_fps.is_finite()
+                || m.source_fps <= 0.0
+                || m.source_fps > 1000.0
+                || video.frames.len() > 1
+            {
+                return Err(FormatError::corrupt(
+                    "linked movie metadata is invalid (expected 1..1000000 source frames, ordered trim, finite FPS in 0..=1000, and at most one resident preview)",
+                ));
+            }
+        }
+        if let Some(children) = layer.children() {
+            validate_movie_backings(children)?;
+        }
+    }
+    Ok(())
 }
 
 fn layer_m(l: &Layer, sink: &mut dyn Sink) -> LayerM {
@@ -597,19 +630,42 @@ pub(crate) struct Loader<'a> {
 
 impl Loader<'_> {
     fn video(&mut self, m: &crate::manifest::VideoDataM) -> Result<photostore_doc::VideoData> {
+        if let Some(meta) = &m.movie_backing {
+            if !matches!(&m.source, photostore_doc::VideoSource::File { path } if !path.is_empty() && std::path::Path::new(path).is_absolute()) {
+                return Err(FormatError::corrupt("linked movie backing requires an absolute file source path"));
+            }
+            if meta.frame_count == 0
+                || meta.frame_count > 1_000_000
+                || meta.trim_in_frame > meta.trim_out_frame
+                || meta.trim_out_frame >= meta.frame_count
+                || !meta.source_fps.is_finite()
+                || meta.source_fps <= 0.0
+                || meta.source_fps > 1000.0
+                || m.frames.len() > 1
+            {
+                return Err(FormatError::corrupt("linked movie metadata is invalid"));
+            }
+        }
         let frames = m.frames.iter().map(|f| self.surface(f)).collect::<Result<Vec<_>>>()?;
         let mut frame_delays_ms = m.frame_delays_ms.clone();
         frame_delays_ms.resize(frames.len(), 0);
         Ok(photostore_doc::VideoData {
             frames,
+            movie_backing: m.movie_backing.clone(),
             frame_delays_ms,
             keyframes: m.keyframes.clone(),
             source: m.source.clone(),
             fps: m.fps,
             playback: m.playback,
             show_altered: m.show_altered,
-            base_translation: { validate_video_translation(m.base_translation)?; m.base_translation },
-            applied_translation: { validate_video_translation(m.applied_translation)?; m.applied_translation },
+            base_translation: {
+                validate_video_translation(m.base_translation)?;
+                m.base_translation
+            },
+            applied_translation: {
+                validate_video_translation(m.applied_translation)?;
+                m.applied_translation
+            },
         })
     }
 

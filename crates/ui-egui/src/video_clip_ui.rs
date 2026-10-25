@@ -3,11 +3,11 @@
 //! This module deliberately owns only the view and gesture state.  The engine remains the
 //! authority for the final source and timeline bounds when `timeline.setVideoClip` is committed.
 
-use crate::theme::Tokens;
 use crate::PhotoStoreApp;
-use egui::{pos2, vec2, Id, Rect, RichText, Sense, Ui};
+use crate::theme::Tokens;
+use egui::{Id, Rect, RichText, Sense, Ui, pos2, vec2};
 use photostore_doc::{DocId, LayerId, Timeline, TimelineMode, VideoData};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const NAME_WIDTH: f32 = 164.0;
 const LANE_HEIGHT: f32 = 34.0;
@@ -61,6 +61,7 @@ struct SourceDurationCache {
     fps_bits: u32,
     delays: usize,
     source_hash: u64,
+    movie_backing: Option<(usize, u32, usize, usize)>,
     duration: f64,
 }
 
@@ -73,6 +74,9 @@ fn selected_id(doc: DocId) -> Id {
 }
 
 fn source_duration(video: &VideoData) -> f64 {
+    if let Some(movie) = &video.movie_backing {
+        return video.len() as f64 / f64::from(movie.source_fps.max(0.001));
+    }
     let fallback = 1.0 / f64::from(video.fps.max(0.001));
     video
         .frames
@@ -80,11 +84,7 @@ fn source_duration(video: &VideoData) -> f64 {
         .enumerate()
         .map(|(index, _)| {
             let delay = video.frame_delays_ms.get(index).copied().unwrap_or(0);
-            if delay > 0 {
-                f64::from(delay) / 1000.0
-            } else {
-                fallback
-            }
+            if delay > 0 { f64::from(delay) / 1000.0 } else { fallback }
         })
         .sum()
 }
@@ -101,10 +101,11 @@ fn source_identity(video: &VideoData) -> u64 {
 
 fn source_duration_cached(ctx: &egui::Context, doc: DocId, layer: LayerId, history: (usize, usize), video: &VideoData) -> f64 {
     let key = Id::new(("video-source-duration", doc.0, layer.0));
-    let frames = video.frames.len();
+    let frames = video.len();
     let fps_bits = video.fps.to_bits();
     let delays = video.frame_delays_ms.len();
     let source_hash = source_identity(video);
+    let movie_backing = video.movie_backing.as_ref().map(|m| (m.frame_count, m.source_fps.to_bits(), m.trim_in_frame, m.trim_out_frame));
     if let Some(cache) = ctx.data(|data| data.get_temp::<SourceDurationCache>(key)) {
         if cache.history_past == history.0
             && cache.history_future == history.1
@@ -112,17 +113,21 @@ fn source_duration_cached(ctx: &egui::Context, doc: DocId, layer: LayerId, histo
             && cache.fps_bits == fps_bits
             && cache.delays == delays
             && cache.source_hash == source_hash
+            && cache.movie_backing == movie_backing
         {
             return cache.duration;
         }
     }
-    let duration = if video.frame_delays_ms.iter().take(frames).all(|delay| *delay == 0) {
+    let duration = if video.movie_backing.is_some() || video.frame_delays_ms.iter().take(frames).all(|delay| *delay == 0) {
         frames as f64 / f64::from(video.fps.max(0.001))
     } else {
         source_duration(video)
     };
     ctx.data_mut(|data| {
-        data.insert_temp(key, SourceDurationCache { history_past: history.0, history_future: history.1, frames, fps_bits, delays, source_hash, duration })
+        data.insert_temp(
+            key,
+            SourceDurationCache { history_past: history.0, history_future: history.1, frames, fps_bits, delays, source_hash, movie_backing, duration },
+        )
     });
     duration
 }
