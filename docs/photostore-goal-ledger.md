@@ -550,14 +550,19 @@ only. The immutable tag `v0.16.0` points to exact source `a87fd1049844a41d456cbd
 - The local certificate is persistent and certificate-bound designated-requirement matching passed across disposable 0.18.1 and 0.18.2 copies. It is not Developer ID or notarized. Migration from the previous ad-hoc identity may trigger consent again for protected folders/services; native consent behavior and native tablet/mouse input were not manually tested.
 - Three focused tests passed against pre-version-bump source `f2a3fe86e8c29f040537b5374ffecf47eb8d7d1b`; see the release receipt for exact scope and limits.
 
-## 2026-10-25: PhotoStore 0.18.3 release preparation
+## 2026-10-25: PhotoStore 0.18.3 published stable release
 
 - Prepared version `0.18.3` from the reviewed `main` source containing the selection-scoped,
   non-modal Generative Fill context bar fix for issue #22. `Command-K` is selection/document
   guarded; the default shortcut is removed from Settings while custom overrides retain precedence,
   and setup retry remains available.
 - `Cargo.toml` and `Cargo.lock` were updated with the existing `xtask version set` command. The
-  release receipt is [0.18.3](releases/0.18.3.md); exact source, artifact digests, publication,
-  installation, and rollback identities will be recorded after the one authorized production build.
+  exact source commit is `111a95a4551df25ce926968a62009fed4822e79d`; the app and CLI were compiled
+  once, packaged, verified, and published as `v0.18.3`.
+- The verified ARM64 DMG SHA-256 is `e44bbc6b79a96598fbe0af55cfb66b3f157be7b5061e2e39dd54263d776b2f67`;
+  the CLI ZIP SHA-256 is `6f2d1167475769518d6d5998adfcf5877565895bbefeedf306301eb674f745b7`. The
+  installed app and CLI read back 0.18.3 and the exact source SHA; rollback identities are recorded
+  in the [release receipt](releases/0.18.3.md).
 - Scheduler remains disabled and unloaded with no pending local-ci job. The pre-existing `.DS_Store`
-  remains untracked and preserved.
+  remains untracked and preserved. Issue #22 remains closed; the release follow-up records the actual
+  stable publication and source commit.
