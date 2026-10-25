@@ -24,6 +24,11 @@ const MIN_SPEED_STEP: f64 = 0.5;
 /// Maximum airbrush catch-up dabs for one input segment.
 const MAX_AIRBRUSH_DABS_PER_SEGMENT: usize = 512;
 
+/// Maximum curve flatness error in screen pixels.
+const CURVE_FLATNESS_PX: f64 = 0.25;
+/// At most 2^8 curve chords are emitted for one input segment.
+const CURVE_MAX_DEPTH: u8 = 8;
+
 #[inline]
 fn lerp_pt(a: &StrokePoint, b: &StrokePoint, f: f64) -> StrokePoint {
     let ff = f as f32;
@@ -148,6 +153,141 @@ pub fn smooth_points(cfg: &Smoothing, zoom: f32, pts: &[StrokePoint]) -> Vec<Str
     }
     s.finish(&mut out);
     out
+}
+
+/// Rebuild a sparse smoothed input polyline as a bounded, centripetal cubic path. One sample of
+/// lookahead gives the live path a stable tangent at each interior point; `finish` supplies a
+/// linear endpoint tangent. The pending tail is deliberately retained here so cloning a generator
+/// and finishing it (the live tail preview) uses precisely the same path as committing the stroke.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CurveRebuilder {
+    before: Option<StrokePoint>,
+    start: Option<StrokePoint>,
+    end: Option<StrokePoint>,
+    emitted_start: bool,
+    tolerance: f64,
+}
+
+impl CurveRebuilder {
+    pub(crate) fn new(zoom: f32) -> Self {
+        Self { tolerance: CURVE_FLATNESS_PX / f64::from(zoom.max(0.01)), ..Self::default() }
+    }
+
+    pub(crate) fn push(&mut self, p: StrokePoint, out: &mut Vec<StrokePoint>) {
+        match (self.start, self.end) {
+            (None, _) => self.start = Some(p),
+            (Some(_), None) => self.end = Some(p),
+            (Some(a), Some(b)) => {
+                let before = self.before.unwrap_or_else(|| extrapolate(a, b, -1.0));
+                self.append_segment(before, a, b, p, out);
+                self.before = Some(a);
+                self.start = Some(b);
+                self.end = Some(p);
+            }
+        }
+    }
+
+    pub(crate) fn finish(&mut self, out: &mut Vec<StrokePoint>) {
+        match (self.start, self.end) {
+            (Some(p), None) => {
+                if !self.emitted_start {
+                    out.push(p);
+                }
+            }
+            (Some(a), Some(b)) => {
+                let before = self.before.unwrap_or_else(|| extrapolate(a, b, -1.0));
+                self.append_segment(before, a, b, extrapolate(a, b, 2.0), out);
+            }
+            _ => {}
+        }
+        self.before = None;
+        self.start = None;
+        self.end = None;
+    }
+
+    fn append_segment(&mut self, before: StrokePoint, a: StrokePoint, b: StrokePoint, after: StrokePoint, out: &mut Vec<StrokePoint>) {
+        let chord = distance(a, b);
+        if !chord.is_finite() || chord <= 1e-8 || ![before.x, before.y, a.x, a.y, b.x, b.y, after.x, after.y].iter().all(|v| v.is_finite()) {
+            if !self.emitted_start {
+                out.push(a);
+                self.emitted_start = true;
+            }
+            out.push(b);
+            return;
+        }
+        let dt0 = distance(before, a).sqrt().max(1e-6);
+        let dt1 = chord.sqrt().max(1e-6);
+        let dt2 = distance(b, after).sqrt().max(1e-6);
+        let scale = dt1;
+        let m1 = [
+            scale * ((a.x - before.x) / dt0 - (b.x - before.x) / (dt0 + dt1) + (b.x - a.x) / dt1),
+            scale * ((a.y - before.y) / dt0 - (b.y - before.y) / (dt0 + dt1) + (b.y - a.y) / dt1),
+        ];
+        let m2 = [
+            scale * ((b.x - a.x) / dt1 - (after.x - a.x) / (dt1 + dt2) + (after.x - b.x) / dt2),
+            scale * ((b.y - a.y) / dt1 - (after.y - a.y) / (dt1 + dt2) + (after.y - b.y) / dt2),
+        ];
+        if !self.emitted_start {
+            out.push(a);
+            self.emitted_start = true;
+        }
+        subdivide_curve(a, b, m1, m2, 0.0, 1.0, 0, self.tolerance.max(1e-5), out);
+    }
+}
+
+fn distance(a: StrokePoint, b: StrokePoint) -> f64 {
+    (a.x - b.x).hypot(a.y - b.y)
+}
+
+fn extrapolate(a: StrokePoint, b: StrokePoint, factor: f64) -> StrokePoint {
+    StrokePoint { x: a.x + (b.x - a.x) * factor, y: a.y + (b.y - a.y) * factor, ..a }
+}
+
+/// Cubic Hermite position, with pressure and stylus channels interpolated linearly in parameter
+/// space. Linear channels avoid overshoot and keep time monotonic between original samples.
+fn curve_at(a: StrokePoint, b: StrokePoint, m1: [f64; 2], m2: [f64; 2], t: f64) -> StrokePoint {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+    let h10 = t3 - 2.0 * t2 + t;
+    let h01 = -2.0 * t3 + 3.0 * t2;
+    let h11 = t3 - t2;
+    let f = t as f32;
+    StrokePoint {
+        x: h00 * a.x + h10 * m1[0] + h01 * b.x + h11 * m2[0],
+        y: h00 * a.y + h10 * m1[1] + h01 * b.y + h11 * m2[1],
+        pressure: a.pressure + (b.pressure - a.pressure) * f,
+        tilt_x: a.tilt_x + (b.tilt_x - a.tilt_x) * f,
+        tilt_y: a.tilt_y + (b.tilt_y - a.tilt_y) * f,
+        rotation: a.rotation + (b.rotation - a.rotation) * f,
+        wheel: a.wheel + (b.wheel - a.wheel) * f,
+        time: a.time + (b.time - a.time) * t,
+    }
+}
+
+fn subdivide_curve(a: StrokePoint, b: StrokePoint, m1: [f64; 2], m2: [f64; 2], t0: f64, t1: f64, depth: u8, tolerance: f64, out: &mut Vec<StrokePoint>) {
+    let p0 = curve_at(a, b, m1, m2, t0);
+    let p1 = curve_at(a, b, m1, m2, t1);
+    // Checking only the midpoint misses an S-shaped inflection whose midpoint lies on the chord.
+    let error = [0.25, 0.5, 0.75]
+        .into_iter()
+        .map(|f| curve_at(a, b, m1, m2, t0 + (t1 - t0) * f))
+        .map(|p| point_segment_distance(p.x, p.y, p0.x, p0.y, p1.x, p1.y))
+        .fold(0.0, f64::max);
+    if depth >= CURVE_MAX_DEPTH || !error.is_finite() || error <= tolerance {
+        out.push(p1);
+    } else {
+        let mid_t = (t0 + t1) * 0.5;
+        subdivide_curve(a, b, m1, m2, t0, mid_t, depth + 1, tolerance, out);
+        subdivide_curve(a, b, m1, m2, mid_t, t1, depth + 1, tolerance, out);
+    }
+}
+
+fn point_segment_distance(px: f64, py: f64, ax: f64, ay: f64, bx: f64, by: f64) -> f64 {
+    let (dx, dy) = (bx - ax, by - ay);
+    let len2 = dx * dx + dy * dy;
+    let t = if len2 > 1e-18 { (((px - ax) * dx + (py - ay) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
+    (px - (ax + t * dx)).hypot(py - (ay + t * dy))
 }
 
 // ---------------------------------------------------------------------------
@@ -614,11 +754,13 @@ pub fn apply_pose(b: &BrushSettings, mut p: StrokePoint) -> StrokePoint {
 #[derive(Clone, Debug)]
 pub struct DabGenerator {
     smoother: Smoother,
+    curve: Option<CurveRebuilder>,
     walker: PathWalker,
     dual_walker: Option<PathWalker>,
     builder: DabBuilder,
     dual: Option<DualBuilder>,
     scratch: Vec<StrokePoint>,
+    curve_scratch: Vec<StrokePoint>,
 }
 
 impl DabGenerator {
@@ -634,11 +776,15 @@ impl DabGenerator {
         let dual_on = brush.dual_brush.enabled;
         Self {
             smoother: Smoother::new(&brush.smoothing, zoom),
+            // The Pencil's aliased pixel-grid path must remain angular; curve reconstruction is
+            // the geometric counterpart of smoothing and is only active when smoothing is on.
+            curve: (brush.smoothing.amount > 0.0 && !brush.aliased).then(|| CurveRebuilder::new(zoom)),
             walker: if brush.spacing_enabled { PathWalker::new(interval) } else { PathWalker::new(interval).speed_spacing(SPEED_SPACING_MS) },
             dual_walker: dual_on.then(|| PathWalker::new(None)),
             builder: DabBuilder::new(&brush),
             dual: dual_on.then(|| DualBuilder::new(&brush)),
             scratch: Vec::new(),
+            curve_scratch: Vec::new(),
         }
     }
 
@@ -670,7 +816,17 @@ impl DabGenerator {
         for p in pts {
             self.smoother.push(*p, &mut sm);
         }
-        self.walk(&sm, dabs, dual);
+        if let Some(curve) = &mut self.curve {
+            let mut curved = std::mem::take(&mut self.curve_scratch);
+            curved.clear();
+            for p in &sm {
+                curve.push(*p, &mut curved);
+            }
+            self.walk(&curved, dabs, dual);
+            self.curve_scratch = curved;
+        } else {
+            self.walk(&sm, dabs, dual);
+        }
         self.scratch = sm;
     }
 
@@ -678,7 +834,18 @@ impl DabGenerator {
     pub fn finish(&mut self, dabs: &mut Vec<Dab>, dual: &mut Vec<Dab>) {
         let mut sm = Vec::new();
         self.smoother.finish(&mut sm);
-        self.walk(&sm, dabs, dual);
+        if let Some(curve) = &mut self.curve {
+            let mut curved = std::mem::take(&mut self.curve_scratch);
+            curved.clear();
+            for p in &sm {
+                curve.push(*p, &mut curved);
+            }
+            curve.finish(&mut curved);
+            self.walk(&curved, dabs, dual);
+            self.curve_scratch = curved;
+        } else {
+            self.walk(&sm, dabs, dual);
+        }
         let mut steps = Vec::new();
         self.walker.finish(&mut |s| steps.push(s));
         for s in &steps {

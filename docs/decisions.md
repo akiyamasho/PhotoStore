@@ -395,3 +395,11 @@ check-start error path, the source build succeeded once at
 published under `v0.18.0`; see [release receipt](releases/0.18.0.md). The local helper installation
 completed, metadata and strict signature checks passed, and a new app process was observed. The
 GitHub download and in-app self-update flow remain untested.
+
+## 2026-10-25: Smoothed brush path reconstruction
+
+Brushes with smoothing enabled reconstruct a bounded centripetal cubic path after input smoothing
+and before dab placement. This addresses polygonal joins left by sparse mouse or pen samples without
+increasing smoothing lag. The aliased Pencil and zero-smoothing paths remain unchanged. Curve
+flattening targets 0.25 screen pixels and emits no more than 256 chords per sample interval; the
+live finish preview and committed stroke share the same generator.

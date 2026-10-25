@@ -5,7 +5,7 @@ use photostore_geom::{Point, Rect};
 use photostore_raster::Surface;
 
 use crate::brush::*;
-use crate::dynamics::{Smoother, smooth_points};
+use crate::dynamics::{CurveRebuilder, Smoother, smooth_points};
 use crate::render::{BrushContext, StrokeRenderer, mask_combine, render_stroke};
 use crate::tile::GrayTile;
 use crate::{Dab, Stroke, StrokePoint, dabs};
@@ -616,6 +616,40 @@ fn smoothing_modes() {
 }
 
 #[test]
+fn smoothing_reconstructs_a_bounded_curve_through_sparse_corners() {
+    let mut input = [StrokePoint::new(0.0, 0.0, 0.5), StrokePoint::new(10.0, 0.0, 0.6), StrokePoint::new(10.0, 10.0, 0.8), StrokePoint::new(20.0, 10.0, 1.0)];
+    for (i, p) in input.iter_mut().enumerate() {
+        p.time = i as f64 * 10.0;
+    }
+    let mut curve = CurveRebuilder::new(1.0);
+    let mut path = Vec::new();
+    for p in input {
+        curve.push(p, &mut path);
+    }
+    curve.finish(&mut path);
+
+    assert!(path.len() > input.len(), "curved corners are adaptively subdivided: {}", path.len());
+    assert_eq!((path.first().unwrap().x, path.first().unwrap().y), (0.0, 0.0));
+    assert_eq!((path.last().unwrap().x, path.last().unwrap().y), (20.0, 10.0));
+    assert!(path.iter().all(|p| p.x.is_finite() && p.y.is_finite() && p.time.is_finite()));
+    assert!(path.iter().any(|p| (1.0..9.0).contains(&p.y) && (p.x - 10.0).abs() > 0.01), "the right-angle corner becomes a curve: {path:?}");
+    assert!(path.windows(2).all(|w| w[1].time >= w[0].time), "sample time stays monotonic");
+    assert!(path.windows(2).all(|w| w[1].pressure >= w[0].pressure), "pressure does not overshoot between samples");
+
+    // Strongly nonuniform sample density: the one-pixel turn between long segments must not
+    // inherit a long-segment tangent and bulge several pixels outside its endpoints.
+    let mut uneven = CurveRebuilder::new(1.0);
+    let mut points = Vec::new();
+    for p in [StrokePoint::new(0.0, 0.0, 1.0), StrokePoint::new(1000.0, 0.0, 1.0), StrokePoint::new(1000.0, 1.0, 1.0)] {
+        uneven.push(p, &mut points);
+    }
+    points.clear();
+    uneven.push(StrokePoint::new(1000.0, 1000.0, 1.0), &mut points);
+    assert!(points.iter().all(|p| p.x.is_finite() && p.y.is_finite()));
+    assert!(points.iter().all(|p| p.y >= -0.05 && p.y <= 1.05), "nonuniform tangents stay local to the short segment: {points:?}");
+}
+
+#[test]
 fn smoothing_pulls_by_time_not_by_how_often_the_device_reports() {
     // The pointer jumps 100 px and is held there for 32 ms, reported at 1000 Hz or about 60 Hz.
     let cfg = Smoothing { amount: 0.8, catch_up: true, catch_up_on_end: false, ..Default::default() };
@@ -678,6 +712,7 @@ fn chunked_rendering_matches_one_shot() {
         scattering: Scattering { enabled: true, scatter: Dynamic::jitter(1.0), both_axes: true, count: 2, ..Default::default() },
         texture: Texture { enabled: true, depth: 0.5, ..Default::default() },
         color_dynamics: ColorDynamics { enabled: true, hue_jitter: 0.5, ..Default::default() },
+        smoothing: Smoothing { amount: 0.45, ..Default::default() },
         color: [1.0, 0.0, 0.0, 1.0],
         ..brush()
     };
