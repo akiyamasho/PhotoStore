@@ -10,10 +10,11 @@ PhotoStore is a Rust-native image editor maintained as a personal fork of PhotoC
 
 Download the macOS Apple Silicon package from [PhotoStore releases](https://github.com/akiyamasho/PhotoStore/releases). For a local install, use Rust stable 1.95+:
 
-The 0.18.2 Apple Silicon macOS app adds stable-release checks under **Help → Check for Updates…**
-using your existing GitHub CLI (`gh`) authentication. The app and CLI are signed with a persistent
+The 0.18.3 Apple Silicon macOS app adds the selection-scoped Generative Fill context bar. Stable-release
+checks are available under **Help → Check for Updates…** using your existing GitHub CLI (`gh`)
+authentication. The app and CLI are signed with a persistent
 local PhotoStore certificate, not Developer ID and not notarized. See [in-app update details](docs/app-updates.md)
-and the [0.18.2 release record](docs/releases/0.18.2.md).
+and the [0.18.3 release record](docs/releases/0.18.3.md).
 
 ```sh
 CARGO_BUILD_JOBS=1 cargo install --path apps/photostore --bin photostore --locked
@@ -30,7 +31,11 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 
 ## Current published release
 
-PhotoStore 0.18.2 adds linked, lazy movie footage and smoother sparse brush curves to the Apple Silicon macOS app. [Download 0.18.2](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.18.2). The [0.18.2 release record](docs/releases/0.18.2.md) documents verification, artifacts, and known limits. The previous [0.18.1 release](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.18.1) added desktop media import and swatch improvements.
+PhotoStore 0.18.3 adds a selection-only, non-modal Generative Fill context bar with guarded document
+and selection state. [Download 0.18.3](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.18.3). The
+[0.18.3 release record](docs/releases/0.18.3.md) documents verification, artifacts, and known limits.
+The previous [0.18.2 release](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.18.2) added linked,
+lazy movie footage and smoother sparse brush curves.
 
 ## Generative Fill
 

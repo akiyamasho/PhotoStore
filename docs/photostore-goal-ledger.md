@@ -549,3 +549,15 @@ only. The immutable tag `v0.16.0` points to exact source `a87fd1049844a41d456cbd
 - The release adds linked movie import with a bounded asynchronous 160 MiB preview cache, and Brush curve reconstruction that preserves pressure and timing. Native format v2 readers support v1 files; v1-only builds refuse v2 documents. The source file must remain available; Frames to Layers retains its 512 MiB eager-conversion limit.
 - The local certificate is persistent and certificate-bound designated-requirement matching passed across disposable 0.18.1 and 0.18.2 copies. It is not Developer ID or notarized. Migration from the previous ad-hoc identity may trigger consent again for protected folders/services; native consent behavior and native tablet/mouse input were not manually tested.
 - Three focused tests passed against pre-version-bump source `f2a3fe86e8c29f040537b5374ffecf47eb8d7d1b`; see the release receipt for exact scope and limits.
+
+## 2026-10-25: PhotoStore 0.18.3 release preparation
+
+- Prepared version `0.18.3` from the reviewed `main` source containing the selection-scoped,
+  non-modal Generative Fill context bar fix for issue #22. `Command-K` is selection/document
+  guarded; the default shortcut is removed from Settings while custom overrides retain precedence,
+  and setup retry remains available.
+- `Cargo.toml` and `Cargo.lock` were updated with the existing `xtask version set` command. The
+  release receipt is [0.18.3](releases/0.18.3.md); exact source, artifact digests, publication,
+  installation, and rollback identities will be recorded after the one authorized production build.
+- Scheduler remains disabled and unloaded with no pending local-ci job. The pre-existing `.DS_Store`
+  remains untracked and preserved.
