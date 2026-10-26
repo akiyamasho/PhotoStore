@@ -435,3 +435,15 @@ documentation. Property keys use dedicated lanes aligned to the shared ruler. Tr
 uses the source-center pivot; perspective and warp are unsupported, and conversion to Frame Animation
 is blocked while Transform animation is enabled. Manual acceptance remains outstanding. See
 [timeline workflow](timeline-workflow.md).
+
+Implemented on main in commit `0845e17150dfc42e947e5512bbb47b9557c4ea42`. The required
+PhotoStore-dev build passed in 2m32s and launched the consolidated background runtime at
+`0845e17150dfc42e947e5512bbb47b9557c4ea42-a0a88350d55a7359` with no pending reload. The extended
+engine seek/save-reopen/undo/translation regression passed 1/1, and the native format animation
+roundtrip passed 1/1. Manual UI acceptance remains outstanding. Transform animation supports scale
+and rotation about the source center; perspective and warp are unsupported. An enabled Transform
+track is edited through timeline controls and guards ordinary Free Transform. Disabled Transform
+metadata is cleared only after a successful Free Transform. Frame Animation conversion is guarded
+while Transform animation is enabled because key baking is unsupported. This development receipt
+does not claim pixel or full-feature parity with public references or establish a production
+release.
