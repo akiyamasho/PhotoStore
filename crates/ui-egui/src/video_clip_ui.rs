@@ -11,7 +11,6 @@ use serde_json::{Value, json};
 
 const NAME_WIDTH: f32 = 164.0;
 const LANE_HEIGHT: f32 = 34.0;
-const RULER_HEIGHT: f32 = 24.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DragKind {
@@ -54,6 +53,30 @@ struct PendingNumber {
 }
 
 #[derive(Clone, Copy, Debug)]
+struct StillDrag {
+    doc: DocId,
+    history: (usize, usize),
+    x: f32,
+    start: usize,
+    end: usize,
+    duration: usize,
+    edge: u8,
+}
+
+fn still_drag_range(state: StillDrag, pointer_x: f32, lane_width: f32) -> (usize, usize) {
+    let delta = ((pointer_x - state.x) / lane_width.max(1.0) * state.duration as f32).round() as i64;
+    match state.edge {
+        1 => ((state.start as i64 + delta).clamp(0, state.end.saturating_sub(1) as i64) as usize, state.end),
+        2 => (state.start, (state.end as i64 + delta).clamp((state.start + 1) as i64, state.duration as i64) as usize),
+        _ => {
+            let len = state.end.saturating_sub(state.start).max(1);
+            let start = (state.start as i64 + delta).clamp(0, state.duration.saturating_sub(len) as i64) as usize;
+            (start, start + len)
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 struct SourceDurationCache {
     history_past: usize,
     history_future: usize,
@@ -71,6 +94,10 @@ fn drag_id(doc: DocId, layer: LayerId) -> Id {
 
 fn selected_id(doc: DocId) -> Id {
     Id::new(("video-clip-selected", doc.0))
+}
+
+pub(crate) fn clear_selection(ctx: &egui::Context, doc: DocId) {
+    ctx.data_mut(|data| data.remove::<u64>(selected_id(doc)));
 }
 
 fn source_duration(video: &VideoData) -> f64 {
@@ -226,24 +253,18 @@ fn number_field(ui: &mut Ui, key: Id, label: &str, current: f64, range: std::ops
     (response.drag_stopped() || response.lost_focus() || response.changed() || enter).then_some(committed_value).filter(|value| (*value - current).abs() > 1e-9)
 }
 
-fn draw_ruler(ui: &mut Ui, width: f32, duration: f64, t: &Tokens) {
-    let (rect, _) = ui.allocate_exact_size(vec2(width, RULER_HEIGHT), Sense::hover());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 2.0, t.card);
-    for n in 0..=10 {
-        let x = rect.left() + rect.width() * n as f32 / 10.0;
-        painter.line_segment([pos2(x, rect.bottom() - 8.0), pos2(x, rect.bottom())], egui::Stroke::new(1.0, t.text_dim));
-        painter.text(
-            pos2(x + 2.0, rect.top() + 2.0),
-            egui::Align2::LEFT_TOP,
-            format!("{:.1}", duration * n as f64 / 10.0),
-            egui::FontId::proportional(10.0),
-            t.text_dim,
-        );
-    }
-}
-
-fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, timeline: &Timeline, doc: DocId, layer: LayerId, clip: ClipSnapshot, lane: Rect, t: &Tokens) {
+fn draw_clip(
+    ui: &mut Ui,
+    app: &mut PhotoStoreApp,
+    timeline: &Timeline,
+    doc: DocId,
+    layer: LayerId,
+    name: &str,
+    clip: ClipSnapshot,
+    lane: Rect,
+    editable: bool,
+    t: &Tokens,
+) {
     let ctx = ui.ctx().clone();
     let key = drag_id(doc, layer);
     let mut state = ctx.data(|data| data.get_temp::<DragState>(key));
@@ -272,13 +293,22 @@ fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, timeline: &Timeline, doc: Doc
     let left = lane.left() + lane.width() * (start as f64 / f64::from(timeline.fps.max(0.001)) / duration) as f32;
     let right = lane.left() + lane.width() * (end as f64 / f64::from(timeline.fps.max(0.001)) / duration) as f32;
     let rect = Rect::from_min_max(pos2(left, lane.top() + 3.0), pos2(right.max(left + 14.0), lane.bottom() - 3.0));
-    let response = ui.interact(rect, Id::new(("video-clip", doc.0, layer.0)), Sense::click_and_drag());
+    let response = ui.interact(rect, Id::new(("video-clip", doc.0, layer.0)), if editable { Sense::click_and_drag() } else { Sense::click() });
     let selected = ctx.data(|data| data.get_temp::<u64>(selected_id(doc))).is_some_and(|id| id == layer.0);
     let fill = if selected { t.accent } else { t.accent.gamma_multiply(0.72) };
     ui.painter_at(lane).rect_filled(rect.intersect(lane), 3.0, fill);
-    ui.painter_at(lane).text(rect.left_center(), egui::Align2::LEFT_CENTER, format!("{}–{}", start, end), egui::FontId::proportional(11.0), t.text);
+    ui.painter_at(lane).text(rect.left_center(), egui::Align2::LEFT_CENTER, format!("{name} · Video"), egui::FontId::proportional(11.0), t.text);
+    response.context_menu(|ui| {
+        if ui.button(tl!("Convert to Smart Object")).clicked() {
+            select_layer(app, doc, layer);
+            let _ = app.with_document(doc, |app| app.run("layer.smartObjects.convertToSmartObject", json!({"layer":layer.0})));
+            ui.close();
+        }
+    });
     if response.clicked() {
         ctx.data_mut(|data| data.insert_temp(selected_id(doc), layer.0));
+        crate::audio_ui::clear_selection(&ctx, doc);
+        select_layer(app, doc, layer);
     }
     let capture = |kind: DragKind, x: f32| DragState {
         doc,
@@ -295,7 +325,7 @@ fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, timeline: &Timeline, doc: Doc
         had_explicit_range: clip.had_explicit_range,
         kind,
     };
-    if response.drag_started() {
+    if editable && response.drag_started() {
         if let Some(point) = response.interact_pointer_pos() {
             ctx.data_mut(|data| data.insert_temp(key, capture(DragKind::Body, point.x)));
         }
@@ -303,8 +333,8 @@ fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, timeline: &Timeline, doc: Doc
     let mut handle_stopped = false;
     for (kind, x) in [(DragKind::Left, rect.left()), (DragKind::Right, rect.right())] {
         let handle = Rect::from_min_max(pos2(x - 5.0, rect.top()), pos2(x + 5.0, rect.bottom()));
-        let handle_response = ui.interact(handle, Id::new(("video-handle", doc.0, layer.0, kind as u8)), Sense::drag());
-        if handle_response.drag_started() {
+        let handle_response = ui.interact(handle, Id::new(("video-handle", doc.0, layer.0, kind as u8)), if editable { Sense::drag() } else { Sense::hover() });
+        if editable && handle_response.drag_started() {
             if let Some(point) = handle_response.interact_pointer_pos() {
                 ctx.data_mut(|data| data.insert_temp(key, capture(kind, point.x)));
             }
@@ -376,8 +406,264 @@ fn properties(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, doc: Do
     });
 }
 
-/// Draw the video rows and their selected clip properties.
-pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline) {
+fn select_layer(app: &mut PhotoStoreApp, doc: DocId, layer: LayerId) {
+    let _ = app.with_document(doc, |app| app.run("layer.select", json!({"layer":layer.0,"mode":"replace"})));
+}
+
+fn layer_header(ui: &mut Ui, app: &mut PhotoStoreApp, doc: DocId, layer: LayerId, name: &str, kind: &str, depth: usize, tokens: &Tokens) -> bool {
+    let (rect, _) = ui.allocate_exact_size(vec2(NAME_WIDTH, LANE_HEIGHT), Sense::hover());
+    let open_id = Id::new(("timeline-layer-open", doc.0, layer.0));
+    let mut open = ui.ctx().data(|data| data.get_temp::<bool>(open_id)).unwrap_or(false);
+    let disclosure = Rect::from_min_size(rect.min, vec2(18.0, rect.height()));
+    if ui.interact(disclosure, Id::new(("timeline-disclosure", doc.0, layer.0)), Sense::click()).clicked() {
+        open = !open;
+        ui.ctx().data_mut(|data| data.insert_temp(open_id, open));
+    }
+    let painter = ui.painter_at(rect);
+    painter.text(
+        pos2(rect.left() + 4.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        if open { "▾" } else { "▸" },
+        egui::FontId::proportional(12.0),
+        tokens.text_dim,
+    );
+    let selected = app.session.active().and_then(|s| s.active_layer) == Some(layer);
+    let label_rect = Rect::from_min_max(pos2(rect.left() + 19.0, rect.top()), rect.right_bottom());
+    let label = format!("{}{name} · {kind}", "  ".repeat(depth));
+    painter.with_clip_rect(label_rect).text(
+        pos2(label_rect.left() + 2.0, label_rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(12.0),
+        if selected { tokens.accent } else { tokens.text },
+    );
+    if ui.interact(label_rect, Id::new(("timeline-layer-label", doc.0, layer.0)), Sense::click()).clicked() {
+        select_layer(app, doc, layer);
+        crate::audio_ui::clear_selection(ui.ctx(), doc);
+    }
+    open
+}
+
+#[derive(Clone, Copy)]
+enum PropertyLane {
+    Position,
+    Opacity,
+    Transform,
+}
+
+#[derive(Clone, Copy)]
+enum PropertyDraftValue {
+    Position(i32, i32),
+    Opacity(f32),
+    Transform(photostore_doc::TransformValue),
+}
+#[derive(Clone, Copy)]
+struct PropertyDraft {
+    frame: usize,
+    history: (usize, usize),
+    signature: u64,
+    value: PropertyDraftValue,
+}
+
+fn property_signature(layer: &photostore_doc::Layer, property: PropertyLane) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    match property {
+        PropertyLane::Position => crate::position_ui::track_signature(layer.position_animation.as_ref()).hash(&mut hasher),
+        PropertyLane::Opacity => {
+            if let Some(track) = &layer.opacity_animation {
+                track.enabled.hash(&mut hasher);
+                track.keys.len().hash(&mut hasher);
+                std::sync::Arc::as_ptr(&track.keys).hash(&mut hasher);
+            }
+        }
+        PropertyLane::Transform => {
+            if let Some(track) = &layer.transform_animation {
+                track.enabled.hash(&mut hasher);
+                track.keys.len().hash(&mut hasher);
+                std::sync::Arc::as_ptr(&track.keys).hash(&mut hasher);
+            }
+        }
+    }
+    hasher.finish()
+}
+
+fn draw_property_lane(
+    app: &mut PhotoStoreApp,
+    ui: &mut Ui,
+    document: &photostore_doc::Document,
+    layer: &photostore_doc::Layer,
+    timeline: &Timeline,
+    lane_width: f32,
+    property: PropertyLane,
+    tokens: &Tokens,
+) {
+    let (label, enabled, key_frames, has_key, value_text) = match property {
+        PropertyLane::Position => {
+            let track = layer.position_animation.as_ref();
+            let value = track.map_or_else(
+                || {
+                    if layer.video.is_some() {
+                        photostore_engine::sample_layer_position(document, layer, timeline.current)
+                    } else {
+                        photostore_doc::comps::layer_position(layer).unwrap_or((0, 0))
+                    }
+                },
+                |a| if a.enabled { a.sampled_value(timeline.current) } else { a.applied_value },
+            );
+            (
+                "Position",
+                track.is_some_and(|a| a.enabled),
+                track.map_or_else(Vec::new, |a| a.keys.iter().map(|key| key.frame).collect()),
+                track.is_some_and(|a| a.keys.iter().any(|key| key.frame == timeline.current)),
+                format!("{}, {}", value.0, value.1),
+            )
+        }
+        PropertyLane::Opacity => {
+            let track = layer.opacity_animation.as_ref();
+            let value = track.map_or(layer.opacity, |a| a.sampled_value(timeline.current));
+            (
+                "Opacity",
+                track.is_some_and(|a| a.enabled),
+                track.map_or_else(Vec::new, |a| a.keys.iter().map(|key| key.frame).collect()),
+                track.is_some_and(|a| a.keys.iter().any(|key| key.frame == timeline.current)),
+                format!("{:.0}%", value * 100.0),
+            )
+        }
+        PropertyLane::Transform => {
+            let track = layer.transform_animation.as_ref();
+            let value =
+                track.map_or(photostore_doc::TransformValue::default(), |a| if a.enabled { a.sampled_value(timeline.current) } else { a.applied_value });
+            (
+                "Transform",
+                track.is_some_and(|a| a.enabled),
+                track.map_or_else(Vec::new, |a| a.keys.iter().map(|key| key.frame).collect()),
+                track.is_some_and(|a| a.keys.iter().any(|key| key.frame == timeline.current)),
+                format!("{:.0}% × {:.0}% · {:.1}°", value.scale_x * 100.0, value.scale_y * 100.0, value.rotation),
+            )
+        }
+    };
+    let history = app.session.active().filter(|st| st.doc.id == document.id).map_or((0, 0), |st| (st.history.past_len(), st.history.future_len()));
+    let draft_id = Id::new(("timeline-property-draft", document.id.0, layer.id.0, label));
+    let signature = property_signature(layer, property);
+    let locks = document.effective_locks(layer.id);
+    let editable = !locks.all && (!matches!(property, PropertyLane::Opacity) || !locks.position);
+    ui.horizontal(|ui| {
+        let (gutter, _) = ui.allocate_exact_size(vec2(NAME_WIDTH, LANE_HEIGHT), Sense::hover());
+        let menu_response = ui.interact(Rect::from_min_size(gutter.min, vec2(22.0, gutter.height())), Id::new(("timeline-property-toggle", document.id.0, layer.id.0, label)), if editable {Sense::click()} else {Sense::hover()});
+        if menu_response.clicked() {
+            select_layer(app, document.id, layer.id);
+            crate::audio_ui::clear_selection(ui.ctx(), document.id);
+            let command = match property { PropertyLane::Position => "timeline.togglePositionAnimation", PropertyLane::Opacity => "timeline.toggleOpacityAnimation", PropertyLane::Transform => "timeline.setTransformAnimation" };
+            let p = if matches!(property, PropertyLane::Transform) { json!({"document":document.id.0,"layer":layer.id.0,"enabled":!enabled}) } else { Value::Null };
+            if matches!(property, PropertyLane::Transform) {
+                if enabled && layer.transform_animation.as_ref().is_some_and(|track| !track.keys.is_empty()) {
+                    ui.ctx().data_mut(|data| data.insert_temp(Id::new(("transform-disable-confirm", document.id.0, layer.id.0)), true));
+                } else if let Err(error) = app.run(command,p) { app.ui.status=error; app.ui.status_error=true; }
+            } else if let Some(result) = crate::timeline_ui::menu(app, ui.ctx(), command, &p) { if let Err(error) = result { app.ui.status = error; app.ui.status_error = true; } }
+        }
+        let painter = ui.painter_at(gutter);
+        painter.text(pos2(gutter.left()+4.0,gutter.center().y), egui::Align2::LEFT_CENTER, if enabled { "◉" } else { "◯" }, egui::FontId::proportional(12.0), tokens.text_dim);
+        painter.text(pos2(gutter.left()+24.0,gutter.center().y), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(11.0), tokens.text);
+        painter.text(pos2(gutter.right()-28.0,gutter.center().y), egui::Align2::RIGHT_CENTER, value_text, egui::FontId::proportional(10.0), tokens.text_dim);
+        let value_response = ui.interact(Rect::from_min_size(pos2(gutter.left()+63.0,gutter.top()),vec2((NAME_WIDTH-90.0).max(24.0),gutter.height())), Id::new(("timeline-property-value",document.id.0,layer.id.0,label)), if editable {Sense::click()} else {Sense::hover()});
+        egui::Popup::menu(&value_response).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+            let pending=ui.ctx().data(|data|data.get_temp::<PropertyDraft>(draft_id)).filter(|draft|draft.frame==timeline.current && draft.history==history && draft.signature==signature);
+            match property {
+                PropertyLane::Position => {
+                    let current = layer.position_animation.as_ref().map_or_else(|| if layer.video.is_some() { photostore_engine::sample_layer_position(document,layer,timeline.current) } else { photostore_doc::comps::layer_position(layer).unwrap_or((0,0)) }, |a| if a.enabled {a.sampled_value(timeline.current)} else {a.applied_value});
+                    let (mut x,mut y)=match pending.map(|d|d.value){Some(PropertyDraftValue::Position(x,y))=>(x,y),_=>(current.0,current.1)};
+                    ui.label("Position"); ui.add(egui::DragValue::new(&mut x).prefix("X ")); ui.add(egui::DragValue::new(&mut y).prefix("Y "));
+                    ui.ctx().data_mut(|data|data.insert_temp(draft_id,PropertyDraft{frame:timeline.current,history,signature,value:PropertyDraftValue::Position(x,y)}));
+                    if ui.button("Apply").clicked() { let cmd=if enabled {"timeline.setPositionKeyframe"} else {"timeline.setPosition"}; let params=if enabled {json!({"document":document.id.0,"layer":layer.id.0,"frame":timeline.current,"x":x,"y":y})} else {json!({"document":document.id.0,"layer":layer.id.0,"x":x,"y":y})}; let _=app.run(cmd,params); ui.ctx().data_mut(|data|data.remove::<PropertyDraft>(draft_id)); ui.close(); }
+                }
+                PropertyLane::Opacity => {
+                    let current=layer.opacity_animation.as_ref().map_or(layer.opacity,|a|a.sampled_value(timeline.current));
+                    let mut value=match pending.map(|d|d.value){Some(PropertyDraftValue::Opacity(value))=>value,_=>current};
+                    ui.label("Opacity"); ui.add(egui::Slider::new(&mut value,0.0..=1.0).show_value(true));
+                    ui.ctx().data_mut(|data|data.insert_temp(draft_id,PropertyDraft{frame:timeline.current,history,signature,value:PropertyDraftValue::Opacity(value)}));
+                    if ui.button("Apply").clicked() { let _=app.run("layer.setProps",json!({"document":document.id.0,"layer":layer.id.0,"opacity":value})); ui.ctx().data_mut(|data|data.remove::<PropertyDraft>(draft_id)); ui.close(); }
+                }
+                PropertyLane::Transform => {
+                    let current=layer.transform_animation.as_ref().map_or(photostore_doc::TransformValue::default(),|a|if a.enabled {a.sampled_value(timeline.current)} else {a.applied_value});
+                    let mut value=match pending.map(|d|d.value){Some(PropertyDraftValue::Transform(value))=>value,_=>current};
+                    ui.label("Transform"); ui.add(egui::DragValue::new(&mut value.scale_x).range(0.001..=1000.0).prefix("Scale X ")); ui.add(egui::DragValue::new(&mut value.scale_y).range(0.001..=1000.0).prefix("Scale Y ")); ui.add(egui::DragValue::new(&mut value.rotation).range(-360000.0..=360000.0).prefix("Rotation° "));
+                    ui.ctx().data_mut(|data|data.insert_temp(draft_id,PropertyDraft{frame:timeline.current,history,signature,value:PropertyDraftValue::Transform(value)}));
+                    if ui.button("Apply").clicked() { let cmd=if enabled {"timeline.setTransformKeyframe"} else {"timeline.setTransform"}; let params=if enabled {json!({"document":document.id.0,"layer":layer.id.0,"frame":timeline.current,"scaleX":value.scale_x,"scaleY":value.scale_y,"rotation":value.rotation})} else {json!({"document":document.id.0,"layer":layer.id.0,"scaleX":value.scale_x,"scaleY":value.scale_y,"rotation":value.rotation})}; let _=app.run(cmd,params); ui.ctx().data_mut(|data|data.remove::<PropertyDraft>(draft_id)); ui.close(); }
+                }
+            }
+            let frames: Vec<_> = match property {
+                PropertyLane::Position => layer.position_animation.as_ref().map_or_else(Vec::new,|a|a.keys.iter().map(|k|k.frame).collect()),
+                PropertyLane::Opacity => layer.opacity_animation.as_ref().map_or_else(Vec::new,|a|a.keys.iter().map(|k|k.frame).collect()),
+                PropertyLane::Transform => layer.transform_animation.as_ref().map_or_else(Vec::new,|a|a.keys.iter().map(|k|k.frame).collect()),
+            };
+            if let Some(previous)=frames.iter().filter(|f| **f<timeline.current).max() { if ui.button("Previous key").clicked(){let _=app.run("timeline.setFrame",json!({"frame":previous}));ui.close();} }
+            if let Some(next)=frames.iter().filter(|f| **f>timeline.current).min() { if ui.button("Next key").clicked(){let _=app.run("timeline.setFrame",json!({"frame":next}));ui.close();} }
+        });
+        let (lane, _) = ui.allocate_exact_size(vec2(lane_width, LANE_HEIGHT), Sense::hover());
+        let lane_painter = ui.painter_at(lane);
+        lane_painter.rect_filled(lane, 2.0, tokens.field);
+        if !key_frames.is_empty() {
+            for frame in key_frames {
+                if frame >= timeline.duration { continue; }
+                let x = lane.left() + lane.width() * frame as f32 / timeline.duration.max(1) as f32;
+                let marker = Rect::from_center_size(pos2(x, lane.center().y), vec2(12.0, 16.0));
+                lane_painter.text(marker.center(), egui::Align2::CENTER_CENTER, "◆", egui::FontId::proportional(11.0), tokens.accent);
+                let response = ui.interact(marker, Id::new(("timeline-property-key", document.id.0, layer.id.0, label, frame)), Sense::click());
+                if response.clicked() { let _ = app.run("timeline.setFrame", json!({"frame":frame})); }
+                response.context_menu(|ui| {
+                    if ui.button("Delete key").clicked() {
+                        let command = match property { PropertyLane::Position => "timeline.deletePositionKeyframe", PropertyLane::Opacity => "timeline.deleteOpacityKeyframe", PropertyLane::Transform => "timeline.deleteTransformKeyframe" };
+                        let _ = app.run(command, json!({"document":document.id.0,"layer":layer.id.0,"frame":frame}));
+                        ui.close();
+                    }
+                });
+            }
+        }
+        let x = lane.left() + lane.width() * timeline.current as f32 / timeline.duration.max(1) as f32;
+        lane_painter.line_segment([pos2(x,lane.top()),pos2(x,lane.bottom())], egui::Stroke::new(1.5,tokens.accent));
+        let key_button = ui.interact(Rect::from_min_size(pos2(gutter.left()+NAME_WIDTH-22.0,gutter.top()),vec2(22.0,gutter.height())), Id::new(("timeline-property-setkey",document.id.0,layer.id.0,label)), if editable {Sense::click()} else {Sense::hover()});
+        if key_button.clicked() {
+            let command = if !enabled {
+                match property { PropertyLane::Position => "timeline.togglePositionAnimation", PropertyLane::Opacity => "timeline.toggleOpacityAnimation", PropertyLane::Transform => "timeline.setTransformAnimation" }
+            } else {
+                match property { PropertyLane::Position => if has_key { "timeline.deletePositionKeyframe" } else { "timeline.setPositionKeyframe" }, PropertyLane::Opacity => if has_key { "timeline.deleteOpacityKeyframe" } else { "timeline.setOpacityKeyframe" }, PropertyLane::Transform => if has_key { "timeline.deleteTransformKeyframe" } else { "timeline.setTransformKeyframe" } }
+            };
+            let params = if has_key {
+                json!({"document":document.id.0,"layer":layer.id.0,"frame":timeline.current})
+            } else { match property {
+                PropertyLane::Position => { let value=layer.position_animation.as_ref().map_or_else(|| if layer.video.is_some() { photostore_engine::sample_layer_position(document,layer,timeline.current) } else { photostore_doc::comps::layer_position(layer).unwrap_or((0,0)) }, |a| if a.enabled {a.sampled_value(timeline.current)} else {a.applied_value}); json!({"document":document.id.0,"layer":layer.id.0,"frame":timeline.current,"x":value.0,"y":value.1}) },
+                PropertyLane::Opacity => { let value=layer.opacity_animation.as_ref().map_or(layer.opacity,|a|a.sampled_value(timeline.current)); json!({"document":document.id.0,"layer":layer.id.0,"frame":timeline.current,"value":value}) },
+                PropertyLane::Transform => { let value=layer.transform_animation.as_ref().map_or(photostore_doc::TransformValue::default(),|a|if a.enabled {a.sampled_value(timeline.current)} else {a.applied_value}); json!({"document":document.id.0,"layer":layer.id.0,"frame":timeline.current,"scaleX":value.scale_x,"scaleY":value.scale_y,"rotation":value.rotation}) },
+            }};
+            if !enabled && !matches!(property, PropertyLane::Transform) {
+                select_layer(app, document.id, layer.id);
+                if let Some(result)=crate::timeline_ui::menu(app,ui.ctx(),command,&Value::Null) { if let Err(error)=result { app.ui.status=error; app.ui.status_error=true; } }
+            } else if !enabled {
+                let _=app.run(command,json!({"document":document.id.0,"layer":layer.id.0,"enabled":true}));
+            } else { let _ = app.run(command, params); }
+        }
+        painter.text(pos2(gutter.right()-18.0,gutter.center().y),egui::Align2::CENTER_CENTER,if has_key {"◆"} else {"◇"},egui::FontId::proportional(12.0),tokens.accent);
+    });
+    let confirm_id = Id::new(("transform-disable-confirm", document.id.0, layer.id.0));
+    if matches!(property, PropertyLane::Transform) && ui.ctx().data(|data| data.get_temp::<bool>(confirm_id)).unwrap_or(false) {
+        ui.horizontal(|ui| {
+            ui.allocate_space(vec2(NAME_WIDTH, LANE_HEIGHT));
+            if ui.button("Disable Transform animation and remove keys").clicked() {
+                let _ = app.run("timeline.setTransformAnimation", json!({"document":document.id.0,"layer":layer.id.0,"enabled":false}));
+                ui.ctx().data_mut(|data| data.remove::<bool>(confirm_id));
+            }
+            if ui.button("Cancel").clicked() {
+                ui.ctx().data_mut(|data| data.remove::<bool>(confirm_id));
+            }
+            let (lane, _) = ui.allocate_exact_size(vec2(lane_width, LANE_HEIGHT), Sense::hover());
+            ui.painter_at(lane).rect_filled(lane, 2.0, tokens.field);
+        });
+    }
+}
+
+/// Draw video clips on the timeline's shared time scale. The parent owns the ruler and scrolling.
+pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_width: f32) {
     if timeline.mode != TimelineMode::Video {
         return;
     }
@@ -386,6 +672,10 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline) {
         return;
     };
     let doc = active.doc.id;
+    let document = active.doc.clone();
+    if let Some(layer) = active.active_layer {
+        ui.ctx().data_mut(|data| data.insert_temp(selected_id(doc), layer.0));
+    }
     let history = (active.history.past_len(), active.history.future_len());
     let ctx = ui.ctx().clone();
     let rows: Vec<(LayerId, String, ClipSnapshot)> = active
@@ -394,27 +684,200 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline) {
         .into_iter()
         .filter_map(|(_, _, layer)| layer.video.as_ref().map(|video| (layer.id, layer.name.clone(), snapshot(&ctx, history, doc, timeline, layer.id, video))))
         .collect();
-    let lane_width = (ui.available_width() - NAME_WIDTH).max(180.0);
-    ui.separator();
-    ui.label(RichText::new(tl!("Video Clips")).strong().color(tokens.text));
+    let display_rows: Vec<(LayerId, String, Option<ClipSnapshot>, usize, usize, bool, usize, String)> = active
+        .doc
+        .walk()
+        .into_iter()
+        .filter_map(|(path, _, layer)| {
+            if let Some(video) = layer.video.as_ref() {
+                return Some((
+                    layer.id,
+                    layer.name.clone(),
+                    Some(snapshot(&ctx, history, doc, timeline, layer.id, video)),
+                    0,
+                    0,
+                    false,
+                    path.len(),
+                    "Video".to_string(),
+                ));
+            }
+            let range = timeline.layer_ranges.iter().find(|range| range.layer == layer.id);
+            let kind = match &layer.content {
+                photostore_doc::LayerContent::Smart(_) => "Smart Object",
+                photostore_doc::LayerContent::Group(_) => "Group",
+                photostore_doc::LayerContent::Fill(_) => "Fill",
+                photostore_doc::LayerContent::Adjustment(_) => "Adjustment",
+                photostore_doc::LayerContent::Text(_) => "Text",
+                photostore_doc::LayerContent::Shape(_) => "Shape",
+                photostore_doc::LayerContent::Raster(_) => "Still",
+            };
+            Some((
+                layer.id,
+                layer.name.clone(),
+                None,
+                range.map_or(0, |r| r.start),
+                range.map_or(timeline.duration, |r| r.end),
+                matches!(layer.content, photostore_doc::LayerContent::Smart(_)),
+                path.len(),
+                kind.to_string(),
+            ))
+        })
+        .collect();
     ui.horizontal(|ui| {
-        ui.allocate_space(vec2(NAME_WIDTH, RULER_HEIGHT));
-        draw_ruler(ui, lane_width, timeline.duration_seconds().max(0.001), &tokens);
-    });
-    egui::ScrollArea::vertical().max_height(190.0).show(ui, |ui| {
-        for (layer, name, clip) in &rows {
-            ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(vec2(NAME_WIDTH, LANE_HEIGHT), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.label(name);
-                });
-                let (lane, _) = ui.allocate_exact_size(vec2(lane_width, LANE_HEIGHT), Sense::hover());
-                ui.painter_at(lane).rect_filled(lane, 2.0, tokens.field);
-                draw_clip(ui, app, timeline, doc, *layer, *clip, lane, &tokens);
-            });
+        ui.allocate_space(vec2(NAME_WIDTH, 24.0));
+        let (ruler, response) = ui.allocate_exact_size(vec2(lane_width, 24.0), Sense::click_and_drag());
+        let painter = ui.painter_at(ruler);
+        painter.rect_filled(ruler, 2.0, tokens.card);
+        for n in 0..=10 {
+            let x = ruler.left() + ruler.width() * n as f32 / 10.0;
+            painter.line_segment([pos2(x, ruler.bottom() - 8.0), pos2(x, ruler.bottom())], egui::Stroke::new(1.0, tokens.text_dim));
+            painter.text(
+                pos2(x + 2.0, ruler.top() + 2.0),
+                egui::Align2::LEFT_TOP,
+                format!("{:.1}s", timeline.duration_seconds() * n as f64 / 10.0),
+                egui::FontId::proportional(10.0),
+                tokens.text_dim,
+            );
+        }
+        let x = ruler.left() + ruler.width() * timeline.current as f32 / timeline.duration.max(1) as f32;
+        painter.line_segment([pos2(x, ruler.top()), pos2(x, ruler.bottom())], egui::Stroke::new(2.0, tokens.accent));
+        if (response.clicked() || response.dragged())
+            && let Some(point) = response.interact_pointer_pos()
+        {
+            let frame = ((((point.x - ruler.left()) / ruler.width()).clamp(0.0, 1.0) * timeline.duration as f32).round() as usize)
+                .min(timeline.duration.saturating_sub(1));
+            let _ = app.run("timeline.setFrame", json!({"frame":frame}));
         }
     });
-    let selected = ui.ctx().data(|data| data.get_temp::<u64>(selected_id(doc)));
-    if let Some((layer, name, clip)) = rows.iter().find(|(layer, _, _)| Some(layer.0) == selected) {
-        properties(app, ui, timeline, doc, *layer, name, *clip, &tokens);
+    for (layer, name, video, start, end, is_smart, depth, kind) in display_rows {
+        if let Some(clip) = video {
+            ui.horizontal(|ui| {
+                layer_header(ui, app, doc, layer, &name, &kind, depth, &tokens);
+                let (lane, _) = ui.allocate_exact_size(vec2(lane_width, LANE_HEIGHT), Sense::hover());
+                ui.painter_at(lane).rect_filled(lane, 2.0, tokens.field);
+                let editable = !document.effective_locks(layer).all && !document.effective_locks(layer).position;
+                draw_clip(ui, app, timeline, doc, layer, &name, clip, lane, editable, &tokens);
+                let x = lane.left() + lane.width() * timeline.current as f32 / timeline.duration.max(1) as f32;
+                ui.painter_at(lane).line_segment([pos2(x, lane.top()), pos2(x, lane.bottom())], egui::Stroke::new(1.5, tokens.accent));
+            });
+        } else {
+            ui.horizontal(|ui| {
+                layer_header(ui, app, doc, layer, &name, &kind, depth, &tokens);
+                let (lane, _) = ui.allocate_exact_size(vec2(lane_width, LANE_HEIGHT), Sense::hover());
+                let drag_id = Id::new(("still-clip-drag", doc.0, layer.0));
+                let drag = ui.ctx().data(|data| data.get_temp::<StillDrag>(drag_id));
+                let pointer_x = ui.input(|input| input.pointer.latest_pos().map_or(lane.left(), |p| p.x));
+                let (visible_start, visible_end) = drag
+                    .filter(|state| state.doc == doc && state.history == history && state.duration == timeline.duration.max(1))
+                    .map_or((start, end), |state| still_drag_range(state, pointer_x, lane.width()));
+                let duration = timeline.duration.max(1) as f32;
+                let left = lane.left() + lane.width() * visible_start as f32 / duration;
+                let right = lane.left() + lane.width() * visible_end as f32 / duration;
+                let rect = Rect::from_min_max(pos2(left, lane.top() + 3.0), pos2(right.max(left + 14.0), lane.bottom() - 3.0));
+                let editable = !document.effective_locks(layer).all && !document.effective_locks(layer).position;
+                let response = ui.interact(rect, Id::new(("still-clip", doc.0, layer.0)), if editable { Sense::click_and_drag() } else { Sense::click() });
+                if response.clicked() {
+                    let _ = app.run("layer.select", json!({"layer":layer.0,"mode":"replace"}));
+                    crate::audio_ui::clear_selection(ui.ctx(), doc);
+                }
+                response.context_menu(|ui| {
+                    if is_smart {
+                        if ui.button(tl!("Edit Contents")).clicked() {
+                            let _ = app.run("layer.smartObjects.editContents", json!({"layer":layer.0}));
+                            ui.close();
+                        }
+                        if ui.button(tl!("Rasterize Smart Object")).clicked() {
+                            let _ = app.run("layer.smartObjects.rasterize", json!({"layer":layer.0}));
+                            ui.close();
+                        }
+                    } else if ui.button(tl!("Convert to Smart Object")).clicked() {
+                        let _ = app.run("layer.smartObjects.convertToSmartObject", json!({"layer":layer.0}));
+                        ui.close();
+                    }
+                });
+                if editable
+                    && response.drag_started()
+                    && let Some(point) = response.interact_pointer_pos()
+                {
+                    let edge = if (point.x - rect.left()).abs() < 8.0 {
+                        1
+                    } else if (point.x - rect.right()).abs() < 8.0 {
+                        2
+                    } else {
+                        0
+                    };
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(drag_id, StillDrag { doc, history, x: point.x, start, end, duration: timeline.duration.max(1), edge })
+                    });
+                }
+                if editable
+                    && response.drag_stopped()
+                    && let Some(state) = ui.ctx().data_mut(|data| data.remove::<StillDrag>(drag_id))
+                {
+                    let x = response.interact_pointer_pos().map_or_else(|| ui.input(|i| i.pointer.latest_pos().map_or(state.x, |p| p.x)), |p| p.x);
+                    let (new_start, new_end) = still_drag_range(state, x, lane.width());
+                    let current_range = document
+                        .timeline
+                        .as_ref()
+                        .and_then(|tl| tl.layer_ranges.iter().find(|range| range.layer == layer))
+                        .map_or((0, timeline.duration), |range| (range.start, range.end));
+                    let current_context =
+                        app.session.active().filter(|active| active.doc.id == state.doc).map(|active| (active.history.past_len(), active.history.future_len()));
+                    if state.doc == doc
+                        && state.history == history
+                        && state.duration == timeline.duration.max(1)
+                        && current_context == Some(state.history)
+                        && current_range == (state.start, state.end)
+                        && (new_start, new_end) != (state.start, state.end)
+                        && editable
+                    {
+                        let _ = app.run("timeline.setLayerRange", json!({"layer":layer.0,"start":new_start,"end":new_end}));
+                    }
+                }
+                let selected = app.session.active().and_then(|s| s.active_layer) == Some(layer);
+                let clip_color = match kind.as_str() {
+                    "Smart Object" => egui::Color32::from_rgb(132, 92, 190),
+                    "Text" => egui::Color32::from_rgb(56, 142, 154),
+                    "Shape" => egui::Color32::from_rgb(64, 126, 182),
+                    "Group" => egui::Color32::from_rgb(108, 118, 130),
+                    "Fill" => egui::Color32::from_rgb(112, 150, 78),
+                    "Adjustment" => egui::Color32::from_rgb(178, 122, 58),
+                    _ => egui::Color32::from_rgb(83, 124, 154),
+                };
+                ui.painter_at(lane).rect_filled(lane, 2.0, tokens.field);
+                ui.painter_at(lane).rect_filled(rect.intersect(lane), 3.0, if selected { tokens.accent } else { clip_color });
+                ui.painter_at(lane).text(
+                    rect.left_center(),
+                    egui::Align2::LEFT_CENTER,
+                    format!("{name} · {kind}"),
+                    egui::FontId::proportional(11.0),
+                    tokens.text,
+                );
+                let x = lane.left() + lane.width() * timeline.current as f32 / timeline.duration.max(1) as f32;
+                ui.painter_at(lane).line_segment([pos2(x, lane.top()), pos2(x, lane.bottom())], egui::Stroke::new(1.5, tokens.accent));
+            });
+        }
+        if ui.ctx().data(|data| data.get_temp::<bool>(Id::new(("timeline-layer-open", doc.0, layer.0)))).unwrap_or(false) {
+            if let Some(layer_data) = document.layer(layer) {
+                draw_property_lane(app, ui, &document, layer_data, timeline, lane_width, PropertyLane::Opacity, &tokens);
+                if !matches!(
+                    layer_data.content,
+                    photostore_doc::LayerContent::Group(_) | photostore_doc::LayerContent::Fill(_) | photostore_doc::LayerContent::Adjustment(_)
+                ) {
+                    draw_property_lane(app, ui, &document, layer_data, timeline, lane_width, PropertyLane::Position, &tokens);
+                }
+                if matches!(layer_data.content, photostore_doc::LayerContent::Smart(_)) {
+                    draw_property_lane(app, ui, &document, layer_data, timeline, lane_width, PropertyLane::Transform, &tokens);
+                }
+            }
+        }
+    }
+    let selected = app.session.active().and_then(|st| st.active_layer);
+    if !crate::audio_ui::has_selection(ui.ctx(), doc)
+        && let Some((layer, name, clip)) = rows.iter().find(|(layer, _, _)| Some(*layer) == selected)
+    {
+        egui::CollapsingHeader::new(RichText::new(format!("Clip details · {name}")).color(tokens.text_dim)).default_open(false).show(ui, |ui| {
+            properties(app, ui, timeline, doc, *layer, name, *clip, &tokens);
+        });
     }
 }

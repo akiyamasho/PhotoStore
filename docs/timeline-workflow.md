@@ -1,0 +1,17 @@
+# Timeline workflow
+
+PhotoStore's video timeline follows familiar editing patterns documented by CapCut and Photoshop: a shared time ruler and playhead, layer-based clips, and property stopwatches/keyframes. References: [CapCut keyframes](https://www.capcut.com/resource/how-to-add-keyframes-in-capcut), [Photoshop timeline workflow](https://helpx.adobe.com/ca/photoshop/desktop/add-video-and-animation/use-keyframes/create-timeline-animation-workflow.html), and [Adobe Smart Object animation tutorial](https://www.adobe.com/learn/photoshop/web/animate-poster-text-images).
+
+## Current UI scope
+
+- Video mode has one main frame/time ruler and one horizontal scroll area shared by the ruler, layer clips, property marker lanes, and audio rows. Zoom out, Fit, and Zoom in change their common pixel width. The panel's lanes share a vertical scroll.
+- Video clips retain the existing move/trim gesture and commit once through `timeline.setVideoClip`. Still and Smart Object layers show persisted layer-range bars and can be moved or trimmed at their edges through `timeline.setLayerRange`; clicks select that layer in the shared Layers selection.
+- Every document layer appears in hierarchy order with indentation and a type label; groups, fills, and adjustment layers remain visible even when they have no editable source clip. Position, Opacity, and Smart Object Transform controls are disclosed directly beneath each layer. Each property has a fixed-width control gutter and a key lane sharing the ruler's width, duration mapping, and playhead. Diamonds seek to keys and offer deletion from their context menu; the gutter's value menu edits values and provides previous/next key navigation. Position and Opacity keep their pending-disable confirmation.
+- Legacy video-key authoring controls are removed from the visible timeline. Existing legacy video key data remains in the document and is not migrated or deleted by this UI change.
+- Smart Object rows offer Convert to Smart Object or Edit Contents from the clip context menu when applicable. Smart Transform controls use the engine's `timeline.setTransformAnimation`, `timeline.setTransform`, and `timeline.setTransformKeyframe` commands; scale values are multiplicative factors and rotation is in degrees. Animation uses the source-center pivot; perspective and warp must be cleared first. Disabling a keyed Transform asks for confirmation. Converting to Frame Animation is guarded while any Smart Object Transform track is enabled because Transform-key baking is unsupported.
+- Audio clips retain their move/trim/split and contextual properties, including source trim, speed, volume, fades, mute, relink and removal. Frame snapping is on by default and can be toggled. Their properties are collapsed unless opened from the selected clip.
+- Frame Animation mode retains its existing thumbnail strip, frame operations, work-area ruler, onion-skin and tween settings.
+
+## Limits
+
+This is an original egui interface informed by public workflow documentation; it does not reproduce either product's branded assets or claim pixel parity. The UI controls are implemented, but visual runtime behavior and persistence still require the coordinated compiler/build and manual acceptance pass. No manual UI acceptance is claimed here.

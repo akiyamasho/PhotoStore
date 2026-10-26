@@ -188,7 +188,44 @@ pub fn sync_plain(doc: &mut Document) {
     if doc.timeline.as_ref().is_some_and(|t| matches!(t.mode, photostore_doc::TimelineMode::Video)) {
         apply_owned_opacity(&mut doc.layers, cur);
         apply_owned_position(doc, cur);
+        apply_owned_transform(&mut doc.layers, cur);
     }
+}
+
+fn apply_owned_transform(layers: &mut [Layer], frame: usize) {
+    for layer in layers {
+        if let (Some(animation), LayerContent::Smart(sm)) = (layer.transform_animation.as_mut(), &mut layer.content) {
+            if let Some(base) = animation.base_transform {
+                let value = animation.sampled_value(frame);
+                if !animation.sampled_footprint_within_limit(frame) { continue; }
+                let angle = value.rotation.to_radians();
+                let (sin, cos) = angle.sin_cos();
+                let pivot = animation.pivot.unwrap_or((0.0, 0.0));
+                let relative = photostore_geom::Affine::translate(pivot.0, pivot.1).mul(
+                    &photostore_geom::Affine { m: [cos * value.scale_x, sin * value.scale_x, -sin * value.scale_y, cos * value.scale_y, 0.0, 0.0] }
+                        .mul(&photostore_geom::Affine::translate(-pivot.0, -pivot.1)),
+                );
+                let old = photostore_geom::Affine { m: base }.mul(&transform_value_affine(animation.applied_value, pivot));
+                let current = sm.transform;
+                let mut sampled = photostore_geom::Affine { m: base }.mul(&relative);
+                sampled.m[4] += current.m[4] - old.m[4];
+                sampled.m[5] += current.m[5] - old.m[5];
+                sm.transform = sampled;
+                animation.applied_value = value;
+            }
+        }
+        if let Some(children) = layer.children_mut() {
+            apply_owned_transform(children, frame);
+        }
+    }
+}
+
+fn transform_value_affine(value: photostore_doc::TransformValue, pivot: (f64, f64)) -> photostore_geom::Affine {
+    let (sin, cos) = value.rotation.to_radians().sin_cos();
+    photostore_geom::Affine::translate(pivot.0, pivot.1).mul(
+        &photostore_geom::Affine { m: [cos * value.scale_x, sin * value.scale_x, -sin * value.scale_y, cos * value.scale_y, 0.0, 0.0] }
+            .mul(&photostore_geom::Affine::translate(-pivot.0, -pivot.1)),
+    )
 }
 
 fn apply_owned_opacity(layers: &mut [Layer], frame: usize) {

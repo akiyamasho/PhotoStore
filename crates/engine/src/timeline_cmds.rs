@@ -91,12 +91,13 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
         Some("frameAnimation") | Some("frame-animation") => TimelineMode::FrameAnimation,
         _ => TimelineMode::Video,
     };
-    if s.active().is_some_and(|st| st.doc.walk().iter().any(|(_, _, l)| l.position_animation.is_some()))
+    if s.active().is_some_and(|st| st.doc.walk().iter().any(|(_, _, l)| l.position_animation.is_some() || l.transform_animation.is_some()))
     {
         s.edit("Create Timeline", |doc, _| {
             let current = doc.timeline.as_ref().map_or(0, |t| t.current);
             crate::video_cmds::sync(doc);
             freeze_and_clear_owned_position(&mut doc.layers, current);
+            crate::smart_transform_cmds::clear_tracks(&mut doc.layers);
             let mut next = Timeline::new(duration, fps);
             next.mode = mode;
             doc.timeline = Some(next);
@@ -255,6 +256,9 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
         return info(s);
     }
     if mode == TimelineMode::FrameAnimation {
+        if s.active().is_some_and(|st|st.doc.walk().iter().any(|(_,_,l)|l.transform_animation.as_ref().is_some_and(|a|a.enabled))) {
+            return Err(bad("timeline.setMode", "disable or delete Smart Object Transform animation before converting to Frame Animation; baking Transform keys is not supported".into()));
+        }
         // Materialize a property snapshot for every frame when entering animation mode. The
         // source video surfaces stay owned by their video layers, so this does not flatten or
         // duplicate the movie and preserves its timing and natural motion.
@@ -458,9 +462,10 @@ fn make_frames_from_layers(s: &mut Session) -> Result<Value> {
 fn delete(s: &mut Session) -> Result<Value> {
     s.edit("Delete Timeline", |doc, _| {
         let current = doc.timeline.as_ref().map_or(0, |t| t.current);
-        crate::video_cmds::sync_plain(doc);
+        crate::video_cmds::sync(doc);
         freeze_and_clear_owned_opacity(&mut doc.layers, current);
         freeze_and_clear_owned_position(&mut doc.layers, current);
+        crate::smart_transform_cmds::clear_tracks(&mut doc.layers);
         crate::video_cmds::store(doc);
         doc.timeline = None;
         Ok(())

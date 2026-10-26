@@ -25,6 +25,9 @@ fn validate_opacity_animation(a: &photostore_doc::OpacityAnimation) -> Result<()
 fn validate_position_animation(a: &photostore_doc::PositionAnimation) -> Result<()> {
     a.validate().map_err(FormatError::corrupt)
 }
+fn validate_transform_animation(a: &photostore_doc::TransformAnimation) -> Result<()> {
+    a.validate().map_err(FormatError::corrupt)
+}
 
 fn validate_video_translation(v: (i32, i32)) -> Result<()> {
     if !(-photostore_doc::MAX_POSITION_COORDINATE..=photostore_doc::MAX_POSITION_COORDINATE).contains(&v.0)
@@ -94,8 +97,51 @@ fn validate_position_layers(layers: &[LayerM]) -> Result<()> {
                 }
                 validate_position_animation(animation)?;
             }
+            if let Some(animation) = &layer.transform_animation {
+                animation.validate().map_err(FormatError::corrupt)?;
+            }
             if let ContentM::Group { children, .. } = &layer.content {
                 visit(children, tracks, keys)?;
+            }
+        }
+        Ok(())
+    }
+    visit(layers, &mut 0, &mut 0)
+}
+
+fn validate_transform_totals_manifest(layers: &[LayerM]) -> Result<()> {
+    fn visit(layers: &[LayerM], tracks: &mut usize, keys: &mut usize) -> Result<()> {
+        for layer in layers {
+            if let Some(a) = &layer.transform_animation {
+                *tracks = tracks.saturating_add(1);
+                *keys = keys.saturating_add(a.keys.len());
+                if *tracks > photostore_doc::MAX_POSITION_ANIMATION_TRACKS || *keys > photostore_doc::MAX_TRANSFORM_ANIMATION_KEYS {
+                    return Err(FormatError::LimitExceeded("document transform animation limits exceeded".into()));
+                }
+                validate_transform_animation(a)?;
+            }
+            if let ContentM::Group { children, .. } = &layer.content {
+                visit(children, tracks, keys)?;
+            }
+        }
+        Ok(())
+    }
+    visit(layers, &mut 0, &mut 0)
+}
+
+fn validate_transform_totals_document(layers: &[Layer]) -> Result<()> {
+    fn visit(layers: &[Layer], tracks: &mut usize, keys: &mut usize) -> Result<()> {
+        for layer in layers {
+            if let Some(a) = &layer.transform_animation {
+                *tracks = tracks.saturating_add(1);
+                *keys = keys.saturating_add(a.keys.len());
+                if *tracks > photostore_doc::MAX_POSITION_ANIMATION_TRACKS || *keys > photostore_doc::MAX_TRANSFORM_ANIMATION_KEYS {
+                    return Err(FormatError::LimitExceeded("document transform animation limits exceeded".into()));
+                }
+                validate_transform_animation(a)?;
+            }
+            if let LayerContent::Group(g) = &layer.content {
+                visit(&g.children, tracks, keys)?;
             }
         }
         Ok(())
@@ -130,7 +176,8 @@ pub(crate) fn validate_opacity_manifest_layers(layers: &[LayerM]) -> Result<()> 
         Ok(())
     }
     visit(layers, &mut 0, &mut 0)?;
-    validate_position_layers(layers)
+    validate_position_layers(layers)?;
+    validate_transform_totals_manifest(layers)
 }
 
 pub(crate) fn validate_opacity_document_layers(layers: &[Layer]) -> Result<()> {
@@ -166,13 +213,17 @@ pub(crate) fn validate_opacity_document_layers(layers: &[Layer]) -> Result<()> {
                 }
                 validate_position_animation(animation)?;
             }
+            if let Some(animation) = &layer.transform_animation {
+                animation.validate().map_err(FormatError::corrupt)?;
+            }
             if let LayerContent::Group(group) = &layer.content {
                 positions(&group.children, tracks, keys)?;
             }
         }
         Ok(())
     }
-    positions(layers, &mut 0, &mut 0)
+    positions(layers, &mut 0, &mut 0)?;
+    validate_transform_totals_document(layers)
 }
 
 fn too_deep() -> FormatError {
@@ -519,6 +570,7 @@ fn layer_m(l: &Layer, sink: &mut dyn Sink) -> LayerM {
         video: l.video.as_ref().map(|v| video_m(v, sink)),
         opacity_animation: l.opacity_animation.clone(),
         position_animation: l.position_animation.clone(),
+        transform_animation: l.transform_animation.clone(),
         private_recording: l.private_recording,
     }
 }
@@ -877,6 +929,7 @@ impl Loader<'_> {
             video: m.video.as_ref().map(|v| self.video(v)).transpose()?,
             opacity_animation: m.opacity_animation.clone(),
             position_animation: m.position_animation.clone(),
+            transform_animation: m.transform_animation.clone(),
             private_recording: m.private_recording,
         })
     }

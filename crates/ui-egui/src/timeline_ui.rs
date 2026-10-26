@@ -10,12 +10,16 @@ use crate::PhotoStoreApp;
 use crate::theme::Tokens;
 
 /// Timeline panel view state.
-#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct TimelineUi {
     pub open: bool,
     /// Playing back (auto-advancing the playhead at the frame rate).
     #[serde(default)]
     pub playing: bool,
+    #[serde(default = "default_timeline_zoom")]
+    pub zoom: f32,
+    #[serde(default = "default_true")]
+    pub snap_frames: bool,
     /// egui time (seconds) of the last auto-advance.
     #[serde(default, skip)]
     pub last_time: f64,
@@ -54,8 +58,6 @@ pub struct TimelineUi {
     #[serde(default)]
     pub tween_selected_layers: bool,
     #[serde(skip)]
-    pending_keyframe: Option<PendingKeyframe>,
-    #[serde(skip)]
     loop_editor_open: bool,
     #[serde(skip)]
     pending_loop_count: String,
@@ -76,17 +78,6 @@ pub struct TimelineUi {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct PendingKeyframe {
-    doc: photostore_doc::DocId,
-    layer: photostore_doc::LayerId,
-    frame: usize,
-    track_signature: u64,
-    x: f32,
-    y: f32,
-    opacity: f32,
-}
-
-#[derive(Clone, Debug, PartialEq)]
 struct PendingOnionSettings {
     doc: photostore_doc::DocId,
     frames_before: u32,
@@ -102,6 +93,48 @@ fn default_tween_additions() -> u64 {
 }
 fn default_true() -> bool {
     true
+}
+
+fn default_timeline_zoom() -> f32 {
+    1.0
+}
+
+impl Default for TimelineUi {
+    fn default() -> Self {
+        Self {
+            open: false,
+            playing: false,
+            zoom: 1.0,
+            snap_frames: true,
+            last_time: 0.0,
+            play_direction: 0,
+            frame_thumbs: Vec::new(),
+            thumb_generation: 0,
+            thumb_last_current: None,
+            thumb_last_revision: None,
+            thumb_last_history: None,
+            thumb_last_signature: None,
+            thumb_last_movie_generation: None,
+            thumb_page: 0,
+            movie_preview_error: None,
+            tween_from: String::new(),
+            tween_to: String::new(),
+            tween_additions: 1,
+            tween_position: true,
+            tween_opacity: true,
+            tween_effects: false,
+            tween_selected_layers: false,
+            loop_editor_open: false,
+            pending_loop_count: String::new(),
+            pending_loop_origin: None,
+            onion_editor_open: false,
+            pending_onion: None,
+            onion_error: String::new(),
+            opacity: crate::opacity_ui::State::default(),
+            position: crate::position_ui::State::default(),
+            loop_error: String::new(),
+        }
+    }
 }
 
 fn linked_movie_thumbnail(surface: &photostore_raster::Surface, bounds: photostore_geom::Rect) -> egui::ColorImage {
@@ -136,7 +169,6 @@ impl std::fmt::Debug for TimelineUi {
             .field("thumb_generation", &self.thumb_generation)
             .field("thumb_page", &self.thumb_page)
             .field("movie_preview_error", &self.movie_preview_error)
-            .field("pending_keyframe", &self.pending_keyframe.is_some())
             .field("loop_editor_open", &self.loop_editor_open)
             .field("onion_editor_open", &self.onion_editor_open)
             .field("opacity_pending_disable", &self.opacity.pending_disable.is_some())
@@ -157,7 +189,10 @@ fn frame_thumbnails(app: &mut PhotoStoreApp, ctx: &egui::Context, tl: &photostor
                 video.len().hash(&mut hasher);
                 match &video.source {
                     photostore_doc::VideoSource::Blank => 0u8.hash(&mut hasher),
-                    photostore_doc::VideoSource::File { path } => { 1u8.hash(&mut hasher); path.hash(&mut hasher); }
+                    photostore_doc::VideoSource::File { path } => {
+                        1u8.hash(&mut hasher);
+                        path.hash(&mut hasher);
+                    }
                 }
                 if let Some(backing) = &video.movie_backing {
                     (backing.frame_count, backing.source_fps.to_bits(), backing.trim_in_frame, backing.trim_out_frame).hash(&mut hasher);
@@ -175,9 +210,7 @@ fn frame_thumbnails(app: &mut PhotoStoreApp, ctx: &egui::Context, tl: &photostor
     let preview_completed = linked_movie && app.ui.timeline.thumb_last_movie_generation.is_some_and(|old| old != movie_generation);
     let content_changed = app.ui.timeline.thumb_last_history != Some(history)
         || app.ui.timeline.thumb_last_signature != Some(signature)
-        || (app.ui.timeline.thumb_last_current == Some(tl.current)
-            && app.ui.timeline.thumb_last_revision != Some(st.revision)
-            && !preview_completed);
+        || (app.ui.timeline.thumb_last_current == Some(tl.current) && app.ui.timeline.thumb_last_revision != Some(st.revision) && !preview_completed);
     if content_changed {
         app.ui.timeline.thumb_generation = app.ui.timeline.thumb_generation.wrapping_add(1);
         app.ui.timeline.frame_thumbs.clear();
@@ -441,9 +474,11 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
     if !app.ui.timeline.open {
         return;
     }
+    if !app.ui.timeline.zoom.is_finite() || !(0.25..=8.0).contains(&app.ui.timeline.zoom) {
+        app.ui.timeline.zoom = 1.0;
+    }
     let ctx = parent.ctx().clone();
     let doc_snapshot = app.session.active().map(|d| (d.doc.clone(), d.active_layer));
-    let timeline_history = app.session.active().map(|st| (st.history.past_len(), st.history.future_len())).unwrap_or_default();
     let tl = doc_snapshot.as_ref().and_then(|(doc, _)| doc.timeline.as_ref());
     let have_doc = doc_snapshot.is_some();
     let layer_rows: Vec<(u64, String, bool)> =
@@ -453,7 +488,6 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
         .and_then(|(doc, active)| active.and_then(|id| doc.layer(id)))
         .and_then(|l| l.video.as_ref())
         .and_then(|v| v.frame_delays_ms.get(tl.map_or(0, |t| t.current)).copied());
-    let active_video_id = doc_snapshot.as_ref().and_then(|(_, active)| *active).map(|id| id.0);
     let animation_delay = tl.and_then(|t| t.frame_delays_ms.get(t.current).copied());
     let (thumb_start, frame_thumb_ids) = tl.map_or((0, Vec::new()), |timeline| frame_thumbnails(app, &ctx, timeline));
     let mut act: Option<(&str, Value)> = None;
@@ -512,6 +546,7 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                     if ui.selectable_label(!frame_mode, tl!("Video Timeline")).clicked() { act = Some(("timeline.setMode", json!({"mode":"video"}))); }
                     if ui.selectable_label(frame_mode, tl!("Frame Animation")).clicked() { act = Some(("timeline.setMode", json!({"mode":"frameAnimation"}))); }
                     ui.separator();
+                    ui.menu_button(tl!("Settings"), |ui| {
                     let loop_label = match tl.loop_mode {
                         photostore_doc::TimelineLoop::Once => tl!("Once").to_owned(),
                         photostore_doc::TimelineLoop::Loop => tl.loop_count.map_or_else(|| tl!("Forever").to_owned(), |n| format!("{} times", n)),
@@ -530,6 +565,7 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                     if ui.button(tl!("Onion Skin Settings")).clicked() {
                         let _ = open_onion_editor(app);
                     }
+                    });
                 });
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -554,24 +590,49 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                     }
                     if crate::icons::button(ui, "chevrons-right", 22.0, false, tl!("Last frame")).clicked() { act = Some(("timeline.setFrame", json!({"frame":tl.duration.saturating_sub(1)}))); }
                     ui.separator();
-                    ui.label(RichText::new(format!("{:.2}s", tl.time())).color(t.text_dim).monospace());
+                    let timecode = format!("{:02}:{:02}:{:02}", (tl.time() / 60.0) as u32, tl.time() as u32 % 60, tl.current % tl.fps.round().max(1.0) as usize);
+                    ui.label(RichText::new(timecode).color(t.text_dim).monospace());
+                    if matches!(tl.mode, photostore_doc::TimelineMode::Video) {
+                        if ui.small_button("−").on_hover_text("Zoom out").clicked() { app.ui.timeline.zoom = (app.ui.timeline.zoom / 1.25).clamp(0.25, 8.0); }
+                        if ui.small_button("Fit").on_hover_text("Fit timeline to panel").clicked() { app.ui.timeline.zoom = 1.0; }
+                        if ui.small_button("+").on_hover_text("Zoom in").clicked() { app.ui.timeline.zoom = (app.ui.timeline.zoom * 1.25).clamp(0.25, 8.0); }
+                        let _ = ui.checkbox(&mut app.ui.timeline.snap_frames, tl!("Snap"));
+                    }
+                    if matches!(tl.mode, photostore_doc::TimelineMode::Video)
+                        && let Some(layer) = doc_snapshot.as_ref().and_then(|(doc, active)| active.and_then(|id| doc.layer(id))).filter(|layer| layer.video.is_some())
+                    {
+                        if crate::widgets::secondary_button(ui, tl!("Split"), 58.0).clicked() {
+                            act = Some(("timeline.splitVideoClip", json!({"layer":layer.id.0,"frame":tl.current})));
+                        }
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if crate::icons::button(ui, "trash", 20.0, false, tl!("Delete Timeline")).clicked() {
                             act = Some(("timeline.delete", json!({})));
                         }
-                        let mut fps = tl.fps;
-                        if ui.add(egui::DragValue::new(&mut fps).speed(0.5).range(1.0..=1000.0).suffix(" fps")).changed() { act = Some(("timeline.setProps", json!({"fps":fps}))); }
+                        if matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation) {
+                            let mut fps = tl.fps;
+                            if ui.add(egui::DragValue::new(&mut fps).speed(0.5).range(1.0..=1000.0).suffix(" fps")).changed() { act = Some(("timeline.setProps", json!({"fps":fps}))); }
+                        }
+                        if matches!(tl.mode, photostore_doc::TimelineMode::Video) {
+                            ui.menu_button("⋯", |ui| {
+                                ui.label("Timeline settings");
+                                let mut fps = tl.fps;
+                                if ui.add(egui::DragValue::new(&mut fps).speed(0.5).range(1.0..=1000.0).suffix(" fps")).changed() { act = Some(("timeline.setProps", json!({"fps":fps}))); }
+                                let mut duration = tl.duration as u64;
+                                if ui.add(egui::DragValue::new(&mut duration).range(1..=1_000_000).prefix("Frames ")).changed() { act = Some(("timeline.setProps", json!({"duration":duration}))); }
+                            });
+                        }
                     });
                 });
-                ui.horizontal(|ui| {
+                if matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation) { ui.horizontal(|ui| {
                     let mut duration = tl.duration as u64;
                     let mut work_start = tl.work_start as u64;
                     let mut work_end = tl.work_end as u64;
                     if ui.add(egui::DragValue::new(&mut duration).range(1..=1_000_000).prefix("duration ")).changed() { act = Some(("timeline.setProps", json!({"duration":duration}))); }
                     if ui.add(egui::DragValue::new(&mut work_start).range(0..=1_000_000).prefix("in ")).changed() { act = Some(("timeline.setProps", json!({"workStart":work_start}))); }
                     if ui.add(egui::DragValue::new(&mut work_end).range(1..=1_000_000).prefix("out ")).changed() { act = Some(("timeline.setProps", json!({"workEnd":work_end}))); }
-                });
-                if let Some(delay) = active_delay.or(animation_delay) {
+                }); }
+                if matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation) && let Some(delay) = active_delay.or(animation_delay) {
                     let mut delay_ms = if delay == 0 { (1000.0 / tl.fps.max(1.0)) as u32 } else { delay };
                     if ui.add(egui::Slider::new(&mut delay_ms, 0..=600_000).text(tl!("Frame delay (ms)"))).changed() {
                         act = Some(if active_delay.is_some() { ("timeline.setFrameDelay", json!({"delayMs": delay_ms})) } else { ("timeline.setAnimationFrameDelay", json!({"frame":tl.current,"delayMs": delay_ms})) });
@@ -579,7 +640,7 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                 }
                 ui.add_space(6.0);
                 // Scrubber: frame playhead across the duration.
-                if tl.duration > 1 {
+                if matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation) && tl.duration > 1 {
                     let mut frame = tl.current as f64;
                     let resp = ui.add(egui::Slider::new(&mut frame, 0.0..=(tl.duration - 1) as f64).integer().show_value(false).text("playhead"));
                     if resp.changed() {
@@ -587,19 +648,20 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                     }
                 }
                 ui.add_space(4.0);
-                // Photoshop-style ruler and work-area handles. Clicking the ruler scrubs exactly
-                // one frame; the highlighted work area is the range used by playback/export.
-                let ruler_width = ui.available_width().max(80.0);
-                let (ruler, response) = ui.allocate_exact_size(vec2(ruler_width, 24.0), egui::Sense::click_and_drag());
-                let painter = ui.painter_at(ruler);
-                painter.rect_filled(ruler, 2.0, t.card);
-                let work_a = ruler.left() + ruler.width() * tl.work_start as f32 / tl.duration.max(1) as f32;
-                let work_b = ruler.left() + ruler.width() * tl.work_end as f32 / tl.duration.max(1) as f32;
-                painter.rect_filled(egui::Rect::from_min_max(egui::pos2(work_a, ruler.top()), egui::pos2(work_b, ruler.bottom())), 0.0, t.accent.gamma_multiply(0.14));
-                for n in 0..=10 { let x = ruler.left() + ruler.width() * n as f32 / 10.0; painter.line_segment([egui::pos2(x, ruler.bottom() - 8.0), egui::pos2(x, ruler.bottom())], egui::Stroke::new(1.0, t.text_dim)); }
-                let px = ruler.left() + ruler.width() * tl.current as f32 / tl.duration.saturating_sub(1).max(1) as f32;
-                painter.line_segment([egui::pos2(px, ruler.top()), egui::pos2(px, ruler.bottom())], egui::Stroke::new(2.0, t.accent));
-                if response.clicked() || response.dragged() { if let Some(pos) = response.interact_pointer_pos() { let f = (((pos.x - ruler.left()) / ruler.width()).clamp(0.0, 1.0) * tl.duration.saturating_sub(1) as f32).round() as u64; act = Some(("timeline.setFrame", json!({"frame":f}))); } }
+                if matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation) {
+                    // Frame-animation work-area ruler remains independent from video editing.
+                    let ruler_width = ui.available_width().max(80.0);
+                    let (ruler, response) = ui.allocate_exact_size(vec2(ruler_width, 24.0), egui::Sense::click_and_drag());
+                    let painter = ui.painter_at(ruler);
+                    painter.rect_filled(ruler, 2.0, t.card);
+                    let work_a = ruler.left() + ruler.width() * tl.work_start as f32 / tl.duration.max(1) as f32;
+                    let work_b = ruler.left() + ruler.width() * tl.work_end as f32 / tl.duration.max(1) as f32;
+                    painter.rect_filled(egui::Rect::from_min_max(egui::pos2(work_a, ruler.top()), egui::pos2(work_b, ruler.bottom())), 0.0, t.accent.gamma_multiply(0.14));
+                    for n in 0..=10 { let x = ruler.left() + ruler.width() * n as f32 / 10.0; painter.line_segment([egui::pos2(x, ruler.bottom() - 8.0), egui::pos2(x, ruler.bottom())], egui::Stroke::new(1.0, t.text_dim)); }
+                    let px = ruler.left() + ruler.width() * tl.current as f32 / tl.duration.saturating_sub(1).max(1) as f32;
+                    painter.line_segment([egui::pos2(px, ruler.top()), egui::pos2(px, ruler.bottom())], egui::Stroke::new(2.0, t.accent));
+                    if response.clicked() || response.dragged() { if let Some(pos) = response.interact_pointer_pos() { let f = (((pos.x - ruler.left()) / ruler.width()).clamp(0.0, 1.0) * tl.duration.saturating_sub(1) as f32).round() as u64; act = Some(("timeline.setFrame", json!({"frame":f}))); } }
+                }
                 ui.separator();
                 if matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation) {
                     ui.horizontal(|ui| {
@@ -644,13 +706,13 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                         ui.colored_label(egui::Color32::RED, error);
                     }
                 }
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(tl!("Layer tracks")).strong().color(t.text));
-                    if matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation) && crate::widgets::secondary_button(ui, tl!("Make Frames From Layers"), 180.0).clicked() { act = Some(("timeline.makeFramesFromLayers", json!({}))); }
-                });
-                egui::ScrollArea::vertical().max_height(130.0).show(ui, |ui| {
-                    if matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation) {
+                if matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation) {
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(tl!("Layer tracks")).strong().color(t.text));
+                        if crate::widgets::secondary_button(ui, tl!("Make Frames From Layers"), 180.0).clicked() { act = Some(("timeline.makeFramesFromLayers", json!({}))); }
+                    });
+                    egui::ScrollArea::vertical().max_height(130.0).show(ui, |ui| {
                         for (layer_id, name, video) in &layer_rows {
                             if *video { continue; }
                             ui.horizontal(|ui| {
@@ -662,72 +724,21 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                                 let _ = layer_id;
                             });
                         }
-                    }
-                });
-                if matches!(tl.mode, photostore_doc::TimelineMode::Video) {
-                    egui::ScrollArea::vertical().max_height(250.0).show(ui, |ui| {
-                        if let Some((doc, _)) = doc_snapshot.as_ref() {
-                            for (_, _, layer) in doc.walk() {
-                                if layer.name == "Background" && layer.locks.position { continue; }
-                                if let Some(next) = crate::opacity_ui::row(app, ui, doc, layer, tl.current, tl.work_start, tl.work_end, !doc.effective_locks(layer.id).all) { act = Some(next); }
-                                if !matches!(layer.content, photostore_doc::LayerContent::Group(_) | photostore_doc::LayerContent::Fill(_) | photostore_doc::LayerContent::Adjustment(_))
-                                    && let Some(next) = crate::position_ui::row(app, ui, doc, layer, tl.current, tl.work_start, tl.work_end, { let locks = doc.effective_locks(layer.id); !locks.all && !locks.position })
-                                { act = Some(next); }
-                            }
-                        }
                     });
                 }
                 if matches!(tl.mode, photostore_doc::TimelineMode::Video) {
-                    crate::video_clip_ui::show(app, ui, tl);
-                    if let (Some(active_id), Some((doc, _))) = (active_video_id, doc_snapshot.as_ref()) {
-                            if let Some(layer) = doc.layer(photostore_doc::LayerId(active_id)) {
-                            if let Some(video) = layer.video.as_ref() {
-                                let layer_id = photostore_doc::LayerId(active_id);
-                                let mut signature_hasher = std::collections::hash_map::DefaultHasher::new();
-                                timeline_history.hash(&mut signature_hasher);
-                                let track_signature = signature_hasher.finish();
-                                let pending_id = (doc.id, layer_id, tl.current, track_signature);
-                                let needs_refresh = app.ui.timeline.pending_keyframe.as_ref().is_none_or(|pending| (pending.doc, pending.layer, pending.frame, pending.track_signature) != pending_id);
-                                if needs_refresh {
-                                    let (x, y, opacity) = photostore_engine::sample_keyframe_transform(video, tl.current);
-                                    app.ui.timeline.pending_keyframe = Some(PendingKeyframe { doc: doc.id, layer: layer_id, frame: tl.current, track_signature, x, y, opacity });
-                                }
-                                let Some(pending) = app.ui.timeline.pending_keyframe.as_mut() else { return; };
-                                ui.push_id(("video-keyframe-editor", doc.id.0, layer_id.0), |ui| ui.horizontal(|ui| {
-                            let owned_position = layer.position_animation.is_some();
-                            let owned_opacity = layer.opacity_animation.is_some();
-                            if owned_position && owned_opacity {
-                                ui.label(RichText::new(tl!("Position and opacity stopwatches own this video layer")).color(t.text_dim));
-                                ui.label(tl!("Use the owned tracks above; legacy keyframes remain separate."));
-                            } else {
-                                ui.label(RichText::new(if owned_position { tl!("Legacy Opacity Keyframe") } else if owned_opacity { tl!("Legacy Position Keyframe") } else { tl!("Position / Opacity Keyframe") }).color(t.text_dim));
-                            }
-                            if !owned_position {
-                                ui.add(egui::DragValue::new(&mut pending.x).prefix("x "));
-                                ui.add(egui::DragValue::new(&mut pending.y).prefix("y "));
-                            }
-                            if !owned_opacity {
-                                ui.add(egui::DragValue::new(&mut pending.opacity).range(0.0..=1.0).prefix("α "));
-                            }
-                            if !(owned_position && owned_opacity) && crate::widgets::secondary_button(ui, "◆", 28.0).on_hover_text(tl!("Set legacy video keyframe")).clicked() {
-                                let mut params = json!({"document": doc.id.0, "layer": active_id, "frame": tl.current});
-                                if !owned_position {
-                                    params["x"] = json!(pending.x);
-                                    params["y"] = json!(pending.y);
-                                }
-                                if !owned_opacity { params["opacity"] = json!(pending.opacity); }
-                                act = Some(("timeline.addKeyframe", params));
-                            }
-                            let key_exists = video.keyframes.iter().any(|key| key.frame == tl.current);
-                            if key_exists && crate::widgets::secondary_button(ui, "×", 28.0).on_hover_text(tl!("Delete legacy video keyframe; owned motion is unchanged")).clicked() {
-                                act = Some(("timeline.deleteKeyframe", json!({"document": doc.id.0, "layer": active_id, "frame": tl.current})));
-                            }
-                                }));
-                            }
-                        }
-                    }
+                    egui::ScrollArea::vertical().max_height(250.0).show(ui, |ui| {
+                        let zoom = app.ui.timeline.zoom;
+                        let snap = app.ui.timeline.snap_frames;
+                        egui::ScrollArea::horizontal().id_salt("timeline-shared-scroll").show(ui, |ui| {
+                            let lane_width = ((ui.available_width() - 164.0).max(180.0) * zoom.clamp(0.25, 8.0)).max(120.0);
+                            crate::video_clip_ui::show(app, ui, tl, lane_width);
+                            crate::audio_ui::show(app, ui, tl, lane_width, snap);
+                        });
+                    });
+                } else {
+                    crate::audio_ui::show(app, ui, tl, (ui.available_width() - 164.0).max(180.0), true);
                 }
-                crate::audio_ui::show(app, ui, tl);
             }
         }
         });

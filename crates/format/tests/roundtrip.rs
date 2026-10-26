@@ -41,6 +41,34 @@ fn custom_shape_stroke_roundtrip_keeps_every_style_field() {
     }
 }
 
+#[test]
+fn smart_transform_animation_roundtrips_with_position_track() {
+    use std::sync::Arc;
+    let mut d = rich_doc(ColorMode::Rgb, SampleType::U8);
+    let source = photostore_doc::SmartSource::Embedded { file_name: "source.png".into(), bytes: Arc::new(vec![1, 2, 3]) };
+    let mut layer =
+        Layer::new("Animated Smart", LayerContent::Smart(photostore_doc::SmartObject::new(source, photostore_geom::Affine::translate(24.0, 18.0), None)));
+    let value = photostore_doc::TransformValue { scale_x: 1.5, scale_y: 0.75, rotation: 30.0 };
+    layer.transform_animation = Some(photostore_doc::TransformAnimation {
+        enabled: true,
+        static_value: photostore_doc::TransformValue::default(),
+        applied_value: value,
+        base_transform: Some([1.0, 0.0, 0.0, 1.0, 24.0, 18.0]),
+        pivot: Some((50.0, 50.0)),
+        source_size: Some((100, 100)),
+        keys: Arc::new(vec![photostore_doc::TransformKeyframe { frame: 3, value, interpolation: photostore_doc::TransformInterpolation::Linear }]),
+    });
+    layer.position_animation = Some(photostore_doc::PositionAnimation {
+        enabled: true,
+        static_value: (0, 0),
+        applied_value: (12, -4),
+        keys: Arc::new(vec![photostore_doc::PositionKeyframe { frame: 3, x: 12, y: -4, interpolation: photostore_doc::PositionInterpolation::Linear }]),
+    });
+    d.layers.push(layer);
+    let bytes = save_to_bytes(&d, &SaveOptions::default()).unwrap();
+    assert_eq!(load_from_bytes(&bytes).unwrap(), d);
+}
+
 fn check_zip(mode: ColorMode, depth: SampleType) {
     let doc = rich_doc(mode, depth);
     let bytes = save_to_bytes(&doc, &SaveOptions::default()).unwrap();

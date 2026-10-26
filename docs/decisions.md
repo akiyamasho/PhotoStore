@@ -421,3 +421,17 @@ and usable code-signing identity before Cargo runs; it does not create or rotate
 certificate-backed signing and the unchanged bundle identifier/designated requirement give macOS a
 consistent app identity across updates and reinstalls. The local certificate is not Developer ID
 and does not provide notarization; ad-hoc signing remains limited to the development packager.
+
+## 2026-10-27: Shared video timeline workflow (#23)
+
+The video timeline uses a single time ruler above a vertically shared lane area. Video clip editing
+continues to use the existing snapshot/gesture/commit path; still and Smart Object ranges use the
+registry's `timeline.setLayerRange` command. Audio uses the timeline's shared duration/frame-rate
+mapping and retains contextual editing. Position/Opacity authoring is collapsed by layer, and the
+competing legacy video-keyframe editor is removed from the timeline without deleting serialized
+legacy keys. Smart Object transform controls use engine-owned TransformAnimation commands. Frame
+Animation remains a separate mode. The design references public CapCut and Adobe workflow
+documentation. Property keys use dedicated lanes aligned to the shared ruler. Transform animation
+uses the source-center pivot; perspective and warp are unsupported, and conversion to Frame Animation
+is blocked while Transform animation is enabled. Manual acceptance remains outstanding. See
+[timeline workflow](timeline-workflow.md).

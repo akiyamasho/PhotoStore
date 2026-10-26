@@ -1214,6 +1214,7 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::timeline_cmds::specs());
     v.extend(crate::video_cmds::specs());
     v.extend(crate::position_cmds::specs());
+    v.extend(crate::smart_transform_cmds::specs());
     v.extend(crate::recording::specs());
     v.extend(crate::audio_cmds::specs());
     v.extend(crate::jobs::specs());

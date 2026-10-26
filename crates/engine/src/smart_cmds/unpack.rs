@@ -162,6 +162,7 @@ fn unpacked(so: &Layer, mut layers: Vec<Layer>) -> Layer {
     let mut g = so.clone();
     g.id = LayerId::fresh();
     g.psd_id = None;
+    g.transform_animation = None;
     g.blend = blend;
     g.content = LayerContent::Group(Group { children: layers, expanded: true, artboard: None });
     detach_psd(&mut g);

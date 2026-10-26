@@ -2,9 +2,10 @@
 //! Video layers (Layer › Video Layers) show their content for the current frame; this type is the
 //! shared clock. Frame-animation and video-timeline modes both reduce to "which frame is current".
 
-use crate::{BlendMode, Effect, LayerId};
+use crate::{Affine, BlendMode, Effect, LayerId};
 use serde::{Deserialize, Serialize};
 
+use photostore_geom::Point;
 use photostore_raster::Surface;
 
 pub const MAX_OPACITY_ANIMATION_KEYS: usize = 100_000;
@@ -14,6 +15,162 @@ pub const MAX_POSITION_ANIMATION_KEYS: usize = 100_000;
 pub const MAX_POSITION_ANIMATION_TRACKS: usize = 256;
 pub const MAX_POSITION_ANIMATION_FRAME: usize = 999_999;
 pub const MAX_POSITION_COORDINATE: i32 = 1_000_000;
+pub const MAX_TRANSFORM_ANIMATION_KEYS: usize = 100_000;
+pub const MAX_TRANSFORM_ANIMATION_FRAME: usize = 999_999;
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TransformValue {
+    pub scale_x: f64,
+    pub scale_y: f64,
+    pub rotation: f64,
+}
+impl Default for TransformValue {
+    fn default() -> Self {
+        Self { scale_x: 1.0, scale_y: 1.0, rotation: 0.0 }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TransformInterpolation {
+    Linear,
+    Hold,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TransformKeyframe {
+    pub frame: usize,
+    pub value: TransformValue,
+    pub interpolation: TransformInterpolation,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TransformAnimation {
+    pub enabled: bool,
+    pub static_value: TransformValue,
+    pub applied_value: TransformValue,
+    /// Stable affine placement captured when this stopwatch is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_transform: Option<[f64; 6]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pivot: Option<(f64, f64)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_size: Option<(u32, u32)>,
+    pub keys: std::sync::Arc<Vec<TransformKeyframe>>,
+}
+impl TransformAnimation {
+    pub fn sampled_footprint_within_limit(&self, frame: usize) -> bool {
+        let (Some(base), Some((px, py)), Some((width, height))) = (self.base_transform, self.pivot, self.source_size) else { return false };
+        if !px.is_finite() || !py.is_finite() || width == 0 || height == 0 {
+            return false;
+        }
+        let value = self.sampled_value(frame);
+        let r = value.rotation.to_radians();
+        let (sin, cos) = r.sin_cos();
+        let relative = Affine::translate(px, py).mul(
+            &Affine { m: [cos * value.scale_x, sin * value.scale_x, -sin * value.scale_y, cos * value.scale_y, 0.0, 0.0] }.mul(&Affine::translate(-px, -py)),
+        );
+        let full = Affine { m: base }.mul(&relative);
+        let corners =
+            [(0.0, 0.0), (f64::from(width), 0.0), (0.0, f64::from(height)), (f64::from(width), f64::from(height))].map(|(x, y)| full.apply(Point::new(x, y)));
+        let min_x = corners.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let max_x = corners.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+        let min_y = corners.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let max_y = corners.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+        min_x.is_finite()
+            && max_x.is_finite()
+            && min_y.is_finite()
+            && max_y.is_finite()
+            && (max_x - min_x).ceil() * (max_y - min_y).ceil() <= (64u64 << 20) as f64
+            && [min_x, max_x, min_y, max_y].iter().all(|v| v.abs() <= f64::from(MAX_POSITION_COORDINATE))
+    }
+
+    pub fn sampled_value(&self, frame: usize) -> TransformValue {
+        if !self.enabled || self.keys.is_empty() {
+            return self.static_value;
+        }
+        let keys = self.keys.as_slice();
+        if frame <= keys[0].frame {
+            return keys[0].value;
+        }
+        let last = &keys[keys.len() - 1];
+        if frame >= last.frame {
+            return last.value;
+        }
+        let upper = keys.partition_point(|k| k.frame < frame);
+        if keys[upper].frame == frame {
+            return keys[upper].value;
+        }
+        let a = &keys[upper - 1];
+        let b = &keys[upper];
+        if a.interpolation == TransformInterpolation::Hold {
+            return a.value;
+        }
+        let t = (frame - a.frame) as f64 / (b.frame - a.frame) as f64;
+        TransformValue {
+            scale_x: a.value.scale_x + (b.value.scale_x - a.value.scale_x) * t,
+            scale_y: a.value.scale_y + (b.value.scale_y - a.value.scale_y) * t,
+            rotation: a.value.rotation + (b.value.rotation - a.value.rotation) * t,
+        }
+    }
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        let valid = |v: TransformValue| {
+            v.scale_x.is_finite()
+                && v.scale_y.is_finite()
+                && v.rotation.is_finite()
+                && (0.001..=1000.0).contains(&v.scale_x)
+                && (0.001..=1000.0).contains(&v.scale_y)
+                && (-360000.0..=360000.0).contains(&v.rotation)
+        };
+        if !valid(self.static_value) || !valid(self.applied_value) {
+            return Err("transform values must have scales between 0.001 and 1000 and rotation between -360000 and 360000 degrees".into());
+        }
+        if self.keys.len() > MAX_TRANSFORM_ANIMATION_KEYS {
+            return Err("transform animation exceeds 100000 keyframes".into());
+        }
+        if self.enabled && (self.base_transform.is_none() || self.pivot.is_none() || self.source_size.is_none()) {
+            return Err("enabled transform animation must include its base placement, source pivot and source dimensions".into());
+        }
+        if !self.enabled && !self.keys.is_empty() {
+            return Err("disabled transform animation must not contain keyframes".into());
+        }
+        if self.enabled && self.keys.is_empty() {
+            return Err("enabled transform animation must contain at least one keyframe".into());
+        }
+        let mut prev = None;
+        for key in self.keys.iter() {
+            if key.frame > MAX_TRANSFORM_ANIMATION_FRAME || prev.is_some_and(|p| p >= key.frame) || !valid(key.value) {
+                return Err("transform keys must be strictly ascending, within frame 999999, with finite supported values".into());
+            }
+            prev = Some(key.frame);
+        }
+        if self.base_transform.is_some_and(|m| m.iter().any(|v| !v.is_finite())) {
+            return Err("transform base placement must be finite".into());
+        }
+        if self.pivot.is_some_and(|(x, y)| !x.is_finite() || !y.is_finite()) {
+            return Err("transform pivot must be finite".into());
+        }
+        if let Some((w, h)) = self.source_size {
+            if w == 0 || h == 0 {
+                return Err("transform source dimensions must be positive".into());
+            }
+            for value in std::iter::once(self.static_value).chain(std::iter::once(self.applied_value)).chain(self.keys.iter().map(|k| k.value)) {
+                let r = value.rotation.to_radians();
+                let ow = (f64::from(w) * value.scale_x * r.cos().abs() + f64::from(h) * value.scale_y * r.sin().abs()).ceil();
+                let oh = (f64::from(w) * value.scale_x * r.sin().abs() + f64::from(h) * value.scale_y * r.cos().abs()).ceil();
+                if !ow.is_finite() || !oh.is_finite() || ow * oh > (64u64 << 20) as f64 {
+                    return Err("transform exceeds the 64-megapixel Smart Object render limit".into());
+                }
+            }
+            if self.base_transform.is_some() && self.pivot.is_some() {
+                let mut applied = self.clone();
+                applied.enabled = false;
+                applied.static_value = self.applied_value;
+                if !applied.sampled_footprint_within_limit(0) || (self.enabled && self.keys.iter().any(|k| !self.sampled_footprint_within_limit(k.frame))) {
+                    return Err("transform exceeds the 64-megapixel Smart Object render limit after its base placement".into());
+                }
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

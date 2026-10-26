@@ -1,11 +1,11 @@
 //! Native controls for timeline audio tracks and clips.
 
+use crate::PhotoStoreApp;
 use crate::file_dialog::{FileDialogAnswer, FileDialogRequest};
 use crate::theme::Tokens;
-use crate::PhotoStoreApp;
-use egui::{pos2, vec2, Color32, Id, Rect, RichText, Sense, Ui};
+use egui::{Color32, Id, Rect, RichText, Sense, Ui, pos2, vec2};
 use photostore_doc::{AudioClip, AudioTrack, DocId, Timeline};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 const AUDIO_EXTENSIONS: &[&str] = &["wav", "mp3", "m4a", "aac", "flac", "aiff", "aif", "ogg", "opus", "mp4", "mov", "webm", "mkv", "avi", "m4v"];
@@ -91,6 +91,13 @@ fn drag_id(doc: DocId, clip: u64) -> Id {
 fn selected_id(doc: DocId) -> Id {
     Id::new(("audio-selected", doc.0))
 }
+
+pub(crate) fn clear_selection(ctx: &egui::Context, doc: DocId) {
+    ctx.data_mut(|data| data.remove::<u64>(selected_id(doc)));
+}
+pub(crate) fn has_selection(ctx: &egui::Context, doc: DocId) -> bool {
+    ctx.data(|data| data.get_temp::<u64>(selected_id(doc))).is_some()
+}
 fn one_field(clip: u64, field: &str, value: f64) -> Value {
     let mut p = serde_json::Map::new();
     p.insert("clip".into(), json!(clip));
@@ -147,12 +154,15 @@ fn draw_ruler(ui: &mut Ui, width: f32, duration: f64, playhead: f64, t: &Tokens)
             t.text_dim,
         );
     }
-    let x = r.left() + r.width() * (playhead / duration).clamp(0.0, 1.0) as f32;
+    let x = r.left() + r.width() * (playhead / duration.max(0.001)) as f32;
     p.line_segment([pos2(x, r.top()), pos2(x, r.bottom())], egui::Stroke::new(2.0, t.accent));
 }
 
-fn drag_values(state: DragState, pointer_x: f32, duration: f64) -> (f64, f64, f64) {
-    let delta = f64::from(pointer_x - state.pointer_start_x) / f64::from(state.lane_width.max(1.0)) * duration;
+fn drag_values(state: DragState, pointer_x: f32, duration: f64, fps: f64, snap: bool) -> (f64, f64, f64) {
+    let mut delta = f64::from(pointer_x - state.pointer_start_x) / f64::from(state.lane_width.max(1.0)) * duration;
+    if snap {
+        delta = (delta * fps).round() / fps.max(0.001);
+    }
     match state.kind {
         DragKind::Body => ((state.start + delta).max(0.0), state.trim_in, state.duration),
         DragKind::Left => {
@@ -166,12 +176,13 @@ fn drag_values(state: DragState, pointer_x: f32, duration: f64) -> (f64, f64, f6
     }
 }
 
-fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, doc: DocId, clip: &AudioClip, lane: Rect, duration: f64, playhead: f64, t: &Tokens) {
+fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, doc: DocId, clip: &AudioClip, lane: Rect, duration: f64, playhead: f64, fps: f64, snap: bool, t: &Tokens) {
     let ctx = ui.ctx().clone();
     let key = drag_id(doc, clip.id);
     let state = ctx.data(|d| d.get_temp::<DragState>(key));
     let pointer_x = ui.input(|i| i.pointer.latest_pos()).map_or(lane.left(), |p| p.x);
-    let (start, trim, clip_duration) = state.map_or((clip.start_seconds, clip.trim_in_seconds, clip.duration_seconds), |s| drag_values(s, pointer_x, duration));
+    let (start, trim, clip_duration) =
+        state.map_or((clip.start_seconds, clip.trim_in_seconds, clip.duration_seconds), |s| drag_values(s, pointer_x, duration, fps, snap));
     let left = lane.left() + lane.width() * (start / duration) as f32;
     let right = lane.left() + lane.width() * ((start + clip_duration) / duration) as f32;
     let rect = Rect::from_min_max(pos2(left, lane.top() + 3.0), pos2(right.max(left + 12.0), lane.bottom() - 3.0));
@@ -189,6 +200,7 @@ fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, doc: DocId, clip: &AudioClip,
     painter.text(rect.left_center(), egui::Align2::LEFT_CENTER, &clip.name, egui::FontId::proportional(11.0), t.text);
     if response.clicked() {
         ctx.data_mut(|d| d.insert_temp(selected_id(doc), clip.id));
+        ctx.data_mut(|d| d.remove::<u64>(Id::new(("video-clip-selected", doc.0))));
     }
     let capture = |kind: DragKind, x: f32| DragState {
         doc,
@@ -229,7 +241,7 @@ fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, doc: DocId, clip: &AudioClip,
                     active.doc.timeline.as_ref().is_some_and(|tl| tl.audio_tracks.iter().any(|tr| tr.clips.iter().any(|c| c.id == s.clip)))
                 });
             if valid {
-                let (ns, nt, nd) = drag_values(s, pointer_x, duration);
+                let (ns, nt, nd) = drag_values(s, pointer_x, duration, fps, snap);
                 let mut p = serde_json::Map::new();
                 p.insert("clip".into(), json!(s.clip));
                 match s.kind {
@@ -332,14 +344,13 @@ fn clip_properties(app: &mut PhotoStoreApp, ui: &mut Ui, doc: DocId, clip: &Audi
     });
 }
 
-pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline) {
+pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_width: f32, snap: bool) {
     let t = Tokens::get(ui.ctx());
     let Some(doc) = target_doc(app) else {
         return;
     };
     let duration = timeline.duration_seconds().max(0.001);
     let playhead = timeline.frame_start_seconds(timeline.current);
-    ui.separator();
     ui.horizontal(|ui| {
         ui.label(RichText::new(tl!("Audio")).strong().color(t.text));
         if crate::widgets::secondary_button(ui, tl!("+ Track"), 72.0).clicked() {
@@ -351,30 +362,34 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline) {
             }
         }
     });
-    let lane_width = (ui.available_width() - NAME_WIDTH).max(180.0);
-    ui.horizontal(|ui| {
-        ui.allocate_space(vec2(NAME_WIDTH, RULER_HEIGHT));
-        draw_ruler(ui, lane_width, duration, playhead, &t);
-    });
     let tracks = timeline.audio_tracks.clone();
-    egui::ScrollArea::vertical().max_height(190.0).show(ui, |ui| {
-        for track in &tracks {
-            ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(vec2(NAME_WIDTH, LANE_HEIGHT), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    track_controls(app, ui, doc, track)
-                });
-                let (lane, _) = ui.allocate_exact_size(vec2(lane_width, LANE_HEIGHT), Sense::hover());
-                ui.painter_at(lane).rect_filled(lane, 2.0, t.field);
-                for clip in &track.clips {
-                    draw_clip(ui, app, doc, clip, lane, duration, playhead, &t);
-                }
-            });
-        }
-    });
+    if matches!(timeline.mode, photostore_doc::TimelineMode::FrameAnimation) {
+        ui.horizontal(|ui| {
+            ui.allocate_space(vec2(NAME_WIDTH, RULER_HEIGHT));
+            draw_ruler(ui, lane_width, duration, playhead, &t);
+        });
+    }
+    for track in &tracks {
+        ui.horizontal(|ui| {
+            let (label_rect, _) = ui.allocate_exact_size(vec2(NAME_WIDTH, LANE_HEIGHT), Sense::hover());
+            let mut label_ui = ui.new_child(egui::UiBuilder::new().max_rect(label_rect));
+            label_ui.set_clip_rect(label_rect.intersect(ui.clip_rect()));
+            track_controls(app, &mut label_ui, doc, track);
+            let (lane, _) = ui.allocate_exact_size(vec2(lane_width, LANE_HEIGHT), Sense::hover());
+            ui.painter_at(lane).rect_filled(lane, 2.0, t.field);
+            for clip in &track.clips {
+                draw_clip(ui, app, doc, clip, lane, duration, playhead, f64::from(timeline.fps.max(0.001)), snap, &t);
+            }
+            let x = lane.left() + lane.width() * timeline.current as f32 / timeline.duration.max(1) as f32;
+            ui.painter_at(lane).line_segment([egui::pos2(x, lane.top()), egui::pos2(x, lane.bottom())], egui::Stroke::new(1.5, t.accent));
+        });
+    }
     let selected =
         ui.ctx().data(|d| d.get_temp::<u64>(selected_id(doc))).and_then(|id| tracks.iter().flat_map(|tr| tr.clips.iter()).find(|c| c.id == id).cloned());
     if let Some(clip) = selected {
-        clip_properties(app, ui, doc, &clip, &t);
+        egui::CollapsingHeader::new(RichText::new(format!("Audio clip details · {}", clip.name)).color(t.text_dim)).default_open(false).show(ui, |ui| {
+            clip_properties(app, ui, doc, &clip, &t);
+        });
     }
 }
 

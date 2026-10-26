@@ -345,6 +345,9 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(LayerId(v)),
         None => st.active_layer,
     };
+    if id.and_then(|id| st.doc.layer(id)).and_then(|layer| layer.transform_animation.as_ref()).is_some_and(|animation| animation.enabled) {
+        return Err(EngineError::Other("Free Transform is unavailable while Smart Object Transform animation exists; edit the timeline track first".into()));
+    }
     let lone = lone_target(&st.doc, id, p)?;
     let id = match (id, lone.is_some() && crate::channel_cmds::is_channel_target(p)) {
         (_, true) => None,
@@ -403,6 +406,13 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
             return Ok(());
         }
         let id = id.ok_or_else(|| EngineError::Other("no active layer".into()))?;
+        if let Some(layer) = doc.layer_mut(id)
+            && layer.transform_animation.as_ref().is_some_and(|animation| !animation.enabled)
+        {
+            // Static transform metadata is no longer authoritative after Free Transform. The
+            // current Smart Object affine already contains the visible static pose.
+            layer.transform_animation = None;
+        }
         let is_group = doc.layer(id).is_some_and(Layer::is_group);
         let group = group_locks(doc, id);
         let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;

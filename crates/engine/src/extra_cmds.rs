@@ -642,6 +642,7 @@ fn rasterize_one(s: &mut Session, id: LayerId, only: Option<&str>, key: &str) ->
                 let px = content_pixels(doc, &snap);
                 let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
                 l.content = LayerContent::Raster(px);
+                if kind == "smart" { l.transform_animation = None; }
                 l.fill_cache = None;
                 Ok(())
             });

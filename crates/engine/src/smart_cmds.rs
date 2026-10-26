@@ -659,6 +659,17 @@ pub fn refresh_layer(doc: &Document, l: &mut Layer) -> Result<bool> {
     refresh_layer_at_time(doc, l, document_time(doc), 0)
 }
 
+/// Centre and dimensions of the untransformed Smart Object source in source-pixel coordinates.
+pub(crate) fn transform_source_bounds(doc: &Document, id: LayerId) -> Result<Option<((f64, f64), (u32, u32))>> {
+    let Some(layer) = doc.layer(id) else { return Err(EngineError::NoLayer(id)) };
+    let LayerContent::Smart(sm) = &layer.content else { return Ok(None) };
+    let Some((name, bytes)) = source_bytes(&doc.metadata, &sm.source) else { return Ok(None) };
+    let image = source_image_at_time_inner(&name, &bytes, doc.pixel_format(), None, 0)?;
+    let width = u32::try_from(image.bounds.width()).map_err(|_| other("Smart Object source has invalid width"))?;
+    let height = u32::try_from(image.bounds.height()).map_err(|_| other("Smart Object source has invalid height"))?;
+    Ok(Some((((image.bounds.x0 + image.bounds.x1) as f64 * 0.5, (image.bounds.y0 + image.bounds.y1) as f64 * 0.5), (width, height))))
+}
+
 fn refresh_layer_at_time(doc: &Document, l: &mut Layer, time: Option<f64>, depth: usize) -> Result<bool> {
     let LayerContent::Smart(sm) = &mut l.content else { return Ok(false) };
     match render_at_time(doc, sm, time, depth)? {
@@ -1591,6 +1602,7 @@ fn reset_transform(s: &mut Session, p: &Value) -> Result<Value> {
         sm.transform = Affine::translate(current_cx - source_cx, current_cy - source_cy);
         sm.perspective = None;
         sm.warp = None;
+        if let Some(layer) = doc.layer_mut(id) { layer.transform_animation = None; }
         refresh_or_fail(doc, id)?;
         Ok(json!({"layer": id.0, "reset": true}))
     })

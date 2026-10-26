@@ -93,6 +93,7 @@ pub mod select_extra_cmds;
 pub mod selection_cmds;
 pub mod slice_cmds;
 pub mod smart_cmds;
+pub mod smart_transform_cmds;
 pub mod smartselect_cmds;
 pub mod snap;
 pub mod solid_fill_cmds;
@@ -519,6 +520,7 @@ impl Session {
             .or_else(|| video_cmds::keyframe_target_enabled(self, spec.id, params))
             .or_else(|| opacity_cmds::target_enabled(self, spec.id, params))
             .or_else(|| position_cmds::target_enabled(self, spec.id, params))
+            .or_else(|| smart_transform_cmds::target_enabled(self, spec.id, params))
             .unwrap_or_else(|| (spec.enabled)(self))
     }
 
