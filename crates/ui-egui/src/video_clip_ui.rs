@@ -810,10 +810,14 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
                         data.insert_temp(drag_id, StillDrag { doc, history, x: point.x, start, end, duration: timeline.duration.max(1), edge })
                     });
                 }
-                if editable
-                    && response.drag_stopped()
-                    && let Some(state) = ui.ctx().data_mut(|data| data.remove::<StillDrag>(drag_id))
-                {
+                let finished_drag = if editable && response.drag_stopped() {
+                    let state = ui.ctx().data(|data| data.get_temp::<StillDrag>(drag_id));
+                    ui.ctx().data_mut(|data| data.remove::<StillDrag>(drag_id));
+                    state
+                } else {
+                    None
+                };
+                if let Some(state) = finished_drag {
                     let x = response.interact_pointer_pos().map_or_else(|| ui.input(|i| i.pointer.latest_pos().map_or(state.x, |p| p.x)), |p| p.x);
                     let (new_start, new_end) = still_drag_range(state, x, lane.width());
                     let current_range = document
