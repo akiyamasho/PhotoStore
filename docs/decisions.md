@@ -469,7 +469,7 @@ Alt-drag resizes paragraph text boxes around their center. These additions do no
 editing workflow. A searchable shortcut reference lists all 107 observed actions and
 gestures, with a PhotoStore mapping for each assigned entry and no default invented for unassigned
 entries. Remaining behavior gaps and implementation state are listed in [timeline workflow](timeline-workflow.md),
-and issue #23 stays open pending final build and manual acceptance.
+and issue #23 stays open pending manual visual, interaction and export acceptance.
 
 Design reference: [CapCut desktop keyframe guide](https://www.capcut.com/resource/how-to-add-keyframes-in-capcut),
 [CapCut keyframe animation](https://www.capcut.com/tools/keyframe-animation),
@@ -477,8 +477,8 @@ Design reference: [CapCut desktop keyframe guide](https://www.capcut.com/resourc
 [Photoshop timeline workflow](https://helpx.adobe.com/photoshop/desktop/add-video-and-animation/use-keyframes/create-timeline-animation-workflow.html),
 and [Adobe Smart Object animation tutorial](https://www.adobe.com/learn/photoshop/web/animate-poster-text-images).
 PhotoStore uses an original egui drawing implementation and copies no branded assets. The API and
-implementation status are tracked in [timeline workflow](timeline-workflow.md); build and manual UI
-acceptance remain outstanding for this reopened work.
+implementation status are tracked in [timeline workflow](timeline-workflow.md); the required source
+build passed, while the guarded runtime reload and manual UI acceptance remain outstanding.
 
 Clip retiming preserves every key and timeline snapshot whose shifted frame remains representable.
 When a hidden pre-clip anchor would move before frame zero, the edit removes only those negative
@@ -488,6 +488,29 @@ exceeding that limit rejects the whole edit. Only unrepresentable negative snaps
 skipped. Undo restores the original document. Legacy Smart clips capture their original absolute
 source clock before clip-local playback is materialized. Persistent visual rows are materialized
 for document roots; descendant timing remains serialized without reopening collapsed group rows.
+
+## 2026-10-27: timeline overhaul delivery receipt
+
+The major timeline overhaul source landed in
+[`5aa7c4a3566a3825bb1acb191e9279bd556dec21`](https://github.com/akiyamasho/PhotoStore/commit/5aa7c4a3566a3825bb1acb191e9279bd556dec21).
+The required PhotoStore-dev build passed in 6m03s from that source SHA. Its built runtime is
+`5aa7c4a3566a3825bb1acb191e9279bd556dec21-216e5754fdbb8689`. Guarded reload was deferred because
+the existing PhotoStore-dev process has open documents; the new runtime remains pending and the
+running app continues on its previous binary. No documents were closed by the delivery process.
+
+During the implementation pass, these seven focused filters each passed 1/1: engine Main-track
+delete/trim/retime and native roundtrip; document speed-curve source-clock integration; engine linked
+audio source-clock schedule after split; cross-document group clipboard range/audio remapping; Smart
+clip split/trim/move source-clock preservation; UI deletion focus scoping; and UI Right-arrow seek
+focus. These results are implementation-pass evidence and are not represented as all having run on
+the exact final source SHA.
+
+The observed CapCut 9.5.0 macOS Shortcut 1 profile contained 107 entries across four categories;
+the catalogue records 76 assigned entries, six gesture mappings and 31 unassigned/no-default
+entries. It is a reference profile, not a universal preset. Perspective/warp animation and baking
+Transform keys into Frame Animation are unsupported. Manual visual, interaction and export
+acceptance remain outstanding, so issue #23 remains open and no full CapCut/Photoshop parity is
+claimed. Detailed implemented behavior and known gaps are in [timeline workflow](timeline-workflow.md).
 
 Left trims can restore retained source within timeline and source bounds. Preview and command edits
 share `ClipPlayback::extend_left`, including curve-offset restoration and bounded first-speed

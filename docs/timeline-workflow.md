@@ -1,8 +1,10 @@
 # Timeline workspace
 
 Issue #23 was reopened on 2026-10-27 after the prior timeline UI was rejected. This page records
-the major-overhaul implementation in progress; issue #23 remains open until its full workflow and
-shortcut acceptance contract is met. This is an original egui interface informed by public
+the major-overhaul implementation delivered in source commit
+[`5aa7c4a3566a3825bb1acb191e9279bd556dec21`](https://github.com/akiyamasho/PhotoStore/commit/5aa7c4a3566a3825bb1acb191e9279bd556dec21).
+Issue #23 remains open while manual visual, interaction and export acceptance is outstanding.
+This is an original egui interface informed by public
 references, with no CapCut or Photoshop assets copied.
 
 ## Current video workspace
@@ -74,5 +76,10 @@ audio properties.
 
 Perspective/warp animation is unsupported. Transform keys use the source-center pivot; conversion
 to Frame Animation remains guarded while Transform animation is enabled because key baking is not
-implemented. The source build, native-data checks and manual visual/interaction acceptance for this
-reopened overhaul have not yet been run. Do not close issue #23 or claim full CapCut/Photoshop parity.
+implemented. The required PhotoStore-dev build passed in 6m03s from the source SHA above. Its
+runtime binary is `5aa7c4a3566a3825bb1acb191e9279bd556dec21-216e5754fdbb8689`; guarded reload is
+deferred because the existing PhotoStore-dev process has open documents. The built runtime remains
+pending, and the running process still uses its prior binary. Seven focused implementation filters
+passed 1/1 each during the implementation pass; they did not all run against the exact final source
+SHA. Manual visual, interaction and export acceptance remain outstanding. Do not claim full
+CapCut/Photoshop parity or close issue #23 until acceptance is complete.

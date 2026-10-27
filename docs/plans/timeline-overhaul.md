@@ -1,6 +1,6 @@
 # Issue #23 — major timeline workspace overhaul
 
-Status: researched and posted to issue #23 before the major-overhaul sweep began; implementation is now in progress. The previous implementation was rejected by the user on 2026-10-27. Its build receipt does not verify this replacement. Current build and acceptance evidence belongs in [the workflow record](../timeline-workflow.md).
+Status: source implementation landed as [`5aa7c4a3566a3825bb1acb191e9279bd556dec21`](https://github.com/akiyamasho/PhotoStore/commit/5aa7c4a3566a3825bb1acb191e9279bd556dec21); required development build passed, and its guarded runtime reload is pending because the existing app has open documents. Manual visual, interaction and export acceptance remain outstanding; issue #23 remains open. Current evidence and limits are recorded in [the workflow record](../timeline-workflow.md).
 
 ## Requirement and evidence
 
