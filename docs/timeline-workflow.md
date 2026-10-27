@@ -1,9 +1,10 @@
 # Timeline workspace
 
 Issue #23 was reopened on 2026-10-27 after the prior timeline UI was rejected. This page records
-the major-overhaul implementation delivered in source commit
-[`5aa7c4a3566a3825bb1acb191e9279bd556dec21`](https://github.com/akiyamasho/PhotoStore/commit/5aa7c4a3566a3825bb1acb191e9279bd556dec21).
-Issue #23 remains open while manual visual, interaction and export acceptance is outstanding.
+the major-overhaul implementation committed locally as
+`5aa7c4a3566a3825bb1acb191e9279bd556dec21`. Remote publication is awaiting explicit push approval.
+Issue #23 remains open while publication and manual visual, interaction and export acceptance are
+outstanding.
 This is an original egui interface informed by public
 references, with no CapCut or Photoshop assets copied.
 

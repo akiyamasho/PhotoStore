@@ -491,8 +491,8 @@ for document roots; descendant timing remains serialized without reopening colla
 
 ## 2026-10-27: timeline overhaul delivery receipt
 
-The major timeline overhaul source landed in
-[`5aa7c4a3566a3825bb1acb191e9279bd556dec21`](https://github.com/akiyamasho/PhotoStore/commit/5aa7c4a3566a3825bb1acb191e9279bd556dec21).
+The major timeline overhaul source is committed locally as
+`5aa7c4a3566a3825bb1acb191e9279bd556dec21`; remote publication is awaiting explicit push approval.
 The required PhotoStore-dev build passed in 6m03s from that source SHA. Its built runtime is
 `5aa7c4a3566a3825bb1acb191e9279bd556dec21-216e5754fdbb8689`. Guarded reload was deferred because
 the existing PhotoStore-dev process has open documents; the new runtime remains pending and the
