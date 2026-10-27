@@ -1101,6 +1101,7 @@ pub fn group_layers(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let name = p.get("name").and_then(Value::as_str).map(str::to_string);
     let gid = s.edit("Group Layers", |doc, active| {
+        crate::timeline_editor_cmds::ensure_tracks(doc)?;
         let ids = top_level(doc, &ids);
         let top = *ids.last().ok_or(EngineError::NoLayer(LayerId(0)))?;
         let name = name.unwrap_or_else(|| doc.next_layer_name("Group"));
@@ -1111,6 +1112,7 @@ pub fn group_layers(s: &mut Session, p: &Value) -> Result<Value> {
         }
         *doc.layer_mut(gid).and_then(Layer::children_mut).ok_or(EngineError::NoLayer(gid))? = children;
         check_group_depth(doc, "Group Layers")?;
+        crate::timeline_editor_cmds::collapse_group_timeline(doc, gid, &ids)?;
         *active = Some(gid);
         Ok(gid)
     })?;
@@ -1185,6 +1187,14 @@ pub fn delete_selected(s: &mut Session) -> Result<Value> {
     let sel = selected(s);
     s.edit("Delete Layers", |doc, active| {
         let ids = top_level(doc, &sel);
+        let mut removed = std::collections::HashSet::new();
+        fn subtree(layer: &Layer, ids: &mut std::collections::HashSet<LayerId>) {
+            ids.insert(layer.id);
+            if let Some(children) = layer.children() { for child in children { subtree(child, ids); } }
+        }
+        for id in &ids {
+            if let Some(layer) = doc.layer(*id) { subtree(layer, &mut removed); }
+        }
         let neighbours = active.map(|id| deletion_neighbours(doc, id)).unwrap_or_default();
         for id in &ids {
             doc.remove(*id).ok_or(EngineError::NoLayer(*id))?;
@@ -1193,6 +1203,7 @@ pub fn delete_selected(s: &mut Session) -> Result<Value> {
             return Err(EngineError::Other("a document must keep at least one layer".into()));
         }
         *active = neighbours.into_iter().find(|candidate| doc.layer(*candidate).is_some());
+        crate::timeline_editor_cmds::prune_deleted_timeline_layers(doc, &removed)?;
         Ok(())
     })?;
     Ok(json!({"deleted": sel.len()}))

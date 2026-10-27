@@ -204,15 +204,23 @@ fn decode_cached(file_name: &str, bytes: &[u8]) -> Result<Arc<Document>> {
 /// Detect linked movies at any depth in embedded or linked Smart Object contents. The content
 /// hash prevents cycles and repeated decoding; depth matches the Smart Object render limit.
 fn has_linked_movie_dependency(doc: &Document, depth: usize, visited: &mut std::collections::HashSet<[u8; 32]>) -> Result<bool> {
-    if depth >= 16 { return Err(other("smart object nesting exceeds the safe render depth (16)")); }
-    if doc.walk().iter().any(|(_, _, layer)| layer.video.as_ref().is_some_and(|video| video.movie_backing.is_some())) { return Ok(true); }
+    if depth >= 16 {
+        return Err(other("smart object nesting exceeds the safe render depth (16)"));
+    }
+    if doc.walk().iter().any(|(_, _, layer)| layer.video.as_ref().is_some_and(|video| video.movie_backing.is_some())) {
+        return Ok(true);
+    }
     for (_, _, layer) in doc.walk() {
         let LayerContent::Smart(smart) = &layer.content else { continue };
         let Some((name, bytes)) = source_bytes(&doc.metadata, &smart.source) else { continue };
         let hash = *blake3::hash(&bytes).as_bytes();
-        if !visited.insert(hash) { continue; }
+        if !visited.insert(hash) {
+            continue;
+        }
         let child = decode_cached(&name, &bytes)?;
-        if has_linked_movie_dependency(&child, depth + 1, visited)? { return Ok(true); }
+        if has_linked_movie_dependency(&child, depth + 1, visited)? {
+            return Ok(true);
+        }
     }
     Ok(false)
 }
@@ -393,6 +401,17 @@ fn document_time(doc: &Document) -> Option<f64> {
         (sum + delay / 1000.0).min(f64::MAX / 2.0)
     });
     Some(seconds)
+}
+
+/// Resolve an animated Smart layer's clip-local clock when the timeline has an explicit
+/// common playback record. Older layers without that record continue to follow document time.
+fn layer_source_time(doc: &Document, layer: LayerId, fallback: Option<f64>) -> Option<f64> {
+    let Some(timeline) = doc.timeline.as_ref() else { return fallback };
+    let Some(range) = timeline.layer_ranges.iter().find(|range| range.layer == layer && range.playback.is_some()) else { return fallback };
+    let (legacy_in, legacy_speed) = doc.layer(layer).and_then(|layer| layer.video.as_ref())
+        .map(|video| (video.playback.source_in_seconds, video.playback.speed)).unwrap_or((0.0, 1.0));
+    let time = range.source_time_seconds(timeline.current, f64::from(timeline.fps.max(0.001)), legacy_in, legacy_speed);
+    time.is_finite().then_some(time).or(fallback)
 }
 
 /// Decode and flatten an animated source at `time`. The decoded document is never modified on
@@ -672,6 +691,7 @@ pub(crate) fn transform_source_bounds(doc: &Document, id: LayerId) -> Result<Opt
 
 fn refresh_layer_at_time(doc: &Document, l: &mut Layer, time: Option<f64>, depth: usize) -> Result<bool> {
     let LayerContent::Smart(sm) = &mut l.content else { return Ok(false) };
+    let time = layer_source_time(doc, l.id, time);
     match render_at_time(doc, sm, time, depth)? {
         Some(px) => {
             sm.cache = Some(px);
@@ -1108,8 +1128,15 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
         None => crate::layer_multi_cmds::selected(s),
     };
     let new_id = s.edit("Convert to Smart Object", |doc, active| {
+        crate::timeline_editor_cmds::ensure_tracks(doc)?;
         let ids = crate::layer_multi_cmds::top_level(doc, &ids);
         let top = *ids.last().ok_or_else(|| other("no layer selected"))?;
+        fn subtree(layer: &Layer, ids: &mut std::collections::HashSet<LayerId>) {
+            ids.insert(layer.id);
+            if let Some(children) = layer.children() { for child in children { subtree(child, ids); } }
+        }
+        let mut removed_ids = std::collections::HashSet::new();
+        for id in &ids { if let Some(layer) = doc.layer(*id) { subtree(layer, &mut removed_ids); } }
         let l = doc.layer(top).ok_or(EngineError::NoLayer(top))?;
         let single_existing_root = ids.len() == 1;
         let video_owns_opacity = l.video.as_ref().is_some_and(|v| !v.keyframes.is_empty());
@@ -1150,9 +1177,6 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
                         state.effects = None;
                     }
                 }
-                for range in t.layer_ranges.iter_mut().filter(|range| range.layer == top) {
-                    range.layer = new_id;
-                }
             } else {
                 t.frame_states.iter_mut().for_each(|states| {
                     let had_selected = states.iter().any(|state| ids.contains(&state.layer));
@@ -1168,7 +1192,42 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
                         states.push(photostore_doc::FrameLayerState::legacy(new_id, true, 1.0));
                     }
                 });
-                t.layer_ranges.retain(|range| !ids.contains(&range.layer));
+            }
+            let ranges: Vec<_> = t.layer_ranges.iter().filter(|range| removed_ids.contains(&range.layer)).cloned().collect();
+            let mut merged_range = ranges.iter().min_by_key(|range| range.start).cloned();
+            if let Some(range) = &mut merged_range {
+                range.layer = new_id;
+                range.start = ranges.iter().map(|range| range.start).min().unwrap_or(range.start);
+                range.end = ranges.iter().map(|range| range.end).max().unwrap_or(range.end);
+                range.enabled = ranges.iter().all(|range| range.enabled);
+                if ids.len() > 1 || removed_ids.len() > 1 { range.playback = None; }
+            }
+            let chosen_track = t.visual_tracks.iter().filter(|track| track.layers.iter().any(|id| removed_ids.contains(id)))
+                .min_by_key(|track| track.order).map(|track| track.id);
+            let mut track_insert = None;
+            for track in &mut t.visual_tracks {
+                if let Some(index) = track.layers.iter().position(|id| removed_ids.contains(id)) {
+                    if Some(track.id) == chosen_track { track_insert = Some(index); }
+                    track.layers.retain(|id| !removed_ids.contains(id));
+                }
+            }
+            if let Some(track_id) = chosen_track {
+                if let Some(track) = t.visual_tracks.iter_mut().find(|track| track.id == track_id) {
+                    let index = track_insert.unwrap_or(track.layers.len()).min(track.layers.len());
+                    track.layers.insert(index, new_id);
+                }
+            }
+            t.layer_ranges.retain(|range| !removed_ids.contains(&range.layer));
+            if let Some(range) = merged_range { t.layer_ranges.push(range); }
+            for states in t.frame_states.iter_mut().chain(t.property_frames.iter_mut()) {
+                for state in states.iter_mut() {
+                    if state.layer != new_id && removed_ids.contains(&state.layer) { state.layer = new_id; }
+                }
+                let mut seen = std::collections::HashSet::new();
+                states.retain(|state| seen.insert(state.layer));
+            }
+            for clip in t.audio_tracks.iter_mut().flat_map(|track| track.clips.iter_mut()) {
+                if clip.linked_video.is_some_and(|id| removed_ids.contains(&id)) { clip.linked_video = Some(new_id); }
             }
         }
         // As with Group Layers, place the result in the top selected root's parent. Insert
@@ -1177,6 +1236,8 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
         for id in ids {
             doc.remove(id).ok_or(EngineError::NoLayer(id))?;
         }
+        crate::timeline_editor_cmds::repack_main_track(doc, "layer.smartObjects.convertToSmartObject")?;
+        crate::video_cmds::sync(doc);
         *active = Some(new_id);
         Ok(new_id)
     })?;
@@ -1602,7 +1663,9 @@ fn reset_transform(s: &mut Session, p: &Value) -> Result<Value> {
         sm.transform = Affine::translate(current_cx - source_cx, current_cy - source_cy);
         sm.perspective = None;
         sm.warp = None;
-        if let Some(layer) = doc.layer_mut(id) { layer.transform_animation = None; }
+        if let Some(layer) = doc.layer_mut(id) {
+            layer.transform_animation = None;
+        }
         refresh_or_fail(doc, id)?;
         Ok(json!({"layer": id.0, "reset": true}))
     })

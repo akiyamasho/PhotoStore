@@ -140,6 +140,15 @@ fn override_held(mods: egui::Modifiers) -> bool {
     mods.ctrl && !mods.mac_cmd
 }
 
+fn preview_alignment_cancel(app: &PhotoStoreApp, mods: egui::Modifiers) -> bool {
+    app.ui.timeline.open
+        && (mods.command || mods.mac_cmd)
+        && app.session.active().is_some_and(|session| {
+            app.ui.timeline.preview_context == Some(session.doc.id)
+                && session.doc.timeline.as_ref().is_some_and(|timeline| matches!(timeline.mode, photostore_doc::TimelineMode::Video))
+        })
+}
+
 /// Start snapping for a drag beginning at `p` (called on pointer down).
 fn begin(app: &mut PhotoStoreApp, p: [f64; 2]) {
     app.prefs_rt.snap = None;
@@ -246,8 +255,9 @@ pub fn filter_event(app: &mut PhotoStoreApp, ev: ToolEvent, mods: egui::Modifier
             if app.prefs_rt.snap.is_none() {
                 return ev;
             }
+            let disabled = override_held(mods) || preview_alignment_cancel(app, mods);
             if let Some(s) = app.prefs_rt.snap.as_mut() {
-                s.disabled = override_held(mods);
+                s.disabled = disabled;
             }
             let q = apply(app, [x, y]);
             let p = pixel_round(app, q);
@@ -257,8 +267,9 @@ pub fn filter_event(app: &mut PhotoStoreApp, ev: ToolEvent, mods: egui::Modifier
             if app.prefs_rt.snap.is_none() {
                 return ev;
             }
+            let disabled = override_held(mods) || preview_alignment_cancel(app, mods);
             if let Some(s) = app.prefs_rt.snap.as_mut() {
-                s.disabled = override_held(mods);
+                s.disabled = disabled;
             }
             let q = apply(app, [x, y]);
             let p = pixel_round(app, q);

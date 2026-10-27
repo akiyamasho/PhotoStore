@@ -251,7 +251,10 @@ fn set_key(s: &mut Session, p: &Value) -> Result<Value> {
     let interp = match p.get("interpolation").and_then(Value::as_str).unwrap_or("linear") {
         "linear" => TransformInterpolation::Linear,
         "hold" => TransformInterpolation::Hold,
-        _ => return Err(bad("timeline.setTransformKeyframe", "interpolation must be linear or hold")),
+        "ease_in" => TransformInterpolation::EaseIn,
+        "ease_out" => TransformInterpolation::EaseOut,
+        "ease_in_out" => TransformInterpolation::EaseInOut,
+        _ => return Err(bad("timeline.setTransformKeyframe", "interpolation must be linear, hold, ease_in, ease_out, or ease_in_out")),
     };
     key(s, id, f, v, interp, "timeline.setTransformKeyframe")
 }

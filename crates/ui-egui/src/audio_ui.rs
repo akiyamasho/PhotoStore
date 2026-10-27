@@ -91,12 +91,22 @@ fn drag_id(doc: DocId, clip: u64) -> Id {
 fn selected_id(doc: DocId) -> Id {
     Id::new(("audio-selected", doc.0))
 }
+fn selected_ids_id(doc: DocId) -> Id {
+    Id::new(("audio-selected-many", doc.0))
+}
 
 pub(crate) fn clear_selection(ctx: &egui::Context, doc: DocId) {
     ctx.data_mut(|data| data.remove::<u64>(selected_id(doc)));
+    ctx.data_mut(|data| data.remove::<Vec<u64>>(selected_ids_id(doc)));
 }
 pub(crate) fn has_selection(ctx: &egui::Context, doc: DocId) -> bool {
     ctx.data(|data| data.get_temp::<u64>(selected_id(doc))).is_some()
+}
+pub(crate) fn selected_clip_id(ctx: &egui::Context, doc: DocId) -> Option<u64> {
+    ctx.data(|data| data.get_temp::<u64>(selected_id(doc)))
+}
+pub(crate) fn selected_clip_ids(ctx: &egui::Context, doc: DocId) -> Vec<u64> {
+    ctx.data(|data| data.get_temp::<Vec<u64>>(selected_ids_id(doc))).unwrap_or_else(|| selected_clip_id(ctx, doc).into_iter().collect())
 }
 fn one_field(clip: u64, field: &str, value: f64) -> Value {
     let mut p = serde_json::Map::new();
@@ -181,13 +191,27 @@ fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, doc: DocId, clip: &AudioClip,
     let key = drag_id(doc, clip.id);
     let state = ctx.data(|d| d.get_temp::<DragState>(key));
     let pointer_x = ui.input(|i| i.pointer.latest_pos()).map_or(lane.left(), |p| p.x);
-    let (start, trim, clip_duration) =
+    let (mut start, trim, mut clip_duration) =
         state.map_or((clip.start_seconds, clip.trim_in_seconds, clip.duration_seconds), |s| drag_values(s, pointer_x, duration, fps, snap));
+    if state.is_some_and(|state| state.kind == DragKind::Body) {
+        let selected = selected_clip_ids(&ctx, doc);
+        let ids = if selected.contains(&clip.id) { selected } else { vec![clip.id] };
+        let requested = ((start - clip.start_seconds) * fps).round() as i64;
+        let plan = app
+            .session
+            .active()
+            .filter(|session| session.doc.id == doc)
+            .map(|session| photostore_engine::timeline_move_audio_plan(&session.doc, &[], &ids, requested, app.ui.timeline.ripple_move));
+        if let Some((_, new_start, new_end)) = plan.and_then(|plan| plan.into_iter().find(|(id, _, _)| *id == clip.id)) {
+            start = new_start;
+            clip_duration = new_end - new_start;
+        }
+    }
     let left = lane.left() + lane.width() * (start / duration) as f32;
     let right = lane.left() + lane.width() * ((start + clip_duration) / duration) as f32;
     let rect = Rect::from_min_max(pos2(left, lane.top() + 3.0), pos2(right.max(left + 12.0), lane.bottom() - 3.0));
     let response = ui.interact(rect, Id::new(("audio-clip", doc.0, clip.id)), Sense::click_and_drag());
-    let selected = ctx.data(|d| d.get_temp::<u64>(selected_id(doc))).is_some_and(|id| id == clip.id);
+    let selected = selected_clip_ids(&ctx, doc).contains(&clip.id);
     let fill = if clip.muted {
         Color32::DARK_GRAY
     } else if selected {
@@ -197,10 +221,69 @@ fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, doc: DocId, clip: &AudioClip,
     };
     let painter = ui.painter_at(lane);
     painter.rect_filled(rect.intersect(lane), 3.0, fill);
+    let waveform_visible = rect.intersect(lane).intersect(ui.clip_rect()).width() >= 8.0;
+    let bin_count = (rect.width().ceil() as usize * 2).clamp(16, 4096);
+    if waveform_visible {
+        match photostore_engine::audio_waveform_cache::request(&clip.path, bin_count) {
+            Ok(waveform) if !waveform.bins.is_empty() => {
+                if matches!(&waveform.status, photostore_engine::audio_waveform_cache::WaveformStatus::Pending) {
+                    let _ = photostore_engine::audio_waveform_cache::completion_generation();
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
+                }
+                let source_duration = waveform.duration_seconds.unwrap_or(clip.source_duration_seconds).max(0.001);
+                let playback = photostore_doc::ClipPlayback {
+                    source_in_seconds: clip.trim_in_seconds,
+                    speed: clip.speed,
+                    speed_curve: clip.speed_curve.clone(),
+                    speed_curve_offset_frames: clip.speed_curve_offset_frames,
+                };
+                let mid = rect.center().y;
+                let half = (rect.height() * 0.43).max(1.0);
+                let count = (rect.width().ceil() as usize).max(1);
+                for pixel in 0..count {
+                    let output_frame = ((pixel as f64 + 0.5) / count as f64 * clip.duration_seconds * fps).round().max(0.0) as usize;
+                    let source_time = clip.trim_in_seconds + playback.source_delta_seconds(output_frame, fps);
+                    let f = (source_time / source_duration).clamp(0.0, 1.0);
+                    let index = ((f * waveform.bins.len() as f64) as usize).min(waveform.bins.len() - 1);
+                    let bin = &waveform.bins[index];
+                    let volume = clip.volume.min(1.0) as f32;
+                    let peak = (bin.peak.clamp(0.0, 1.0) * volume * half).clamp(0.0, half);
+                    let rms = (bin.rms.clamp(0.0, 1.0) * volume * half).clamp(0.0, half);
+                    let x = rect.left() + pixel as f32 + 0.5;
+                    painter.line_segment([pos2(x, mid - peak), pos2(x, mid + peak)], egui::Stroke::new(1.0, Color32::from_white_alpha(125)));
+                    painter.line_segment([pos2(x, mid - rms), pos2(x, mid + rms)], egui::Stroke::new(1.0, Color32::WHITE));
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                app.ui.status = error;
+                app.ui.status_error = true;
+            }
+        }
+    }
     painter.text(rect.left_center(), egui::Align2::LEFT_CENTER, &clip.name, egui::FontId::proportional(11.0), t.text);
     if response.clicked() {
-        ctx.data_mut(|d| d.insert_temp(selected_id(doc), clip.id));
+        let multi = ui.input(|i| i.modifiers.shift || i.modifiers.command || i.modifiers.ctrl);
+        let mut selected = if multi { selected_clip_ids(&ctx, doc) } else { Vec::new() };
+        if multi {
+            if selected.contains(&clip.id) { selected.retain(|id| *id != clip.id) } else { selected.push(clip.id) }
+        } else {
+            selected.push(clip.id)
+        }
+        ctx.data_mut(|d| {
+            if let Some(active) = selected.last() {
+                d.insert_temp(selected_id(doc), *active);
+            } else {
+                d.remove::<u64>(selected_id(doc));
+            }
+            d.insert_temp(selected_ids_id(doc), selected.clone());
+        });
         ctx.data_mut(|d| d.remove::<u64>(Id::new(("video-clip-selected", doc.0))));
+        crate::video_clip_ui::clear_key_selection(&ctx, doc.0);
+        if let Err(error) = app.run("timeline.editor.select", json!({"document":doc.0,"layers":[],"audio":selected})) {
+            app.ui.status = error;
+            app.ui.status_error = true;
+        }
     }
     let capture = |kind: DragKind, x: f32| DragState {
         doc,
@@ -257,8 +340,22 @@ fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, doc: DocId, clip: &AudioClip,
                         p.insert("durationSeconds".into(), json!(nd));
                     }
                 }
-                let params = Value::Object(p);
-                let _ = app.with_document(s.doc, |app| app.run("timeline.setAudioClip", params));
+                if s.kind == DragKind::Body {
+                    let ids = selected_clip_ids(&ctx, s.doc);
+                    let ids = if ids.contains(&s.clip) { ids } else { vec![s.clip] };
+                    let delta = ((ns - clip.start_seconds) * fps).round() as i64;
+                    if delta != 0 {
+                        if let Err(error) = app.with_document(s.doc, |app| {
+                            app.run("timeline.editor.move", json!({"document":s.doc.0,"audio":ids,"deltaFrames":delta,"ripple":app.ui.timeline.ripple_move}))
+                        }) {
+                            app.ui.status = error;
+                            app.ui.status_error = true;
+                        }
+                    }
+                } else if let Err(error) = app.with_document(s.doc, |app| app.run("timeline.setAudioClip", Value::Object(p))) {
+                    app.ui.status = error;
+                    app.ui.status_error = true;
+                }
             }
         }
     }
@@ -393,6 +490,61 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
     }
 }
 
+/// Audio rows embedded in the unified video timeline. The parent supplies the shared ruler width
+/// and label gutter so this surface does not create a second header, ruler, details panel or scroll.
+pub fn show_workspace(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_width: f32, gutter_width: f32, snap: bool, scroll_x: f32) {
+    let Some(doc) = target_doc(app) else { return };
+    let tokens = Tokens::get(ui.ctx());
+    let tracks = timeline.audio_tracks.clone();
+    let duration = timeline.duration_seconds().max(0.001);
+    let playhead = timeline.frame_start_seconds(timeline.current);
+    for track in tracks {
+        ui.horizontal(|ui| {
+            let (gutter, _) = ui.allocate_exact_size(vec2(gutter_width, 34.0), Sense::hover());
+            let mut left = ui.new_child(egui::UiBuilder::new().max_rect(gutter));
+            if crate::icons::button(&mut left, if track.muted { "volume-x" } else { "volume-2" }, 18.0, track.muted, "Mute audio track").clicked() {
+                dispatch(app, "timeline.setAudioTrack", json!({"document":doc.0,"track":track.id,"muted":!track.muted}));
+            }
+            let label = Rect::from_min_max(pos2(gutter.left() + 24.0, gutter.top()), gutter.right_bottom());
+            left.painter().with_clip_rect(label).text(
+                label.left_center(),
+                egui::Align2::LEFT_CENTER,
+                &track.name,
+                egui::FontId::proportional(11.5),
+                tokens.text_dim,
+            );
+            let scroll_id = Id::new(("timeline-time-offset", doc.0));
+            let out = egui::ScrollArea::horizontal()
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .scroll_source(egui::scroll_area::ScrollSource::NONE)
+                .id_salt(("timeline-audio-lane", doc.0, track.id))
+                .scroll_offset(egui::vec2(scroll_x, 0.0))
+                .show(ui, |ui| {
+                    let (lane, _) = ui.allocate_exact_size(vec2(lane_width, 34.0), Sense::hover());
+                    let painter = ui.painter_at(lane);
+                    painter.rect_filled(lane, 0.0, tokens.field);
+                    painter.line_segment([lane.left_bottom(), lane.right_bottom()], egui::Stroke::new(1.0, tokens.separator));
+                    for clip in &track.clips {
+                        draw_clip(ui, app, doc, clip, lane, duration, playhead, f64::from(timeline.fps.max(0.001)), snap, &tokens);
+                    }
+                    let x = lane.left() + lane.width() * timeline.current as f32 / timeline.duration.max(1) as f32;
+                    painter.line_segment([pos2(x, lane.top()), pos2(x, lane.bottom())], egui::Stroke::new(1.5, tokens.accent));
+                });
+            let _ = (scroll_id, out.state.offset);
+        });
+    }
+}
+
 pub fn target_doc(app: &PhotoStoreApp) -> Option<DocId> {
     app.session.active().map(|s| s.doc.id)
+}
+
+pub(crate) fn inspector(app: &mut PhotoStoreApp, ui: &mut Ui) {
+    let Some(st) = app.session.active() else { return };
+    let doc = st.doc.id;
+    let Some(id) = selected_clip_id(ui.ctx(), doc) else { return };
+    let Some(clip) = st.doc.timeline.as_ref().and_then(|t| t.audio_tracks.iter().flat_map(|tr| tr.clips.iter()).find(|clip| clip.id == id)).cloned() else {
+        return;
+    };
+    clip_properties(app, ui, doc, &clip, &Tokens::get(ui.ctx()));
 }

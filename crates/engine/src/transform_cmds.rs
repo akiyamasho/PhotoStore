@@ -2,10 +2,14 @@
 
 use photostore_algo::transform::{Homography, Interp, warp_surface};
 use photostore_color::PixelFormat;
-use photostore_doc::{Document, Layer, LayerContent, LayerId, Locks};
+use photostore_doc::{
+    Document, Layer, LayerContent, LayerId, Locks, PositionAnimation, PositionInterpolation, PositionKeyframe, TransformAnimation, TransformInterpolation,
+    TransformValue,
+};
 use photostore_geom::{Affine, Rect};
 use photostore_raster::Surface;
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 use crate::commands::CommandSpec;
 use crate::{EngineError, Result, Session};
@@ -134,7 +138,14 @@ pub fn lone_target<'a>(doc: &'a Document, layer: Option<LayerId>, p: &Value) -> 
         }
         Target::FilterMask => {
             let id = layer.ok_or_else(|| EngineError::Other("no active layer".into()))?;
-            Ok(Some(doc.layer(id).and_then(|l| match &l.content { LayerContent::Smart(sm) => sm.filter_mask.as_ref().map(|m| &m.surface), _ => None }).ok_or_else(|| EngineError::Other("smart object has no filter mask".into()))?))
+            Ok(Some(
+                doc.layer(id)
+                    .and_then(|l| match &l.content {
+                        LayerContent::Smart(sm) => sm.filter_mask.as_ref().map(|m| &m.surface),
+                        _ => None,
+                    })
+                    .ok_or_else(|| EngineError::Other("smart object has no filter mask".into()))?,
+            ))
         }
         Target::Alpha(i) => doc
             .channels
@@ -339,14 +350,133 @@ fn quad_param(p: &Value) -> Option<[[f64; 2]; 4]> {
     Some(q)
 }
 
+fn value_affine(value: TransformValue, pivot: (f64, f64)) -> Affine {
+    let (sin, cos) = value.rotation.to_radians().sin_cos();
+    Affine::translate(pivot.0, pivot.1).mul(
+        &Affine { m: [cos * value.scale_x, sin * value.scale_x, -sin * value.scale_y, cos * value.scale_y, 0.0, 0.0] }
+            .mul(&Affine::translate(-pivot.0, -pivot.1)),
+    )
+}
+fn decompose_transform(base: [f64; 6], desired: Affine) -> Result<TransformValue> {
+    let base = Affine { m: base };
+    let relative = base.inverse().ok_or_else(|| bad("Smart Object transform base is singular"))?.mul(&desired);
+    let [a, b, c, d, _, _] = relative.m;
+    let sx = a.hypot(b);
+    let determinant = relative.determinant();
+    if !sx.is_finite() || sx <= 0.0 || !determinant.is_finite() || determinant <= 0.0 {
+        return Err(bad("Free Transform reflection or degenerate scale cannot be recorded as Smart Transform keyframes"));
+    }
+    let sy = determinant / sx;
+    let shear = a * c + b * d;
+    if !sy.is_finite() || sy <= 0.0 || shear.abs() > 1e-6 * (sx * sy).max(1.0) {
+        return Err(bad("Free Transform shear cannot be recorded as Smart Transform keyframes; use an affine scale or rotation"));
+    }
+    let value = TransformValue { scale_x: sx, scale_y: sy, rotation: b.atan2(a).to_degrees() };
+    if !(0.001..=1000.0).contains(&value.scale_x)
+        || !(0.001..=1000.0).contains(&value.scale_y)
+        || !value.rotation.is_finite()
+        || value.rotation.abs() > 360000.0
+    {
+        return Err(bad("Free Transform scale or rotation exceeds Smart Transform keyframe limits"));
+    }
+    Ok(value)
+}
+fn record_smart_transform(doc: &mut Document, id: LayerId, frame: usize, before: Affine, desired: Affine) -> Result<()> {
+    let snapshot = doc.layer(id).ok_or(EngineError::NoLayer(id))?.clone();
+    let animation = snapshot.transform_animation.as_ref().filter(|a| a.enabled).ok_or_else(|| bad("Smart Transform animation is disabled"))?;
+    let base = animation.base_transform.ok_or_else(|| bad("Smart Transform animation has no base placement"))?;
+    let pivot = animation.pivot.ok_or_else(|| bad("Smart Transform animation has no pivot"))?;
+    let value = decompose_transform(base, desired)?;
+    let old_expected = Affine { m: base }.mul(&value_affine(animation.applied_value, pivot));
+    let new_expected = Affine { m: base }.mul(&value_affine(value, pivot));
+    let shift_x = (desired.m[4] - new_expected.m[4]) - (before.m[4] - old_expected.m[4]);
+    let shift_y = (desired.m[5] - new_expected.m[5]) - (before.m[5] - old_expected.m[5]);
+    let current_position = crate::position_cmds::sample_layer_position(doc, &snapshot, frame);
+    let position = (f64::from(current_position.0) + shift_x).round();
+    let position_y = (f64::from(current_position.1) + shift_y).round();
+    if !position.is_finite() || !position_y.is_finite() || position.abs() > 1_000_000.0 || position_y.abs() > 1_000_000.0 {
+        return Err(bad("Free Transform translation exceeds Position keyframe limits"));
+    }
+    let transform_total: usize = doc.walk().iter().filter_map(|(_, _, layer)| layer.transform_animation.as_ref()).map(|track| track.keys.len()).sum();
+    let position_track_count = doc.walk().iter().filter(|(_, _, layer)| layer.position_animation.is_some()).count();
+    let position_keys_total: usize = doc.walk().iter().filter_map(|(_, _, layer)| layer.position_animation.as_ref()).map(|track| track.keys.len()).sum();
+    let has_position_track = snapshot.position_animation.is_some();
+    let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
+    let animation = l.transform_animation.as_mut().ok_or_else(|| bad("Smart Transform animation disappeared during edit"))?;
+    let mut keys = animation.keys.as_ref().clone();
+    match keys.binary_search_by_key(&frame, |key| key.frame) {
+        Ok(i) => keys[i].value = value,
+        Err(i) => {
+            let interpolation = i.checked_sub(1).and_then(|n| keys.get(n).map(|key| key.interpolation)).unwrap_or(TransformInterpolation::Linear);
+            keys.insert(i, photostore_doc::TransformKeyframe { frame, value, interpolation });
+        }
+    }
+    let max = photostore_doc::MAX_TRANSFORM_ANIMATION_KEYS;
+    if keys.len() > max || transform_total > max {
+        return Err(bad("Smart Transform keyframe limit reached"));
+    }
+    animation.keys = Arc::new(keys);
+    animation.applied_value = value;
+    animation.validate().map_err(|e| bad(e))?;
+    let position_value = (position as i32, position_y as i32);
+    let layer = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
+    if position_value != current_position {
+        if !has_position_track && position_track_count >= photostore_doc::MAX_POSITION_ANIMATION_TRACKS {
+            return Err(bad("position animation track limit reached while recording Smart Object translation"));
+        }
+        let track = layer.position_animation.get_or_insert_with(|| PositionAnimation {
+            enabled: true,
+            static_value: current_position,
+            applied_value: current_position,
+            keys: Arc::new(Vec::new()),
+        });
+        if !track.enabled {
+            track.enabled = true;
+            track.static_value = current_position;
+            track.applied_value = current_position;
+            track.keys = Arc::new(Vec::new());
+        }
+        let mut position_keys = track.keys.as_ref().clone();
+        if position_keys.is_empty() {
+            if frame > 0 {
+                position_keys.push(PositionKeyframe { frame: 0, x: current_position.0, y: current_position.1, interpolation: PositionInterpolation::Hold });
+            }
+            position_keys.push(PositionKeyframe { frame, x: position_value.0, y: position_value.1, interpolation: PositionInterpolation::Linear });
+        } else {
+            match position_keys.binary_search_by_key(&frame, |key| key.frame) {
+                Ok(i) => {
+                    position_keys[i].x = position_value.0;
+                    position_keys[i].y = position_value.1;
+                }
+                Err(i) => {
+                    let interpolation =
+                        i.checked_sub(1).and_then(|n| position_keys.get(n).map(|key| key.interpolation)).unwrap_or(PositionInterpolation::Linear);
+                    position_keys.insert(i, PositionKeyframe { frame, x: position_value.0, y: position_value.1, interpolation });
+                }
+            }
+        }
+        if position_keys_total.saturating_add(position_keys.len().saturating_sub(track.keys.len())) > photostore_doc::MAX_POSITION_ANIMATION_KEYS {
+            return Err(bad("Position keyframe limit reached while recording Smart Object translation"));
+        }
+        track.keys = Arc::new(position_keys);
+        track.validate().map_err(|e| bad(e))?;
+        if let LayerContent::Smart(sm) = &mut layer.content {
+            sm.transform.m[4] -= f64::from(position_value.0 - current_position.0);
+            sm.transform.m[5] -= f64::from(position_value.1 - current_position.1);
+        }
+    }
+    Ok(())
+}
+
 fn transform(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.active().ok_or(EngineError::NoDocument)?;
     let id = match p.get("layer").and_then(Value::as_u64) {
         Some(v) => Some(LayerId(v)),
         None => st.active_layer,
     };
-    if id.and_then(|id| st.doc.layer(id)).and_then(|layer| layer.transform_animation.as_ref()).is_some_and(|animation| animation.enabled) {
-        return Err(EngineError::Other("Free Transform is unavailable while Smart Object Transform animation exists; edit the timeline track first".into()));
+    let keyed_transform = id.and_then(|id| st.doc.layer(id)).and_then(|layer| layer.transform_animation.as_ref()).is_some_and(|animation| animation.enabled);
+    if keyed_transform && id.and_then(|id| st.doc.layer(id)).is_some_and(|layer| !matches!(layer.content, LayerContent::Smart(_))) {
+        return Err(bad("Transform keyframes are supported only on Smart Objects"));
     }
     let lone = lone_target(&st.doc, id, p)?;
     let id = match (id, lone.is_some() && crate::channel_cmds::is_channel_target(p)) {
@@ -389,6 +519,9 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
     let m = h.0;
     let affine =
         (m[6].abs() < 1e-12 && m[7].abs() < 1e-12).then(|| Affine { m: [m[0] / m[8], m[3] / m[8], m[1] / m[8], m[4] / m[8], m[2] / m[8], m[5] / m[8]] });
+    if keyed_transform && affine.is_none() {
+        return Err(bad("Smart Transform keyframing supports affine scale, rotation, and translation; clear perspective or warp before transforming"));
+    }
     let interp = Interp::parse(p.get("interpolation").and_then(Value::as_str).unwrap_or("bicubic"));
     let lone = lone.is_some();
     s.edit("Free Transform", |doc, _| {
@@ -406,6 +539,15 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
             return Ok(());
         }
         let id = id.ok_or_else(|| EngineError::Other("no active layer".into()))?;
+        let frame = doc.timeline.as_ref().map_or(0, |timeline| timeline.current);
+        let prior_smart_transform = if keyed_transform {
+            doc.layer(id).and_then(|layer| match &layer.content {
+                LayerContent::Smart(sm) => Some(sm.transform),
+                _ => None,
+            })
+        } else {
+            None
+        };
         if let Some(layer) = doc.layer_mut(id)
             && layer.transform_animation.as_ref().is_some_and(|animation| !animation.enabled)
         {
@@ -417,6 +559,10 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
         let group = group_locks(doc, id);
         let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
         transform_layer(if is_group { None } else { sel.as_ref() }, group, l, &h, affine, interp)?;
+        if let (true, Some(before), Some(a)) = (keyed_transform, prior_smart_transform, affine) {
+            let desired = a.mul(&before);
+            record_smart_transform(doc, id, frame, before, desired)?;
+        }
         // Type layers re-render from their new transform.
         let snapshot = doc.clone();
         if let Some(l) = doc.layer_mut(id) {
@@ -425,6 +571,12 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
         // The selection outline moves with the pixels.
         if let Some(sel) = &doc.selection {
             doc.selection = Some(warp_gray(sel, &h, Interp::Bilinear)).filter(|s| !s.content_bounds().is_empty());
+        }
+        if keyed_transform {
+            crate::video_cmds::sync_plain(doc);
+            if !crate::smart_cmds::refresh(doc, id)? {
+                return Err(EngineError::Other("Smart Object source could not be refreshed after recording its transform keyframe".into()));
+            }
         }
         Ok(())
     })?;

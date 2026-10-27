@@ -170,7 +170,23 @@ pub fn sync(doc: &mut Document) {
 pub fn sync_plain(doc: &mut Document) {
     let cur = doc.timeline.as_ref().map_or(0, |t| t.current);
     let timeline_fps = doc.timeline.as_ref().map_or(30.0_f64, |t| f64::from(t.fps.max(0.001)));
-    let ranges = doc.timeline.as_ref().map(|t| t.layer_ranges.clone()).unwrap_or_default();
+    let ranges = doc
+        .timeline
+        .as_ref()
+        .map(|t| {
+            let mut ranges = t.layer_ranges.clone();
+            for track in &t.visual_tracks {
+                if track.muted {
+                    for range in &mut ranges {
+                        if track.layers.contains(&range.layer) {
+                            range.enabled = false;
+                        }
+                    }
+                }
+            }
+            ranges
+        })
+        .unwrap_or_default();
     let geometry = doc.clone();
     sync_layers(&geometry, &mut doc.layers, cur, timeline_fps, &ranges);
     if let Some(t) = &doc.timeline
@@ -197,7 +213,9 @@ fn apply_owned_transform(layers: &mut [Layer], frame: usize) {
         if let (Some(animation), LayerContent::Smart(sm)) = (layer.transform_animation.as_mut(), &mut layer.content) {
             if let Some(base) = animation.base_transform {
                 let value = animation.sampled_value(frame);
-                if !animation.sampled_footprint_within_limit(frame) { continue; }
+                if !animation.sampled_footprint_within_limit(frame) {
+                    continue;
+                }
                 let angle = value.rotation.to_radians();
                 let (sin, cos) = angle.sin_cos();
                 let pivot = animation.pivot.unwrap_or((0.0, 0.0));
@@ -273,7 +291,7 @@ fn apply_owned_position(doc: &mut Document, frame: usize) {
 fn apply_ranges(layers: &mut [Layer], frame: usize, ranges: &[photostore_doc::LayerTimelineRange], states: Option<&Vec<FrameLayerState>>) {
     for layer in layers {
         if let Some(range) = ranges.iter().find(|r| r.layer == layer.id) {
-            if frame < range.start || frame >= range.end.max(range.start.saturating_add(1)) {
+            if !range.enabled || frame < range.start || frame >= range.end.max(range.start.saturating_add(1)) {
                 layer.visible = false;
             } else if let Some(state) = states.and_then(|states| states.iter().find(|state| state.layer == layer.id)) {
                 layer.visible = state.visible;
@@ -335,11 +353,10 @@ fn apply_states(geometry: &Document, layers: &mut [Layer], states: &[FrameLayerS
 }
 
 fn source_index(cur: usize, timeline_fps: f64, video: &VideoData, range: Option<&photostore_doc::LayerTimelineRange>) -> usize {
-    let relative = range.map_or(cur, |r| cur.saturating_sub(r.start));
     let playback = video.playback;
     let source_in = if playback.source_in_seconds.is_finite() && playback.source_in_seconds >= 0.0 { playback.source_in_seconds } else { 0.0 };
     let speed = if playback.speed.is_finite() && playback.speed > 0.0 { playback.speed } else { 1.0 };
-    let seconds = source_in + relative as f64 / timeline_fps.max(0.001) * speed;
+    let seconds = range.map_or(source_in + cur as f64 / timeline_fps.max(0.001) * speed, |r| r.source_time_seconds(cur, timeline_fps, source_in, speed));
     if !video.frame_delays_ms.iter().any(|delay| *delay > 0) {
         return (seconds * f64::from(video.fps.max(0.001)) + 1e-9).floor() as usize;
     }
@@ -353,6 +370,19 @@ fn source_index(cur: usize, timeline_fps: f64, video: &VideoData, range: Option<
         }
     }
     video.len().saturating_sub(1)
+}
+
+/// Resolve an absolute document timeline frame to the source-frame index displayed for a video
+/// layer. Used by playback/export and by timeline filmstrip thumbnail requests.
+pub fn source_frame_for_layer(doc: &Document, layer: &Layer, timeline_frame: usize) -> Result<usize> {
+    let video = layer.video.as_ref().ok_or_else(|| EngineError::Other(format!("layer {:?} has no video source", layer.id)))?;
+    let fps = doc.timeline.as_ref().map_or(30.0_f64, |t| f64::from(t.fps.max(0.001)));
+    let range = doc.timeline.as_ref().and_then(|t| t.layer_ranges.iter().find(|r| r.layer == layer.id));
+    let relative = source_index(timeline_frame, fps, video, range);
+    Ok(video
+        .movie_backing
+        .as_ref()
+        .map_or(relative, |backing| backing.trim_in_frame.saturating_add(relative).min(backing.trim_out_frame).min(backing.frame_count.saturating_sub(1))))
 }
 
 /// Whether all linked movie layers currently sampled in this document have a decoded frame ready.
@@ -1415,7 +1445,7 @@ fn interpret_footage(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some(range) = t.layer_ranges.iter_mut().find(|r| r.layer == id) {
                 range.end = range_end;
             } else {
-                t.layer_ranges.push(photostore_doc::LayerTimelineRange { layer: id, start: range_start, end: range_end });
+                t.layer_ranges.push(photostore_doc::LayerTimelineRange { layer: id, start: range_start, end: range_end, enabled: true, playback: None });
             }
             t.duration = t.duration.max(range_end);
             t.work_end = t.work_end.max(range_end).min(MAX_EXPORT_FRAMES);

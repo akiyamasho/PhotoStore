@@ -37,6 +37,7 @@ mod camera_raw_scope_ui;
 pub mod camera_raw_ui;
 pub mod canvas;
 pub mod canvas_tool_menu;
+pub mod capcut_shortcut_reference;
 pub mod channel_view;
 pub mod channels_panel;
 pub mod chrome_ui;
@@ -1413,6 +1414,7 @@ impl eframe::App for PhotoStoreApp {
         // The Timeline is a true bottom dock, so it reserves canvas space before the central area
         // is laid out. Other windows remain overlays below.
         timeline_ui::windows(self, ui);
+        timeline_ui::media_bin(self, ui);
         if let Some((cmd, params)) = opacity_ui::confirmation(self, &ctx) {
             match self.run(cmd, params) {
                 Ok(_) => {

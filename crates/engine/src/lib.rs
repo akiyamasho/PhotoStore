@@ -14,6 +14,7 @@ pub mod align_cmds;
 pub mod analysis_cmds;
 pub mod artboard_cmds;
 pub mod audio_cmds;
+pub mod audio_waveform_cache;
 pub mod automate_cmds;
 pub mod brush_cmds;
 pub mod brush_key_cmds;
@@ -101,6 +102,7 @@ pub mod stamp_cmds;
 pub mod swatch_cmds;
 pub mod symmetry_cmds;
 mod timeline_cmds;
+mod timeline_editor_cmds;
 pub mod transform_cmds;
 mod trap_cmds;
 pub mod type_caret_cmds;
@@ -113,7 +115,13 @@ mod variables_cmds;
 pub mod vector_cmds;
 mod video_cmds;
 pub use position_cmds::sample_layer_position;
-pub use video_cmds::{render_video_with, sample_keyframe_transform, sync as sync_video};
+pub use timeline_editor_cmds::{
+    preview_move_audio_plan as timeline_move_audio_plan,
+    preview_move_delta as timeline_move_delta,
+    preview_move_plan as timeline_move_plan,
+    sample_property as sample_timeline_property,
+};
+pub use video_cmds::{render_video_with, sample_keyframe_transform, source_frame_for_layer, sync as sync_video};
 pub mod vp_cmds;
 pub mod warp_cmds;
 pub mod web_cmds;
@@ -332,6 +340,18 @@ pub struct Session {
     coalesce_request: Option<String>,
     /// Pixels copied with Edit › Copy / Cut (shared by all documents, like Photoshop).
     pub clipboard: Option<edit_cmds::Clip>,
+    /// Complete editable visual clip snapshots used by the timeline clipboard.
+    pub timeline_clipboard: Option<Vec<TimelineClipSnapshot>>,
+    /// Editable audio clip snapshots used by the timeline clipboard.
+    pub timeline_audio_clipboard: Option<Vec<TimelineAudioClipSnapshot>>,
+    /// Clip appearance and animation attributes, independent of the complete-media clipboard.
+    pub timeline_attribute_clipboard: Option<TimelineAttributeSnapshot>,
+    /// Audio clip selection for the active document's timeline editor.
+    pub timeline_selected_audio: Vec<u64>,
+    pub timeline_selected_audio_document: Option<photostore_doc::DocId>,
+    /// Keyframe clipboard is separate from both pixel and clip clipboard contents.
+    pub timeline_key_clipboard: Option<Vec<Value>>,
+    pub timeline_key_clipboard_document: Option<photostore_doc::DocId>,
     /// Layer › Layer Style › Copy Layer Style: effects, blend mode, fill opacity and the Advanced
     /// Blending switches.
     pub style_clipboard: Option<(photostore_doc::Effects, photostore_color::BlendMode, f32, photostore_doc::AdvancedBlending)>,
@@ -377,6 +397,28 @@ pub struct Session {
     pub update_service: Option<update_cmds::UpdateService>,
 }
 
+#[derive(Clone, Debug)]
+pub struct TimelineClipSnapshot {
+    pub layer: photostore_doc::Layer,
+    pub ranges: Vec<photostore_doc::LayerTimelineRange>,
+    pub tracks: Vec<photostore_doc::VisualTrack>,
+    pub frame_states: Vec<(usize, photostore_doc::FrameLayerState)>,
+    pub property_frames: Vec<(usize, photostore_doc::FrameLayerState)>,
+    pub linked_audio: Vec<TimelineAudioClipSnapshot>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TimelineAudioClipSnapshot {
+    pub clip: photostore_doc::AudioClip,
+    pub track: photostore_doc::AudioTrack,
+}
+
+#[derive(Clone, Debug)]
+pub struct TimelineAttributeSnapshot {
+    pub layer: photostore_doc::Layer,
+    pub range: photostore_doc::LayerTimelineRange,
+}
+
 /// Move item `i` of `v` to position `to`, clamped to the end. Returns where it went; `None` when
 /// `i` is out of range.
 pub fn move_item<T>(v: &mut Vec<T>, i: usize, to: usize) -> Option<usize> {
@@ -409,6 +451,11 @@ impl Session {
     pub fn set_active(&mut self, index: usize) -> bool {
         if index < self.docs.len() {
             self.active = Some(index);
+            let active_id = self.docs[index].doc.id;
+            if self.timeline_selected_audio_document != Some(active_id) {
+                self.timeline_selected_audio.clear();
+                self.timeline_selected_audio_document = Some(active_id);
+            }
             true
         } else {
             false
@@ -438,6 +485,8 @@ impl Session {
         self.docs.push(st);
         let i = self.docs.len() - 1;
         self.active = Some(i);
+        self.timeline_selected_audio.clear();
+        self.timeline_selected_audio_document = self.docs.get(i).map(|state| state.doc.id);
         i
     }
 
@@ -465,6 +514,11 @@ impl Session {
                 _ => index.min(self.docs.len() - 1),
             })
         };
+        let active_id = self.active().map(|state| state.doc.id);
+        if self.timeline_selected_audio_document != active_id {
+            self.timeline_selected_audio.clear();
+            self.timeline_selected_audio_document = active_id;
+        }
         Ok(Some(d))
     }
 

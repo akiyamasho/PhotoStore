@@ -13,6 +13,16 @@ use crate::theme::Tokens;
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct TimelineUi {
     pub open: bool,
+    /// Current-document source bin in the video-editing workspace.
+    #[serde(default = "default_true")]
+    pub media_open: bool,
+    /// The last pointer interaction landed on the video preview, for scoped gestures such as
+    /// holding Command to suppress alignment while moving its content.
+    #[serde(skip)]
+    pub preview_context: Option<photostore_doc::DocId>,
+    /// Whether clip body moves carry following clips on the same tracks.
+    #[serde(default)]
+    pub ripple_move: bool,
     /// Playing back (auto-advancing the playhead at the frame rate).
     #[serde(default)]
     pub playing: bool,
@@ -103,6 +113,9 @@ impl Default for TimelineUi {
     fn default() -> Self {
         Self {
             open: false,
+            media_open: true,
+            preview_context: None,
+            ripple_move: false,
             playing: false,
             zoom: 1.0,
             snap_frames: true,
@@ -137,7 +150,7 @@ impl Default for TimelineUi {
     }
 }
 
-fn linked_movie_thumbnail(surface: &photostore_raster::Surface, bounds: photostore_geom::Rect) -> egui::ColorImage {
+pub(crate) fn linked_movie_thumbnail(surface: &photostore_raster::Surface, bounds: photostore_geom::Rect) -> egui::ColorImage {
     let (width, height) = (bounds.width().max(0) as usize, bounds.height().max(0) as usize);
     if width == 0 || height == 0 {
         return egui::ColorImage::new([1, 1], vec![egui::Color32::TRANSPARENT]);
@@ -472,6 +485,8 @@ pub fn menu(app: &mut PhotoStoreApp, ctx: &egui::Context, id: &str, params: &Val
 /// Render the Timeline panel.
 pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
     if !app.ui.timeline.open {
+        app.ui.timeline.preview_context = None;
+        parent.ctx().data_mut(|data| data.remove::<u64>(egui::Id::new("timeline-scoped-context")));
         return;
     }
     if !app.ui.timeline.zoom.is_finite() || !(0.25..=8.0).contains(&app.ui.timeline.zoom) {
@@ -480,6 +495,18 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
     let ctx = parent.ctx().clone();
     let doc_snapshot = app.session.active().map(|d| (d.doc.clone(), d.active_layer));
     let tl = doc_snapshot.as_ref().and_then(|(doc, _)| doc.timeline.as_ref());
+    if let Some(timeline) = tl.filter(|timeline| matches!(timeline.mode, photostore_doc::TimelineMode::Video)) {
+        crate::video_clip_ui::workspace(app, parent, timeline);
+        timeline_shortcut_help(app, parent);
+        if app.ui.timeline.playing && !app.timeline_playback.playing {
+            let mut runtime = std::mem::take(&mut app.timeline_playback);
+            runtime.play(app, ctx.input(|i| i.time));
+            app.timeline_playback = runtime;
+        }
+        crate::timeline_playback::tick(app, &ctx);
+        app.ui.timeline.playing = app.timeline_playback.playing;
+        return;
+    }
     let have_doc = doc_snapshot.is_some();
     let layer_rows: Vec<(u64, String, bool)> =
         doc_snapshot.as_ref().map(|(doc, _)| doc.layers.iter().map(|l| (l.id.0, l.name.clone(), l.video.is_some())).collect()).unwrap_or_default();
@@ -574,7 +601,7 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                     if crate::icons::button(ui, play_icon, 22.0, playing, if playing { tl!("Pause") } else { tl!("Play") }).clicked() {
                         toggle_play = true;
                     }
-                    if crate::icons::button(ui, "chevron-left", 22.0, false, tl!("Previous frame")).clicked() {
+                    if crate::icons::button(ui, "chevrons-left", 22.0, false, tl!("Previous frame")).clicked() {
                         act = Some(("timeline.previousFrame", json!({})));
                     }
                     ui.label(
@@ -670,7 +697,7 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                         if crate::widgets::secondary_button(ui, "−", 28.0).clicked() { act = Some(("timeline.deleteFrame", json!({}))); }
                         ui.label(RichText::new(tl!("Frames")).color(t.text_dim));
                         let total_pages = (tl.duration.max(1) + 47) / 48;
-                        if crate::icons::button(ui, "chevron-left", 20.0, app.ui.timeline.thumb_page > 0, tl!("Previous frame page")).clicked() { app.ui.timeline.thumb_page = app.ui.timeline.thumb_page.saturating_sub(1); }
+                        if crate::icons::button(ui, "chevrons-left", 20.0, app.ui.timeline.thumb_page > 0, tl!("Previous frame page")).clicked() { app.ui.timeline.thumb_page = app.ui.timeline.thumb_page.saturating_sub(1); }
                         ui.label(format!("{}/{}", app.ui.timeline.thumb_page + 1, total_pages));
                         if crate::icons::button(ui, "chevron-right", 20.0, app.ui.timeline.thumb_page + 1 < total_pages, tl!("Next frame page")).clicked() { app.ui.timeline.thumb_page = (app.ui.timeline.thumb_page + 1).min(total_pages.saturating_sub(1)); }
                         ui.separator();
@@ -872,4 +899,273 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
     }
     crate::timeline_playback::tick(app, &ctx);
     app.ui.timeline.playing = app.timeline_playback.playing;
+}
+
+fn timeline_shortcut_help(app: &mut PhotoStoreApp, parent: &mut Ui) {
+    let ctx = parent.ctx().clone();
+    let open_id = egui::Id::new("timeline-shortcut-help-open");
+    let mut open = ctx.data_mut(|data| data.get_persisted::<bool>(open_id)).unwrap_or(false);
+    if !open {
+        return;
+    }
+    let query_id = egui::Id::new("timeline-shortcut-help-query");
+    let mut query = ctx.data_mut(|data| data.get_persisted::<String>(query_id)).unwrap_or_default();
+    let mut edit = false;
+    let mut close_requested = false;
+    egui::Window::new("Timeline shortcuts").id(open_id).open(&mut open).default_width(460.0).show(parent.ctx(), |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Search");
+            ui.add(egui::TextEdit::singleline(&mut query).desired_width(250.0));
+            if ui.button("Edit shortcuts…").clicked() {
+                edit = true;
+                close_requested = true;
+            }
+        });
+        ui.label(
+            RichText::new("These bindings apply after you interact with the timeline workspace. Text entry and modal controls keep their own keys.")
+                .small()
+                .color(Tokens::get(ui.ctx()).text_dim),
+        );
+        ui.separator();
+        egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+            for (id, label, binding) in crate::shortcuts::TIMELINE_SHORTCUTS {
+                if !query.is_empty() && !label.to_lowercase().contains(&query.to_lowercase()) && !id.to_lowercase().contains(&query.to_lowercase()) {
+                    continue;
+                }
+                let shortcut = app.session.prefs().shortcuts_for(id, binding.map(str::to_string).as_deref()).into_iter().collect::<Vec<_>>().join(" · ");
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(*label).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(if shortcut.is_empty() { "Unbound".to_string() } else { shortcut });
+                    });
+                });
+            }
+            ui.separator();
+            ui.label(RichText::new("CapCut 9.5.0 · Shortcut 1 reference (107 actions and gestures)").strong());
+            let mut last_category = String::new();
+            for (category, action, binding) in crate::shortcuts::capcut_reference_rows() {
+                let mapping = crate::shortcuts::capcut_reference_mapping(&action, &binding);
+                let query = query.to_lowercase();
+                if !query.is_empty()
+                    && !category.to_lowercase().contains(&query)
+                    && !action.to_lowercase().contains(&query)
+                    && !binding.to_lowercase().contains(&query)
+                    && !mapping.to_lowercase().contains(&query)
+                {
+                    continue;
+                }
+                if category != last_category {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(&category).strong().color(Tokens::get(ui.ctx()).accent));
+                    last_category = category;
+                }
+                ui.horizontal(|ui| {
+                    ui.label(&action);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(mapping).small().color(Tokens::get(ui.ctx()).text_dim));
+                        ui.label(RichText::new(binding).monospace().small());
+                    });
+                });
+            }
+        });
+    });
+    if close_requested {
+        open = false;
+    }
+    ctx.data_mut(|data| {
+        data.insert_persisted(open_id, open);
+        data.insert_persisted(query_id, query);
+    });
+    if edit {
+        let _ = crate::menus::invoke(app, &ctx, "edit.keyboardShortcuts", json!({}));
+    }
+}
+
+/// A small source bin for the active document; it never indexes the user's filesystem or global
+/// project library. Each existing source/content identity appears once.
+pub fn media_bin(app: &mut PhotoStoreApp, parent: &mut Ui) {
+    if !app.ui.timeline.open || !app.ui.timeline.media_open {
+        return;
+    }
+    let Some(active) = app.session.active() else { return };
+    let Some(timeline) = active.doc.timeline.as_ref().filter(|t| matches!(t.mode, photostore_doc::TimelineMode::Video)) else { return };
+    let doc = active.doc.clone();
+    let doc_id = doc.id;
+    let current = timeline.current.min(timeline.duration.saturating_sub(1));
+    let tokens = Tokens::get(parent.ctx());
+    let panel = egui::Panel::left("timeline-media-bin")
+        .resizable(true)
+        .default_size(230.0)
+        .size_range(egui::Rangef::new(170.0, 340.0))
+        .frame(egui::Frame::NONE.fill(tokens.card).inner_margin(egui::Margin::same(8)))
+        .show(parent, |ui| {
+            ui.horizontal(|ui| {
+                ui.heading("Media");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("×").on_hover_text("Close media bin").clicked() {
+                        app.ui.timeline.media_open = false;
+                    }
+                    if ui.button("Import…").clicked() {
+                        if let Err(error) = crate::menus::invoke(app, ui.ctx(), "file.placeEmbedded", json!({})) {
+                            app.ui.status = error;
+                            app.ui.status_error = true;
+                        }
+                    }
+                    if ui.button("Audio…").on_hover_text("Import an audio clip").clicked() {
+                        let mut track = doc.timeline.as_ref().and_then(|timeline| timeline.audio_tracks.first().map(|track| track.id));
+                        if track.is_none() {
+                            match app.run("timeline.addAudioTrack", json!({"document":doc_id.0})) {
+                                Ok(result) => track = result.get("track").and_then(Value::as_u64),
+                                Err(error) => {
+                                    app.ui.status = error;
+                                    app.ui.status_error = true;
+                                }
+                            }
+                        }
+                        if let Some(track) = track {
+                            if let Some(Err(error)) =
+                                crate::audio_ui::invoke(app, ui.ctx(), "timeline.addAudioClip", &json!({"document":doc_id.0,"track":track}))
+                            {
+                                app.ui.status = error;
+                                app.ui.status_error = true;
+                            }
+                        }
+                    }
+                });
+            });
+            ui.label(RichText::new("This document").small().color(tokens.text_dim));
+            ui.separator();
+            let mut seen = std::collections::HashSet::new();
+            let mut sources = Vec::new();
+            for (_, _, layer) in doc.walk() {
+                let identity = if let Some(video) = &layer.video {
+                    match &video.source {
+                        photostore_doc::VideoSource::File { path } => format!("video:{path}"),
+                        photostore_doc::VideoSource::Blank => format!("layer:{}", layer.id.0),
+                    }
+                } else if let photostore_doc::LayerContent::Smart(smart) = &layer.content {
+                    format!("smart:{}", smart.contents_id.0)
+                } else {
+                    format!("layer:{}", layer.id.0)
+                };
+                if seen.insert(identity) {
+                    sources.push((layer.id, layer.name.clone(), layer.content.kind_name().to_string()));
+                }
+            }
+            if sources.is_empty() {
+                ui.label(RichText::new("Import an image or video to add a source.").color(tokens.text_dim));
+            }
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                for (layer_id, name, kind) in sources {
+                    let Some(layer) = doc.layer(layer_id) else { continue };
+                    let row_id = egui::Id::new(("timeline-media-source", doc_id.0, layer_id.0));
+                    ui.push_id(row_id, |ui| {
+                        let selected = app.session.active().is_some_and(|st| st.selected_layers.contains(&layer_id));
+                        let frame = egui::Frame::group(ui.style()).fill(if selected { tokens.accent.gamma_multiply(0.14) } else { tokens.field });
+                        frame.show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let thumb_key = format!("media-bin:{}:{}:{}", doc_id.0, layer_id.0, history_pair(app, doc_id));
+                                let texture = app.ui.timeline.frame_thumbs.iter().find(|(key, _)| key == &thumb_key).map(|(_, tex)| tex.id()).or_else(|| {
+                                    let surface = if let Some(video) = layer.video.as_ref() {
+                                        if let (Some(movie), photostore_doc::VideoSource::File { path }) = (&video.movie_backing, &video.source) {
+                                            let source_frame = photostore_engine::source_frame_for_layer(&doc, layer, current).unwrap_or(movie.trim_in_frame);
+                                            match photostore_engine::movie_cache::frame_thumbnail(path, source_frame, doc.pixel_format()) {
+                                                Ok(Some(surface)) => Some(surface),
+                                                Ok(None) => {
+                                                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
+                                                    None
+                                                }
+                                                Err(error) => {
+                                                    app.ui.status = error;
+                                                    app.ui.status_error = true;
+                                                    None
+                                                }
+                                            }
+                                        } else {
+                                            video.frames.first().cloned()
+                                        }
+                                    } else {
+                                        layer.surface().cloned()
+                                    };
+                                    surface.map(|surface| {
+                                        let image = linked_movie_thumbnail(&surface, doc.bounds());
+                                        let handle = ui.ctx().load_texture(thumb_key.clone(), image, egui::TextureOptions::LINEAR);
+                                        let id = handle.id();
+                                        app.ui.timeline.frame_thumbs.push((thumb_key.clone(), handle));
+                                        id
+                                    })
+                                });
+                                let thumb_response = if let Some(texture) = texture {
+                                    ui.add(
+                                        egui::Image::new((texture, vec2(56.0, 42.0))).fit_to_exact_size(vec2(56.0, 42.0)).sense(egui::Sense::click_and_drag()),
+                                    )
+                                } else {
+                                    let (rect, response) = ui.allocate_exact_size(vec2(56.0, 42.0), egui::Sense::click_and_drag());
+                                    ui.painter_at(rect).text(
+                                        rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        "◈",
+                                        egui::FontId::proportional(20.0),
+                                        tokens.text_dim,
+                                    );
+                                    response
+                                };
+                                if thumb_response.clicked() {
+                                    let _ =
+                                        app.with_document(doc_id, |app| app.run("timeline.editor.select", json!({"document":doc_id.0,"layers":[layer_id.0]})));
+                                    crate::audio_ui::clear_selection(ui.ctx(), doc_id);
+                                }
+                                if thumb_response.drag_stopped()
+                                    && let Some(pos) = thumb_response.interact_pointer_pos()
+                                    && ui
+                                        .ctx()
+                                        .data(|data| data.get_temp::<egui::Rect>(egui::Id::new("timeline-media-drop-target")))
+                                        .is_some_and(|rect| rect.contains(pos))
+                                {
+                                    add_source_to_timeline(app, doc_id, layer_id, current);
+                                }
+                                ui.vertical(|ui| {
+                                    let source_response = ui.selectable_label(selected, RichText::new(&name).strong());
+                                    if source_response.clicked() {
+                                        if let Err(error) = app
+                                            .with_document(doc_id, |app| app.run("timeline.editor.select", json!({"document":doc_id.0,"layers":[layer_id.0]})))
+                                        {
+                                            app.ui.status = error;
+                                            app.ui.status_error = true;
+                                        }
+                                        crate::audio_ui::clear_selection(ui.ctx(), doc_id);
+                                    }
+                                    if source_response.double_clicked() {
+                                        add_source_to_timeline(app, doc_id, layer_id, current);
+                                    }
+                                    ui.label(RichText::new(kind).small().color(tokens.text_dim));
+                                    if ui.small_button("Add at playhead").clicked() {
+                                        add_source_to_timeline(app, doc_id, layer_id, current);
+                                    }
+                                });
+                            });
+                        });
+                    });
+                }
+            });
+        });
+    if parent.ctx().input(|i| i.pointer.any_pressed()) {
+        let inside = parent.ctx().input(|i| i.pointer.press_origin()).is_some_and(|pos| panel.response.rect.contains(pos));
+        parent.ctx().data_mut(|data| {
+            if inside {
+                data.insert_persisted(egui::Id::new("timeline-scoped-context"), doc_id.0);
+            }
+        });
+    }
+}
+
+fn history_pair(app: &PhotoStoreApp, doc: photostore_doc::DocId) -> String {
+    app.session.active().filter(|s| s.doc.id == doc).map_or_else(|| "0:0".into(), |s| format!("{}:{}", s.history.past_len(), s.history.future_len()))
+}
+
+fn add_source_to_timeline(app: &mut PhotoStoreApp, doc: photostore_doc::DocId, source: photostore_doc::LayerId, start: usize) {
+    if let Err(error) = app.with_document(doc, |app| app.run("timeline.editor.duplicate", json!({"document":doc.0,"layers":[source.0],"frame":start}))) {
+        app.ui.status = error;
+        app.ui.status_error = true;
+    }
 }

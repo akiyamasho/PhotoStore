@@ -141,6 +141,7 @@ pub(crate) fn read_manifest(src: &dyn Source, opts: &LoadOptions) -> Result<Mani
     m.document.layers = layers_from_json(layers)?;
     crate::convert::validate_opacity_manifest_layers(&m.document.layers)?;
     crate::convert::validate_timeline_positions(m.document.timeline.as_ref())?;
+    crate::convert::validate_timeline_manifest_layer_refs(m.document.timeline.as_ref(), &m.document.layers)?;
     Ok(m)
 }
 
@@ -507,6 +508,7 @@ impl PcraftWriter {
         convert::check_nesting(&doc.layers)?;
         convert::validate_opacity_document_layers(&doc.layers)?;
         convert::validate_timeline_positions(doc.timeline.as_ref())?;
+        convert::validate_timeline_document_layer_refs(doc.timeline.as_ref(), &doc.layers)?;
         convert::validate_movie_backings(&doc.layers)?;
         if let Some(recording) = &doc.recording {
             convert::validate_recording(recording)?;

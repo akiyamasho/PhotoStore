@@ -289,7 +289,7 @@ mod tests {
         let id = app.run("type.create", json!({"text": "Hello world", "size": 40, "x": 20, "y": 100, "color": "#ffffff"})).unwrap()["layer"].as_u64().unwrap();
         app.ui.tool = Tool::Type;
         app.ui.text_edit =
-            Some(crate::state::TextEdit { layer: id, caret: 0, anchor: 5, session: "s".into(), created: false, dragging: false, resize: None, preedit: None });
+            Some(crate::state::TextEdit { layer: id, caret: 0, anchor: 5, session: "s".into(), created: false, dragging: false, resize: None, resize_origin: None, preedit: None });
         // Recolour with a visible colour: put Red first.
         app.run("swatches.move", json!({"swatch": "Red", "to": "Grays", "position": 0})).unwrap();
         let mut h = Harness::builder().with_size(vec2(300.0, 300.0)).build_ui_state(|ui, app: &mut PhotoStoreApp| panel(app, ui), app);

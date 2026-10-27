@@ -50,11 +50,12 @@ pub use vector::{
     ClippingPath, FillRule, Knot, LineCap, LineJoin, LiveShape, NamedPath, Path, PathOp, ShapeLayer, ShapeStroke, StrokeAlign, Subpath, VectorMask,
 };
 pub use video::{
-    AudioClip, AudioTrack, FrameEffectsState, FrameLayerState, LayerTimelineRange, MAX_OPACITY_ANIMATION_FRAME, MAX_OPACITY_ANIMATION_KEYS,
+    AudioClip, AudioTrack, ClipPlayback, FrameEffectsState, FrameLayerState, LayerTimelineRange, SpeedCurvePoint, MAX_OPACITY_ANIMATION_FRAME, MAX_OPACITY_ANIMATION_KEYS,
     MAX_OPACITY_ANIMATION_TRACKS, MAX_POSITION_ANIMATION_FRAME, MAX_POSITION_ANIMATION_KEYS, MAX_POSITION_ANIMATION_TRACKS, MAX_POSITION_COORDINATE,
     MAX_TRANSFORM_ANIMATION_FRAME, MAX_TRANSFORM_ANIMATION_KEYS, MovieBacking, OnionSkinBlend, OnionSkinSettings, OpacityAnimation, OpacityInterpolation,
     OpacityKeyframe, PositionAnimation, PositionInterpolation, PositionKeyframe, Timeline, TimelineLoop, TimelineMode, TransformAnimation,
-    TransformInterpolation, TransformKeyframe, TransformValue, VideoData, VideoKeyframe, VideoPlayback, VideoSource,
+    TimelineMarker, TransformInterpolation, TransformKeyframe, TransformValue, VideoData, VideoKeyframe, VideoPlayback, VideoSource, VisualTrack,
+    VisualTrackKind,
 };
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);

@@ -485,6 +485,8 @@ fn open_audio_document(name: &str, path: &str) -> Result<Document> {
             duration_seconds: audio.duration_seconds,
             source_duration_seconds: audio.duration_seconds,
             speed: 1.0,
+            speed_curve: Vec::new(),
+            speed_curve_offset_frames: 0,
             volume: 1.0,
             fade_in_seconds: 0.0,
             fade_out_seconds: 0.0,

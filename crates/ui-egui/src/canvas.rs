@@ -62,8 +62,14 @@ fn ensure_onion_skin(app: &mut PhotoStoreApp, painter: &egui::Painter, idx: usiz
         app.onion_preview = None;
         return None;
     }
-    let Some(st) = app.session.documents().get(idx) else { app.onion_preview = None; return None };
-    let Some(timeline) = &st.doc.timeline else { app.onion_preview = None; return None };
+    let Some(st) = app.session.documents().get(idx) else {
+        app.onion_preview = None;
+        return None;
+    };
+    let Some(timeline) = &st.doc.timeline else {
+        app.onion_preview = None;
+        return None;
+    };
     let settings = timeline.onion_settings.normalized();
     let current = timeline.current.min(timeline.duration.saturating_sub(1));
     let spacing = settings.spacing.max(1) as usize;
@@ -74,7 +80,9 @@ fn ensure_onion_skin(app: &mut PhotoStoreApp, painter: &egui::Painter, idx: usiz
     }
     for distance in 1..=settings.frames_after as usize {
         let Some(frame) = current.checked_add(distance.saturating_mul(spacing)) else { break };
-        if frame >= timeline.duration { break; }
+        if frame >= timeline.duration {
+            break;
+        }
         frames.push((frame, distance, false));
     }
     if frames.is_empty() {
@@ -118,7 +126,10 @@ fn ensure_onion_skin(app: &mut PhotoStoreApp, painter: &egui::Painter, idx: usiz
         }
         let image = display_image(display.as_deref(), &combined);
         let texture = match app.onion_preview.take() {
-            Some(mut cache) => { cache.texture.set(image, TextureOptions::LINEAR); cache.texture }
+            Some(mut cache) => {
+                cache.texture.set(image, TextureOptions::LINEAR);
+                cache.texture
+            }
             None => painter.ctx().load_texture("timeline-onion-skin", image, TextureOptions::LINEAR),
         };
         app.onion_preview = Some(OnionSkinCache { key, texture });
@@ -136,7 +147,9 @@ fn render_onion_frame(doc: &Document, frame: usize, w: u32, h: u32) -> photostor
 }
 
 fn onion_opacity(min: f32, max: f32, distance: usize, count: usize) -> f32 {
-    if count <= 1 { return max.clamp(0.0, 1.0); }
+    if count <= 1 {
+        return max.clamp(0.0, 1.0);
+    }
     let t = (count.saturating_sub(distance) as f32 / (count - 1) as f32).clamp(0.0, 1.0);
     (min + (max - min) * t).clamp(0.0, 1.0)
 }
@@ -164,7 +177,10 @@ fn draw_clone_preview(app: &mut PhotoStoreApp, painter: &egui::Painter, xf: &Vie
     if !radius.is_finite() || radius <= 0.0 || radius > 500.0 || !at.iter().all(|v| v.is_finite() && v.abs() < 1_000_000.0) {
         return;
     }
-    let first = app.drag.as_ref().filter(|d| matches!(d.tool, Tool::CloneStamp | Tool::Healing))
+    let first = app
+        .drag
+        .as_ref()
+        .filter(|d| matches!(d.tool, Tool::CloneStamp | Tool::Healing))
         .and_then(|d| d.points.first().map(|p| [p[0], p[1]]).or(Some(d.start)))
         .unwrap_or(at);
     let Some(map) = crate::preset_panels::clone_mapping(app, first) else { return };
@@ -1900,7 +1916,13 @@ fn pro_tab_title(app: &PhotoStoreApp, i: usize) -> String {
     let active_layer = st.active_layer.and_then(|id| st.doc.layer(id)).filter(|l| !(l.name == "Background" && l.locks.transparency));
     let mask = app.session.active_index() == Some(i) && app.ui.mask_target && active_layer.is_some_and(|l| l.mask.is_some());
     let filter_mask = app.session.active_index() == Some(i) && app.filter_mask_targeted();
-    let model = if filter_mask { tl!("Filter Mask").to_string() } else if mask { tl!("Layer Mask").to_string() } else { mode_label(&st.doc).to_string() };
+    let model = if filter_mask {
+        tl!("Filter Mask").to_string()
+    } else if mask {
+        tl!("Layer Mask").to_string()
+    } else {
+        mode_label(&st.doc).to_string()
+    };
     let layer = active_layer.map(|l| format!("{}, ", l.name)).unwrap_or_default();
     format!("{} @ {}% ({layer}{model}/{}){}", st.doc.name, fmt_zoom(zoom), st.doc.depth.bits(), if st.is_dirty() { "*" } else { "" })
 }
@@ -2349,6 +2371,15 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
     let pixel_grid = app.ui.view.shows(app.ui.view.show.pixel_grid);
     // Only the foreground bar rect owns pointer input; the rest of the canvas remains usable.
     let response = ui.allocate_rect(rect, Sense::click_and_drag());
+    let video_preview = doc.timeline.as_ref().is_some_and(|timeline| matches!(timeline.mode, photostore_doc::TimelineMode::Video));
+    if response.hovered() && (response.clicked() || response.drag_started()) {
+        app.ui.timeline.preview_context = video_preview.then_some(doc.id);
+        if video_preview {
+            ctx.data_mut(|data| data.insert_persisted(egui::Id::new("timeline-scoped-context"), doc.id.0));
+        } else {
+            ctx.data_mut(|data| data.remove::<u64>(egui::Id::new("timeline-scoped-context")));
+        }
+    }
     let painter = ui.painter_at(rect);
 
     match crate::prefs_ui::pasteboard_color(app) {
@@ -3730,7 +3761,7 @@ pub(crate) fn composite_color(app: &mut PhotoStoreApp, x: f64, y: f64) -> Option
 fn tool_move(app: &mut PhotoStoreApp, x: f64, y: f64, pressure: f32, mods: egui::Modifiers) {
     let tool = app.active_tool();
     if tool.is_type() && app.drag.is_none() {
-        crate::type_tool::pointer_move(app, x, y);
+        crate::type_tool::pointer_move(app, x, y, mods.alt);
     }
     if tool == Tool::Pen {
         crate::vector_ui::pen_move(app, x, y);
@@ -4450,7 +4481,13 @@ pub fn paint_target(app: &PhotoStoreApp) -> serde_json::Value {
     let has_mask = st.active_layer.and_then(|id| st.doc.layer(id)).is_some_and(|l| l.mask.is_some());
     // Viewing the mask (⌥-click its thumbnail, #196) paints the mask.
     let viewing = photostore_engine::mask_view_cmds::current(st).is_some();
-    json!(if app.filter_mask_targeted() { "filterMask" } else if (app.ui.mask_target || viewing) && has_mask { "mask" } else { "pixels" })
+    json!(if app.filter_mask_targeted() {
+        "filterMask"
+    } else if (app.ui.mask_target || viewing) && has_mask {
+        "mask"
+    } else {
+        "pixels"
+    })
 }
 
 #[cfg(test)]

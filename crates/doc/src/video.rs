@@ -18,6 +18,24 @@ pub const MAX_POSITION_COORDINATE: i32 = 1_000_000;
 pub const MAX_TRANSFORM_ANIMATION_KEYS: usize = 100_000;
 pub const MAX_TRANSFORM_ANIMATION_FRAME: usize = 999_999;
 
+/// Map the common linear/hold/ease interpolation order used by the three keyframe domains.
+fn eased_progress(mode: u8, t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    match mode {
+        1 => 0.0,
+        2 => t * t,
+        3 => 1.0 - (1.0 - t) * (1.0 - t),
+        4 => {
+            if t < 0.5 {
+                2.0 * t * t
+            } else {
+                1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
+            }
+        }
+        _ => t,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TransformValue {
     pub scale_x: f64,
@@ -30,10 +48,13 @@ impl Default for TransformValue {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum TransformInterpolation {
     Linear,
     Hold,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TransformKeyframe {
@@ -103,7 +124,7 @@ impl TransformAnimation {
         if a.interpolation == TransformInterpolation::Hold {
             return a.value;
         }
-        let t = (frame - a.frame) as f64 / (b.frame - a.frame) as f64;
+        let t = eased_progress(a.interpolation as u8, (frame - a.frame) as f64 / (b.frame - a.frame) as f64);
         TransformValue {
             scale_x: a.value.scale_x + (b.value.scale_x - a.value.scale_x) * t,
             scale_y: a.value.scale_y + (b.value.scale_y - a.value.scale_y) * t,
@@ -173,10 +194,13 @@ impl TransformAnimation {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum OpacityInterpolation {
     Linear,
     Hold,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -220,7 +244,7 @@ impl OpacityAnimation {
         }
         let span = b.frame.saturating_sub(a.frame) as f32;
         let elapsed = frame.saturating_sub(a.frame) as f32;
-        if span <= 0.0 { av } else { (av + (value(b.value) - av) * (elapsed / span)).clamp(0.0, 1.0) }
+        if span <= 0.0 { av } else { (av + (value(b.value) - av) * eased_progress(a.interpolation as u8, f64::from(elapsed / span)) as f32).clamp(0.0, 1.0) }
     }
 
     pub fn validate(&self) -> std::result::Result<(), String> {
@@ -254,10 +278,13 @@ impl OpacityAnimation {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum PositionInterpolation {
     Linear,
     Hold,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,7 +327,7 @@ impl PositionAnimation {
             return (a.x, a.y);
         }
         let span = (b.frame - a.frame) as f64;
-        let t = (frame - a.frame) as f64 / span;
+        let t = eased_progress(a.interpolation as u8, (frame - a.frame) as f64 / span);
         let interp = |av: i32, bv: i32| (f64::from(av) + (f64::from(bv) - f64::from(av)) * t).round() as i32;
         (interp(a.x, b.x), interp(a.y, b.y))
     }
@@ -455,6 +482,10 @@ pub struct AudioClip {
     pub source_duration_seconds: f64,
     #[serde(default = "default_clip_speed")]
     pub speed: f64,
+    #[serde(default)]
+    pub speed_curve: Vec<SpeedCurvePoint>,
+    #[serde(default)]
+    pub speed_curve_offset_frames: usize,
     #[serde(default = "default_clip_volume")]
     pub volume: f64,
     #[serde(default)]
@@ -619,6 +650,186 @@ pub struct LayerTimelineRange {
     pub layer: LayerId,
     pub start: usize,
     pub end: usize,
+    #[serde(default = "default_clip_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub playback: Option<ClipPlayback>,
+}
+
+fn default_clip_enabled() -> bool {
+    true
+}
+fn default_true() -> bool {
+    true
+}
+
+/// Optional common source timing for visual clips. When absent, video playback uses the
+/// legacy `VideoData::playback` source-in/speed pair.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ClipPlayback {
+    #[serde(default)]
+    pub source_in_seconds: f64,
+    #[serde(default = "default_clip_speed")]
+    pub speed: f64,
+    #[serde(default)]
+    pub speed_curve: Vec<SpeedCurvePoint>,
+    #[serde(default)]
+    pub speed_curve_offset_frames: usize,
+}
+impl Default for ClipPlayback {
+    fn default() -> Self {
+        Self { source_in_seconds: 0.0, speed: 1.0, speed_curve: Vec::new(), speed_curve_offset_frames: 0 }
+    }
+}
+/// A clip-local playback rate. Rates are interpolated linearly over output timeline time.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpeedCurvePoint {
+    pub frame: usize,
+    pub speed: f64,
+}
+impl ClipPlayback {
+    /// Integrate the speed curve over `frames` output frames using analytic trapezoids.
+    pub fn source_delta_seconds(&self, frames: usize, fps: f64) -> f64 {
+        let fps = fps.max(0.001);
+        if self.speed_curve.is_empty() || self.speed_curve.len() == 1 || self.speed_curve.windows(2).any(|pair| pair[0].frame >= pair[1].frame) {
+            return frames as f64 / fps * self.speed;
+        }
+        let start = self.speed_curve_offset_frames as f64;
+        let end = start + frames as f64;
+        let mut cursor = start;
+        let mut total = 0.0;
+        let mut speed_at = |at: f64| {
+            let points = &self.speed_curve;
+            if at <= points[0].frame as f64 {
+                return points[0].speed;
+            }
+            for pair in points.windows(2) {
+                let a = pair[0];
+                let b = pair[1];
+                if at <= b.frame as f64 {
+                    let f = (at - a.frame as f64) / (b.frame - a.frame) as f64;
+                    return a.speed + (b.speed - a.speed) * f;
+                }
+            }
+            points.last().map_or(self.speed, |p| p.speed)
+        };
+        while cursor < end {
+            let next = self.speed_curve.iter().map(|p| p.frame as f64).find(|frame| *frame > cursor).unwrap_or(end).min(end);
+            let v0 = speed_at(cursor);
+            let v1 = speed_at(next);
+            total += (next - cursor) / fps * (v0 + v1) * 0.5;
+            if next <= cursor {
+                break;
+            }
+            cursor = next;
+        }
+        total
+    }
+
+    /// Restore `frames` of source from the left edge of a previously trimmed clip.
+    /// The returned mapping keeps the old clip start at the same source time, even
+    /// when the clip uses a piecewise-linear speed curve.
+    pub fn extend_left(&self, frames: usize, fps: f64) -> Result<Self, String> {
+        if !self.source_in_seconds.is_finite() || self.source_in_seconds < 0.0 {
+            return Err("clip has an invalid source in-point".into());
+        }
+        let mut restored = self.clone();
+        if frames == 0 {
+            return Ok(restored);
+        }
+        if restored.speed_curve_offset_frames < frames {
+            let shift = frames - restored.speed_curve_offset_frames;
+            if let Some(first) = restored.speed_curve.first().copied() {
+                let mut points = Vec::with_capacity(restored.speed_curve.len() + 1);
+                points.push(SpeedCurvePoint { frame: 0, speed: first.speed });
+                for point in &restored.speed_curve {
+                    let frame = point.frame.checked_add(shift)
+                        .filter(|frame| *frame <= 999_999)
+                        .ok_or_else(|| "restored speed curve exceeds the supported clip length".to_string())?;
+                    points.push(SpeedCurvePoint { frame, speed: point.speed });
+                }
+                restored.speed_curve = points;
+            }
+            restored.speed_curve_offset_frames = 0;
+        } else {
+            restored.speed_curve_offset_frames -= frames;
+        }
+        let source_delta = restored.source_delta_seconds(frames, fps);
+        if !source_delta.is_finite() || source_delta < 0.0
+            || source_delta > restored.source_in_seconds + 1e-9 {
+            return Err("left trim cannot be restored past the beginning of the source".into());
+        }
+        restored.source_in_seconds = (restored.source_in_seconds - source_delta).max(0.0);
+        restored.validate_speed_curve()?;
+        Ok(restored)
+    }
+
+    pub fn validate_speed_curve(&self) -> std::result::Result<(), String> {
+        if self.speed_curve.len() > 256 {
+            return Err("speed curve exceeds 256 points".into());
+        }
+        if !self.speed_curve.is_empty() && (self.speed_curve.len() < 2 || self.speed_curve[0].frame != 0) {
+            return Err("speed curve must contain endpoints and begin at frame 0".into());
+        }
+        if self.speed_curve.iter().any(|p| !p.speed.is_finite() || !(0.01..=100.0).contains(&p.speed)) {
+            return Err("speed curve rates must be finite and in 0.01..=100".into());
+        }
+        if self.speed_curve.windows(2).any(|w| w[0].frame >= w[1].frame) {
+            return Err("speed curve frames must be strictly increasing".into());
+        }
+        Ok(())
+    }
+}
+impl LayerTimelineRange {
+    /// Resolve clip-local timeline time to source seconds. The range override is the canonical
+    /// new value; legacy media timing supplies the fallback for older documents.
+    pub fn source_time_seconds(&self, frame: usize, fps: f64, legacy_source_in: f64, legacy_speed: f64) -> f64 {
+        let elapsed = frame.saturating_sub(self.start);
+        if let Some(playback) = &self.playback {
+            let source_in = if playback.source_in_seconds.is_finite() && playback.source_in_seconds >= 0.0 { playback.source_in_seconds } else { 0.0 };
+            let delta = playback.source_delta_seconds(elapsed, fps);
+            return source_in + if delta.is_finite() && delta >= 0.0 { delta } else { elapsed as f64 / fps.max(0.001) * playback.speed.max(0.01) };
+        }
+        let source_in = if legacy_source_in.is_finite() && legacy_source_in >= 0.0 { legacy_source_in } else { 0.0 };
+        let speed = if legacy_speed.is_finite() && legacy_speed > 0.0 { legacy_speed } else { 1.0 };
+        source_in + elapsed as f64 / fps.max(0.001) * speed
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VisualTrackKind {
+    #[default]
+    Main,
+    Video,
+    Text,
+    Overlay,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VisualTrack {
+    pub id: u64,
+    pub name: String,
+    #[serde(default)]
+    pub order: usize,
+    #[serde(default)]
+    pub kind: VisualTrackKind,
+    #[serde(default)]
+    pub layers: Vec<LayerId>,
+    #[serde(default)]
+    pub locked: bool,
+    #[serde(default)]
+    pub muted: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TimelineMarker {
+    pub id: u64,
+    pub frame: usize,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub color: Option<[u8; 3]>,
 }
 
 impl Default for TimelineLoop {
@@ -668,6 +879,18 @@ pub struct Timeline {
     /// Audio tracks associated with this timeline.
     #[serde(default)]
     pub audio_tracks: Vec<AudioTrack>,
+    #[serde(default)]
+    pub visual_tracks: Vec<VisualTrack>,
+    #[serde(default)]
+    pub markers: Vec<TimelineMarker>,
+    #[serde(default)]
+    pub main_track_magnet: bool,
+    #[serde(default = "default_true")]
+    pub snapping: bool,
+    #[serde(default = "default_true")]
+    pub linked_selection: bool,
+    #[serde(default)]
+    pub preview_skimming: bool,
 }
 
 impl Timeline {
@@ -689,6 +912,12 @@ impl Timeline {
             frame_delays_ms: vec![0; d.min(1_000_000)],
             layer_ranges: Vec::new(),
             audio_tracks: Vec::new(),
+            visual_tracks: Vec::new(),
+            markers: Vec::new(),
+            main_track_magnet: false,
+            snapping: true,
+            linked_selection: true,
+            preview_skimming: false,
         }
     }
 
@@ -788,6 +1017,30 @@ mod tests {
         let t = Timeline::new(48, 25.0);
         let j = serde_json::to_string(&t).unwrap();
         assert_eq!(serde_json::from_str::<Timeline>(&j).unwrap(), t);
+    }
+
+    #[test]
+    fn speed_curve_integral_preserves_source_clock_across_split_offset() {
+        let original = ClipPlayback {
+            source_in_seconds: 2.0,
+            speed: 0.5,
+            speed_curve: vec![SpeedCurvePoint { frame: 0, speed: 0.5 }, SpeedCurvePoint { frame: 20, speed: 2.0 }],
+            speed_curve_offset_frames: 0,
+        };
+        let left = original.source_delta_seconds(10, 10.0);
+        let right = ClipPlayback {
+            source_in_seconds: original.source_in_seconds + left,
+            speed: original.speed,
+            speed_curve: original.speed_curve.clone(),
+            speed_curve_offset_frames: 10,
+        };
+        let saved = serde_json::to_string(&right).unwrap();
+        let reopened: ClipPlayback = serde_json::from_str(&saved).unwrap();
+        let right_delta = reopened.source_delta_seconds(10, 10.0);
+        let combined = left + right_delta;
+        assert!((combined - original.source_delta_seconds(20, 10.0)).abs() < 1e-9);
+        assert!(left > 0.0 && right_delta > left);
+        assert_eq!(reopened.speed_curve_offset_frames, 10);
     }
 
     #[test]

@@ -283,6 +283,7 @@ fn size_applies_at_layer_and_selection_scope() {
             created: false,
             dragging: false,
             resize: None,
+            resize_origin: None,
             preedit: None,
         });
         super::apply(&mut app, &ctx, json!({"size": 10.0}));
@@ -429,6 +430,7 @@ fn foreground_colour_recolours_only_selected_type() {
         created: false,
         dragging: false,
         resize: None,
+        resize_origin: None,
         preedit: None,
     };
     app.ui.text_edit = Some(edit(3, 3));
@@ -499,6 +501,7 @@ fn text_color_dialog_edits_only_the_selected_range_and_cancel_is_inert() {
         created: false,
         dragging: false,
         resize: None,
+        resize_origin: None,
         preedit: None,
     });
     let foreground = app.session.tools.foreground;
@@ -548,7 +551,7 @@ fn empty_ime_events_never_delete_the_selection() {
     let mut app = new_app();
     let id = LayerId(app.run("type.create", json!({"text": "Hello", "size": 40, "x": 300, "y": 420})).unwrap()["layer"].as_u64().unwrap());
     app.ui.text_edit =
-        Some(crate::state::TextEdit { layer: id.0, caret: 5, anchor: 0, session: "s".into(), created: false, dragging: false, resize: None, preedit: None });
+        Some(crate::state::TextEdit { layer: id.0, caret: 5, anchor: 0, session: "s".into(), created: false, dragging: false, resize: None, resize_origin: None, preedit: None });
     let mut h = harness(1.0, app);
     let ime = |h: &mut Harness<'static, PhotoStoreApp>, e: egui::ImeEvent| {
         h.event(egui::Event::Ime(e));
@@ -1273,6 +1276,7 @@ mod multi_layer_formatting {
             created: false,
             dragging: false,
             resize: None,
+            resize_origin: None,
             preedit: None,
         });
     }

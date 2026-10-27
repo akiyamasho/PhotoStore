@@ -480,6 +480,7 @@ fn type_tool_alt_arrows_kern_the_pair() {
         created: false,
         dragging: false,
         resize: None,
+        resize_origin: None,
         preedit: None,
     });
     h.run_steps(2);

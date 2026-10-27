@@ -2,10 +2,10 @@
 use crate::commands::CommandSpec;
 use crate::{EngineError, Result, Session};
 use photostore_doc::{
-    DocId, LayerContent, LayerId, PositionAnimation, PositionInterpolation, PositionKeyframe, VideoKeyframe, MAX_POSITION_ANIMATION_FRAME, MAX_POSITION_ANIMATION_KEYS,
-    MAX_POSITION_ANIMATION_TRACKS, MAX_POSITION_COORDINATE,
+    DocId, LayerContent, LayerId, MAX_POSITION_ANIMATION_FRAME, MAX_POSITION_ANIMATION_KEYS, MAX_POSITION_ANIMATION_TRACKS, MAX_POSITION_COORDINATE,
+    PositionAnimation, PositionInterpolation, PositionKeyframe, VideoKeyframe,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
@@ -46,8 +46,14 @@ fn context(s: &Session, p: &Value, cmd: &str, keys: &[&str]) -> Result<(DocId, L
         fn owned_ancestor(layers: &[photostore_doc::Layer], target: LayerId, inherited: bool) -> bool {
             for layer in layers {
                 let here = inherited || layer.position_animation.is_some();
-                if layer.id == target { return inherited; }
-                if let Some(children) = layer.children() && owned_ancestor(children, target, here) { return true; }
+                if layer.id == target {
+                    return inherited;
+                }
+                if let Some(children) = layer.children()
+                    && owned_ancestor(children, target, here)
+                {
+                    return true;
+                }
             }
             false
         }
@@ -90,9 +96,7 @@ fn checked_position(cmd: &str, base: (i32, i32), offset: (i32, i32)) -> Result<(
         base.0.checked_add(offset.0).ok_or_else(|| bad(cmd, "video position x coordinate overflow"))?,
         base.1.checked_add(offset.1).ok_or_else(|| bad(cmd, "video position y coordinate overflow"))?,
     );
-    if !(-MAX_POSITION_COORDINATE..=MAX_POSITION_COORDINATE).contains(&value.0)
-        || !(-MAX_POSITION_COORDINATE..=MAX_POSITION_COORDINATE).contains(&value.1)
-    {
+    if !(-MAX_POSITION_COORDINATE..=MAX_POSITION_COORDINATE).contains(&value.0) || !(-MAX_POSITION_COORDINATE..=MAX_POSITION_COORDINATE).contains(&value.1) {
         return Err(bad(cmd, "video position exceeds ±1000000"));
     }
     Ok(value)
@@ -110,22 +114,32 @@ fn rounded_offset(cmd: &str, value: f32) -> Result<i32> {
 }
 
 fn sample_legacy_keys(keys: &[VideoKeyframe], frame: usize) -> (f32, f32) {
-    if keys.is_empty() { return (0.0, 0.0); }
+    if keys.is_empty() {
+        return (0.0, 0.0);
+    }
     let sorted = keys.windows(2).all(|pair| pair[0].frame <= pair[1].frame);
     let (left, right) = if sorted {
         let mut lo = 0usize;
         let mut hi = keys.len();
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            if keys[mid].frame < frame { lo = mid + 1; } else { hi = mid; }
+            if keys[mid].frame < frame {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
         }
         (lo.checked_sub(1), (lo < keys.len()).then_some(lo))
     } else {
         let mut left: Option<usize> = None;
         let mut right: Option<usize> = None;
         for (i, key) in keys.iter().enumerate() {
-            if key.frame <= frame && left.map_or(true, |j| keys[j].frame <= key.frame) { left = Some(i); }
-            if key.frame >= frame && right.map_or(true, |j| keys[j].frame > key.frame) { right = Some(i); }
+            if key.frame <= frame && left.map_or(true, |j| keys[j].frame <= key.frame) {
+                left = Some(i);
+            }
+            if key.frame >= frame && right.map_or(true, |j| keys[j].frame > key.frame) {
+                right = Some(i);
+            }
         }
         (left, right)
     };
@@ -139,19 +153,27 @@ fn sample_legacy_keys(keys: &[VideoKeyframe], frame: usize) -> (f32, f32) {
     };
     let a = &keys[left];
     let b = &keys[right];
-    if a.frame == b.frame || frame == b.frame { return (b.x, b.y); }
+    if a.frame == b.frame || frame == b.frame {
+        return (b.x, b.y);
+    }
     let span = b.frame.saturating_sub(a.frame).max(1) as f32;
     let u = (frame.saturating_sub(a.frame) as f32 / span).clamp(0.0, 1.0);
     (a.x + (b.x - a.x) * u, a.y + (b.y - a.y) * u)
 }
 
 fn sample_sorted_legacy_keys(keys: &[VideoKeyframe], frame: usize) -> (f32, f32) {
-    if keys.is_empty() { return (0.0, 0.0); }
+    if keys.is_empty() {
+        return (0.0, 0.0);
+    }
     let mut lo = 0usize;
     let mut hi = keys.len();
     while lo < hi {
         let mid = lo + (hi - lo) / 2;
-        if keys[mid].frame < frame { lo = mid + 1; } else { hi = mid; }
+        if keys[mid].frame < frame {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
     }
     let Some(right) = (lo < keys.len()).then_some(lo) else {
         let key = &keys[keys.len() - 1];
@@ -163,7 +185,9 @@ fn sample_sorted_legacy_keys(keys: &[VideoKeyframe], frame: usize) -> (f32, f32)
     };
     let a = &keys[left];
     let b = &keys[right];
-    if a.frame == b.frame || frame == b.frame { return (b.x, b.y); }
+    if a.frame == b.frame || frame == b.frame {
+        return (b.x, b.y);
+    }
     let span = b.frame.saturating_sub(a.frame).max(1) as f32;
     let u = (frame.saturating_sub(a.frame) as f32 / span).clamp(0.0, 1.0);
     (a.x + (b.x - a.x) * u, a.y + (b.y - a.y) * u)
@@ -174,7 +198,10 @@ fn dense_video_position(doc: &photostore_doc::Document, id: LayerId, frame: usiz
     let rows = if matches!(timeline.mode, photostore_doc::TimelineMode::FrameAnimation) { &timeline.frame_states } else { &timeline.property_frames };
     let Some(state) = rows.get(frame).and_then(|row| row.iter().find(|state| state.layer == id)) else { return Ok(None) };
     if state.video_position.is_none() && state.position.is_some() {
-        return Err(bad("timeline.setPositionAnimation", "legacy video position snapshots use ambiguous content bounds; clear snapshots before enabling Position"));
+        return Err(bad(
+            "timeline.setPositionAnimation",
+            "legacy video position snapshots use ambiguous content bounds; clear snapshots before enabling Position",
+        ));
     }
     Ok(state.video_position)
 }
@@ -188,10 +215,14 @@ fn video_value_from_keys(cmd: &str, video: &photostore_doc::VideoData, keys: &[V
 fn video_migration_keys(doc: &photostore_doc::Document, id: LayerId, frame: usize) -> Result<Vec<PositionKeyframe>> {
     let layer = doc.layer(id).ok_or(EngineError::NoLayer(id))?;
     let video = layer.video.as_ref().ok_or_else(|| bad("timeline.setPositionAnimation", "target layer is not a video layer"))?;
-    if video.keyframes.len() > MAX_POSITION_ANIMATION_KEYS { return Err(bad("timeline.setPositionAnimation", "legacy video keyframe track exceeds 100000 keyframes")); }
+    if video.keyframes.len() > MAX_POSITION_ANIMATION_KEYS {
+        return Err(bad("timeline.setPositionAnimation", "legacy video keyframe track exceeds 100000 keyframes"));
+    }
     let mut legacy = video.keyframes.clone();
     for key in &legacy {
-        if key.frame > MAX_POSITION_ANIMATION_FRAME { return Err(bad("timeline.setPositionAnimation", "legacy video keyframe is beyond frame 999999")); }
+        if key.frame > MAX_POSITION_ANIMATION_FRAME {
+            return Err(bad("timeline.setPositionAnimation", "legacy video keyframe is beyond frame 999999"));
+        }
         rounded_offset("timeline.setPositionAnimation", key.x)?;
         rounded_offset("timeline.setPositionAnimation", key.y)?;
     }
@@ -200,22 +231,34 @@ fn video_migration_keys(doc: &photostore_doc::Document, id: LayerId, frame: usiz
     let dense_last = if !timeline.property_frames.is_empty() { timeline.property_frames.len() } else { timeline.frame_states.len().saturating_sub(1) };
     let legacy_last = legacy.iter().map(|key| key.frame).max().unwrap_or(0);
     let last = timeline.duration.saturating_sub(1).max(dense_last).max(legacy_last);
-    if last > MAX_POSITION_ANIMATION_FRAME { return Err(bad("timeline.setPositionAnimation", "video position migration exceeds frame 999999")); }
-    if last == usize::MAX { return Err(bad("timeline.setPositionAnimation", "video position migration frame range overflow")); }
+    if last > MAX_POSITION_ANIMATION_FRAME {
+        return Err(bad("timeline.setPositionAnimation", "video position migration exceeds frame 999999"));
+    }
+    if last == usize::MAX {
+        return Err(bad("timeline.setPositionAnimation", "video position migration frame range overflow"));
+    }
     let mut migrated = Vec::new();
     let mut previous = None;
     for current in 0..=last {
         let value = if let Some(value) = dense_video_position(doc, id, current)? {
-            if !(-MAX_POSITION_COORDINATE..=MAX_POSITION_COORDINATE).contains(&value.0) || !(-MAX_POSITION_COORDINATE..=MAX_POSITION_COORDINATE).contains(&value.1) {
+            if !(-MAX_POSITION_COORDINATE..=MAX_POSITION_COORDINATE).contains(&value.0)
+                || !(-MAX_POSITION_COORDINATE..=MAX_POSITION_COORDINATE).contains(&value.1)
+            {
                 return Err(bad("timeline.setPositionAnimation", "dense video position snapshot exceeds ±1000000"));
             }
             value
         } else {
             let sampled = sample_sorted_legacy_keys(&legacy, current);
-            checked_position("timeline.setPositionAnimation", video.base_translation, (rounded_offset("timeline.setPositionAnimation", sampled.0)?, rounded_offset("timeline.setPositionAnimation", sampled.1)?))?
+            checked_position(
+                "timeline.setPositionAnimation",
+                video.base_translation,
+                (rounded_offset("timeline.setPositionAnimation", sampled.0)?, rounded_offset("timeline.setPositionAnimation", sampled.1)?),
+            )?
         };
         if previous != Some(value) {
-            if migrated.len() >= MAX_POSITION_ANIMATION_KEYS { return Err(bad("timeline.setPositionAnimation", "video position migration exceeds 100000 keyframes")); }
+            if migrated.len() >= MAX_POSITION_ANIMATION_KEYS {
+                return Err(bad("timeline.setPositionAnimation", "video position migration exceeds 100000 keyframes"));
+            }
             migrated.push(PositionKeyframe { frame: current, x: value.0, y: value.1, interpolation: PositionInterpolation::Hold });
             previous = Some(value);
         }
@@ -225,7 +268,11 @@ fn video_migration_keys(doc: &photostore_doc::Document, id: LayerId, frame: usiz
             value
         } else {
             let sampled = sample_sorted_legacy_keys(&legacy, frame);
-            checked_position("timeline.setPositionAnimation", video.base_translation, (rounded_offset("timeline.setPositionAnimation", sampled.0)?, rounded_offset("timeline.setPositionAnimation", sampled.1)?))?
+            checked_position(
+                "timeline.setPositionAnimation",
+                video.base_translation,
+                (rounded_offset("timeline.setPositionAnimation", sampled.0)?, rounded_offset("timeline.setPositionAnimation", sampled.1)?),
+            )?
         };
         migrated.push(PositionKeyframe { frame, x: value.0, y: value.1, interpolation: PositionInterpolation::Linear });
     }
@@ -237,23 +284,33 @@ fn parse_interp(cmd: &str, v: Option<&Value>) -> Result<Option<PositionInterpola
         Some(Value::String(s)) => match s.as_str() {
             "linear" => Ok(Some(PositionInterpolation::Linear)),
             "hold" => Ok(Some(PositionInterpolation::Hold)),
-            _ => Err(bad(cmd, "`interpolation` must be `linear` or `hold")),
+            "ease_in" => Ok(Some(PositionInterpolation::EaseIn)),
+            "ease_out" => Ok(Some(PositionInterpolation::EaseOut)),
+            "ease_in_out" => Ok(Some(PositionInterpolation::EaseInOut)),
+            _ => Err(bad(cmd, "`interpolation` must be linear, hold, ease_in, ease_out, or ease_in_out")),
         },
-        Some(_) => Err(bad(cmd, "`interpolation` must be `linear` or `hold")),
+        Some(_) => Err(bad(cmd, "`interpolation` must be linear, hold, ease_in, ease_out, or ease_in_out")),
     }
 }
 fn logical(l: &photostore_doc::Layer) -> (i32, i32) {
-    l.position_animation.as_ref().map(|a| a.applied_value)
+    l.position_animation
+        .as_ref()
+        .map(|a| a.applied_value)
         .or_else(|| l.video.as_ref().map(|v| v.applied_translation))
-        .or_else(|| photostore_doc::comps::layer_position(l)).unwrap_or((0, 0))
+        .or_else(|| photostore_doc::comps::layer_position(l))
+        .unwrap_or((0, 0))
 }
 
 /// Sample the canonical integer position used by the engine and UI for a layer at a timeline frame.
 pub fn sample_layer_position(doc: &photostore_doc::Document, layer: &photostore_doc::Layer, frame: usize) -> (i32, i32) {
     let video_mode = doc.timeline.as_ref().is_some_and(|timeline| matches!(timeline.mode, photostore_doc::TimelineMode::Video));
-    if video_mode && let Some(track) = layer.position_animation.as_ref() { return track.sampled_value(frame); }
+    if video_mode && let Some(track) = layer.position_animation.as_ref() {
+        return track.sampled_value(frame);
+    }
     if let Some(video) = layer.video.as_ref() {
-        if let Ok(Some(value)) = dense_video_position(doc, layer.id, frame) { return safe_position(value); }
+        if let Ok(Some(value)) = dense_video_position(doc, layer.id, frame) {
+            return safe_position(value);
+        }
         return video_value_from_keys("timeline.sampleLayerPosition", video, &video.keyframes, frame).unwrap_or(video.applied_translation);
     }
     layer.position_animation.as_ref().map_or_else(|| photostore_doc::comps::layer_position(layer).unwrap_or((0, 0)), |a| a.sampled_value(frame))
@@ -282,9 +339,16 @@ fn set_enabled(s: &mut Session, p: &Value) -> Result<Value> {
                     for (f, states) in t.property_frames.iter().enumerate() {
                         let state = states.iter().find(|s| s.layer == id);
                         if doc.layer(id).is_some_and(|l| l.video.is_some()) && state.is_some_and(|s| s.video_position.is_none() && s.position.is_some()) {
-                            return Err(bad("timeline.setPositionAnimation", "legacy video position snapshots use ambiguous content bounds; clear snapshots before enabling Position"));
+                            return Err(bad(
+                                "timeline.setPositionAnimation",
+                                "legacy video position snapshots use ambiguous content bounds; clear snapshots before enabling Position",
+                            ));
                         }
-                        let snapshot = if doc.layer(id).is_some_and(|l| l.video.is_some()) { state.and_then(|s| s.video_position) } else { state.and_then(|s| s.position) };
+                        let snapshot = if doc.layer(id).is_some_and(|l| l.video.is_some()) {
+                            state.and_then(|s| s.video_position)
+                        } else {
+                            state.and_then(|s| s.position)
+                        };
                         if let Some((x, y)) = snapshot {
                             if f <= MAX_POSITION_ANIMATION_FRAME
                                 && (-MAX_POSITION_COORDINATE..=MAX_POSITION_COORDINATE).contains(&x)
@@ -510,7 +574,9 @@ pub(crate) fn author_moved(doc: &mut photostore_doc::Document, moves: &[(LayerId
             a.applied_value = v;
             if let Some(video) = l.video.as_mut() {
                 video.applied_translation = v;
-                if !a.enabled { video.base_translation = v; }
+                if !a.enabled {
+                    video.base_translation = v;
+                }
             }
             if a.enabled && video {
                 let mut ks = a.keys.as_ref().clone();

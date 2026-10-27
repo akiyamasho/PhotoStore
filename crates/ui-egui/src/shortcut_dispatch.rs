@@ -62,7 +62,7 @@ pub fn bindings(app: &PhotoStoreApp) -> Vec<(String, KeyboardShortcut)> {
             })
     };
     let ui = crate::menus::UI_COMMANDS.iter().map(|(id, _, _, sc)| (*id, if aliased(id, *sc) { None } else { prefs.shortcut(id, *sc) }));
-    let engine = photostore_engine::command_specs().iter().map(|c| (c.id, prefs.shortcut(c.id, c.shortcut)));
+    let engine = photostore_engine::command_specs().iter().filter(|c| !c.id.starts_with("timeline.editor.")).map(|c| (c.id, prefs.shortcut(c.id, c.shortcut)));
     let tools = crate::state::Tool::ALL.iter().map(|t| {
         let id = crate::shortcuts::tool_id(*t);
         (id, prefs.shortcut(id, photostore_engine::prefs::tool_default_shortcut(id)))
@@ -82,6 +82,7 @@ pub fn bindings(app: &PhotoStoreApp) -> Vec<(String, KeyboardShortcut)> {
         .filter(|(id, sc)| {
             !sc.is_empty()
                 && !id.starts_with(crate::actions::SHORTCUT_PREFIX)
+                && !id.starts_with("timeline.editor.")
                 && photostore_engine::commands::find(id).is_none()
                 && !crate::menus::UI_COMMANDS.iter().any(|c| c.0 == id.as_str())
                 && !crate::hold_keys::is_temporary(id)
@@ -93,7 +94,8 @@ pub fn bindings(app: &PhotoStoreApp) -> Vec<(String, KeyboardShortcut)> {
     // A key the user assigned in Edit › Keyboard Shortcuts belongs to that command, ahead of any
     // default that still names it (#1272): OK clears the old owner's row, but that row can be
     // another id for the same item, or a default the dialog doesn't list.
-    let mut candidates: Vec<(&str, Option<&str>)> = actions.chain(ui).chain(engine).chain(tools).chain(catalog).chain(overrides).chain(secondary).chain(alternate_storage).collect();
+    let mut candidates: Vec<(&str, Option<&str>)> =
+        actions.chain(ui).chain(engine).chain(tools).chain(catalog).chain(overrides).chain(secondary).chain(alternate_storage).collect();
     candidates.sort_by_key(|(id, sc)| !(sc.is_some() && prefs.shortcuts.get(*id).map(String::as_str) == *sc));
     let mut all: Vec<(String, KeyboardShortcut)> = Vec::new();
     for (id, sc) in candidates {
@@ -222,7 +224,10 @@ pub fn dispatch_pressed(app: &mut PhotoStoreApp, ctx: &egui::Context, focus: Foc
             let (at, hit) = i.events.iter().enumerate().find_map(|(at, e)| {
                 let egui::Event::Key { key, pressed: true, repeat, modifiers, .. } = e else { return None };
                 let generic = table.iter().find(|(_, sc)| key_matches(sc, *key, *modifiers)).map(|(id, _)| id.clone());
-                let id = generic.as_deref().filter(|id| !photostore_engine::prefs::is_tool_shortcut_id(id)).map(str::to_owned)
+                let id = generic
+                    .as_deref()
+                    .filter(|id| !photostore_engine::prefs::is_tool_shortcut_id(id))
+                    .map(str::to_owned)
                     .or_else(|| tool_event_id(app, *key, *modifiers, *repeat, focus))
                     .or(generic)?;
                 Some((at, (id, *key == Key::Tab)))
@@ -260,8 +265,13 @@ fn tool_event_id(app: &PhotoStoreApp, key: Key, mods: egui::Modifiers, repeat: b
         let shortcuts = prefs.shortcuts_for(id, default);
         for raw in shortcuts {
             let Some(sc) = crate::shortcuts::parse(&raw) else { continue };
-            if sc.modifiers.shift && key_matches(&sc, key, mods) { shifted_exact = true; }
-            if focus.allows(&sc) && key_matches(&sc, key, mods) { peers.push(tool); break; }
+            if sc.modifiers.shift && key_matches(&sc, key, mods) {
+                shifted_exact = true;
+            }
+            if focus.allows(&sc) && key_matches(&sc, key, mods) {
+                peers.push(tool);
+                break;
+            }
         }
     }
     if peers.is_empty() && mods.shift && !shifted_exact {
@@ -270,7 +280,10 @@ fn tool_event_id(app: &PhotoStoreApp, key: Key, mods: egui::Modifiers, repeat: b
             let id = crate::shortcuts::tool_id(tool);
             for raw in prefs.shortcuts_for(id, photostore_engine::prefs::tool_default_shortcut(id)) {
                 let Some(sc) = crate::shortcuts::parse(&raw) else { continue };
-                if !sc.modifiers.shift && focus.allows(&sc) && key_matches(&sc, key, plain) { peers.push(tool); break; }
+                if !sc.modifiers.shift && focus.allows(&sc) && key_matches(&sc, key, plain) {
+                    peers.push(tool);
+                    break;
+                }
             }
         }
         if !prefs.tools.use_shift_key_for_tool_switch {

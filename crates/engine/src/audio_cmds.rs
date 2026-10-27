@@ -1,10 +1,10 @@
 //! Timeline audio editing commands and the document-to-mixer projection.
 
 use photostore_doc::{AudioClip, AudioTrack, LayerId};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{fs, path::Path};
 
-use crate::{commands::CommandSpec, EngineError, Result, Session};
+use crate::{EngineError, Result, Session, commands::CommandSpec};
 
 const MAX_TRACKS: usize = 64;
 const MAX_CLIPS: usize = 4096;
@@ -24,19 +24,11 @@ fn finite(p: &Value, key: &str, default: f64) -> Result<f64> {
 }
 fn positive(p: &Value, key: &str, default: f64) -> Result<f64> {
     let x = finite(p, key, default)?;
-    if x <= 0.0 {
-        Err(bad("timeline.audio", format!("`{key}` must be positive")))
-    } else {
-        Ok(x)
-    }
+    if x <= 0.0 { Err(bad("timeline.audio", format!("`{key}` must be positive"))) } else { Ok(x) }
 }
 fn nonnegative(p: &Value, key: &str, default: f64) -> Result<f64> {
     let x = finite(p, key, default)?;
-    if x < 0.0 {
-        Err(bad("timeline.audio", format!("`{key}` must be non-negative")))
-    } else {
-        Ok(x)
-    }
+    if x < 0.0 { Err(bad("timeline.audio", format!("`{key}` must be non-negative"))) } else { Ok(x) }
 }
 fn id(p: &Value, key: &str) -> Result<u64> {
     p.get(key).and_then(Value::as_u64).filter(|x| *x > 0).ok_or_else(|| bad("timeline.audio", format!("`{key}` must be a positive integer")))
@@ -113,6 +105,8 @@ fn clip_from(p: &Value, id: u64, path: String, source_duration: f64) -> Result<A
         duration_seconds: duration,
         source_duration_seconds: source_duration,
         speed,
+        speed_curve: Vec::new(),
+        speed_curve_offset_frames: 0,
         volume,
         fade_in_seconds: fi,
         fade_out_seconds: fo,
@@ -496,6 +490,7 @@ pub fn audio_mix_for_range(t: &photostore_doc::Timeline, start: f64, end: f64) -
     }
     validate_timeline(t)?;
     let mut out = Vec::new();
+    let timeline_fps = f64::from(t.fps.max(0.001));
     for tr in &t.audio_tracks {
         if tr.muted {
             continue;
@@ -512,7 +507,16 @@ pub fn audio_mix_for_range(t: &photostore_doc::Timeline, start: f64, end: f64) -
             }
             let env = c.envelope_duration_seconds.unwrap_or(c.duration_seconds);
             let skip = a - c.start_seconds;
-            let original_trim = c.trim_in_seconds - c.envelope_offset_seconds * c.speed;
+            let original_trim = if c.speed_curve.is_empty() {
+                c.trim_in_seconds - c.envelope_offset_seconds * c.speed
+            } else {
+                let curve =
+                    photostore_doc::ClipPlayback { source_in_seconds: 0.0, speed: c.speed, speed_curve: c.speed_curve.clone(), speed_curve_offset_frames: 0 };
+                c.trim_in_seconds - curve.source_delta_seconds(c.speed_curve_offset_frames, timeline_fps)
+            };
+            if !original_trim.is_finite() || original_trim < 0.0 {
+                return Err(bad("timeline.audio", "speed curve implies an invalid original source trim"));
+            }
             out.push(crate::media_backend::AudioMixClip {
                 input_path: c.path.clone().into(),
                 start_seconds: a - start,
@@ -523,6 +527,9 @@ pub fn audio_mix_for_range(t: &photostore_doc::Timeline, start: f64, end: f64) -
                 fade_out_seconds: c.fade_out_seconds,
                 mute: false,
                 speed: c.speed,
+                speed_curve: c.speed_curve.clone(),
+                speed_curve_offset_frames: c.speed_curve_offset_frames,
+                timeline_fps,
                 offset_seconds: c.envelope_offset_seconds + skip,
                 limit_seconds: Some(b - a),
             });
@@ -586,6 +593,8 @@ pub(crate) fn add_linked_movie_audio(
         duration_seconds,
         source_duration_seconds,
         speed,
+        speed_curve: Vec::new(),
+        speed_curve_offset_frames: 0,
         volume: 1.0,
         fade_in_seconds: 0.0,
         fade_out_seconds: 0.0,

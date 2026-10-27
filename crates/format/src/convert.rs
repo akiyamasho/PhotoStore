@@ -57,6 +57,139 @@ fn validate_video_keyframes(keys: &[photostore_doc::VideoKeyframe]) -> Result<()
 
 pub(crate) fn validate_timeline_positions(timeline: Option<&photostore_doc::Timeline>) -> Result<()> {
     let Some(timeline) = timeline else { return Ok(()) };
+    const MAX_TIMELINE_ENTRIES: usize = 100_000;
+    if timeline.duration == 0 || timeline.duration > 1_000_000 || timeline.layer_ranges.len() > MAX_TIMELINE_ENTRIES {
+        return Err(FormatError::LimitExceeded("timeline duration or clip range count exceeds the supported limit".into()));
+    }
+    let mut range_layers = std::collections::HashSet::new();
+    let mut total_speed_points = 0usize;
+    for range in &timeline.layer_ranges {
+        if !range_layers.insert(range.layer) || range.start >= range.end || range.end > 1_000_000 {
+            return Err(FormatError::corrupt("timeline clip ranges must have unique layer ids and valid bounded start/end frames"));
+        }
+        if let Some(playback) = &range.playback {
+            if !playback.source_in_seconds.is_finite()
+                || playback.source_in_seconds < 0.0
+                || !playback.speed.is_finite()
+                || !(0.01..=100.0).contains(&playback.speed)
+            {
+                return Err(FormatError::corrupt("timeline clip playback source-in and speed are invalid"));
+            }
+            playback.validate_speed_curve().map_err(FormatError::corrupt)?;
+            total_speed_points = total_speed_points.saturating_add(playback.speed_curve.len());
+            if playback.speed_curve_offset_frames.saturating_add(range.end - range.start) > 1_000_000
+                || playback.speed_curve.iter().any(|point| point.frame > 1_000_000)
+            {
+                return Err(FormatError::corrupt("timeline speed curve exceeds the supported clip-local frame range"));
+            }
+        }
+    }
+    if total_speed_points > 1_000_000 {
+        return Err(FormatError::LimitExceeded("timeline speed curves exceed one million total points".into()));
+    }
+    if timeline.audio_tracks.len() > 64 {
+        return Err(FormatError::LimitExceeded("timeline contains more than 64 audio tracks".into()));
+    }
+    let mut audio_track_ids = std::collections::HashSet::new();
+    let mut audio_clip_ids = std::collections::HashSet::new();
+    let mut audio_count = 0usize;
+    for track in &timeline.audio_tracks {
+        if track.id == 0 || !audio_track_ids.insert(track.id) || track.name.trim().is_empty() || track.name.len() > 128 {
+            return Err(FormatError::corrupt("audio track metadata is invalid"));
+        }
+        audio_count = audio_count.saturating_add(track.clips.len());
+        for clip in &track.clips {
+            if clip.id == 0
+                || !audio_clip_ids.insert(clip.id)
+                || clip.path.is_empty()
+                || clip.name.len() > 256
+                || ![
+                    clip.start_seconds,
+                    clip.trim_in_seconds,
+                    clip.duration_seconds,
+                    clip.source_duration_seconds,
+                    clip.speed,
+                    clip.volume,
+                    clip.fade_in_seconds,
+                    clip.fade_out_seconds,
+                    clip.envelope_offset_seconds,
+                ]
+                .iter()
+                .all(|v| v.is_finite())
+                || clip.start_seconds < 0.0
+                || clip.trim_in_seconds < 0.0
+                || clip.duration_seconds <= 0.0
+                || clip.source_duration_seconds <= 0.0
+                || !(0.01..=100.0).contains(&clip.speed)
+                || !(0.0..=4.0).contains(&clip.volume)
+                || clip.fade_in_seconds < 0.0
+                || clip.fade_out_seconds < 0.0
+                || clip.trim_in_seconds + clip.duration_seconds * clip.speed > clip.source_duration_seconds + 1e-9
+            {
+                return Err(FormatError::corrupt("audio clip source or timing metadata is invalid"));
+            }
+            if clip
+                .envelope_duration_seconds
+                .is_some_and(|duration| !duration.is_finite() || duration <= 0.0 || clip.envelope_offset_seconds + clip.duration_seconds > duration + 1e-9)
+            {
+                return Err(FormatError::corrupt("audio clip envelope metadata is invalid"));
+            }
+            if (!clip.speed_curve.is_empty() && (clip.speed_curve.len() < 2 || clip.speed_curve[0].frame != 0))
+                || clip.speed_curve.len() > 256
+                || clip.speed_curve.windows(2).any(|pair| pair[0].frame >= pair[1].frame)
+                || clip.speed_curve.iter().any(|point| !point.speed.is_finite() || !(0.01..=100.0).contains(&point.speed) || point.frame > 1_000_000)
+            {
+                return Err(FormatError::corrupt("audio clip speed curve is invalid"));
+            }
+            total_speed_points = total_speed_points.saturating_add(clip.speed_curve.len());
+            if clip.speed_curve_offset_frames.saturating_add((clip.duration_seconds * f64::from(timeline.fps.max(0.001))).ceil() as usize) > 1_000_000 {
+                return Err(FormatError::corrupt("audio speed curve exceeds the supported clip-local frame range"));
+            }
+        }
+    }
+    if audio_count > 4096 {
+        return Err(FormatError::LimitExceeded("timeline contains more than 4096 audio clips".into()));
+    }
+    if total_speed_points > 1_000_000 {
+        return Err(FormatError::LimitExceeded("timeline speed curves exceed one million total points".into()));
+    }
+    if timeline.visual_tracks.len() > 4096 {
+        return Err(FormatError::LimitExceeded("timeline contains more than 4096 visual tracks".into()));
+    }
+    let mut track_ids = std::collections::HashSet::new();
+    let mut track_orders = std::collections::HashSet::new();
+    let mut members = std::collections::HashSet::new();
+    for track in &timeline.visual_tracks {
+        if track.id == 0
+            || !track_ids.insert(track.id)
+            || !track_orders.insert(track.order)
+            || track.name.trim().is_empty()
+            || track.name.len() > 128
+            || track.layers.len() > MAX_TIMELINE_ENTRIES
+        {
+            return Err(FormatError::corrupt("visual track metadata has duplicate ids/orders or invalid name/member counts"));
+        }
+        for layer in &track.layers {
+            if !range_layers.contains(layer) || !members.insert(*layer) {
+                return Err(FormatError::corrupt("visual track membership must reference a unique timeline clip layer"));
+            }
+        }
+    }
+    if timeline.visual_tracks.iter().filter(|track| track.kind == photostore_doc::VisualTrackKind::Main).count() > 1 {
+        return Err(FormatError::corrupt("timeline may contain only one Main visual track"));
+    }
+    if timeline.markers.len() > MAX_TIMELINE_ENTRIES {
+        return Err(FormatError::LimitExceeded("timeline contains more than 100000 markers".into()));
+    }
+    let mut marker_ids = std::collections::HashSet::new();
+    for marker in &timeline.markers {
+        if marker.id == 0 || !marker_ids.insert(marker.id) || marker.frame >= timeline.duration || marker.label.len() > 256 {
+            return Err(FormatError::corrupt("timeline marker id, frame, or label is invalid"));
+        }
+    }
+    if timeline.work_start >= timeline.work_end || timeline.work_end > timeline.duration {
+        return Err(FormatError::corrupt("timeline work area must be a nonempty range inside the timeline"));
+    }
     for rows in [&timeline.frame_states, &timeline.property_frames] {
         if rows.len() > photostore_doc::MAX_POSITION_ANIMATION_FRAME + 1 {
             return Err(FormatError::LimitExceeded("timeline position snapshots exceed frame 999999".into()));
@@ -70,6 +203,42 @@ pub(crate) fn validate_timeline_positions(timeline: Option<&photostore_doc::Time
         }
     }
     Ok(())
+}
+
+fn validate_timeline_layer_ids(timeline: Option<&photostore_doc::Timeline>, ids: &std::collections::HashSet<u64>) -> Result<()> {
+    let Some(timeline) = timeline else { return Ok(()) };
+    if timeline.layer_ranges.iter().any(|range| !ids.contains(&range.layer.0)) {
+        return Err(FormatError::corrupt("timeline clip range references a missing layer"));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_timeline_manifest_layer_refs(timeline: Option<&photostore_doc::Timeline>, layers: &[LayerM]) -> Result<()> {
+    fn collect(layers: &[LayerM], ids: &mut std::collections::HashSet<u64>) {
+        for layer in layers {
+            ids.insert(layer.id);
+            if let ContentM::Group { children, .. } = &layer.content {
+                collect(children, ids);
+            }
+        }
+    }
+    let mut ids = std::collections::HashSet::new();
+    collect(layers, &mut ids);
+    validate_timeline_layer_ids(timeline, &ids)
+}
+
+pub(crate) fn validate_timeline_document_layer_refs(timeline: Option<&photostore_doc::Timeline>, layers: &[Layer]) -> Result<()> {
+    fn collect(layers: &[Layer], ids: &mut std::collections::HashSet<u64>) {
+        for layer in layers {
+            ids.insert(layer.id.0);
+            if let Some(children) = layer.children() {
+                collect(children, ids);
+            }
+        }
+    }
+    let mut ids = std::collections::HashSet::new();
+    collect(layers, &mut ids);
+    validate_timeline_layer_ids(timeline, &ids)
 }
 
 fn validate_position_layers(layers: &[LayerM]) -> Result<()> {

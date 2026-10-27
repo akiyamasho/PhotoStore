@@ -106,7 +106,17 @@ pub fn edit_active(app: &mut PhotoStoreApp) -> Result<(), String> {
         commit(app);
         let key = session_key(app);
         begin_edit(app, id, &key)?;
-        app.ui.text_edit = Some(TextEdit { layer: id.0, caret: n, anchor: 0, session: key, created: false, dragging: false, resize: None, preedit: None });
+        app.ui.text_edit = Some(TextEdit {
+            layer: id.0,
+            caret: n,
+            anchor: 0,
+            session: key,
+            created: false,
+            dragging: false,
+            resize: None,
+            resize_origin: None,
+            preedit: None,
+        });
     } else if let Some(ed) = app.ui.text_edit.as_mut() {
         ed.anchor = 0;
         ed.caret = n;
@@ -171,23 +181,31 @@ pub(crate) fn box_handle_at(app: &mut PhotoStoreApp, id: LayerId, x: f64, y: f64
 }
 
 /// Drag handle `i` to the document point: the dragged edges follow it, the others stay put.
-fn resize_box(app: &mut PhotoStoreApp, ed: &TextEdit, i: u8, x: f64, y: f64) {
+fn resize_box(app: &mut PhotoStoreApp, ed: &TextEdit, i: u8, x: f64, y: f64, centered: bool) {
     let id = LayerId(ed.layer);
-    let Some((bx, by, w, h)) = box_shape(app, id) else { return };
+    let Some((bx, by, w, h)) = ed.resize_origin.or_else(|| box_shape(app, id)) else { return };
     let Some((_, aff, _)) = layout(app, id) else { return };
     let (px, py) = to_text(&aff, x, y);
     let (l, r, t, b) = handle_sides(i);
     let (mut x0, mut y0, mut x1, mut y1) = (bx, by, bx + w, by + h);
-    if l {
+    if centered && (l || r) {
+        let center = bx + w / 2.0;
+        let half = (px - center).abs().max(MIN_BOX / 2.0);
+        x0 = center - half;
+        x1 = center + half;
+    } else if l {
         x0 = px.min(x1 - MIN_BOX);
-    }
-    if r {
+    } else if r {
         x1 = px.max(x0 + MIN_BOX);
     }
-    if t {
+    if centered && (t || b) {
+        let center = by + h / 2.0;
+        let half = (py - center).abs().max(MIN_BOX / 2.0);
+        y0 = center - half;
+        y1 = center + half;
+    } else if t {
         y0 = py.min(y1 - MIN_BOX);
-    }
-    if b {
+    } else if b {
         y1 = py.max(y0 + MIN_BOX);
     }
     // type.edit places the box's top-left at the given document point.
@@ -200,8 +218,10 @@ pub fn pointer_down(app: &mut PhotoStoreApp, x: f64, y: f64, shift: bool) -> boo
     if let Some(ed) = app.ui.text_edit.clone() {
         let id = LayerId(ed.layer);
         if let Some(i) = box_handle_at(app, id, x, y) {
+            let origin = box_shape(app, id);
             if let Some(e) = app.ui.text_edit.as_mut() {
                 e.resize = Some(i);
+                e.resize_origin = origin;
             }
             return true;
         }
@@ -226,16 +246,26 @@ pub fn pointer_down(app: &mut PhotoStoreApp, x: f64, y: f64, shift: bool) -> boo
             return true;
         }
         let off = hit_offset(app, id, x, y);
-        app.ui.text_edit = Some(TextEdit { layer: id.0, caret: off, anchor: off, session: key, created: false, dragging: true, resize: None, preedit: None });
+        app.ui.text_edit = Some(TextEdit {
+            layer: id.0,
+            caret: off,
+            anchor: off,
+            session: key,
+            created: false,
+            dragging: true,
+            resize: None,
+            resize_origin: None,
+            preedit: None,
+        });
         return true;
     }
     false
 }
 
-pub fn pointer_move(app: &mut PhotoStoreApp, x: f64, y: f64) {
+pub fn pointer_move(app: &mut PhotoStoreApp, x: f64, y: f64, centered: bool) {
     let Some(ed) = app.ui.text_edit.clone() else { return };
     if let Some(i) = ed.resize {
-        resize_box(app, &ed, i, x, y);
+        resize_box(app, &ed, i, x, y, centered);
         return;
     }
     if ed.dragging {
@@ -251,6 +281,7 @@ pub fn pointer_up(app: &mut PhotoStoreApp, start: [f64; 2], end: [f64; 2]) {
     if let Some(e) = app.ui.text_edit.as_mut() {
         e.dragging = false;
         e.resize = None;
+        e.resize_origin = None;
         return;
     }
     let (w, h) = ((end[0] - start[0]).abs(), (end[1] - start[1]).abs());
@@ -283,7 +314,8 @@ pub fn pointer_up(app: &mut PhotoStoreApp, start: [f64; 2], end: [f64; 2]) {
         }
         // Like Photoshop: the placeholder is selected, so typing replaces it.
         let n = text.chars().count();
-        app.ui.text_edit = Some(TextEdit { layer: id, caret: n, anchor: 0, session: key, created: true, dragging: false, resize: None, preedit: None });
+        app.ui.text_edit =
+            Some(TextEdit { layer: id, caret: n, anchor: 0, session: key, created: true, dragging: false, resize: None, resize_origin: None, preedit: None });
     }
 }
 
@@ -1625,8 +1657,8 @@ mod tests {
         // Top-left corner: the box keeps its bottom-right corner.
         assert!(pointer_down(&mut app, 10.0, 10.0, false));
         assert_eq!(app.ui.text_edit.as_ref().unwrap().resize, Some(0));
-        pointer_move(&mut app, 20.0, 25.0);
-        pointer_move(&mut app, 30.0, 30.0);
+        pointer_move(&mut app, 20.0, 25.0, false);
+        pointer_move(&mut app, 30.0, 30.0, false);
         pointer_up(&mut app, [10.0, 10.0], [30.0, 30.0]);
         assert_eq!(box_shape(&app, id), Some((0.0, 0.0, 80.0, 30.0)));
         let aff = layout(&mut app, id).unwrap().1;
@@ -1636,7 +1668,7 @@ mod tests {
         assert!(app.ui.text_edit.is_some());
         // Right edge: only the width changes, and never below the minimum.
         assert!(pointer_down(&mut app, 110.0, 45.0, false));
-        pointer_move(&mut app, 0.0, 99.0);
+        pointer_move(&mut app, 0.0, 99.0, false);
         pointer_up(&mut app, [110.0, 45.0], [0.0, 99.0]);
         assert_eq!(box_shape(&app, id), Some((0.0, 0.0, MIN_BOX, 30.0)));
     }

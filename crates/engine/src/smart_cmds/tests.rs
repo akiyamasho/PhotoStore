@@ -1180,3 +1180,108 @@ fn inspect_reports_the_smart_source() {
     assert_eq!(source(&s)["kind"], "embedded");
     assert!(source(&s)["fileName"].is_string());
 }
+
+#[test]
+fn smart_clip_split_trim_and_move_keep_the_nested_source_clock() {
+    let mut s = session(8);
+    let id = s.active().unwrap().doc.layers[0].id;
+    {
+        let state = s.active_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut state.doc);
+        let layer = doc.layer_mut(id).unwrap();
+        layer.content = LayerContent::Smart(SmartObject::new(
+            SmartSource::Linked { path: "missing-nested-source".into() },
+            Affine::IDENTITY,
+            None,
+        ));
+    }
+    s.execute("timeline.create", json!({"duration":30,"fps":30.0})).unwrap();
+    s.execute("timeline.setLayerRange", json!({"layer":id.0,"start":3,"end":12})).unwrap();
+    s.execute("timeline.editor.setModes", json!({"snapping":false})).unwrap();
+    {
+        let state = s.active_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut state.doc);
+        let timeline = doc.timeline.as_mut().unwrap();
+        timeline.current = 9;
+        timeline.linked_selection = true;
+        let playback = timeline.layer_ranges.iter_mut().find(|range| range.layer == id).unwrap().playback.as_mut().unwrap();
+        playback.speed_curve = vec![
+            photostore_doc::SpeedCurvePoint { frame: 0, speed: 1.0 },
+            photostore_doc::SpeedCurvePoint { frame: 9, speed: 2.0 },
+        ];
+        timeline.audio_tracks.push(photostore_doc::AudioTrack {
+            id: 1,
+            name: "Linked audio".into(),
+            muted: false,
+            clips: vec![photostore_doc::AudioClip {
+                id: 1,
+                name: "Linked source".into(),
+                path: "missing-audio-source.wav".into(),
+                start_seconds: 3.0 / 30.0,
+                trim_in_seconds: 1.0,
+                duration_seconds: 9.0 / 30.0,
+                source_duration_seconds: 10.0,
+                speed: 1.0,
+                speed_curve: vec![
+                    photostore_doc::SpeedCurvePoint { frame: 0, speed: 1.0 },
+                    photostore_doc::SpeedCurvePoint { frame: 9, speed: 2.0 },
+                ],
+                speed_curve_offset_frames: 0,
+                volume: 0.8,
+                fade_in_seconds: 0.0,
+                fade_out_seconds: 0.0,
+                muted: false,
+                linked_video: Some(id),
+                envelope_offset_seconds: 0.0,
+                envelope_duration_seconds: Some(9.0 / 30.0),
+            }],
+        });
+    }
+    let original_time = layer_source_time(&s.active().unwrap().doc, id, document_time(&s.active().unwrap().doc)).unwrap();
+    let split = s.execute("timeline.editor.split", json!({"layers":[id.0],"frame":6})).unwrap();
+    let right = LayerId(split["affected"]["clips"][0]["right"].as_u64().unwrap());
+    let right_time = layer_source_time(&s.active().unwrap().doc, right, None).unwrap();
+    assert!((right_time - original_time).abs() < 1e-9, "split changed nested source time: {right_time} != {original_time}");
+    let split_audio = s.active().unwrap().doc.timeline.as_ref().unwrap().audio_tracks[0].clips.iter()
+        .find(|clip| clip.linked_video == Some(right)).unwrap();
+    assert_ne!(split_audio.id, 1);
+    assert!((split_audio.start_seconds - 6.0 / 30.0).abs() < 1e-9);
+    assert!(split_audio.trim_in_seconds > 1.0);
+
+    let (source_in_before_trim, curve_offset_before_trim, linked_audio_before_trim) = {
+        let timeline = s.active().unwrap().doc.timeline.as_ref().unwrap();
+        let range = timeline.layer_ranges.iter().find(|range| range.layer == right).unwrap();
+        let audio = timeline.audio_tracks.iter().flat_map(|track| &track.clips)
+            .find(|clip| clip.linked_video == Some(right)).unwrap();
+        (range.playback.as_ref().unwrap().source_in_seconds,
+         range.playback.as_ref().unwrap().speed_curve_offset_frames,
+         (audio.trim_in_seconds, audio.speed_curve_offset_frames, audio.envelope_offset_seconds, audio.start_seconds))
+    };
+    s.execute("timeline.editor.trimLeft", json!({"layers":[right.0],"frame":8})).unwrap();
+    let trimmed_time = layer_source_time(&s.active().unwrap().doc, right, None).unwrap();
+    assert!((trimmed_time - original_time).abs() < 1e-9, "left trim changed nested source time: {trimmed_time} != {original_time}");
+    s.execute("timeline.editor.trimLeft", json!({"layers":[right.0],"frame":6})).unwrap();
+    let restored_time = layer_source_time(&s.active().unwrap().doc, right, None).unwrap();
+    assert!((restored_time - original_time).abs() < 1e-9, "restoring a left trim changed nested source time: {restored_time} != {original_time}");
+    let timeline = s.active().unwrap().doc.timeline.as_ref().unwrap();
+    let restored_range = timeline.layer_ranges.iter().find(|range| range.layer == right).unwrap();
+    assert_eq!((restored_range.start, restored_range.end), (6, 12));
+    assert!((restored_range.playback.as_ref().unwrap().source_in_seconds - source_in_before_trim).abs() < 1e-9);
+    assert_eq!(restored_range.playback.as_ref().unwrap().speed_curve_offset_frames, curve_offset_before_trim);
+    assert_eq!(restored_range.playback.as_ref().unwrap().speed_curve.len(), 2);
+    let restored_audio = timeline.audio_tracks.iter().flat_map(|track| &track.clips)
+        .find(|clip| clip.linked_video == Some(right)).unwrap();
+    assert!((restored_audio.trim_in_seconds - linked_audio_before_trim.0).abs() < 1e-9);
+    assert_eq!(restored_audio.speed_curve_offset_frames, linked_audio_before_trim.1);
+    assert!((restored_audio.envelope_offset_seconds - linked_audio_before_trim.2).abs() < 1e-9);
+    assert!((restored_audio.start_seconds - linked_audio_before_trim.3).abs() < 1e-9);
+
+    s.execute("timeline.editor.move", json!({"layers":[right.0],"deltaFrames":3})).unwrap();
+    {
+        let state = s.active_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut state.doc);
+        doc.timeline.as_mut().unwrap().current = 12;
+    }
+    let moved_time = layer_source_time(&s.active().unwrap().doc, right, None).unwrap();
+    assert!((moved_time - original_time).abs() < 1e-9, "moving a clip changed nested source time: {moved_time} != {original_time}");
+}

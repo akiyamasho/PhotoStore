@@ -19,7 +19,9 @@ fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
 }
 
 fn strict_object<'a>(p: &'a Value, cmd: &str, allowed: &[&str]) -> Result<&'a serde_json::Map<String, Value>> {
-    let Some(obj) = p.as_object() else { return Err(bad(cmd, "parameters must be an object")); };
+    let Some(obj) = p.as_object() else {
+        return Err(bad(cmd, "parameters must be an object"));
+    };
     if let Some(key) = obj.keys().find(|k| !allowed.contains(&k.as_str())) {
         return Err(bad(cmd, format!("unknown parameter `{key}`")));
     }
@@ -30,12 +32,16 @@ fn context(s: &Session, p: &Value, cmd: &str, allowed: &[&str]) -> Result<(DocId
     let obj = strict_object(p, cmd, allowed)?;
     let st = s.active().ok_or(EngineError::NoDocument)?;
     let timeline = st.doc.timeline.as_ref().ok_or_else(|| bad(cmd, "an active timeline is required"))?;
-    if timeline.mode != photostore_doc::TimelineMode::Video { return Err(bad(cmd, "an active video timeline is required")); }
+    if timeline.mode != photostore_doc::TimelineMode::Video {
+        return Err(bad(cmd, "an active video timeline is required"));
+    }
     let doc_id = match obj.get("document") {
         None => st.doc.id,
         Some(v) => {
             let id = v.as_u64().map(DocId).ok_or_else(|| bad(cmd, "`document` must be a document id"))?;
-            if id != st.doc.id { return Err(bad(cmd, format!("document {id:?} is not active"))); }
+            if id != st.doc.id {
+                return Err(bad(cmd, format!("document {id:?} is not active")));
+            }
             id
         }
     };
@@ -45,33 +51,48 @@ fn context(s: &Session, p: &Value, cmd: &str, allowed: &[&str]) -> Result<(DocId
     };
     let layer = st.doc.layer(layer_id).ok_or(EngineError::NoLayer(layer_id))?;
     let locks = st.doc.effective_locks(layer_id);
-    if locks.all || crate::extra_cmds::is_background(layer) { return Err(bad(cmd, "the layer is locked")); }
+    if locks.all || crate::extra_cmds::is_background(layer) {
+        return Err(bad(cmd, "the layer is locked"));
+    }
     let frame = match obj.get("frame") {
         None => timeline.current,
         Some(v) => v.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad(cmd, "`frame` must be a non-negative integer"))?,
     };
-    if frame > MAX_OPACITY_ANIMATION_FRAME || frame >= timeline.duration { return Err(bad(cmd, format!("`frame` must be within the timeline duration and at most {MAX_OPACITY_ANIMATION_FRAME}"))); }
+    if frame > MAX_OPACITY_ANIMATION_FRAME || frame >= timeline.duration {
+        return Err(bad(cmd, format!("`frame` must be within the timeline duration and at most {MAX_OPACITY_ANIMATION_FRAME}")));
+    }
     Ok((doc_id, layer_id, frame))
 }
 
 fn enabled(s: &Session) -> std::result::Result<(), String> {
     let st = s.active().ok_or("no document open")?;
     let Some(id) = st.active_layer else { return Err("no active layer".into()) };
-    if st.doc.timeline.as_ref().is_none_or(|t| t.mode != photostore_doc::TimelineMode::Video) { return Err("an active video timeline is required".into()); }
-    if st.doc.timeline.as_ref().is_some_and(|t| t.current >= t.duration) { return Err("the timeline playhead is outside its duration".into()); }
+    if st.doc.timeline.as_ref().is_none_or(|t| t.mode != photostore_doc::TimelineMode::Video) {
+        return Err("an active video timeline is required".into());
+    }
+    if st.doc.timeline.as_ref().is_some_and(|t| t.current >= t.duration) {
+        return Err("the timeline playhead is outside its duration".into());
+    }
     let l = st.doc.layer(id).ok_or("no active layer")?;
     let locks = st.doc.effective_locks(id);
-    if locks.all || crate::extra_cmds::is_background(l) { return Err("the layer is locked".into()); }
+    if locks.all || crate::extra_cmds::is_background(l) {
+        return Err("the layer is locked".into());
+    }
     Ok(())
 }
 
 fn interpolation(cmd: &str, v: Option<&Value>) -> Result<Option<OpacityInterpolation>> {
     let Some(v) = v else { return Ok(None) };
-    let Some(s) = v.as_str() else { return Err(bad(cmd, "`interpolation` must be `linear` or `hold`")); };
+    let Some(s) = v.as_str() else {
+        return Err(bad(cmd, "`interpolation` must be `linear` or `hold`"));
+    };
     match s {
         "linear" => Ok(Some(OpacityInterpolation::Linear)),
         "hold" => Ok(Some(OpacityInterpolation::Hold)),
-        _ => Err(bad(cmd, "`interpolation` must be `linear` or `hold`")),
+        "ease_in" => Ok(Some(OpacityInterpolation::EaseIn)),
+        "ease_out" => Ok(Some(OpacityInterpolation::EaseOut)),
+        "ease_in_out" => Ok(Some(OpacityInterpolation::EaseInOut)),
+        _ => Err(bad(cmd, "`interpolation` must be linear, hold, ease_in, ease_out, or ease_in_out")),
     }
 }
 
@@ -81,7 +102,9 @@ fn opacity(cmd: &str, v: &Value) -> Result<f32> {
 }
 
 fn track_json(layer: LayerId, track: Option<&OpacityAnimation>) -> Value {
-    let Some(track) = track else { return json!({"layer": layer.0, "animation": null}); };
+    let Some(track) = track else {
+        return json!({"layer": layer.0, "animation": null});
+    };
     json!({"layer": layer.0, "animation": {"enabled": track.enabled, "staticValue": track.static_value, "keyCount": track.keys.len()}})
 }
 
@@ -98,23 +121,38 @@ fn dense_opacity_state<'a>(timeline: &'a photostore_doc::Timeline, layer_id: Lay
 }
 
 fn legacy_video_opacity(points: &[photostore_doc::VideoKeyframe], frame: usize, fallback: f32) -> Result<f32> {
-    if points.is_empty() { return Ok(fallback); }
+    if points.is_empty() {
+        return Ok(fallback);
+    }
     let upper = points.partition_point(|key| key.frame < frame);
     let value = |value: f32| {
-        value.is_finite().then_some(value.clamp(0.0, 1.0)).ok_or_else(|| bad("timeline.setOpacityAnimation", "legacy video opacity contains a non-finite value"))
+        value
+            .is_finite()
+            .then_some(value.clamp(0.0, 1.0))
+            .ok_or_else(|| bad("timeline.setOpacityAnimation", "legacy video opacity contains a non-finite value"))
     };
-    if frame <= points[0].frame { return value(points[0].opacity); }
-    if upper < points.len() && points[upper].frame == frame { return value(points[upper].opacity); }
-    if upper >= points.len() { return value(points.last().map_or(fallback, |key| key.opacity)); }
+    if frame <= points[0].frame {
+        return value(points[0].opacity);
+    }
+    if upper < points.len() && points[upper].frame == frame {
+        return value(points[upper].opacity);
+    }
+    if upper >= points.len() {
+        return value(points.last().map_or(fallback, |key| key.opacity));
+    }
     let a = &points[upper - 1];
     let b = &points[upper];
     let av = a.opacity;
     let bv = b.opacity;
     let span = b.frame.saturating_sub(a.frame) as f32;
-    if span <= 0.0 { return Ok(av.clamp(0.0, 1.0)); }
+    if span <= 0.0 {
+        return Ok(av.clamp(0.0, 1.0));
+    }
     let elapsed = frame.saturating_sub(a.frame) as f32;
     let interpolated = av + (bv - av) * (elapsed / span);
-    if !interpolated.is_finite() { return Err(bad("timeline.setOpacityAnimation", "legacy video opacity interpolation is non-finite")); }
+    if !interpolated.is_finite() {
+        return Err(bad("timeline.setOpacityAnimation", "legacy video opacity interpolation is non-finite"));
+    }
     Ok(interpolated.clamp(0.0, 1.0))
 }
 
@@ -122,12 +160,20 @@ fn legacy_video_opacity(points: &[photostore_doc::VideoKeyframe], frame: usize, 
 /// Dense or complex legacy tracks use Hold keys only for exact bitwise changes.
 fn migrate_video_opacity(doc: &photostore_doc::Document, layer_id: LayerId, static_value: f32) -> Result<Vec<OpacityKeyframe>> {
     let layer = doc.layer(layer_id).ok_or(EngineError::NoLayer(layer_id))?;
-    let Some(video) = layer.video.as_ref() else { return Ok(Vec::new()); };
+    let Some(video) = layer.video.as_ref() else {
+        return Ok(Vec::new());
+    };
     let timeline = doc.timeline.as_ref().ok_or_else(|| bad("timeline.setOpacityAnimation", "an active video timeline is required"))?;
-    if video.keyframes.len() > MAX_OPACITY_ANIMATION_KEYS { return Err(bad("timeline.setOpacityAnimation", format!("legacy video opacity track exceeds the {MAX_OPACITY_ANIMATION_KEYS}-key limit"))); }
+    if video.keyframes.len() > MAX_OPACITY_ANIMATION_KEYS {
+        return Err(bad("timeline.setOpacityAnimation", format!("legacy video opacity track exceeds the {MAX_OPACITY_ANIMATION_KEYS}-key limit")));
+    }
     let mut legacy = video.keyframes.clone();
-    if legacy.iter().any(|key| key.frame > MAX_OPACITY_ANIMATION_FRAME) { return Err(bad("timeline.setOpacityAnimation", format!("legacy opacity keyframe frame exceeds {MAX_OPACITY_ANIMATION_FRAME}"))); }
-    if legacy.iter().any(|key| !key.opacity.is_finite()) { return Err(bad("timeline.setOpacityAnimation", "legacy video opacity contains a non-finite value")); }
+    if legacy.iter().any(|key| key.frame > MAX_OPACITY_ANIMATION_FRAME) {
+        return Err(bad("timeline.setOpacityAnimation", format!("legacy opacity keyframe frame exceeds {MAX_OPACITY_ANIMATION_FRAME}")));
+    }
+    if legacy.iter().any(|key| !key.opacity.is_finite()) {
+        return Err(bad("timeline.setOpacityAnimation", "legacy video opacity contains a non-finite value"));
+    }
     legacy.sort_by_key(|key| key.frame);
     let has_duplicate = legacy.windows(2).any(|pair| pair[0].frame == pair[1].frame);
     let has_out_of_range = legacy.iter().any(|key| !(0.0..=1.0).contains(&key.opacity));
@@ -147,13 +193,16 @@ fn migrate_video_opacity(doc: &photostore_doc::Document, layer_id: LayerId, stat
     let mut keys = Vec::new();
     let mut previous = None;
     for frame in 0..extent {
-        let value = dense_opacity_state(timeline, layer_id, frame)
-            .map(|state| state.opacity)
-            .map_or_else(|| legacy_video_opacity(&legacy, frame, static_value), Ok)?;
-        if !value.is_finite() { return Err(bad("timeline.setOpacityAnimation", "dense or legacy video opacity contains a non-finite value")); }
+        let value =
+            dense_opacity_state(timeline, layer_id, frame).map(|state| state.opacity).map_or_else(|| legacy_video_opacity(&legacy, frame, static_value), Ok)?;
+        if !value.is_finite() {
+            return Err(bad("timeline.setOpacityAnimation", "dense or legacy video opacity contains a non-finite value"));
+        }
         let value = value.clamp(0.0, 1.0);
         if previous.is_none_or(|old: f32| old.to_bits() != value.to_bits()) {
-            if keys.len() >= MAX_OPACITY_ANIMATION_KEYS { return Err(bad("timeline.setOpacityAnimation", format!("opacity animation migration exceeds the {MAX_OPACITY_ANIMATION_KEYS}-key limit"))); }
+            if keys.len() >= MAX_OPACITY_ANIMATION_KEYS {
+                return Err(bad("timeline.setOpacityAnimation", format!("opacity animation migration exceeds the {MAX_OPACITY_ANIMATION_KEYS}-key limit")));
+            }
             keys.push(OpacityKeyframe { frame, value, interpolation: OpacityInterpolation::Hold });
             previous = Some(value);
         }
@@ -163,7 +212,9 @@ fn migrate_video_opacity(doc: &photostore_doc::Document, layer_id: LayerId, stat
     if extent <= MAX_OPACITY_ANIMATION_FRAME {
         let restore = legacy_video_opacity(&legacy, extent, static_value)?;
         if previous.is_none_or(|old: f32| old.to_bits() != restore.to_bits()) {
-            if keys.len() >= MAX_OPACITY_ANIMATION_KEYS { return Err(bad("timeline.setOpacityAnimation", format!("opacity animation migration exceeds the {MAX_OPACITY_ANIMATION_KEYS}-key limit"))); }
+            if keys.len() >= MAX_OPACITY_ANIMATION_KEYS {
+                return Err(bad("timeline.setOpacityAnimation", format!("opacity animation migration exceeds the {MAX_OPACITY_ANIMATION_KEYS}-key limit")));
+            }
             keys.push(OpacityKeyframe { frame: extent, value: restore, interpolation: OpacityInterpolation::Hold });
         }
     }
@@ -171,7 +222,9 @@ fn migrate_video_opacity(doc: &photostore_doc::Document, layer_id: LayerId, stat
 }
 
 pub(crate) fn target_enabled(s: &Session, id: &str, p: &Value) -> Option<std::result::Result<(), String>> {
-    if !matches!(id, "timeline.setOpacityAnimation" | "timeline.toggleOpacityAnimation" | "timeline.setOpacityKeyframe" | "timeline.deleteOpacityKeyframe") { return None; }
+    if !matches!(id, "timeline.setOpacityAnimation" | "timeline.toggleOpacityAnimation" | "timeline.setOpacityKeyframe" | "timeline.deleteOpacityKeyframe") {
+        return None;
+    }
     let empty = json!({});
     let params = if p.is_null() { &empty } else { p };
     Some(context(s, params, id, &["document", "layer", "enabled", "frame", "value", "interpolation"]).map(|_| ()).map_err(|e| e.to_string()))
@@ -184,7 +237,9 @@ fn set_enabled(s: &mut Session, p: &Value) -> Result<Value> {
         return Ok(track_json(layer_id, None));
     }
     if let Some(track) = s.active().and_then(|st| st.doc.layer(layer_id)).and_then(|l| l.opacity_animation.as_ref()) {
-        if (enabled && track.enabled) || (!enabled && !track.enabled) { return Ok(track_json(layer_id, Some(track))); }
+        if (enabled && track.enabled) || (!enabled && !track.enabled) {
+            return Ok(track_json(layer_id, Some(track)));
+        }
     }
     let result = s.edit(if enabled { "Enable Opacity Animation" } else { "Disable Opacity Animation" }, |doc, _| {
         let layer = doc.layer(layer_id).ok_or(EngineError::NoLayer(layer_id))?;
@@ -193,23 +248,31 @@ fn set_enabled(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad("timeline.setOpacityAnimation", format!("opacity animation track limit is {MAX_OPACITY_ANIMATION_TRACKS}")));
         }
         let current = doc.timeline.as_ref().map_or(0, |t| t.current);
-        let static_value = if layer.opacity.is_finite() { layer.opacity.clamp(0.0, 1.0) } else { return Err(bad("timeline.setOpacityAnimation", "layer opacity must be finite")); };
+        let static_value = if layer.opacity.is_finite() {
+            layer.opacity.clamp(0.0, 1.0)
+        } else {
+            return Err(bad("timeline.setOpacityAnimation", "layer opacity must be finite"));
+        };
         let migrating_video = enabled && previous.is_none() && layer.video.is_some();
         let migrated_keys = if migrating_video { migrate_video_opacity(doc, layer_id, static_value)? } else { Vec::new() };
-        let new_key_count = if enabled && (previous.is_none() || previous.is_some_and(|a| !a.enabled && a.keys.is_empty())) {
-            migrated_keys.len().max(1)
-        } else { 0 };
+        let new_key_count =
+            if enabled && (previous.is_none() || previous.is_some_and(|a| !a.enabled && a.keys.is_empty())) { migrated_keys.len().max(1) } else { 0 };
         if enabled && previous.is_none_or(|a| !a.enabled && a.keys.is_empty()) {
             let total = total_keys(doc);
             if new_key_count > MAX_OPACITY_ANIMATION_KEYS.saturating_sub(total) {
-                return Err(bad("timeline.setOpacityAnimation", format!("opacity animation migration exceeds the {MAX_OPACITY_ANIMATION_KEYS}-key document limit")));
+                return Err(bad(
+                    "timeline.setOpacityAnimation",
+                    format!("opacity animation migration exceeds the {MAX_OPACITY_ANIMATION_KEYS}-key document limit"),
+                ));
             }
         }
         {
             let l = doc.layer_mut(layer_id).ok_or(EngineError::NoLayer(layer_id))?;
             if enabled {
                 let mut keys = if migrating_video { migrated_keys } else { l.opacity_animation.as_ref().map(|a| a.keys.as_ref().clone()).unwrap_or_default() };
-                if keys.is_empty() { keys.push(OpacityKeyframe { frame: current, value: static_value, interpolation: OpacityInterpolation::Linear }); }
+                if keys.is_empty() {
+                    keys.push(OpacityKeyframe { frame: current, value: static_value, interpolation: OpacityInterpolation::Linear });
+                }
                 l.opacity_animation = Some(OpacityAnimation { enabled: true, static_value, keys: Arc::new(keys) });
             } else {
                 let sampled = l.opacity_animation.as_ref().map_or(l.opacity, |a| a.sampled_value(current));
@@ -228,7 +291,9 @@ fn toggle(s: &mut Session, p: &Value) -> Result<Value> {
     let (_, layer_id, _) = context(s, &p, "timeline.toggleOpacityAnimation", &["document", "layer"])?;
     let enabled_now = s.active().and_then(|st| st.doc.layer(layer_id)).and_then(|l| l.opacity_animation.as_ref()).is_some_and(|a| a.enabled);
     let mut params = p;
-    if let Some(obj) = params.as_object_mut() { obj.insert("enabled".into(), Value::Bool(!enabled_now)); }
+    if let Some(obj) = params.as_object_mut() {
+        obj.insert("enabled".into(), Value::Bool(!enabled_now));
+    }
     set_enabled(s, &params)
 }
 
@@ -242,25 +307,38 @@ fn set_key(s: &mut Session, p: &Value) -> Result<Value> {
     {
         let value_same = p.get("value").map_or(true, |v| opacity(cmd, v).is_ok_and(|n| n.to_bits() == track.keys[index].value.to_bits()));
         let interp_same = interp.is_none_or(|i| i == track.keys[index].interpolation);
-        if value_same && interp_same { return Ok(track_json(layer_id, Some(track))); }
+        if value_same && interp_same {
+            return Ok(track_json(layer_id, Some(track)));
+        }
     }
     let result = s.edit("Set Opacity Keyframe", |doc, _| {
         let key_count = total_keys(doc);
         let l = doc.layer_mut(layer_id).ok_or(EngineError::NoLayer(layer_id))?;
-        let Some(old) = l.opacity_animation.as_ref() else { return Err(bad(cmd, "opacity animation is disabled")); };
-        if !old.enabled { return Err(bad(cmd, "opacity animation is disabled")); }
+        let Some(old) = l.opacity_animation.as_ref() else {
+            return Err(bad(cmd, "opacity animation is disabled"));
+        };
+        if !old.enabled {
+            return Err(bad(cmd, "opacity animation is disabled"));
+        }
         let sampled = old.sampled_value(frame);
-        let value = match p.get("value") { Some(v) => opacity(cmd, v)?, None => sampled };
+        let value = match p.get("value") {
+            Some(v) => opacity(cmd, v)?,
+            None => sampled,
+        };
         let static_value = old.static_value;
         let mut keys = old.keys.as_ref().clone();
         match keys.binary_search_by_key(&frame, |k| k.frame) {
             Ok(index) => {
                 let key = &mut keys[index];
                 key.value = value;
-                if let Some(i) = interp { key.interpolation = i; }
+                if let Some(i) = interp {
+                    key.interpolation = i;
+                }
             }
             Err(index) => {
-                if key_count >= MAX_OPACITY_ANIMATION_KEYS { return Err(bad(cmd, format!("opacity animation key limit is {MAX_OPACITY_ANIMATION_KEYS}"))); }
+                if key_count >= MAX_OPACITY_ANIMATION_KEYS {
+                    return Err(bad(cmd, format!("opacity animation key limit is {MAX_OPACITY_ANIMATION_KEYS}")));
+                }
                 let i = interp.or_else(|| index.checked_sub(1).and_then(|n| keys.get(n).map(|k| k.interpolation))).unwrap_or(OpacityInterpolation::Linear);
                 keys.insert(index, OpacityKeyframe { frame, value, interpolation: i });
             }
@@ -284,11 +362,17 @@ fn delete_key(s: &mut Session, p: &Value) -> Result<Value> {
     let result = s.edit("Delete Opacity Keyframe", |doc, _| {
         let current = doc.timeline.as_ref().map_or(frame, |t| t.current);
         let l = doc.layer_mut(layer_id).ok_or(EngineError::NoLayer(layer_id))?;
-        let Some(old) = l.opacity_animation.as_ref() else { return Ok(track_json(layer_id, None)); };
-        if !old.enabled { return Ok(track_json(layer_id, Some(old))); }
+        let Some(old) = l.opacity_animation.as_ref() else {
+            return Ok(track_json(layer_id, None));
+        };
+        if !old.enabled {
+            return Ok(track_json(layer_id, Some(old)));
+        }
         let old_static = old.static_value;
         let mut keys = old.keys.as_ref().clone();
-        let Ok(index) = keys.binary_search_by_key(&frame, |k| k.frame) else { return Ok(track_json(layer_id, Some(old))); };
+        let Ok(index) = keys.binary_search_by_key(&frame, |k| k.frame) else {
+            return Ok(track_json(layer_id, Some(old)));
+        };
         keys.remove(index);
         if keys.is_empty() {
             let sampled = old.sampled_value(current);
@@ -312,9 +396,18 @@ macro_rules! spec {
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        spec!("timeline.setOpacityAnimation", "Set Opacity Animation", r#"{document?:id,layer?:id,enabled:bool} → {layer,animation}"#, |s, p| set_enabled(s, p)),
+        spec!("timeline.setOpacityAnimation", "Set Opacity Animation", r#"{document?:id,layer?:id,enabled:bool} → {layer,animation}"#, |s, p| set_enabled(
+            s, p
+        )),
         spec!("timeline.toggleOpacityAnimation", "Toggle Opacity Animation", r#"null|{document?:id,layer?:id} → {layer,animation}"#, |s, p| toggle(s, p)),
-        spec!("timeline.setOpacityKeyframe", "Set Opacity Keyframe", r#"{document?:id,layer?:id,frame?:current,value?:0..1,interpolation?:linear|hold} → {layer,animation}"#, |s, p| set_key(s, p)),
-        spec!("timeline.deleteOpacityKeyframe", "Delete Opacity Keyframe", r#"{document?:id,layer?:id,frame?:current} → {layer,animation}"#, |s, p| delete_key(s, p)),
+        spec!(
+            "timeline.setOpacityKeyframe",
+            "Set Opacity Keyframe",
+            r#"{document?:id,layer?:id,frame?:current,value?:0..1,interpolation?:linear|hold} → {layer,animation}"#,
+            |s, p| set_key(s, p)
+        ),
+        spec!("timeline.deleteOpacityKeyframe", "Delete Opacity Keyframe", r#"{document?:id,layer?:id,frame?:current} → {layer,animation}"#, |s, p| {
+            delete_key(s, p)
+        }),
     ]
 }

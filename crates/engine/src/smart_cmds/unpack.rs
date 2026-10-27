@@ -182,8 +182,10 @@ pub(super) fn convert_to_layers(s: &mut Session, p: &Value) -> Result<Value> {
     let out = unpacked(so, layers);
     let (new_id, group) = (out.id, out.is_group());
     s.edit("Convert to Layers", |doc, active| {
+        crate::timeline_editor_cmds::ensure_tracks(doc)?;
         let path = doc.path_of(id).ok_or(EngineError::NoLayer(id))?;
         *doc.layer_at_mut(&path).ok_or(EngineError::NoLayer(id))? = out;
+        crate::timeline_editor_cmds::remap_timeline_layer(doc, id, new_id)?;
         *active = Some(new_id);
         Ok(())
     })?;

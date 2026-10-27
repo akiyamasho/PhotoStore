@@ -33,7 +33,7 @@ fn target_params(doc: photostore_doc::DocId, layer: photostore_doc::LayerId) -> 
     json!({"document": doc.0, "layer": layer.0})
 }
 
-fn fallback_position(doc: &photostore_doc::Document, layer: &photostore_doc::Layer, frame: usize) -> (i32, i32) {
+pub(crate) fn fallback_position(doc: &photostore_doc::Document, layer: &photostore_doc::Layer, frame: usize) -> (i32, i32) {
     if layer.video.is_some() {
         photostore_engine::sample_layer_position(doc, layer, frame)
     } else {
@@ -190,6 +190,9 @@ pub(crate) fn row(
                             p["interpolation"] = json!(match keys[i].interpolation {
                                 photostore_doc::PositionInterpolation::Hold => "hold",
                                 photostore_doc::PositionInterpolation::Linear => "linear",
+                                photostore_doc::PositionInterpolation::EaseIn => "ease_in",
+                                photostore_doc::PositionInterpolation::EaseOut => "ease_out",
+                                photostore_doc::PositionInterpolation::EaseInOut => "ease_in_out",
                             });
                         }
                         action = Some(("timeline.setPositionKeyframe", p));
@@ -217,17 +220,19 @@ pub(crate) fn row(
                             .selected_text(match interpolation {
                                 photostore_doc::PositionInterpolation::Linear => "Linear",
                                 photostore_doc::PositionInterpolation::Hold => "Hold",
+                                photostore_doc::PositionInterpolation::EaseIn => "Ease In",
+                                photostore_doc::PositionInterpolation::EaseOut => "Ease Out",
+                                photostore_doc::PositionInterpolation::EaseInOut => "Ease In Out",
                             })
                             .show_ui(ui, |ui| {
-                                for (label, value) in [("Linear", "linear"), ("Hold", "hold")] {
-                                    if ui
-                                        .selectable_label(
-                                            (value == "hold" && interpolation == photostore_doc::PositionInterpolation::Hold)
-                                                || (value == "linear" && interpolation == photostore_doc::PositionInterpolation::Linear),
-                                            label,
-                                        )
-                                        .clicked()
-                                    {
+                                for (label, value, selected) in [
+                                    ("Linear", "linear", interpolation == photostore_doc::PositionInterpolation::Linear),
+                                    ("Hold", "hold", interpolation == photostore_doc::PositionInterpolation::Hold),
+                                    ("Ease In", "ease_in", interpolation == photostore_doc::PositionInterpolation::EaseIn),
+                                    ("Ease Out", "ease_out", interpolation == photostore_doc::PositionInterpolation::EaseOut),
+                                    ("Ease In Out", "ease_in_out", interpolation == photostore_doc::PositionInterpolation::EaseInOut),
+                                ] {
+                                    if ui.selectable_label(selected, label).clicked() {
                                         let mut p = target_params(doc.id, layer.id);
                                         p["frame"] = json!(frame);
                                         p["interpolation"] = json!(value);
@@ -278,7 +283,10 @@ pub(crate) fn confirmation(app: &mut PhotoStoreApp, ctx: &egui::Context) -> Opti
     egui::Window::new("Disable position stopwatch?").collapsible(false).resizable(false).open(&mut open).show(ctx, |ui| {
         ui.label("Delete all position keyframes and keep the current value?");
         if stale || !app.ui.timeline.position.error.is_empty() {
-            ui.colored_label(egui::Color32::RED, if stale { "The document, layer, or edit history changed; choose the layer again" } else { &app.ui.timeline.position.error });
+            ui.colored_label(
+                egui::Color32::RED,
+                if stale { "The document, layer, or edit history changed; choose the layer again" } else { &app.ui.timeline.position.error },
+            );
         }
         ui.horizontal(|ui| {
             if !stale && crate::widgets::primary_button(ui, "Disable and Delete Keys", 160.0).clicked() {

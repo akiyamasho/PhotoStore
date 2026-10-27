@@ -591,6 +591,12 @@ fn build() -> Vec<CommandSpec> {
             let id = layer_param(s, p)?;
             s.edit("Delete Layer", |doc, active| {
                 let neighbours = crate::layer_multi_cmds::deletion_neighbours(doc, id);
+                fn subtree(layer: &Layer, ids: &mut std::collections::HashSet<LayerId>) {
+                    ids.insert(layer.id);
+                    if let Some(children) = layer.children() { for child in children { subtree(child, ids); } }
+                }
+                let mut removed = std::collections::HashSet::new();
+                if let Some(layer) = doc.layer(id) { subtree(layer, &mut removed); }
                 doc.remove(id).ok_or(EngineError::NoLayer(id))?;
                 if doc.layers.is_empty() {
                     return Err(EngineError::Other("a document must keep at least one layer".into()));
@@ -598,6 +604,7 @@ fn build() -> Vec<CommandSpec> {
                 if active.is_some_and(|current| doc.layer(current).is_none()) {
                     *active = neighbours.into_iter().find(|candidate| doc.layer(*candidate).is_some());
                 }
+                crate::timeline_editor_cmds::prune_deleted_timeline_layers(doc, &removed)?;
                 Ok(())
             })?;
             Ok(Value::Null)
@@ -1212,6 +1219,7 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::migrate_cmds::specs());
     v.extend(crate::trap_cmds::specs());
     v.extend(crate::timeline_cmds::specs());
+    v.extend(crate::timeline_editor_cmds::specs());
     v.extend(crate::video_cmds::specs());
     v.extend(crate::position_cmds::specs());
     v.extend(crate::smart_transform_cmds::specs());

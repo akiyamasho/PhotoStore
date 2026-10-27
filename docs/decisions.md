@@ -447,3 +447,49 @@ metadata is cleared only after a successful Free Transform. Frame Animation conv
 while Transform animation is enabled because key baking is unsupported. This development receipt
 does not claim pixel or full-feature parity with public references or establish a production
 release.
+
+## 2026-10-27: Reopened timeline workspace overhaul (#23)
+
+The earlier video timeline was rejected as visually cluttered and insufficient for familiar clip
+editing. The replacement uses a compact toolbar, persistent visual-track rows, a pinned ruler and
+track-control gutter, cached media-derived clip thumbnails, and selection-aware Properties in the
+right dock. Audio waveform bins come from the engine's bounded background waveform cache; no
+synthetic waveform is painted. The ordinary timeline no longer hosts per-layer value forms.
+
+Timeline editor shortcuts are scoped to a direct timeline interaction and excluded from the global
+Photoshop dispatcher, preserving those bindings for canvas work. The shortcut setup reuses the
+existing preference store/export format. The selected-clip key pane supports multi-key selection,
+dragging, deletion, copy/paste, persisted easing, and direct atomic value edits for Position, Opacity
+and Transform keys. It also draws engine-sampled selected-channel value curves, with Alt-drag moving
+and editing one key in a single history edit. Speed curves are editable through graph points and
+frame/rate fields; the engine maps them for preview, export and linked audio. Main-track deletion,
+trim and paste repack the Main row when the P magnet is enabled; non-Main ripple delete is not
+implemented. Media-bin duplication and clip-attribute copy/paste use separate backend clipboards.
+Alt-drag resizes paragraph text boxes around their center. These additions do not complete the whole
+editing workflow. A searchable shortcut reference lists all 107 observed actions and
+gestures, with a PhotoStore mapping for each assigned entry and no default invented for unassigned
+entries. Remaining behavior gaps and implementation state are listed in [timeline workflow](timeline-workflow.md),
+and issue #23 stays open pending final build and manual acceptance.
+
+Design reference: [CapCut desktop keyframe guide](https://www.capcut.com/resource/how-to-add-keyframes-in-capcut),
+[CapCut keyframe animation](https://www.capcut.com/tools/keyframe-animation),
+[CapCut split workflow](https://www.capcut.com/features/how-to-split-a-video-capcut-workflow-comparison),
+[Photoshop timeline workflow](https://helpx.adobe.com/photoshop/desktop/add-video-and-animation/use-keyframes/create-timeline-animation-workflow.html),
+and [Adobe Smart Object animation tutorial](https://www.adobe.com/learn/photoshop/web/animate-poster-text-images).
+PhotoStore uses an original egui drawing implementation and copies no branded assets. The API and
+implementation status are tracked in [timeline workflow](timeline-workflow.md); build and manual UI
+acceptance remain outstanding for this reopened work.
+
+Clip retiming preserves every key and timeline snapshot whose shifted frame remains representable.
+When a hidden pre-clip anchor would move before frame zero, the edit removes only those negative
+anchors, retains other hidden keys, and materializes the clip-start sample where needed. A severed
+eased boundary segment is preserved at integer frames within the existing 100,000-key limit;
+exceeding that limit rejects the whole edit. Only unrepresentable negative snapshot rows are
+skipped. Undo restores the original document. Legacy Smart clips capture their original absolute
+source clock before clip-local playback is materialized. Persistent visual rows are materialized
+for document roots; descendant timing remains serialized without reopening collapsed group rows.
+
+Left trims can restore retained source within timeline and source bounds. Preview and command edits
+share `ClipPlayback::extend_left`, including curve-offset restoration and bounded first-speed
+extension. Cross-document clipboard paste maps a source Main row to the destination Main row;
+magnet mode controls repacking, and native files retain the one-Main-track invariant.

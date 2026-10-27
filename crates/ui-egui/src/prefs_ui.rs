@@ -418,7 +418,7 @@ fn persist(app: &mut PhotoStoreApp, now: f64) -> Option<f64> {
                 app.ui.status = format!("Couldn't save preferences: {e}. Retrying…");
                 app.ui.status_error = true;
             } else if failures == SAVE_NOTICE_AFTER {
-        let lines = vec![e, "PhotoStore keeps retrying; until a save succeeds, preference changes are lost when it closes.".into()];
+                let lines = vec![e, "PhotoStore keeps retrying; until a save succeeds, preference changes are lost when it closes.".into()];
                 let id = crate::notices::post(app, "Preferences can't be saved", lines, true, None);
                 app.prefs_rt.save_retry.notice = Some(id);
             }
@@ -623,7 +623,14 @@ pub fn shortcut_items(app: &PhotoStoreApp) -> Vec<(String, String, Vec<String>, 
     let mut layer = Vec::new();
     for c in photostore_engine::command_specs() {
         if seen.insert(c.id.to_string()) && (c.shortcut.is_some() || c.id.starts_with("timeline.") || c.id.starts_with("layer.smartObjects.")) {
-            let item = (c.id.to_string(), c.label.to_string(), c.menu.iter().map(|s| s.to_string()).collect::<Vec<_>>(), c.shortcut.map(Into::into));
+            let path = if c.id.starts_with("timeline.editor.key.") {
+                vec!["Keyframes".to_string()]
+            } else if c.id.starts_with("timeline.editor.") {
+                vec!["Timeline".to_string()]
+            } else {
+                c.menu.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+            };
+            let item = (c.id.to_string(), c.label.to_string(), path, crate::shortcuts::default_shortcut(c.id).or_else(|| c.shortcut.map(Into::into)));
             if c.menu.is_empty() && tools_key(c.id) {
                 tools.push((item.0, item.1, vec!["Tools".to_string()], item.3));
             } else if c.menu.is_empty() && c.id.starts_with("layer.") {
@@ -638,8 +645,12 @@ pub fn shortcut_items(app: &PhotoStoreApp) -> Vec<(String, String, Vec<String>, 
     let at = out.iter().rposition(|i| i.2.first().map(String::as_str) == Some("Layer")).map_or(out.len(), |i| i + 1);
     out.splice(at..at, layer);
     out.extend(tools);
-    for (id, label) in [("tools.previousBrush", "Previous Brush"), ("tools.nextBrush", "Next Brush"), ("tools.firstBrush", "First Brush"), ("tools.lastBrush", "Last Brush")] {
-        if seen.insert(id.to_string()) { out.push((id.to_string(), label.to_string(), vec!["Tools".into(), "Brushes".into()], None)); }
+    for (id, label) in
+        [("tools.previousBrush", "Previous Brush"), ("tools.nextBrush", "Next Brush"), ("tools.firstBrush", "First Brush"), ("tools.lastBrush", "Last Brush")]
+    {
+        if seen.insert(id.to_string()) {
+            out.push((id.to_string(), label.to_string(), vec!["Tools".into(), "Brushes".into()], None));
+        }
     }
     for tool in crate::state::Tool::ALL {
         let id = crate::shortcuts::tool_id(tool).to_string();
@@ -652,7 +663,23 @@ pub fn shortcut_items(app: &PhotoStoreApp) -> Vec<(String, String, Vec<String>, 
             out.push((id.to_string(), label.to_string(), vec!["Tools".into(), "Temporary".into()], Some(def.to_string())));
         }
     }
+    for (id, label, binding) in crate::shortcuts::TIMELINE_SHORTCUTS {
+        if seen.insert((*id).to_string()) {
+            let group = if id.contains("key") {
+                "Keyframes"
+            } else if ["importMedia", "export", "newDocument", "quit", "backToEditor", "fullScreenPreview"].iter().any(|part| id.ends_with(part)) {
+                "Basic"
+            } else {
+                "Timeline"
+            };
+            out.push(((*id).to_string(), (*label).to_string(), vec![group.to_string()], binding.map(str::to_string)));
+        }
+    }
     out
+}
+
+fn scoped_shortcut_pair(a: &str, b: &str) -> bool {
+    a.starts_with("timeline.editor.") != b.starts_with("timeline.editor.")
 }
 
 /// Text of a key press for the shortcut editor (`Cmd+Shift+K`), `None` for bare modifiers.
@@ -1486,14 +1513,27 @@ fn shortcuts_body(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String
             } else if let Some(sc) = shortcut_text(key, m) {
                 let clash: Vec<String> = items
                     .iter()
-                    .filter(|(id, _, _, def)| *id != selected && !(photostore_engine::prefs::is_tool_shortcut_id(id) && photostore_engine::prefs::is_tool_shortcut_id(&selected)) && eff(&overrides, id, def).as_deref().and_then(prefs::normalize_shortcut) == Some(sc.clone()))
+                    .filter(|(id, _, _, def)| {
+                        *id != selected
+                            && !(photostore_engine::prefs::is_tool_shortcut_id(id) && photostore_engine::prefs::is_tool_shortcut_id(&selected))
+                            && eff(&overrides, id, def).as_deref().and_then(prefs::normalize_shortcut) == Some(sc.clone())
+                    })
                     .map(|(id, label, path, _)| {
                         let (path, label) = shown(id, label, path);
                         format!("{} › {}", path.join(" › "), label.trim_end_matches('…'))
                     })
                     .collect();
                 let mut clash = clash;
-                clash.extend(alternates.iter().filter(|(id, keys)| id.as_str() != selected.as_str() && !(photostore_engine::prefs::is_tool_shortcut_id(id) && photostore_engine::prefs::is_tool_shortcut_id(&selected)) && keys.iter().any(|key| prefs::normalize_shortcut(key).as_deref() == Some(sc.as_str()))).map(|(id, _)| id.clone()));
+                clash.extend(
+                    alternates
+                        .iter()
+                        .filter(|(id, keys)| {
+                            id.as_str() != selected.as_str()
+                                && !(photostore_engine::prefs::is_tool_shortcut_id(id) && photostore_engine::prefs::is_tool_shortcut_id(&selected))
+                                && keys.iter().any(|key| prefs::normalize_shortcut(key).as_deref() == Some(sc.as_str()))
+                        })
+                        .map(|(id, _)| id.clone()),
+                );
                 // Primary capture always replaces the primary binding, including Shift based
                 // shortcuts. Alternate capture is an explicit editor mode.
                 if capture_alternate {
@@ -1524,7 +1564,11 @@ fn shortcuts_body(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String
     if sort == "shortcut" {
         items.sort_by(|a, b| {
             let key = |row: &(String, String, Vec<String>, Option<String>)| {
-                let current = match overrides.get(&row.0) { Some(v) if v.is_empty() => None, Some(v) => Some(v.clone()), None => row.3.clone() };
+                let current = match overrides.get(&row.0) {
+                    Some(v) if v.is_empty() => None,
+                    Some(v) => Some(v.clone()),
+                    None => row.3.clone(),
+                };
                 let alt = alternates.get(&row.0).and_then(|v| v.first()).cloned();
                 let effective = current.or(alt);
                 (effective.is_none(), effective.unwrap_or_default())
@@ -1564,7 +1608,9 @@ fn shortcuts_body(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String
                     selected = id.clone();
                 }
                 if tab == 0 {
-                    let text = if sel && capture { tl!("Press keys…").to_string() } else {
+                    let text = if sel && capture {
+                        tl!("Press keys…").to_string()
+                    } else {
                         let mut keys = vec![cur.clone().unwrap_or_default()];
                         keys.extend(alternates.get(id).cloned().unwrap_or_default());
                         keys.into_iter().filter(|s| !s.is_empty()).map(|s| crate::shortcuts::pretty(&s)).collect::<Vec<_>>().join(" / ")
@@ -1623,7 +1669,9 @@ fn shortcuts_body(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String
             if ui.add_enabled(has_sel && alternates.get(&selected).is_some_and(|v| !v.is_empty()), egui::Button::new(tl!("Remove Alternate"))).clicked() {
                 if let Some(keys) = alternates.get_mut(&selected) {
                     keys.pop();
-                    if keys.is_empty() { alternates.remove(&selected); }
+                    if keys.is_empty() {
+                        alternates.remove(&selected);
+                    }
                 }
                 message = tl!("Alternate shortcut removed.").into();
             }
@@ -1657,7 +1705,9 @@ fn shortcuts_body(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String
     if overrides_ok {
         f.insert("overrides".into(), json!(overrides));
     }
-    if alternates_ok { f.insert("alternates".into(), json!(alternates)); }
+    if alternates_ok {
+        f.insert("alternates".into(), json!(alternates));
+    }
     f.insert("hidden".into(), json!(hidden));
     f.insert("colors".into(), json!(colors));
     f.insert("selected".into(), json!(selected));
@@ -1688,7 +1738,11 @@ fn toolbar_tab(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, V
     if sort == "shortcut" {
         rows.sort_by_key(|(rank, tool)| {
             let id = crate::shortcuts::tool_id(*tool);
-            let key = match overrides.get(id) { Some(v) if v.is_empty() => None, Some(v) => Some(v.clone()), None => crate::shortcuts::default_shortcut(id) };
+            let key = match overrides.get(id) {
+                Some(v) if v.is_empty() => None,
+                Some(v) => Some(v.clone()),
+                None => crate::shortcuts::default_shortcut(id),
+            };
             let effective = key.or_else(|| alternates.get(id).and_then(|v| v.first()).cloned());
             (effective.is_none(), effective.unwrap_or_default(), *rank)
         });
@@ -1710,7 +1764,9 @@ fn toolbar_tab(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, V
                     let (icon_rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                     crate::icons::paint(ui, icon_rect, crate::icons::tool_icon(tool), 14.0, t.icon);
                     let label = ui.selectable_label(false, RichText::new(tl!(tool.label())).color(t.text_dim));
-                    if label.clicked() { on = !on; }
+                    if label.clicked() {
+                        on = !on;
+                    }
                     checkbox.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), on, tl!(tool.label())));
                 });
                 if on {
@@ -1719,38 +1775,122 @@ fn toolbar_tab(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, V
                     hidden.push(name);
                 }
                 let id = crate::shortcuts::tool_id(tool);
-                let current = match overrides.get(id) { Some(v) if v.is_empty() => None, Some(v) => Some(v.clone()), None => crate::shortcuts::default_shortcut(id) };
-                let display = if selected == id && capture { tl!("Press keys…").to_string() } else { current.as_deref().map(crate::shortcuts::pretty).unwrap_or_default() };
-                let chosen = ui.selectable_label(selected == id, egui::RichText::new(if display.is_empty() { tl!("Unassigned").to_string() } else { display }).size(12.0));
-                if chosen.clicked() { selected = id.to_string(); capture = true; capture_alt = false; edit_alt = None; message.clear(); }
+                let current = match overrides.get(id) {
+                    Some(v) if v.is_empty() => None,
+                    Some(v) => Some(v.clone()),
+                    None => crate::shortcuts::default_shortcut(id),
+                };
+                let display = if selected == id && capture {
+                    tl!("Press keys…").to_string()
+                } else {
+                    current.as_deref().map(crate::shortcuts::pretty).unwrap_or_default()
+                };
+                let chosen = ui
+                    .selectable_label(selected == id, egui::RichText::new(if display.is_empty() { tl!("Unassigned").to_string() } else { display }).size(12.0));
+                if chosen.clicked() {
+                    selected = id.to_string();
+                    capture = true;
+                    capture_alt = false;
+                    edit_alt = None;
+                    message.clear();
+                }
                 let mut remove_alt = None;
-                ui.horizontal(|ui| { for (index, alt) in alternates.get(id).cloned().unwrap_or_default().iter().enumerate() {
-                    let alt_resp = ui.small_button(crate::shortcuts::pretty(alt)).on_hover_text(tl!("Right-click to edit or remove this alternate"));
-                    alt_resp.context_menu(|ui| {
-                        if ui.button(tl!("Edit Alternate")).clicked() { selected = id.to_string(); edit_alt = Some(index); capture = true; capture_alt = true; ui.close(); }
-                        if ui.button(tl!("Remove Alternate")).clicked() { remove_alt = Some(index); ui.close(); }
-                    });
-                } });
-                if let Some(index) = remove_alt { if let Some(keys) = alternates.get_mut(id) { keys.remove(index); if keys.is_empty() { alternates.remove(id); } } }
+                ui.horizontal(|ui| {
+                    for (index, alt) in alternates.get(id).cloned().unwrap_or_default().iter().enumerate() {
+                        let alt_resp = ui.small_button(crate::shortcuts::pretty(alt)).on_hover_text(tl!("Right-click to edit or remove this alternate"));
+                        alt_resp.context_menu(|ui| {
+                            if ui.button(tl!("Edit Alternate")).clicked() {
+                                selected = id.to_string();
+                                edit_alt = Some(index);
+                                capture = true;
+                                capture_alt = true;
+                                ui.close();
+                            }
+                            if ui.button(tl!("Remove Alternate")).clicked() {
+                                remove_alt = Some(index);
+                                ui.close();
+                            }
+                        });
+                    }
+                });
+                if let Some(index) = remove_alt {
+                    if let Some(keys) = alternates.get_mut(id) {
+                        keys.remove(index);
+                        if keys.is_empty() {
+                            alternates.remove(id);
+                        }
+                    }
+                }
                 ui.end_row();
             }
         });
     });
     if capture && !selected.is_empty() {
-        if let Some((key, mods)) = ui.input(|i| i.events.iter().find_map(|e| match e { egui::Event::Key { key, pressed: true, modifiers, .. } if !is_modifier_key(*key) => Some((*key, *modifiers)), _ => None })) {
+        if let Some((key, mods)) = ui.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Key { key, pressed: true, modifiers, .. } if !is_modifier_key(*key) => Some((*key, *modifiers)),
+                _ => None,
+            })
+        }) {
             ui.input_mut(|i| i.consume_key(mods, key));
-            if key == egui::Key::Escape { capture = false; edit_alt = None; } else if matches!(key, egui::Key::Backspace | egui::Key::Delete) && mods.is_none() { overrides.insert(selected.clone(), String::new()); alternates.remove(&selected); capture = false; edit_alt = None; } else if let Some(sc) = shortcut_text(key, mods) {
-                if capture_alt { let keys = alternates.entry(selected.clone()).or_default(); if let Some(index) = edit_alt.take() { if index < keys.len() { keys[index] = sc.clone(); } } else if !keys.iter().any(|k| prefs::normalize_shortcut(k).as_deref() == Some(sc.as_str())) { keys.push(sc.clone()); } } else { overrides.insert(selected.clone(), sc.clone()); }
-                message = format!("{} assigned.", crate::shortcuts::pretty(&sc)); capture = false; capture_alt = false;
+            if key == egui::Key::Escape {
+                capture = false;
+                edit_alt = None;
+            } else if matches!(key, egui::Key::Backspace | egui::Key::Delete) && mods.is_none() {
+                overrides.insert(selected.clone(), String::new());
+                alternates.remove(&selected);
+                capture = false;
+                edit_alt = None;
+            } else if let Some(sc) = shortcut_text(key, mods) {
+                if capture_alt {
+                    let keys = alternates.entry(selected.clone()).or_default();
+                    if let Some(index) = edit_alt.take() {
+                        if index < keys.len() {
+                            keys[index] = sc.clone();
+                        }
+                    } else if !keys.iter().any(|k| prefs::normalize_shortcut(k).as_deref() == Some(sc.as_str())) {
+                        keys.push(sc.clone());
+                    }
+                } else {
+                    overrides.insert(selected.clone(), sc.clone());
+                }
+                message = format!("{} assigned.", crate::shortcuts::pretty(&sc));
+                capture = false;
+                capture_alt = false;
             }
         }
     }
     ui.horizontal(|ui| {
         let has = !selected.is_empty();
-        if ui.add_enabled(has, egui::Button::new(tl!("Use Default"))).clicked() { overrides.remove(&selected); alternates.remove(&selected); edit_alt = None; }
-        if ui.add_enabled(has, egui::Button::new(tl!("Delete Shortcut"))).clicked() { overrides.insert(selected.clone(), String::new()); alternates.remove(&selected); edit_alt = None; }
-        if ui.add_enabled(has, egui::Button::new(tl!("Add Alternate"))).clicked() { capture = true; capture_alt = true; edit_alt = None; message = tl!("Press keys for an alternate binding…").into(); }
-        if ui.add_enabled(has && alternates.get(&selected).is_some_and(|v| !v.is_empty()), egui::Button::new(tl!("Remove Alternate"))).clicked() { if let Some(v) = alternates.get_mut(&selected) { if let Some(index) = edit_alt.or_else(|| v.len().checked_sub(1)) { if index < v.len() { v.remove(index); } } if v.is_empty() { alternates.remove(&selected); } } edit_alt = None; }
+        if ui.add_enabled(has, egui::Button::new(tl!("Use Default"))).clicked() {
+            overrides.remove(&selected);
+            alternates.remove(&selected);
+            edit_alt = None;
+        }
+        if ui.add_enabled(has, egui::Button::new(tl!("Delete Shortcut"))).clicked() {
+            overrides.insert(selected.clone(), String::new());
+            alternates.remove(&selected);
+            edit_alt = None;
+        }
+        if ui.add_enabled(has, egui::Button::new(tl!("Add Alternate"))).clicked() {
+            capture = true;
+            capture_alt = true;
+            edit_alt = None;
+            message = tl!("Press keys for an alternate binding…").into();
+        }
+        if ui.add_enabled(has && alternates.get(&selected).is_some_and(|v| !v.is_empty()), egui::Button::new(tl!("Remove Alternate"))).clicked() {
+            if let Some(v) = alternates.get_mut(&selected) {
+                if let Some(index) = edit_alt.or_else(|| v.len().checked_sub(1)) {
+                    if index < v.len() {
+                        v.remove(index);
+                    }
+                }
+                if v.is_empty() {
+                    alternates.remove(&selected);
+                }
+            }
+            edit_alt = None;
+        }
     });
     if ui.button(tl!("Restore Defaults")).clicked() {
         hidden.clear();
@@ -1763,13 +1903,27 @@ fn toolbar_tab(app: &mut PhotoStoreApp, ui: &mut egui::Ui, f: &mut Map<String, V
         }
     }
     ui.horizontal(|ui| {
-        if ui.button(tl!("Import Shortcuts…")).clicked() && let Err(e) = crate::kys_import::import_dialog(app) { message = e; }
-        if ui.button(tl!("Export PhotoStore Set…")).clicked() && let Err(e) = crate::kys_import::export_dialog(app, &overrides, &alternates) { message = e; }
+        if ui.button(tl!("Import Shortcuts…")).clicked()
+            && let Err(e) = crate::kys_import::import_dialog(app)
+        {
+            message = e;
+        }
+        if ui.button(tl!("Export PhotoStore Set…")).clicked()
+            && let Err(e) = crate::kys_import::export_dialog(app, &overrides, &alternates)
+        {
+            message = e;
+        }
     });
-    if !message.is_empty() { ui.label(RichText::new(&message).color(Tokens::get(ui.ctx()).warning)); }
+    if !message.is_empty() {
+        ui.label(RichText::new(&message).color(Tokens::get(ui.ctx()).warning));
+    }
     f.insert("toolbarHidden".into(), json!(hidden));
-    if overrides_ok { f.insert("overrides".into(), json!(overrides)); }
-    if alternates_ok { f.insert("alternates".into(), json!(alternates)); }
+    if overrides_ok {
+        f.insert("overrides".into(), json!(overrides));
+    }
+    if alternates_ok {
+        f.insert("alternates".into(), json!(alternates));
+    }
     f.insert("selected".into(), json!(selected));
     f.insert("capture".into(), json!(capture));
     f.insert("captureAlternate".into(), json!(capture_alt));
@@ -1882,7 +2036,8 @@ pub fn confirm(app: &mut PhotoStoreApp, f: &Map<String, Value>) -> Result<Value,
             // The map replaces every stored override, so a malformed one is an error, not "none".
             let mut ov: BTreeMap<String, String> =
                 serde_json::from_value(overrides).map_err(|e| format!("overrides must map command IDs to shortcut strings: {e}"))?;
-            let mut alt: BTreeMap<String, Vec<String>> = serde_json::from_value(alternates).map_err(|e| format!("alternates must map command IDs to shortcut arrays: {e}"))?;
+            let mut alt: BTreeMap<String, Vec<String>> =
+                serde_json::from_value(alternates).map_err(|e| format!("alternates must map command IDs to shortcut arrays: {e}"))?;
             photostore_engine::prefs::encode_shortcut_set(&ov, &alt)?;
             for (id, keys) in alt.iter_mut() {
                 for key in keys.iter_mut() {
@@ -1909,7 +2064,11 @@ pub fn confirm(app: &mut PhotoStoreApp, f: &Map<String, Value>) -> Result<Value,
                         Some(_) => None,
                         None => def.as_deref(),
                     };
-                    if *other != id && !(photostore_engine::prefs::is_tool_shortcut_id(other) && photostore_engine::prefs::is_tool_shortcut_id(&id)) && held.and_then(prefs::normalize_shortcut) == norm {
+                    if *other != id
+                        && !scoped_shortcut_pair(other, &id)
+                        && !(photostore_engine::prefs::is_tool_shortcut_id(other) && photostore_engine::prefs::is_tool_shortcut_id(&id))
+                        && held.and_then(prefs::normalize_shortcut) == norm
+                    {
                         ov.insert(other.clone(), String::new());
                     }
                 }
@@ -1920,17 +2079,29 @@ pub fn confirm(app: &mut PhotoStoreApp, f: &Map<String, Value>) -> Result<Value,
             let alt_owners: Vec<(String, String)> = alt.iter().flat_map(|(id, keys)| keys.iter().map(move |key| (id.clone(), key.clone()))).collect();
             for (owner, key) in alt_owners {
                 for (other, value) in ov.iter_mut() {
-                    if other != &owner && !(photostore_engine::prefs::is_tool_shortcut_id(other) && photostore_engine::prefs::is_tool_shortcut_id(&owner)) && prefs::normalize_shortcut(value).as_deref() == Some(key.as_str()) {
+                    if other != &owner
+                        && !scoped_shortcut_pair(other, &owner)
+                        && !(photostore_engine::prefs::is_tool_shortcut_id(other) && photostore_engine::prefs::is_tool_shortcut_id(&owner))
+                        && prefs::normalize_shortcut(value).as_deref() == Some(key.as_str())
+                    {
                         value.clear();
                     }
                 }
                 for (other, _, _, def) in &items {
-                    if *other != owner && !(photostore_engine::prefs::is_tool_shortcut_id(other) && photostore_engine::prefs::is_tool_shortcut_id(&owner)) && !ov.contains_key(other) && def.as_deref().and_then(prefs::normalize_shortcut).as_deref() == Some(key.as_str()) {
+                    if *other != owner
+                        && !scoped_shortcut_pair(other, &owner)
+                        && !(photostore_engine::prefs::is_tool_shortcut_id(other) && photostore_engine::prefs::is_tool_shortcut_id(&owner))
+                        && !ov.contains_key(other)
+                        && def.as_deref().and_then(prefs::normalize_shortcut).as_deref() == Some(key.as_str())
+                    {
                         ov.insert(other.to_string(), String::new());
                     }
                 }
                 for (other, keys) in alt.iter_mut() {
-                    if other != &owner && !(photostore_engine::prefs::is_tool_shortcut_id(other) && photostore_engine::prefs::is_tool_shortcut_id(&owner)) {
+                    if other != &owner
+                        && !scoped_shortcut_pair(other, &owner)
+                        && !(photostore_engine::prefs::is_tool_shortcut_id(other) && photostore_engine::prefs::is_tool_shortcut_id(&owner))
+                    {
                         keys.retain(|candidate| candidate != &key);
                     }
                 }

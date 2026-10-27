@@ -190,12 +190,15 @@ pub fn toolbar(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                                                             .x
                                                     })
                                                     .fold(0.0f32, f32::max);
-                                                let key_w = slot.iter().map(|it| {
-                                                    let id = crate::shortcuts::tool_id(*it);
-                                                    let keys = app.session.prefs().shortcuts_for(id, photostore_engine::prefs::tool_default_shortcut(id));
-                                                    let text = keys.iter().map(|k| crate::shortcuts::pretty(k)).collect::<Vec<_>>().join(" / ");
-                                                    ui.painter().layout_no_wrap(text, egui::FontId::proportional(12.0), t.text_dim).size().x.min(140.0)
-                                                }).fold(0.0f32, f32::max);
+                                                let key_w = slot
+                                                    .iter()
+                                                    .map(|it| {
+                                                        let id = crate::shortcuts::tool_id(*it);
+                                                        let keys = app.session.prefs().shortcuts_for(id, photostore_engine::prefs::tool_default_shortcut(id));
+                                                        let text = keys.iter().map(|k| crate::shortcuts::pretty(k)).collect::<Vec<_>>().join(" / ");
+                                                        ui.painter().layout_no_wrap(text, egui::FontId::proportional(12.0), t.text_dim).size().x.min(140.0)
+                                                    })
+                                                    .fold(0.0f32, f32::max);
                                                 let fw = (label_w + key_w + 56.0).max(180.0);
                                                 for &item in slot.iter() {
                                                     let (r, ir) = ui.allocate_exact_size(vec2(fw, 26.0), Sense::click());
@@ -223,18 +226,30 @@ pub fn toolbar(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                                                         egui::FontId::proportional(12.5),
                                                         t.text,
                                                     );
-                                                    let item_keys = app.session.prefs().shortcuts_for(crate::shortcuts::tool_id(item), photostore_engine::prefs::tool_default_shortcut(crate::shortcuts::tool_id(item)));
+                                                    let item_keys = app.session.prefs().shortcuts_for(
+                                                        crate::shortcuts::tool_id(item),
+                                                        photostore_engine::prefs::tool_default_shortcut(crate::shortcuts::tool_id(item)),
+                                                    );
                                                     if !item_keys.is_empty() {
                                                         let key_text = item_keys.iter().map(|k| crate::shortcuts::pretty(k)).collect::<Vec<_>>().join(" / ");
-                                                        let key_shown = if key_text.chars().count() > 18 { format!("{}…", key_text.chars().take(17).collect::<String>()) } else { key_text.clone() };
+                                                        let key_shown = if key_text.chars().count() > 18 {
+                                                            format!("{}…", key_text.chars().take(17).collect::<String>())
+                                                        } else {
+                                                            key_text.clone()
+                                                        };
                                                         ir.clone().on_hover_text(key_text);
-                                                        ui.painter().with_clip_rect(Rect::from_min_max(pos2(r.right() - 8.0 - key_w, r.top()), pos2(r.right() - 8.0, r.bottom()))).text(
-                                                            pos2(r.right() - 8.0, r.center().y),
-                                                            Align2::RIGHT_CENTER,
-                                                            key_shown,
-                                                            egui::FontId::proportional(12.0),
-                                                            t.text_dim,
-                                                        );
+                                                        ui.painter()
+                                                            .with_clip_rect(Rect::from_min_max(
+                                                                pos2(r.right() - 8.0 - key_w, r.top()),
+                                                                pos2(r.right() - 8.0, r.bottom()),
+                                                            ))
+                                                            .text(
+                                                                pos2(r.right() - 8.0, r.center().y),
+                                                                Align2::RIGHT_CENTER,
+                                                                key_shown,
+                                                                egui::FontId::proportional(12.0),
+                                                                t.text_dim,
+                                                            );
                                                     }
                                                     if ir.clicked() {
                                                         app.ui.tool = item;
@@ -528,14 +543,18 @@ pub fn title_bar(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
             }
             let app_name = photostore_engine::build_info::app_name();
-            let title = app.session.active().map(|d| {
-                let dirty = if d.is_dirty() { "  •" } else { "" };
-                if photostore_engine::build_info::is_dev_build() {
-                    format!("{}{} — {app_name}", d.doc.name, dirty)
-                } else {
-                    format!("{}{}", d.doc.name, dirty)
-                }
-            }).unwrap_or_else(|| app_name.into());
+            let title = app
+                .session
+                .active()
+                .map(|d| {
+                    let dirty = if d.is_dirty() { "  •" } else { "" };
+                    if photostore_engine::build_info::is_dev_build() {
+                        format!("{}{} — {app_name}", d.doc.name, dirty)
+                    } else {
+                        format!("{}{}", d.doc.name, dirty)
+                    }
+                })
+                .unwrap_or_else(|| app_name.into());
             // The menus and the right-hand controls are laid out first; the title is centred in
             // whatever room is left between them, shortened or dropped rather than drawn over them.
             let (mut menus_right, mut controls_left) = (full.left(), full.right());
@@ -1390,6 +1409,7 @@ pub fn status_bar(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
 // ----------------------------------------------------------------------------- dock
 
 pub fn right_dock(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
+    ui.ctx().data_mut(|data| data.remove::<egui::Rect>(egui::Id::new("timeline-inspector-rect")));
     let t = Tokens::get(ui.ctx());
     let p = app.ui.panels.clone();
     if t.pro {
@@ -1447,7 +1467,12 @@ fn dock_panels(app: &mut PhotoStoreApp, ui: &mut egui::Ui, p: &crate::state::Pan
     // Floating in Studio, Properties docks only in Pro (Photoshop).
     let shown: Vec<Group> = [
         (Group::Color, p.color),
-        (Group::Properties, t.pro && p.properties),
+        (
+            Group::Properties,
+            p.properties
+                && (t.pro
+                    || app.session.active().and_then(|s| s.doc.timeline.as_ref()).is_some_and(|tl| matches!(tl.mode, photostore_doc::TimelineMode::Video))),
+        ),
         (Group::Character, p.character),
         (Group::Navigator, p.navigator),
         (Group::History, p.history),
@@ -2028,9 +2053,8 @@ fn layers(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
             continue;
         }
         if id == "ui.filterMaskTarget" {
-            app.ui.filter_mask_target = (p.get("target").and_then(Value::as_bool) == Some(true)).then(|| {
-                Some((p.get("document")?.as_u64()?, p.get("layer")?.as_u64()?))
-            }).flatten();
+            app.ui.filter_mask_target =
+                (p.get("target").and_then(Value::as_bool) == Some(true)).then(|| Some((p.get("document")?.as_u64()?, p.get("layer")?.as_u64()?))).flatten();
             app.ui.mask_target = false;
             app.ui.vector_mask_target = false;
             continue;
@@ -2054,11 +2078,7 @@ fn layers(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                 }
                 continue;
             }
-            let params = if id.starts_with("layer.smartObjects.") {
-                target.map_or_else(|| json!({}), |layer| json!({"layer": layer}))
-            } else {
-                json!({})
-            };
+            let params = if id.starts_with("layer.smartObjects.") { target.map_or_else(|| json!({}), |layer| json!({"layer": layer})) } else { json!({}) };
             if let Err(e) = crate::menus::invoke(app, &ctx, &id, params) {
                 app.ui.status = e;
                 app.ui.status_error = true;
@@ -2574,7 +2594,10 @@ fn history(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
 /// Floating Properties card anchored to the canvas' top-right corner.
 pub fn properties_window(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     // Pro (Photoshop) docks Properties; Studio floats it over the canvas.
-    if !app.ui.panels.properties || Tokens::get(ctx).pro {
+    if !app.ui.panels.properties
+        || Tokens::get(ctx).pro
+        || app.session.active().and_then(|s| s.doc.timeline.as_ref()).is_some_and(|tl| matches!(tl.mode, photostore_doc::TimelineMode::Video))
+    {
         return;
     }
     let Some(st) = app.session.active() else { return };
@@ -2722,7 +2745,22 @@ fn properties_body(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
         return;
     };
     let doc = st.doc.clone();
-    if let Some(layer) = st.active_layer.and_then(|id| doc.layer(id))
+    let active_layer = st.active_layer;
+    if doc.timeline.as_ref().is_some_and(|timeline| matches!(timeline.mode, photostore_doc::TimelineMode::Video)) {
+        let inspector_rect = ui.clip_rect();
+        ui.ctx().data_mut(|data| data.insert_temp(egui::Id::new("timeline-inspector-rect"), inspector_rect));
+        if crate::audio_ui::selected_clip_id(ui.ctx(), doc.id).is_some() {
+            crate::audio_ui::inspector(app, ui);
+        } else if let Some(layer) = active_layer.and_then(|id| doc.layer(id))
+            && (layer.video.is_some() || doc.timeline.as_ref().is_some_and(|timeline| timeline.layer_ranges.iter().any(|range| range.layer == layer.id)))
+        {
+            crate::video_clip_ui::inspector(app, ui, &doc, layer);
+        } else {
+            empty(ui, tl!("Select a clip to view its properties"));
+        }
+        return;
+    }
+    if let Some(layer) = active_layer.and_then(|id| doc.layer(id))
         && crate::mask_props_ui::targeted(app, layer)
     {
         crate::props_layout::header(ui, layer);
@@ -2730,11 +2768,11 @@ fn properties_body(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
         return;
     }
     // Photoshop shows the Document properties when nothing or the Background layer is selected.
-    if crate::doc_props_ui::shows_document(&st.doc, st.active_layer) {
+    if crate::doc_props_ui::shows_document(&doc, active_layer) {
         crate::doc_props_ui::properties(app, ui);
         return;
     }
-    let Some(id) = st.active_layer else { return };
+    let Some(id) = active_layer else { return };
     // Borrowed from the document snapshot: cloning the layer every frame copied whole groups.
     let Some(layer) = doc.layer(id) else { return };
     // Header: kind icon, layer name and kind (#155); sections below draw their own separators.
@@ -3707,8 +3745,17 @@ mod swatch_type_tests {
         app.run("tools.setColors", json!({"foreground": "#d8452e"})).unwrap();
         let fg = app.session.tools.foreground;
         app.ui.tool = Tool::Type;
-        app.ui.text_edit =
-            Some(crate::state::TextEdit { layer: id, caret: 0, anchor: 5, session: "s".into(), created: false, dragging: false, resize: None, preedit: None });
+        app.ui.text_edit = Some(crate::state::TextEdit {
+            layer: id,
+            caret: 0,
+            anchor: 5,
+            session: "s".into(),
+            created: false,
+            dragging: false,
+            resize: None,
+            resize_origin: None,
+            preedit: None,
+        });
         let mut h = Harness::builder().with_size(vec2(300.0, 300.0)).build_ui_state(|ui, app: &mut PhotoStoreApp| color_picker(app, ui), app);
         h.run_steps(4);
         assert_eq!(h.state().session.tools.foreground, fg);

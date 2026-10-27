@@ -761,6 +761,9 @@ pub struct TextEdit {
     /// Paragraph-box handle being dragged (0-3 corners from top-left clockwise, 4-7 top/right/bottom/left edges).
     #[serde(skip)]
     pub resize: Option<u8>,
+    /// Original paragraph box geometry, kept for modifier-based center resizing.
+    #[serde(skip)]
+    pub resize_origin: Option<(f32, f32, f32, f32)>,
     /// IME composition in progress: (start, length) in characters. The preedit text lives in the
     /// layer so it lays out like typed text; each IME update replaces it.
     #[serde(skip)]

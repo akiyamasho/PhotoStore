@@ -488,6 +488,7 @@ fn delete_where(s: &mut Session, label: &str, pred: fn(&Layer) -> bool) -> Resul
             }
             n
         }
+        let old_ids: std::collections::HashSet<_> = doc.walk().into_iter().map(|(_, _, layer)| layer.id).collect();
         let backup = doc.layers.clone();
         let n = rec(&mut doc.layers, pred);
         if doc.layers.is_empty() {
@@ -497,6 +498,9 @@ fn delete_where(s: &mut Session, label: &str, pred: fn(&Layer) -> bool) -> Resul
         if active.is_none_or(|id| doc.layer(id).is_none()) {
             *active = doc.top_layer();
         }
+        let current: std::collections::HashSet<_> = doc.walk().into_iter().map(|(_, _, layer)| layer.id).collect();
+        let removed: std::collections::HashSet<_> = old_ids.difference(&current).copied().collect();
+        crate::timeline_editor_cmds::prune_deleted_timeline_layers(doc, &removed)?;
         Ok(n)
     })?;
     Ok(json!({"deleted": n}))
@@ -513,12 +517,16 @@ fn is_empty_layer(l: &Layer) -> bool {
 fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {
     let id = layer_param(s, p)?;
     s.edit("Ungroup Layers", |doc, active| {
+        crate::timeline_editor_cmds::ensure_tracks(doc)?;
+        let original_range = doc.timeline.as_ref().and_then(|timeline| timeline.layer_ranges.iter().find(|range| range.layer == id).cloned());
+        let original_track = doc.timeline.as_ref().and_then(|timeline| timeline.visual_tracks.iter().find(|track| track.layers.contains(&id)).map(|track| track.id));
         let path = doc.path_of(id).ok_or(EngineError::NoLayer(id))?;
         let g = doc.layer(id).ok_or(EngineError::NoLayer(id))?;
         let LayerContent::Group(group) = &g.content else {
             return Err(EngineError::Other("the active layer is not a group".into()));
         };
         let children = group.children.clone();
+        let child_ids: Vec<_> = children.iter().map(|child| child.id).collect();
         let (&idx, parent) = path.split_last().ok_or(EngineError::NoLayer(id))?;
         let sib = if parent.is_empty() { &mut doc.layers } else { doc.layer_at_mut(parent).and_then(Layer::children_mut).ok_or(EngineError::NoLayer(id))? };
         sib.remove(idx);
@@ -526,6 +534,7 @@ fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {
         for (k, l) in children.into_iter().enumerate() {
             sib.insert(idx + k, l);
         }
+        crate::timeline_editor_cmds::expand_group_timeline(doc, id, &child_ids, original_range, original_track)?;
         *active = top.or_else(|| doc.top_layer());
         Ok(())
     })?;
