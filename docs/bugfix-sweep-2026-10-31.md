@@ -46,3 +46,38 @@ The isolated old-filter reproduction showed 87.75 px versus 81.4078 px at the en
 0→100 px timed motion sampled differently, and 6.655 px endpoint drift between equivalent circular
 paths. The new tests require matching analytic response and equivalent-path endpoints. These are
 synthetic input checks; the user's native input sequence was not recorded as pointer events.
+
+## Development delivery
+
+The combined source commit is `4f653e04a1bb3820bb67ef64a7c60d6481d703ba`. One consolidated
+PhotoStore-dev build passed in 179.582 seconds using the existing development helper's `build()`
+and `save_pending()` functions. It produced runtime
+`4f653e04a1bb3820bb67ef64a7c60d6481d703ba-97040010455e8515`, with source fingerprint
+`97040010455e851529d7bb8d7534af698d8b7f70166cb9a6a4e2b4d56350e78f`.
+Build log: `/private/tmp/photostore-combined-dev-build.log`.
+
+The old controlled dev process remained running while the new binary was staged. Because a live
+child lease prevents a second watcher from attaching, this pass acquired the watcher owner lock
+without blocking, used the existing shared build lock and helper build path, and staged the result
+without starting a watcher, rotating its token, requesting a reload, or changing the app session.
+The previous pending runtime's binary remains available. The production app was not rebuilt,
+reinstalled, or launched.
+
+To load the staged runtime, save work and quit PhotoStore-dev normally, then run `./dev --background`
+from the repository root. The watcher consumes the pending binary. Native manual acceptance remains
+outstanding. This documentation receipt does not change the binary's source commit or require
+another build.
+
+After staging, `ai.photostore.local-ci` remained disabled and unloaded, and local-CI status reported
+no pending development or release job. Historical failure flags remained present; the scheduler
+was not enabled or otherwise changed by this pass.
+
+Suggested manual acceptance, not performed by this pass:
+
+1. On a disposable canvas, use the same Brush preset, size, zoom, input device, and 35% smoothing
+   as the report. Draw circles and curved strokes, checking both live feedback and the final stroke.
+2. Explicitly enable recording on a disposable document, make several edits, save PSD, close and
+   reopen it, and check replay/history and private-layer exclusions. Purge, save, and reopen again
+   to confirm the old frames do not return. Recording remains off by default.
+3. If a Photoshop round trip is required, use a copy of that PSD and compare artwork, layers, and
+   retained PhotoStore recording after Photoshop saves it. Preservation by Photoshop is unverified.
