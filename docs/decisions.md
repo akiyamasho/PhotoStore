@@ -560,3 +560,10 @@ committed brush strokes.
 The focused reproduction concerns equivalent timed paths and the severe drawing defect. Synthetic
 path evidence does not establish native mouse/tablet input acceptance. The issue remains open until
 the change is landed and the reporter's native drawing workflow is accepted.
+
+
+## 2026-11-01: Require GPT Image design before feature/UI implementation
+
+Before implementation begins for any new feature or UI bug fix, generate and inspect a GPT Image mockup/design, then save it with its exact prompt and provenance under `docs/design/<date>/`. Backend-only features still use a generated workflow/interface diagram. A prior screenshot or text wireframe alone is insufficient. This is a design workflow, not a user-approval or discretionary QA gate. If image generation is unavailable, research and specification may continue, but the affected implementation waits until a design can be generated. Pure non-UI bug fixes are outside this rule. Generated mockups are design references and never product screenshots or verification evidence.
+
+The timeline request remains research/specification and design in this pass. The generated concept is recorded in [the design README](design/2026-11-01/README.md); the detailed proposal and unresolved implementation decisions are in [the timeline plan](plans/video-timeline-2026-11-01.md). Issue #23 remains open pending future implementation and manual acceptance.

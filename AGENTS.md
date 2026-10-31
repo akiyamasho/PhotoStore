@@ -88,6 +88,12 @@ proven disabled or a pending job remains, pause scheduling safely and leave it p
 report. Do not re-enable the local scheduler without an explicit user request and a proven no-replay
 handoff.
 
+## Required GPT Image design before feature/UI implementation
+
+Before implementing any new feature or fixing any UI bug, generate a GPT Image mockup/design for the proposed user-facing result and save the image and exact prompt/provenance record under `docs/design/<YYYY-MM-DD>/`. Inspect the generated design against the request and current product context, then use it as a design reference during implementation. For a backend-only feature, the image must show a useful workflow/interface diagram for the affected user flow; it still requires the GPT Image design step. A pre-existing screenshot, text-only wireframe, or prompt without a generated image does not satisfy this requirement.
+
+This applies before code implementation begins; it is a design workflow, not a user-approval or discretionary QA gate. If GPT Image generation is unavailable, continue independent research and specification work, record the blocker, and do not begin implementation of the affected feature/UI fix until its design can be generated. Pure non-UI bug fixes are outside this requirement. Do not use private artwork or known characters as image inputs unless their separate required authorization/reference rules are met. Preserve generated-asset provenance and identify mockups as design references, not product screenshots or verification evidence.
+
 ## Changes
 
 Read the relevant crate and docs before editing. Keep manifests valid, preserve unrelated work, and make focused changes. Run only checks requested by the user or required to establish that an explicitly requested change is safe. Record significant product or format decisions in `docs/decisions.md`.

@@ -1,5 +1,7 @@
 # Timeline workspace
 
+> **Current request status — 2026-11-01:** The user says the supplied timeline still does not meet the desired Photoshop/CapCut-style workflow. Issue [#23 remains open](https://github.com/akiyamasho/PhotoStore/issues/23). This pass records research, a detailed proposal, and a GPT Image design concept attached to issue #23; it does not implement another overhaul or establish manual acceptance. See the [research/specification](plans/video-timeline-2026-11-01.md) and [design/provenance record](design/2026-11-01/README.md).
+
 Issue #23 was reopened on 2026-10-27 after the prior timeline UI was rejected. This page records
 the major-overhaul implementation in source commit
 `5aa7c4a3566a3825bb1acb191e9279bd556dec21`, published to `main` on 2026-10-31 in the
