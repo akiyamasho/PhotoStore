@@ -1347,7 +1347,11 @@ impl eframe::App for PhotoStoreApp {
         if let Some(menu) = self.services.native_menu.as_mut() {
             menu.raw_input(raw_input);
         }
-        shortcuts::clipboard_keys(ctx, ctx.text_edit_focused() || self.ui.text_edit.is_some(), raw_input);
+        shortcuts::clipboard_keys(
+            ctx,
+            ctx.text_edit_focused() || crate::layer_row_ui::rename_active(ctx) || self.ui.text_edit.is_some(),
+            raw_input,
+        );
         // Windows sends a touchpad pinch as Ctrl + wheel; make it a pinch again (wheel_nav.rs).
         if cfg!(target_os = "windows") {
             wheel_nav::fold_legacy_pinch(ctx, raw_input);

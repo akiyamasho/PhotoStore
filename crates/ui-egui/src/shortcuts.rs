@@ -1048,6 +1048,20 @@ pub fn clipboard_keys(ctx: &egui::Context, typing: bool, raw: &mut egui::RawInpu
         });
     }
     if typing {
+        // AppKit consumes native-menu key equivalents before egui-winit can turn them into
+        // clipboard events. Recreate the text-edit events for those injected key presses.
+        let mut out = Vec::with_capacity(raw.events.len());
+        for e in raw.events.drain(..) {
+            match &e {
+                egui::Event::Key { key: Key::C, pressed: true, modifiers, .. } if modifiers.command => out.push(egui::Event::Copy),
+                egui::Event::Key { key: Key::X, pressed: true, modifiers, .. } if modifiers.command => out.push(egui::Event::Cut),
+                egui::Event::Key { key: Key::V, pressed: true, modifiers, .. } if modifiers.command => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                }
+                _ => out.push(e),
+            }
+        }
+        raw.events = out;
         return;
     }
     let seen = egui::Id::new("pc-paste-key-seen");

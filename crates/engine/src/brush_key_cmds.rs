@@ -13,7 +13,7 @@ pub const MAX_SIZE: f32 = 5000.0;
 
 /// `[` / `]`: 25 % smaller or larger, at least a pixel larger so small brushes still grow.
 fn size_step(size: f32, up: bool) -> f32 {
-    let next = if up { (size * 1.25).round().max(size + 1.0) } else { (size / 1.25).round() };
+    let next = if up { (size * 1.25).round().max(size + 1.0) } else { (size / 1.25).round().min(size - 1.0) };
     next.clamp(1.0, MAX_SIZE)
 }
 

@@ -662,6 +662,7 @@ impl NativeMenu {
 pub fn run(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     let Some(menu) = app.services.native_menu.as_mut() else { return };
     let clicks = std::mem::take(&mut menu.clicks);
+    let text_edit = ctx.text_edit_focused() || crate::layer_row_ui::rename_active(ctx);
     for id in clicks {
         if id == MINIMIZE {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
@@ -670,6 +671,23 @@ pub fn run(app: &mut PhotoStoreApp, ctx: &egui::Context) {
         // The rows are disabled while a dialog is open; a click that raced the update is dropped.
         if !crate::menus::modal_allows(app, &id) {
             continue;
+        }
+        if text_edit {
+            match id.as_str() {
+                "edit.copy" => {
+                    ctx.input_mut(|i| i.events.push(egui::Event::Copy));
+                    continue;
+                }
+                "edit.cut" => {
+                    ctx.input_mut(|i| i.events.push(egui::Event::Cut));
+                    continue;
+                }
+                "edit.paste" => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                    continue;
+                }
+                _ => {}
+            }
         }
         if let Err(e) = crate::menus::invoke(app, ctx, &id, serde_json::json!({})) {
             app.ui.status = e;
@@ -690,6 +708,13 @@ pub fn sync(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     }
     let lang = crate::i18n::current();
     let mut items = crate::menus::menu_items(app);
+    if ctx.text_edit_focused() || crate::layer_row_ui::rename_active(ctx) {
+        for item in &mut items {
+            if matches!(item.id.as_str(), "edit.copy" | "edit.cut" | "edit.paste") {
+                item.enabled = true;
+            }
+        }
+    }
     for it in &mut items {
         it.enabled &= crate::menus::modal_allows(app, &it.id);
     }
