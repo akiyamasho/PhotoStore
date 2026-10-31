@@ -148,8 +148,14 @@ rm -f "$DMG" "$WORK/raw.dmg"
 # APFS avoids synthesized empty FinderInfo attributes on the mounted HFS hybrid,
 # which can make a clean bundle fail strict code-signature validation on current macOS.
 # APFS is available on every supported macOS version (minimum 11.0).
+# Automatic source-folder sizing can leave too little APFS metadata space even
+# with ample host disk space. Pad the uncompressed payload; UDZO still compresses
+# unused space, so this is a volume capacity rather than a download-size floor.
+STAGE_KIB=$(du -sk "$STAGE" | awk '{print $1}')
+DMG_SIZE_MB=$(( (STAGE_KIB * 2 + 1023) / 1024 + 256 ))
+if [ "$DMG_SIZE_MB" -lt 512 ]; then DMG_SIZE_MB=512; fi
 hdiutil create -srcfolder "$STAGE" -fs APFS -format UDZO -imagekey zlib-level=9 \
-  -volname "PhotoStore" -o "$DMG"
+  -size "${DMG_SIZE_MB}m" -volname "PhotoStore" -o "$DMG"
 sign "$DMG"
 codesign --verify --strict --verbose=2 "$DMG"
 if [ "$NOTARIZE" = 1 ]; then

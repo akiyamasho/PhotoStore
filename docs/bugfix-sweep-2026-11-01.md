@@ -1,6 +1,9 @@
 # PhotoStore issue and bugfix sweep — 2026-11-01
 
-This follow-up records the user's separate reports, the source state, and the timeline research/design pass. The seven open, non-PR issues in the final inventory snapshot `/private/tmp/photostore-open-issues-after-report.json` are #20, #23, #24, #25, #26, #27, and #28. No issue was closed in this sweep.
+This page preserves the initial reporting/design pass and records the later authorized implementation
+and stable delivery. The initial seven-open-issue snapshot was #20, #23, #24, #25, #26, #27 and #28
+(`/private/tmp/photostore-open-issues-after-report.json`). The historical table below describes that
+initial pass; the later delivery receipt at the end supersedes its unpublished/source-only status.
 
 | Issue | Report or scope | Current disposition |
 | --- | --- | --- |
@@ -20,7 +23,47 @@ The two local fixes are in source commit `2d7859e239c406f85f808853a5b6b5a22066d5
 
 The timeline documentation is a research/design deliverable only. It does not authorize or imply a second timeline implementation, build, or release. See [timeline workspace status](timeline-workflow.md) and the [2026-11-01 plan](plans/video-timeline-2026-11-01.md).
 
+That scope statement applied to the initial pass. The user subsequently authorized all open issues,
+enhancements, pushing, tagging, releasing and reinstallation; the later transaction below records
+that expanded authorization and delivery.
+
 
 ## Issue #23 design update receipt
 
 On 2026-11-01, the existing issue body was appended once with the research/design addendum and the generated `video-timeline-concept.png` was attached through GitHub CLI. The updated body and attachment reference were read back from [issue #23](https://github.com/akiyamasho/PhotoStore/issues/23). The user-provided cropped timeline screenshot from the earlier report remains in the same issue. The original screenshot was preserved.
+
+## Authorized all-issue/enhancement delivery — 0.19.0
+
+The complete seven-issue inventory was reconsidered under the user's later authorization. Existing
+smoothing, PSD/PSB recording persistence, cursor recovery and timeline overhaul code was integrated
+with the new rename clipboard and 1 px brush fixes. Additional timeline work implements compact
+responsive controls, explicit mode selection, adaptive ruler ticks, readable larger media lanes,
+visible-range thumbnail/waveform work, shared linked-movie presentation-time sampling, prioritized
+per-consumer movie requests, cached source metadata and explicit atomic Ripple Delete. The
+pre-implementation GPT Image references, exact prompts and provenance are committed under
+`docs/design/2026-11-01/`; they are synthetic designs, not product captures.
+
+Stable [v0.19.0](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.19.0) was built once for the
+ARM64 app and CLI from exact source `8aaacce50eccee3eb6d6261b21910cce7fe32545` (726.091 seconds).
+Source was pushed to `main`, checked artifacts were published with matching server digests, and the
+same app and CLI were immediately installed at `/Applications/PhotoStore.app` and
+`/Users/computer/tools_bin/photostore-cli`. Normal production identity is used; `AGENTS.md` now
+retires routine dev delivery and requires direct staged atomic replacement with rollback. The owned
+dev watcher was stopped without closing its app session. The local-CI scheduler remains disabled,
+unloaded and without pending work; no build is triggered by publication or documentation pushes.
+
+One focused ripple data-boundary regression passed 1/1, and a tiny local FFV1 fixture established
+held-frame selection at 0/0.5/1/1.5 seconds. The single production build and artifact integrity,
+signature, version, full source and architecture checks passed. No native UI/OS-input, screenshots,
+visual/export acceptance, broad QA or full Photoshop/CapCut parity is claimed. The persistent local
+signing certificate is not Developer ID and the artifacts are not notarized. See the
+[release receipt](releases/0.19.0.md) for exact hashes, rollback paths, packaging-only recovery and
+remaining architecture proposals. The immutable tag was not moved for documentation/workflow
+follow-ups, and its executable inputs were not rebuilt.
+
+The exact release delivery comments were posted once and read back. Issues #20, #24, #25, #26,
+#27 and #28 were closed as delivered with their acceptance limits stated. Issue #23 remains open;
+the complete paginated post-delivery open non-PR inventory contains only #23. Receipt:
+`/private/tmp/photostore-0.19.0-issue-delivery.json`; snapshot:
+`/private/tmp/photostore-open-issues-after-0.19.json`. The earlier table is retained as historical
+reporting state rather than the final issue disposition.

@@ -566,3 +566,27 @@ only. The immutable tag `v0.16.0` points to exact source `a87fd1049844a41d456cbd
 - Scheduler remains disabled and unloaded with no pending local-ci job. The pre-existing `.DS_Store`
   remains untracked and preserved. Issue #22 remains closed; the release follow-up records the actual
   stable publication and source commit.
+
+## 2026-11-01: PhotoStore 0.19.0 all-issue and enhancement delivery
+
+- Published stable [v0.19.0](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.19.0) from immutable
+  source `8aaacce50eccee3eb6d6261b21910cce7fe32545`, pushed to `main`. The single successful production
+  ARM64 app-and-CLI build took 726.091 seconds; checked server asset digests match the local receipt.
+- Installed those same binaries as normal `/Applications/PhotoStore.app` and
+  `/Users/computer/tools_bin/photostore-cli`. The user's direct overwrite/reinstall policy replaces
+  routine dev builds/watchers. Atomic replacement preserved rollback bundles, running sessions,
+  artwork, preferences and recovery. Existing sessions need a restart to load the new version.
+- Included the seven-issue source inventory: smoothing, PSD/PSB recording persistence, cursor
+  focus recovery, layer/group rename clipboard, 1 px brush decrease, GPT Image design policy, and
+  the timeline overhaul plus layout/media/ripple enhancements. Issue #23 remains open for native
+  visual/interaction/export acceptance and clearly marked future architecture proposals.
+- One targeted ripple regression passed 1/1, and a synthetic tiny FFV1 held-frame fixture passed.
+  No broad QA, screenshots, computer use or native manual acceptance was performed. Artifacts use a
+  persistent local certificate, not Developer ID, and are not notarized.
+- Packaging fallback reused the signed app after an image-size failure; supported DiskImages2
+  verified the final image. No repeated compiler pass, release-triggered build or source retag was
+  used. Documentation/packaging-workflow follow-ups retain the artifact SHA. Scheduler remains
+  disabled/unloaded with no pending jobs and no supported safe-resume handoff.
+- Full hashes, source/version readback, rollback paths and limits: [release receipt](releases/0.19.0.md).
+- Delivery comments were read back on all seven issues; #20, #24, #25, #26, #27 and #28 are closed.
+  The complete paginated open non-PR inventory contains only #23.

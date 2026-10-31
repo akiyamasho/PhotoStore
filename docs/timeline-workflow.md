@@ -1,6 +1,6 @@
 # Timeline workspace
 
-> **Current request status — 2026-11-01:** After the research/design pass, the user authorized implementation of all open issues and enhancements, publication, and normal PhotoStore overwrite/reinstallation. The 0.19.0 pass carries the existing major timeline overhaul and additional layout, editing, and media improvements into the normal app. See the [release record](releases/0.19.0.md), [specification](plans/video-timeline-2026-11-01.md), and [design provenance](design/2026-11-01/README.md). No computer-use, screenshot, native interaction, or visual-acceptance claim is made.
+> **Current delivery — 2026-11-01:** Stable [v0.19.0](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.19.0), exact source `8aaacce50eccee3eb6d6261b21910cce7fe32545`, is published and installed as the normal PhotoStore app and CLI. It carries the existing major timeline overhaul plus layout, editing, and media enhancements. Issue #23 remains open for user visual/interaction/export acceptance. See the [release receipt](releases/0.19.0.md), [specification](plans/video-timeline-2026-11-01.md), and [GPT Image design provenance](design/2026-11-01/README.md). No computer-use, screenshot, native interaction, or visual-acceptance claim is made.
 
 Issue #23 was reopened on 2026-10-27 after the prior timeline UI was rejected. This page records
 the major-overhaul implementation in source commit
@@ -83,12 +83,14 @@ audio properties.
 
 Perspective/warp animation is unsupported. Transform keys use the source-center pivot; conversion
 to Frame Animation remains guarded while Transform animation is enabled because key baking is not
-implemented. The required PhotoStore-dev build passed in 6m03s from the source SHA above. Its
+implemented. During the earlier development pass, the required PhotoStore-dev build passed in 6m03s from the source SHA above. Its
 runtime binary was `5aa7c4a3566a3825bb1acb191e9279bd556dec21-216e5754fdbb8689`; its guarded reload
 was deferred because the existing PhotoStore-dev process had open documents. The later consolidated
 runtime `a387feb51d63b3749f892af046de592403105b2d-8184edd6c3af42a5` includes this overhaul plus the
-smoothing, PSD recording, and cursor fixes. It passed its required build and remains staged; the
-running process was left untouched. See [the delivery receipt](bugfix-sweep-2026-10-31.md).
+smoothing, PSD recording, and cursor fixes. At that time it passed its required build and was staged;
+the running process was left untouched. See [the historical receipt](bugfix-sweep-2026-10-31.md).
+Normal 0.19.0 installation supersedes that development delivery; routine dev builds/watchers are now
+retired by the user's policy. The old session was preserved while its owned watcher was stopped.
 Seven focused implementation filters
 passed 1/1 each during the implementation pass; they did not all run against the exact final source
 SHA. Manual visual, interaction and export acceptance remain outstanding. Do not claim full
