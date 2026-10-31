@@ -1,6 +1,6 @@
 # Issue #23 — major timeline workspace overhaul
 
-Status: source implementation is committed locally as `5aa7c4a3566a3825bb1acb191e9279bd556dec21`; remote publication is awaiting explicit push approval. The required development build passed, and guarded runtime reload is pending because the existing app has open documents. Manual visual, interaction and export acceptance remain outstanding; issue #23 remains open. Current evidence and limits are recorded in [the workflow record](../timeline-workflow.md).
+Status: source implementation `5aa7c4a3566a3825bb1acb191e9279bd556dec21` was published to `main` on 2026-10-31 in the user-approved push through `43f0e2b6fe0ac67037f32d967f49bf10c19cc3ea`. The required development build passed, and the latest consolidated runtime is staged without interrupting the existing app. Manual visual, interaction and export acceptance remain outstanding; issue #23 remains open. Current evidence and limits are recorded in [the workflow record](../timeline-workflow.md).
 
 ## Requirement and evidence
 

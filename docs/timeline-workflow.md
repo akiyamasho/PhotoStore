@@ -1,10 +1,10 @@
 # Timeline workspace
 
 Issue #23 was reopened on 2026-10-27 after the prior timeline UI was rejected. This page records
-the major-overhaul implementation committed locally as
-`5aa7c4a3566a3825bb1acb191e9279bd556dec21`. Remote publication is awaiting explicit push approval.
-Issue #23 remains open while publication and manual visual, interaction and export acceptance are
-outstanding.
+the major-overhaul implementation in source commit
+`5aa7c4a3566a3825bb1acb191e9279bd556dec21`, published to `main` on 2026-10-31 in the
+user-approved push through `43f0e2b6fe0ac67037f32d967f49bf10c19cc3ea`.
+Issue #23 remains open while manual visual, interaction and export acceptance are outstanding.
 This is an original egui interface informed by public
 references, with no CapCut or Photoshop assets copied.
 
@@ -78,9 +78,12 @@ audio properties.
 Perspective/warp animation is unsupported. Transform keys use the source-center pivot; conversion
 to Frame Animation remains guarded while Transform animation is enabled because key baking is not
 implemented. The required PhotoStore-dev build passed in 6m03s from the source SHA above. Its
-runtime binary is `5aa7c4a3566a3825bb1acb191e9279bd556dec21-216e5754fdbb8689`; guarded reload is
-deferred because the existing PhotoStore-dev process has open documents. The built runtime remains
-pending, and the running process still uses its prior binary. Seven focused implementation filters
+runtime binary was `5aa7c4a3566a3825bb1acb191e9279bd556dec21-216e5754fdbb8689`; its guarded reload
+was deferred because the existing PhotoStore-dev process had open documents. The later consolidated
+runtime `a387feb51d63b3749f892af046de592403105b2d-8184edd6c3af42a5` includes this overhaul plus the
+smoothing, PSD recording, and cursor fixes. It passed its required build and remains staged; the
+running process was left untouched. See [the delivery receipt](bugfix-sweep-2026-10-31.md).
+Seven focused implementation filters
 passed 1/1 each during the implementation pass; they did not all run against the exact final source
 SHA. Manual visual, interaction and export acceptance remain outstanding. Do not claim full
 CapCut/Photoshop parity or close issue #23 until acceptance is complete.

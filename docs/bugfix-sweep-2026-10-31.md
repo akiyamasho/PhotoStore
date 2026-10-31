@@ -12,10 +12,10 @@ below describe the first implementation pass.
 
 | Issue | Disposition | Delivery state |
 | --- | --- | --- |
-| [#20 — Drawing strokes remain angular despite smoothing with tablet pen and mouse](https://github.com/akiyamasho/PhotoStore/issues/20) | Reopened after the user's 35% smoothing report and inability to draw circles. Corrected the timed filter to follow moving input analytically, preserving interpolated time and pressure before curve reconstruction. | Local implementation; six smoothing regressions and one live/committed chunked-rendering regression passed. Native mouse/tablet acceptance remains outstanding; issue stays open. |
-| [#24 — Save timelapse recording history with the PSD](https://github.com/akiyamasho/PhotoStore/issues/24) | Persist recording settings, encoded frames, action labels, pause/error state, and layer recording exclusions in a namespaced PSD/PSB image resource. | Local implementation; five focused persistence regressions passed. Photoshop open/re-save acceptance remains unverified; issue stays open. |
-| [#23 — Major overhaul: CapCut timeline workspace, full shortcuts, and keyframing](https://github.com/akiyamasho/PhotoStore/issues/23) | Existing implementation and development-build receipts are recorded in [timeline workflow](timeline-workflow.md). Manual visual, interaction, and export acceptance remain outstanding. | Remains open; this timelapse change does not establish timeline acceptance. |
-| [#25 — Active tool cursor sometimes resets after switching apps](https://github.com/akiyamasho/PhotoStore/issues/25) | User reports intermittent arrow cursor after Alt-Tab while a tool remains selected. Added per-viewport focus recovery that refreshes native cursor visibility after the final cursor is resolved. Tool, build, OS, input device, and exact switch-key mapping remain Unknown. | Local implementation and required development build passed. Native app-switch acceptance remains outstanding; issue stays open. |
+| [#20 — Drawing strokes remain angular despite smoothing with tablet pen and mouse](https://github.com/akiyamasho/PhotoStore/issues/20) | Reopened after the user's 35% smoothing report and inability to draw circles. Corrected the timed filter to follow moving input analytically, preserving interpolated time and pressure before curve reconstruction. | Source delivered on main; six smoothing regressions and one live/committed chunked-rendering regression passed. Native mouse/tablet acceptance remains outstanding; issue stays open. |
+| [#24 — Save timelapse recording history with the PSD](https://github.com/akiyamasho/PhotoStore/issues/24) | Persist recording settings, encoded frames, action labels, pause/error state, and layer recording exclusions in a namespaced PSD/PSB image resource. | Source delivered on main; five focused persistence regressions passed. Photoshop open/re-save acceptance remains unverified; issue stays open. |
+| [#23 — Major overhaul: CapCut timeline workspace, full shortcuts, and keyframing](https://github.com/akiyamasho/PhotoStore/issues/23) | Implementation and development-build receipts are recorded in [timeline workflow](timeline-workflow.md). Manual visual, interaction, and export acceptance remain outstanding. | Source delivered on main; remains open pending timeline acceptance. |
+| [#25 — Active tool cursor sometimes resets after switching apps](https://github.com/akiyamasho/PhotoStore/issues/25) | User reports intermittent arrow cursor after Alt-Tab while a tool remains selected. Added per-viewport focus recovery that refreshes native cursor visibility after the final cursor is resolved. Tool, build, OS, input device, and exact switch-key mapping remain Unknown. | Source delivered on main and required development build passed. Native app-switch acceptance remains outstanding; issue stays open. |
 
 The report creation and duplicate report update used the explicitly invoked PhotoStore bug-report
 workflow. Unreported build, device, reproduction, and error details remain Unknown. A reviewed still
@@ -26,9 +26,9 @@ history and preservation of private-layer exclusions. The smoothing checks addre
 severe drawing blocker. No broad test suite, screenshot pass, or manual application/Photoshop
 acceptance is implied.
 
-Local `main` already contains three unpublished timeline commits before this change. Publishing
-those commits has not been authorized in this session. Both fixes remain reviewable locally;
-neither issue may be closed on the strength of a local-only fix. No issues were closed: two local
+At the initial checkpoint, local `main` contained three unpublished timeline commits before this
+change, and publishing them had not been authorized. Both fixes remained reviewable locally;
+neither issue could be closed on the strength of a local-only fix. No issues were closed: two local
 fixes and one separate acceptance-dependent timeline issue remained open at the first checkpoint.
 The subsequent cursor report raises the current inventory to four open issues; no issues have
 been closed by this workflow.
@@ -117,3 +117,23 @@ remains available. The running controlled child was untouched. Load the pending 
 save/quit/`./dev --background` instructions above. No release or production installation was made.
 After staging, local CI remained disabled and unloaded, with no pending CI development or release
 jobs. No issue was closed or source pushed; all four inventory issues remain open.
+
+## Source publication — 2026-10-31
+
+The user explicitly approved pushing all seven local commits to `main`. Publication advanced
+GitHub `main` from `2a9b527bf7ff965ed00da782e87b20e4302c24b2` to
+[`43f0e2b6fe0ac67037f32d967f49bf10c19cc3ea`](https://github.com/akiyamasho/PhotoStore/commit/43f0e2b6fe0ac67037f32d967f49bf10c19cc3ea),
+including the timeline overhaul, smoothing, PSD recording, cursor focus recovery, and their delivery
+documentation. The live GitHub branch and remote ref were verified against that exact SHA.
+
+Implementation and existing build evidence were posted and read back on all four issues:
+
+- [#20 smoothing evidence](https://github.com/akiyamasho/PhotoStore/issues/20#issuecomment-6539409845).
+- [#24 PSD recording evidence](https://github.com/akiyamasho/PhotoStore/issues/24#issuecomment-6539410909).
+- [#25 cursor focus evidence](https://github.com/akiyamasho/PhotoStore/issues/25#issuecomment-6539411950).
+- [#23 timeline overhaul evidence](https://github.com/akiyamasho/PhotoStore/issues/23#issuecomment-6539412894).
+
+All four remain open with their manual acceptance limits stated. Publication reused the existing
+compiled evidence and staged runtime; it did not start a build, test, release, installation, or app
+reload. The binary's source remains `a387feb51d63b3749f892af046de592403105b2d`; this publication
+receipt changes documentation only and does not require rebuilding identical executable inputs.
