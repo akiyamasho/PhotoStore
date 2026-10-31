@@ -98,23 +98,29 @@ This applies before code implementation begins; it is a design workflow, not a u
 
 Read the relevant crate and docs before editing. Keep manifests valid, preserve unrelated work, and make focused changes. Run only checks requested by the user or required to establish that an explicitly requested change is safe. Record significant product or format decisions in `docs/decisions.md`.
 
-## Local development installation policy
+## Local installation policy
 
-Deliver milestone changes through the consolidated `PhotoStore-dev` runtime; use the repository-root
-`./dev` watcher for local iteration, and reserve installed bundle refreshes for local CI/main
-promotion. The normal edit loop is documented in [`docs/dev-install.md`](docs/dev-install.md) and
-[`docs/dev-watch.md`](docs/dev-watch.md). It uses one shared Cargo target and incrementally builds
-changed inputs; it does not require a new pull request or a fresh application reinstall for each
-edit. An explicitly requested independent goal may use a separate `PhotoStore-dev-<goal>` identity,
-but goal bundles are never the default workflow.
+Deliver local changes by overwriting and reinstalling the normal production-identity app at
+`/Applications/PhotoStore.app`. Build the latest authorized local source with the normal
+`PhotoStore` name, executable, bundle identifier and configuration directory. Do not use the
+`dev-install` feature, `PhotoStore-dev`/goal bundles, or the `./dev` watcher for routine delivery.
+Existing development tooling is legacy and must not be started automatically.
 
-The watcher may close the owned, controlled dev app only when it has no open document tabs and no
-background jobs or dialogs. Any open tab, including a saved tab, defers the queued reload; save and
-close every tab to let it apply automatically. It never closes an unrelated owner process and never
-touches `/Applications/PhotoStore.app`. Source preferences and configuration are preserved. The
-loop is a safe process restart, not in-process hot module replacement. When launched by an agent,
-use background mode so the app opens behind the user's active UI without blocking, focusing, or
-raising that window.
+A request to install the latest version authorizes the local build, staging and replacement;
+it does not require a GitHub push, tag, release or publication. Reuse a verified production
+artifact when its executable inputs match; otherwise build the app once using the shared Cargo
+target, `CARGO_BUILD_JOBS=1`, `RAYON_NUM_THREADS=1`, and `nice -n 10`. Do not run an additional
+development build, discretionary tests, screenshots or QA. Documentation-only follow-ups do not
+require rebuilding identical executable inputs.
+
+Stage and verify the replacement's production identity, version, source SHA, architecture and
+signature before installation. Atomically replace the app bundle, retaining the previous bundle
+as a rollback copy while any process may still use it. Do not force-quit a running app, discard
+open documents, or modify private preferences/recovery state. The existing process may continue
+using its loaded version until the user restarts it. If explicitly launching after installation,
+open the normal PhotoStore app in the background without raising it. Keep the local CI scheduler
+disabled and verify no pending jobs; stop only the owned legacy dev watcher, preserving its app
+and documents. Never enable a watcher as a side effect of a local reinstall.
 
 ## Local CI and release watcher
 

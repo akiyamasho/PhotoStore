@@ -1,6 +1,6 @@
 # Timeline workspace
 
-> **Current request status — 2026-11-01:** The user says the supplied timeline still does not meet the desired Photoshop/CapCut-style workflow. Issue [#23 remains open](https://github.com/akiyamasho/PhotoStore/issues/23). This pass records research, a detailed proposal, and a GPT Image design concept attached to issue #23; it does not implement another overhaul or establish manual acceptance. See the [research/specification](plans/video-timeline-2026-11-01.md) and [design/provenance record](design/2026-11-01/README.md).
+> **Current request status — 2026-11-01:** After the research/design pass, the user authorized implementation of all open issues and enhancements, publication, and normal PhotoStore overwrite/reinstallation. The 0.19.0 pass carries the existing major timeline overhaul and additional layout, editing, and media improvements into the normal app. See the [release record](releases/0.19.0.md), [specification](plans/video-timeline-2026-11-01.md), and [design provenance](design/2026-11-01/README.md). No computer-use, screenshot, native interaction, or visual-acceptance claim is made.
 
 Issue #23 was reopened on 2026-10-27 after the prior timeline UI was rejected. This page records
 the major-overhaul implementation in source commit
@@ -65,11 +65,15 @@ issue report establishes visual hierarchy only; native app observations establis
 profile's bindings; public documentation establishes reference workflows. PhotoStore behaviors and
 shortcuts are design adaptations.
 
+## 0.19.0 source follow-up
+
+The later user authorization includes enhancements and normal production-identity installation. The source adds explicit mode menus, compact responsive overflow, adaptive ruler labels, larger lanes and visible-range media work, shared source-time movie sampling, prioritized/coalesced canvas requests, nested Smart Object request isolation, and explicit optional ripple deletion on non-Main visual/audio tracks. Ordinary deletion remains unchanged. See [0.19.0](releases/0.19.0.md) for exact compiler, artifact, publication and installation evidence. No source change or generated design establishes manual visual acceptance.
+
 ## Remaining requirements and limits
 
 Main-track magnet reorders clips; with P enabled, Main-row deletion/trim/paste repacks the row and
 updates later clips. Optional ripple moves on other rows are available. The observed native profile
-does not assign a ripple-delete action; ripple deletion for non-Main rows is not implemented.
+does not assign a ripple-delete shortcut; 0.19.0 exposes an explicit Ripple Delete action for non-Main visual/audio rows without inventing a default key.
 Variable-speed curves can be created and edited by dragging
 interior graph points or changing their frame/speed fields; the engine maps those curves in preview
 and export and synchronizes linked audio. The documented Alt+Drag text-center resize gesture is

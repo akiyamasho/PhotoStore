@@ -1,5 +1,7 @@
 # PhotoStore development watcher
 
+> **Legacy workflow — 2026-11-01:** Routine delivery now builds and overwrites the normal `/Applications/PhotoStore.app` directly. Do not start the dev watcher or create dev bundles unless the user explicitly requests that legacy workflow. Preserve existing sessions and configuration. See [AGENTS.md](../AGENTS.md#local-installation-policy).
+
 The development watcher is the small feedback loop around the isolated `PhotoStore-dev`
 installation. It is intended for local source iteration and does not change the production app.
 

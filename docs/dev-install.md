@@ -1,5 +1,7 @@
 # PhotoStore-dev local installation
 
+> **Legacy workflow — 2026-11-01:** Routine delivery now builds and overwrites the normal `/Applications/PhotoStore.app` directly. Do not start the dev watcher or create dev bundles unless the user explicitly requests that legacy workflow. Preserve existing sessions and configuration. See [AGENTS.md](../AGENTS.md#local-installation-policy).
+
 `PhotoStore-dev.app` is the consolidated review installation for development. Build it with the
 `dev-install` Cargo feature so the native app uses the consolidated identity and window name, with
 isolated per-user state (`PhotoStore-dev` on macOS and Windows, `photostore-dev` on Linux).

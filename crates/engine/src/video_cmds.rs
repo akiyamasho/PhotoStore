@@ -168,6 +168,16 @@ pub fn sync(doc: &mut Document) {
 /// Synchronize video layers and frame-animation state without traversing smart-object sources.
 /// Smart-object rendering calls this on decoded child documents to avoid recursive sync loops.
 pub fn sync_plain(doc: &mut Document) {
+    sync_plain_impl(doc, true);
+}
+
+/// Nested Smart Object instances may sample the same child layer at different times in one
+/// composite. Preserve all of those requests instead of coalescing them as one canvas consumer.
+pub(crate) fn sync_plain_for_nested(doc: &mut Document) {
+    sync_plain_impl(doc, false);
+}
+
+fn sync_plain_impl(doc: &mut Document, coalesce: bool) {
     let cur = doc.timeline.as_ref().map_or(0, |t| t.current);
     let timeline_fps = doc.timeline.as_ref().map_or(30.0_f64, |t| f64::from(t.fps.max(0.001)));
     let ranges = doc
@@ -188,7 +198,7 @@ pub fn sync_plain(doc: &mut Document) {
         })
         .unwrap_or_default();
     let geometry = doc.clone();
-    sync_layers(&geometry, &mut doc.layers, cur, timeline_fps, &ranges);
+    sync_layers(&geometry, &mut doc.layers, cur, timeline_fps, &ranges, coalesce);
     if let Some(t) = &doc.timeline
         && let Some(states) = if matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation) { t.frame_states.get(cur) } else { t.property_frames.get(cur) }
     {
@@ -352,11 +362,15 @@ fn apply_states(geometry: &Document, layers: &mut [Layer], states: &[FrameLayerS
     }
 }
 
-fn source_index(cur: usize, timeline_fps: f64, video: &VideoData, range: Option<&photostore_doc::LayerTimelineRange>) -> usize {
+fn source_clock_seconds(cur: usize, timeline_fps: f64, video: &VideoData, range: Option<&photostore_doc::LayerTimelineRange>) -> f64 {
     let playback = video.playback;
     let source_in = if playback.source_in_seconds.is_finite() && playback.source_in_seconds >= 0.0 { playback.source_in_seconds } else { 0.0 };
     let speed = if playback.speed.is_finite() && playback.speed > 0.0 { playback.speed } else { 1.0 };
-    let seconds = range.map_or(source_in + cur as f64 / timeline_fps.max(0.001) * speed, |r| r.source_time_seconds(cur, timeline_fps, source_in, speed));
+    range.map_or(source_in + cur as f64 / timeline_fps.max(0.001) * speed, |r| r.source_time_seconds(cur, timeline_fps, source_in, speed))
+}
+
+fn source_index(cur: usize, timeline_fps: f64, video: &VideoData, range: Option<&photostore_doc::LayerTimelineRange>) -> usize {
+    let seconds = source_clock_seconds(cur, timeline_fps, video, range);
     if !video.frame_delays_ms.iter().any(|delay| *delay > 0) {
         return (seconds * f64::from(video.fps.max(0.001)) + 1e-9).floor() as usize;
     }
@@ -385,6 +399,34 @@ pub fn source_frame_for_layer(doc: &Document, layer: &Layer, timeline_frame: usi
         .map_or(relative, |backing| backing.trim_in_frame.saturating_add(relative).min(backing.trim_out_frame).min(backing.frame_count.saturating_sub(1))))
 }
 
+/// Map a linked clip to native source presentation seconds without first rounding to a
+/// nominal frame index. Existing interpreted-FPS and trim metadata retain their meaning.
+fn linked_source_seconds(cur: usize, timeline_fps: f64, video: &VideoData, range: Option<&photostore_doc::LayerTimelineRange>) -> Result<f64> {
+    let backing = video.movie_backing.as_ref().ok_or_else(|| EngineError::Other("video has no linked movie backing".into()))?;
+    let native_fps = f64::from(backing.source_fps);
+    let interpreted_fps = f64::from(video.fps);
+    if !native_fps.is_finite() || native_fps <= 0.0 || !interpreted_fps.is_finite() || interpreted_fps <= 0.0
+        || backing.frame_count == 0 || backing.trim_in_frame > backing.trim_out_frame || backing.trim_in_frame >= backing.frame_count {
+        return Err(EngineError::Other("linked movie has invalid source frame-rate or trim metadata".into()));
+    }
+    let relative = source_clock_seconds(cur, timeline_fps, video, range);
+    let seconds = (backing.trim_in_frame as f64 + relative * interpreted_fps) / native_fps;
+    if !seconds.is_finite() || seconds < 0.0 {
+        return Err(EngineError::Other("linked movie has an invalid source-time mapping".into()));
+    }
+    let end = backing.trim_out_frame.min(backing.frame_count - 1).saturating_add(1) as f64 / native_fps;
+    // The trim end is exclusive. Preserve sub-frame source time throughout the last hold.
+    Ok(seconds.min((end - 1e-9).max(backing.trim_in_frame as f64 / native_fps)))
+}
+
+/// Resolve a project frame to linked movie presentation time for preview, thumbnails and export.
+pub fn source_time_for_layer(doc: &Document, layer: &Layer, timeline_frame: usize) -> Result<f64> {
+    let video = layer.video.as_ref().ok_or_else(|| EngineError::Other(format!("layer {:?} has no video source", layer.id)))?;
+    let fps = doc.timeline.as_ref().map_or(30.0, |t| f64::from(t.fps.max(0.001)));
+    let range = doc.timeline.as_ref().and_then(|t| t.layer_ranges.iter().find(|range| range.layer == layer.id));
+    linked_source_seconds(timeline_frame, fps, video, range)
+}
+
 /// Whether all linked movie layers currently sampled in this document have a decoded frame ready.
 /// This is used by Smart Object rendering to avoid caching a last-valid placeholder for a new time.
 pub(crate) fn linked_frames_ready(doc: &Document) -> bool {
@@ -393,18 +435,17 @@ pub(crate) fn linked_frames_ready(doc: &Document) -> bool {
     let ranges = doc.timeline.as_ref().map(|t| t.layer_ranges.as_slice()).unwrap_or(&[]);
     for (_, _, layer) in doc.walk() {
         let Some(video) = layer.video.as_ref() else { continue };
-        let Some(backing) = video.movie_backing.as_ref() else { continue };
-        let index = source_index(cur, fps, video, ranges.iter().find(|r| r.layer == layer.id));
-        let frame = backing.trim_in_frame.saturating_add(index).min(backing.trim_out_frame).min(backing.frame_count.saturating_sub(1));
+        if video.movie_backing.is_none() { continue; }
+        let Ok(seconds) = linked_source_seconds(cur, fps, video, ranges.iter().find(|r| r.layer == layer.id)) else { return false };
         let photostore_doc::VideoSource::File { path } = &video.source else { return false };
-        if !matches!(crate::movie_cache::frame(path, frame, doc.pixel_format()), Ok(Some(_))) {
+        if !matches!(crate::movie_cache::frame_at_seconds(path, seconds, doc.pixel_format()), Ok(Some(_))) {
             return false;
         }
     }
     true
 }
 
-fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[photostore_doc::LayerTimelineRange]) {
+fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[photostore_doc::LayerTimelineRange], coalesce: bool) {
     for l in layers.iter_mut() {
         let transform = l.video.as_ref().map(|v| keyframe_transform(v, cur));
         if let Some((_, _, opacity)) = transform {
@@ -427,10 +468,26 @@ fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_f
             .as_ref()
             .and_then(|v| {
                 let index = source_index(cur, timeline_fps, v, ranges.iter().find(|range| range.layer == l.id));
-                if let Some(backing) = &v.movie_backing {
-                    let source_frame = backing.trim_in_frame.saturating_add(index).min(backing.trim_out_frame).min(backing.frame_count.saturating_sub(1));
-                    let photostore_doc::VideoSource::File { path } = &v.source else { return v.frames.first().cloned() };
-                    crate::movie_cache::frame(path, source_frame, geometry.pixel_format()).ok().flatten()
+                if v.movie_backing.is_some() {
+                    let photostore_doc::VideoSource::File { path } = &v.source else {
+                        crate::movie_cache::note_error("linked movie backing has no original file source".into());
+                        return None;
+                    };
+                    let seconds = match linked_source_seconds(cur, timeline_fps, v, ranges.iter().find(|range| range.layer == l.id)) {
+                        Ok(seconds) => seconds,
+                        Err(error) => {
+                            crate::movie_cache::note_error(error.to_string());
+                            return None;
+                        }
+                    };
+                    if coalesce {
+                        use std::hash::{Hash, Hasher};
+                        let mut identity = std::collections::hash_map::DefaultHasher::new();
+                        (geometry.id.0, l.id.0).hash(&mut identity);
+                        crate::movie_cache::frame_at_seconds_for_consumer(path, seconds, geometry.pixel_format(), identity.finish()).ok().flatten()
+                    } else {
+                        crate::movie_cache::frame_at_seconds(path, seconds, geometry.pixel_format()).ok().flatten()
+                    }
                 } else {
                     v.frames.get(index.min(v.frames.len().saturating_sub(1))).cloned()
                 }
@@ -457,7 +514,7 @@ fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_f
             }
         }
         if let Some(ch) = l.children_mut() {
-            sync_layers(geometry, ch, cur, timeline_fps, ranges);
+            sync_layers(geometry, ch, cur, timeline_fps, ranges, coalesce);
         }
     }
 }

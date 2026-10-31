@@ -27,9 +27,11 @@ version is verified; this procedure does not rewrite older tags retroactively.
 
 ## Local release procedure
 
-1. Set the workspace version with `cargo xtask version set <version>` and review the resulting
+1. Set the workspace version with `cargo xtask version set <version>` (or the existing
+   `target/debug/xtask version set <version>` to reuse the compiled helper) and review the resulting
    `Cargo.toml` and `Cargo.lock` changes. Keep the workspace lockfile consistent.
-2. Make the exact reviewed source commit the release reference and push it.
+2. Commit the exact reviewed source as the immutable build reference. Push this source after the
+   local build/artifact verification passes and before publishing the release.
 3. Build with the shared target directory, low resource settings, one job, and the locked offline
    dependency set when available. For the current macOS scope, package ARM64 with
    [`packaging/macos/package.sh`](../packaging/macos/package.sh).

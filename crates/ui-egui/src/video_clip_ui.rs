@@ -11,6 +11,56 @@ use serde_json::{Value, json};
 
 const NAME_WIDTH: f32 = 164.0;
 const LANE_HEIGHT: f32 = 34.0;
+const TIMELINE_GUTTER_WIDTH: f32 = 180.0;
+const VIDEO_TRACK_HEIGHT: f32 = 56.0;
+const STILL_TRACK_HEIGHT: f32 = 40.0;
+const TIMELINE_RULER_HEIGHT: f32 = 28.0;
+
+fn nice_tick_interval(target: f64) -> f64 {
+    if !target.is_finite() || target <= 0.0 {
+        return 1.0;
+    }
+    let magnitude = 10.0_f64.powf(target.log10().floor());
+    [1.0, 2.0, 5.0, 10.0]
+        .into_iter()
+        .map(|step| step * magnitude)
+        .find(|step| *step >= target)
+        .unwrap_or(magnitude * 10.0)
+}
+
+fn format_ruler_tick(seconds: f64, step: f64) -> String {
+    if step >= 1.0 {
+        let whole = seconds.round().max(0.0) as u64;
+        if whole >= 3600 {
+            format!("{}:{:02}:{:02}", whole / 3600, (whole / 60) % 60, whole % 60)
+        } else if whole >= 60 {
+            format!("{}:{:02}", whole / 60, whole % 60)
+        } else {
+            format!("{whole}s")
+        }
+    } else {
+        let precision = (-step.log10()).ceil().clamp(1.0, 3.0) as usize;
+        format!("{:.*}s", precision, seconds)
+    }
+}
+
+fn paint_timeline_clip_label(ui: &Ui, rect: Rect, label: &str, tokens: &Tokens) {
+    let visible = rect.intersect(ui.clip_rect());
+    if visible.width() < 24.0 || visible.height() < 20.0 {
+        return;
+    }
+    let width = (label.chars().count() as f32 * 7.0 + 14.0).min((visible.width() - 8.0).max(0.0));
+    let label_rect = Rect::from_min_size(pos2(visible.left() + 4.0, visible.center().y - 10.0), vec2(width, 20.0)).intersect(visible);
+    let painter = ui.painter_at(visible);
+    painter.rect_filled(label_rect, 2.0, egui::Color32::from_black_alpha(150));
+    painter.with_clip_rect(label_rect).text(
+        label_rect.left_center() + egui::vec2(5.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(12.0),
+        tokens.text,
+    );
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DragKind {
@@ -932,12 +982,21 @@ fn draw_clip(
     let selected = app.session.active().is_some_and(|s| s.selected_layers.contains(&layer));
     let fill = if selected { t.accent } else { t.accent.gamma_multiply(0.72) };
     ui.painter_at(lane).rect_filled(rect.intersect(lane), 3.0, fill);
-    ui.painter_at(lane).text(rect.left_center(), egui::Align2::LEFT_CENTER, format!("{name} · Video"), egui::FontId::proportional(11.0), t.text);
     response.context_menu(|ui| {
         if ui.button(tl!("Convert to Smart Object")).clicked() {
             select_layer(app, doc, layer);
             report_timeline_result(app, |app| app.with_document(doc, |app| app.run("layer.smartObjects.convertToSmartObject", json!({"layer":layer.0}))));
             ui.close();
+        }
+        ui.separator();
+        for (label, ripple) in [(tl!("Delete Clip"), false), (tl!("Ripple Delete (close gap)"), true)] {
+            if ui.button(label).clicked() {
+                let layers = delete_targets(app, doc, layer, timeline);
+                report_timeline_result(app, |app| {
+                    app.with_document(doc, |app| app.run("timeline.editor.delete", json!({"layers":layers,"audio":[],"ripple":ripple})))
+                });
+                ui.close();
+            }
         }
     });
     if response.clicked() {
@@ -1119,27 +1178,30 @@ fn paint_clip_thumbnails(
     }
     let count = ((visible.width() / 58.0).ceil() as usize).clamp(1, 8);
     let prefix = format!("timeline-clip-thumb:{}:{}:", document.id.0, layer.id.0);
-    let mut textures = Vec::new();
+    let mut textures: Vec<(usize, egui::TextureId)> = Vec::new();
     if let Some(video) = layer.video.as_ref() {
-        if let (Some(movie), photostore_doc::VideoSource::File { path }) = (&video.movie_backing, &video.source) {
+        if let (Some(_movie), photostore_doc::VideoSource::File { path }) = (&video.movie_backing, &video.source) {
             let range_start = range.map_or(0, |r| r.start);
             let range_end = range.map_or(video.len(), |r| r.end);
             let duration = (range_end.saturating_sub(range_start)).max(1);
-            let playback = range.and_then(|r| r.playback.clone()).unwrap_or(photostore_doc::ClipPlayback {
-                source_in_seconds: video.playback.source_in_seconds,
-                speed: video.playback.speed,
-                ..Default::default()
-            });
+            let first_visible = ((visible.left() - clip_rect.left()) / clip_rect.width().max(1.0)).clamp(0.0, 1.0);
+            let last_visible = ((visible.right() - clip_rect.left()) / clip_rect.width().max(1.0)).clamp(0.0, 1.0);
             for sample in 0..count {
-                let at = duration.saturating_mul(sample).checked_div(count).unwrap_or(0);
-                let time = playback.source_in_seconds + (at as f64 / f64::from(video.fps.max(0.001))) * playback.speed;
+                let fraction = first_visible + (last_visible - first_visible) * (sample as f64 + 0.5) as f32 / count as f32;
+                let at = (duration as f32 * fraction).round().max(0.0) as usize;
                 let timeline_frame = range_start.saturating_add(at).min(document.timeline.as_ref().map_or(range_end, |t| t.duration.saturating_sub(1)));
-                let source_index = photostore_engine::source_frame_for_layer(document, layer, timeline_frame).unwrap_or_else(|_| {
-                    movie.trim_in_frame.saturating_add((time * f64::from(movie.source_fps.max(0.001))).round().max(0.0) as usize).min(movie.trim_out_frame)
-                });
-                let key = format!("{prefix}movie:{}:{}", path, source_index);
+                let source_seconds = match photostore_engine::source_time_for_layer(document, layer, timeline_frame) {
+                    Ok(seconds) => seconds,
+                    Err(error) => {
+                        app.ui.status = error.to_string();
+                        app.ui.status_error = true;
+                        continue;
+                    }
+                };
+                let source_nanos = (source_seconds * 1_000_000_000.0).round().max(0.0) as u64;
+                let key = format!("{prefix}movie:{}:{}", path, source_nanos);
                 let cached = app.ui.timeline.frame_thumbs.iter().find(|(k, _)| k == &key).map(|(_, tex)| tex.id());
-                let texture = cached.or_else(|| match photostore_engine::movie_cache::frame_thumbnail(path, source_index, document.pixel_format()) {
+                let texture = cached.or_else(|| match photostore_engine::movie_cache::frame_thumbnail_at_seconds(path, source_seconds, document.pixel_format()) {
                     Ok(Some(surface)) => {
                         let image = crate::timeline_ui::linked_movie_thumbnail(&surface, document.bounds());
                         let tex = ui.ctx().load_texture(format!("{key}"), image, egui::TextureOptions::LINEAR);
@@ -1158,12 +1220,22 @@ fn paint_clip_thumbnails(
                     }
                 });
                 if let Some(texture) = texture {
-                    textures.push(texture);
+                    textures.push((sample, texture));
                 }
             }
         } else if !video.frames.is_empty() {
+            let range_start = range.map_or(0, |r| r.start);
+            let range_end = range.map_or(video.len(), |r| r.end);
+            let range_duration = range_end.saturating_sub(range_start).max(1);
+            let first_visible = ((visible.left() - clip_rect.left()) / clip_rect.width().max(1.0)).clamp(0.0, 1.0);
+            let last_visible = ((visible.right() - clip_rect.left()) / clip_rect.width().max(1.0)).clamp(0.0, 1.0);
             for sample in 0..count {
-                let index = video.frames.len().saturating_mul(sample).checked_div(count).unwrap_or(0).min(video.frames.len() - 1);
+                let fraction = first_visible + (last_visible - first_visible) * (sample as f32 + 0.5) / count as f32;
+                let project_offset = (range_duration as f32 * fraction).round().max(0.0) as usize;
+                let timeline_frame = range_start.saturating_add(project_offset).min(range_end.saturating_sub(1));
+                let index = photostore_engine::source_frame_for_layer(document, layer, timeline_frame)
+                    .unwrap_or(timeline_frame)
+                    .min(video.frames.len() - 1);
                 let key = format!("{prefix}frame:{}:{}", app.ui.timeline.thumb_generation, index);
                 let texture = app.ui.timeline.frame_thumbs.iter().find(|(k, _)| k == &key).map(|(_, tex)| tex.id()).or_else(|| {
                     let image = crate::transform_tex::read_surface(&video.frames[index], None, document.bounds(), 64).0;
@@ -1173,7 +1245,7 @@ fn paint_clip_thumbnails(
                     Some(id)
                 });
                 if let Some(texture) = texture {
-                    textures.push(texture);
+                    textures.push((sample, texture));
                 }
             }
         }
@@ -1187,17 +1259,19 @@ fn paint_clip_thumbnails(
             Some(id)
         });
         if let Some(texture) = texture {
-            textures.push(texture);
+            for sample in 0..count {
+                textures.push((sample, texture));
+            }
         }
     }
-    let painter = ui.painter_at(clip_rect);
-    let slot_w = clip_rect.width() / count as f32;
-    for (i, texture) in textures.into_iter().enumerate() {
+    let painter = ui.painter_at(visible);
+    let slot_w = visible.width() / count as f32;
+    for (sample, texture) in textures {
         let slot = Rect::from_min_max(
-            pos2(clip_rect.left() + i as f32 * slot_w, clip_rect.top()),
-            pos2(clip_rect.left() + (i + 1) as f32 * slot_w, clip_rect.bottom()),
+            pos2(visible.left() + sample as f32 * slot_w, visible.top()),
+            pos2(visible.left() + (sample + 1) as f32 * slot_w, visible.bottom()),
         )
-        .intersect(clip_rect);
+        .intersect(visible);
         painter.image(texture, slot, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), egui::Color32::WHITE);
     }
     while app.ui.timeline.frame_thumbs.len() > 512 {
@@ -1242,6 +1316,26 @@ fn select_layer(app: &mut PhotoStoreApp, doc: DocId, layer: LayerId) {
         app.ui.status = error;
         app.ui.status_error = true;
     }
+}
+
+fn delete_targets(app: &PhotoStoreApp, doc: DocId, clicked: LayerId, timeline: &Timeline) -> Vec<u64> {
+    app.session
+        .active()
+        .filter(|active| active.doc.id == doc)
+        .map(|active| {
+            if active.selected_layers.contains(&clicked) {
+                active
+                    .selected_layers
+                    .iter()
+                    .copied()
+                    .filter(|id| active.doc.layer(*id).is_some_and(|layer| layer.video.is_some()) || timeline.layer_ranges.iter().any(|range| range.layer == *id))
+                    .map(|id| id.0)
+                    .collect()
+            } else {
+                vec![clicked.0]
+            }
+        })
+        .unwrap_or_else(|| vec![clicked.0])
 }
 
 fn select_layer_with_modifiers(app: &mut PhotoStoreApp, ctx: &egui::Context, doc: DocId, layer: LayerId) {
@@ -1808,13 +1902,24 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
         .frame(egui::Frame::NONE.fill(tokens.card).inner_margin(egui::Margin::same(6)))
         .show(parent, |ui| {
             // Compact editing toolbar: every button dispatches an operation or exposes a real mode.
-            ui.horizontal(|ui| {
+            let toolbar_width = ui.available_width();
+            let compact_toolbar = toolbar_width < 760.0;
+            let very_narrow_toolbar = toolbar_width < 520.0;
+            ui.horizontal_wrapped(|ui| {
+                ui.menu_button(RichText::new(format!("{} ▾", tl!("Video Timeline"))).strong().color(tokens.text), |ui| {
+                    ui.weak(tl!("Active timeline mode"));
+                    ui.separator();
+                    if ui.button(tl!("Convert to Frame Animation")).clicked() {
+                        action = Some(("timeline.setMode", json!({"mode":"frameAnimation"})));
+                        ui.close();
+                    }
+                });
                 if crate::icons::button(ui, if app.ui.timeline.playing { "pause" } else { "play" }, 22.0, app.ui.timeline.playing, "Play / Pause (Space)")
                     .clicked()
                 {
                     toggle_play = true;
                 }
-                if crate::icons::button(ui, "chevrons-left", 20.0, false, "Previous frame (←)").clicked() {
+                if !very_narrow_toolbar && crate::icons::button(ui, "chevrons-left", 20.0, false, "Previous frame (←)").clicked() {
                     action = Some(("timeline.previousFrame", json!({"document":doc.0})));
                 }
                 let timecode = format!(
@@ -1824,49 +1929,96 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                     timeline.time() as u32 % 60,
                     frame % timeline.fps.round().max(1.0) as usize
                 );
-                ui.label(RichText::new(timecode).monospace().color(tokens.text));
-                if crate::icons::button(ui, "chevron-right", 20.0, false, "Next frame (→)").clicked() {
+                if !very_narrow_toolbar {
+                    ui.label(RichText::new(timecode.clone()).monospace().color(tokens.text));
+                }
+                if !very_narrow_toolbar && crate::icons::button(ui, "chevron-right", 20.0, false, "Next frame (→)").clicked() {
                     action = Some(("timeline.nextFrame", json!({"document":doc.0})));
                 }
                 ui.separator();
-                if ui.selectable_label(!razor_mode, "A").on_hover_text("Select mode (A)").clicked() {
-                    razor_mode = false;
-                }
-                if ui.selectable_label(razor_mode, "B").on_hover_text("Razor mode (B)").clicked() {
-                    razor_mode = true;
-                }
-                if selected_clip && crate::icons::button(ui, "scissors", 20.0, false, "Split selected clip (⌘B)").clicked() {
-                    action = Some((
-                        "timeline.editor.split",
-                        json!({"document":doc.0,"layers":selected_visual.iter().map(|layer|layer.0).collect::<Vec<_>>(),"frame":frame}),
-                    ));
-                }
-                if crate::icons::button(ui, "lasso-magnetic", 20.0, timeline.main_track_magnet, "Main track magnet (P)").clicked() {
-                    action = Some(("timeline.editor.setModes", json!({"document":doc.0,"mainTrackMagnet":!timeline.main_track_magnet})));
-                }
                 if crate::icons::button(ui, "scan-line", 20.0, snap, "Snapping (N)").clicked() {
                     snap = !snap;
                     action = Some(("timeline.editor.setModes", json!({"document":doc.0,"snapping":snap})));
                 }
-                if crate::icons::button(ui, "clock", 20.0, false, "Add marker (M)").clicked() {
-                    action = Some(("timeline.editor.marker.add", json!({"document":doc.0,"frame":frame})));
-                }
-                let keypane_id = Id::new(("timeline-key-pane", doc.0));
-                let keypane = ui.ctx().data_mut(|d| d.get_persisted::<bool>(keypane_id)).unwrap_or(false);
-                if crate::icons::button(ui, "diamond", 20.0, keypane, "Selected clip keyframes (Alt+K)").clicked() {
-                    ui.ctx().data_mut(|d| d.insert_persisted(keypane_id, !keypane));
-                    if keypane {
-                        clear_key_selection(ui.ctx(), doc.0);
+                if compact_toolbar {
+                    ui.menu_button(tl!("Tools"), |ui| {
+                        if very_narrow_toolbar && ui.button(tl!("Previous frame (←)")).clicked() {
+                            action = Some(("timeline.previousFrame", json!({"document":doc.0})));
+                            ui.close();
+                        }
+                        if very_narrow_toolbar && ui.button(tl!("Next frame (→)")).clicked() {
+                            action = Some(("timeline.nextFrame", json!({"document":doc.0})));
+                            ui.close();
+                        }
+                        if ui.selectable_label(!razor_mode, "A · Select").clicked() { razor_mode = false; }
+                        if ui.selectable_label(razor_mode, "B · Razor").clicked() { razor_mode = true; }
+                        if selected_clip && ui.button(tl!("Split selected clip (⌘B)")).clicked() {
+                            action = Some(("timeline.editor.split", json!({"document":doc.0,"layers":selected_visual.iter().map(|layer|layer.0).collect::<Vec<_>>(),"frame":frame})));
+                            ui.close();
+                        }
+                        if ui.button(tl!("Main track magnet (P)")).clicked() {
+                            action = Some(("timeline.editor.setModes", json!({"document":doc.0,"mainTrackMagnet":!timeline.main_track_magnet})));
+                            ui.close();
+                        }
+                        if ui.button(tl!("Add marker (M)")).clicked() {
+                            action = Some(("timeline.editor.marker.add", json!({"document":doc.0,"frame":frame})));
+                            ui.close();
+                        }
+                        let keypane_id = Id::new(("timeline-key-pane", doc.0));
+                        let keypane = ui.ctx().data_mut(|d| d.get_persisted::<bool>(keypane_id)).unwrap_or(false);
+                        if ui.button(if keypane { tl!("Hide selected clip keyframes") } else { tl!("Selected clip keyframes (Alt+K)") }).clicked() {
+                            ui.ctx().data_mut(|d| d.insert_persisted(keypane_id, !keypane));
+                            if keypane { clear_key_selection(ui.ctx(), doc.0); }
+                            ui.close();
+                        }
+                    });
+                } else {
+                    if ui.selectable_label(!razor_mode, "A").on_hover_text("Select mode (A)").clicked() { razor_mode = false; }
+                    if ui.selectable_label(razor_mode, "B").on_hover_text("Razor mode (B)").clicked() { razor_mode = true; }
+                    if selected_clip && crate::icons::button(ui, "scissors", 20.0, false, "Split selected clip (⌘B)").clicked() {
+                        action = Some(("timeline.editor.split", json!({"document":doc.0,"layers":selected_visual.iter().map(|layer|layer.0).collect::<Vec<_>>(),"frame":frame})));
+                    }
+                    if crate::icons::button(ui, "lasso-magnetic", 20.0, timeline.main_track_magnet, "Main track magnet (P)").clicked() {
+                        action = Some(("timeline.editor.setModes", json!({"document":doc.0,"mainTrackMagnet":!timeline.main_track_magnet})));
+                    }
+                    if crate::icons::button(ui, "clock", 20.0, false, "Add marker (M)").clicked() {
+                        action = Some(("timeline.editor.marker.add", json!({"document":doc.0,"frame":frame})));
+                    }
+                    let keypane_id = Id::new(("timeline-key-pane", doc.0));
+                    let keypane = ui.ctx().data_mut(|d| d.get_persisted::<bool>(keypane_id)).unwrap_or(false);
+                    if crate::icons::button(ui, "diamond", 20.0, keypane, "Selected clip keyframes (Alt+K)").clicked() {
+                        ui.ctx().data_mut(|d| d.insert_persisted(keypane_id, !keypane));
+                        if keypane { clear_key_selection(ui.ctx(), doc.0); }
                     }
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if crate::icons::button(ui, "x", 20.0, false, "Close timeline").clicked() {
-                        close = true;
-                    }
-                    if crate::icons::button(ui, "sliders-horizontal", 20.0, app.ui.panels.properties, "Show selected clip Properties").clicked() {
-                        app.ui.panels.properties = true;
-                    }
-                    ui.menu_button("⋯", |ui| {
+                ui.menu_button("⋯", |ui| {
+                        if very_narrow_toolbar {
+                            ui.label(RichText::new(timecode.clone()).monospace());
+                            ui.separator();
+                        }
+                        if ui.button(tl!("Close timeline")).clicked() {
+                            close = true;
+                            ui.close();
+                        }
+                        if ui.button(tl!("Show selected clip Properties")).clicked() {
+                            app.ui.panels.properties = true;
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button(tl!("Fit timeline to view")).clicked() {
+                            zoom = 1.0;
+                            scroll_x = 0.0;
+                            ui.close();
+                        }
+                        if ui.button(tl!("Zoom in")).clicked() {
+                            zoom = (zoom * 1.25).clamp(0.25, 16.0);
+                            ui.close();
+                        }
+                        if ui.button(tl!("Zoom out")).clicked() {
+                            zoom = (zoom / 1.25).clamp(0.25, 16.0);
+                            ui.close();
+                        }
+                        ui.separator();
                         if ui.checkbox(&mut app.ui.timeline.ripple_move, "Ripple following clips on move").changed() {
                             ui.close();
                         }
@@ -1955,33 +2107,22 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                             ui.ctx().data_mut(|data| data.insert_persisted(Id::new("timeline-shortcut-help-open"), true));
                             ui.close();
                         }
-                    });
-                    if ui.small_button("Fit").on_hover_text("Fit timeline to view").clicked() {
-                        zoom = 1.0;
-                        scroll_x = 0.0;
-                    }
-                    if ui.small_button("+").on_hover_text("Zoom in").clicked() {
-                        zoom = (zoom * 1.25).clamp(0.25, 16.0);
-                    }
-                    if ui.small_button("−").on_hover_text("Zoom out").clicked() {
-                        zoom = (zoom / 1.25).clamp(0.25, 16.0);
-                    }
                 });
             });
 
             // Fixed time ruler; lane widths use the same duration and zoom geometry below.
-            let gutter = 142.0;
+            let gutter = TIMELINE_GUTTER_WIDTH;
             let lane_width = ((ui.available_width() - gutter).max(200.0) * zoom).max(240.0);
             ruler_geometry = Some((lane_width, gutter));
             ui.horizontal(|ui| {
-                let (g, _) = ui.allocate_exact_size(vec2(gutter, 26.0), Sense::hover());
+                let (g, _) = ui.allocate_exact_size(vec2(gutter, TIMELINE_RULER_HEIGHT), Sense::hover());
                 ui.painter_at(g).rect_filled(g, 0.0, tokens.card);
                 let ruler_output = egui::ScrollArea::horizontal()
                     .scroll_source(egui::scroll_area::ScrollSource::NONE)
                     .id_salt(("timeline-ruler", doc.0))
                     .scroll_offset(egui::vec2(scroll_x, 0.0))
                     .show(ui, |ui| {
-                        let (ruler, response) = ui.allocate_exact_size(vec2(lane_width, 26.0), Sense::click_and_drag());
+                        let (ruler, response) = ui.allocate_exact_size(vec2(lane_width, TIMELINE_RULER_HEIGHT), Sense::click_and_drag());
                         let p = ui.painter_at(ruler);
                         p.rect_filled(ruler, 0.0, tokens.card);
                         let work_start = ruler.left() + ruler.width() * timeline.work_start.min(duration) as f32 / duration as f32;
@@ -1991,20 +2132,36 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                             0.0,
                             tokens.accent.gamma_multiply(0.10),
                         );
-                        let ticks = 10usize;
-                        for n in 0..=ticks {
-                            let x = ruler.left() + ruler.width() * n as f32 / ticks as f32;
-                            p.line_segment([pos2(x, ruler.bottom() - 8.0), pos2(x, ruler.bottom())], egui::Stroke::new(1.0, tokens.text_dim));
-                            p.text(
-                                pos2(x + 3.0, ruler.top() + 2.0),
-                                egui::Align2::LEFT_TOP,
-                                format!("{:.1}s", timeline.duration_seconds() * n as f64 / ticks as f64),
-                                egui::FontId::proportional(10.0),
-                                tokens.text_dim,
-                            );
+                        let total_seconds = timeline.duration_seconds().max(0.001);
+                        let visible = ruler.intersect(ui.clip_rect());
+                        let seconds_per_pixel = total_seconds / lane_width.max(1.0) as f64;
+                        let tick_step = nice_tick_interval((seconds_per_pixel * 88.0).max(1.0 / f64::from(timeline.fps.max(0.001))));
+                        let visible_start = ((visible.left() - ruler.left()).max(0.0) as f64 * seconds_per_pixel).max(0.0);
+                        let visible_end = ((visible.right() - ruler.left()).max(0.0) as f64 * seconds_per_pixel).min(total_seconds);
+                        let first_tick = (visible_start / tick_step).floor().max(0.0) as u64;
+                        let last_tick = (visible_end / tick_step).ceil().max(first_tick as f64) as u64;
+                        for tick_index in first_tick..=last_tick.min(first_tick.saturating_add(512)) {
+                            let seconds = tick_index as f64 * tick_step;
+                            if seconds > total_seconds {
+                                break;
+                            }
+                            let x = ruler.left() + ruler.width() * (seconds / total_seconds) as f32;
+                            p.line_segment([pos2(x, ruler.bottom() - 9.0), pos2(x, ruler.bottom())], egui::Stroke::new(1.0, tokens.text_dim));
+                            if x < visible.right() - 28.0 {
+                                p.text(
+                                    pos2(x + 4.0, ruler.top() + 2.0),
+                                    egui::Align2::LEFT_TOP,
+                                    format_ruler_tick(seconds, tick_step),
+                                    egui::FontId::proportional(11.0),
+                                    tokens.text_dim,
+                                );
+                            }
                         }
                         for marker in &timeline.markers {
                             let mx = ruler.left() + ruler.width() * marker.frame.min(duration - 1) as f32 / duration as f32;
+                            if mx < visible.left() - 12.0 || mx > visible.right() + 12.0 {
+                                continue;
+                            }
                             let color = marker.color.map_or(tokens.text_dim, |rgb| egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
                             p.line_segment([pos2(mx, ruler.top()), pos2(mx, ruler.bottom())], egui::Stroke::new(1.0, color));
                             p.text(pos2(mx + 2.0, ruler.top() + 2.0), egui::Align2::LEFT_TOP, &marker.label, egui::FontId::proportional(9.5), color);
@@ -2043,8 +2200,13 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                     }
                 }
                 for (track_id, track_name, layers, track_locked, track_muted) in tracks {
+                    let row_height = layers
+                        .iter()
+                        .filter_map(|id| document.layer(*id))
+                        .map(|layer| if layer.video.is_some() { VIDEO_TRACK_HEIGHT } else { STILL_TRACK_HEIGHT })
+                        .fold(STILL_TRACK_HEIGHT, f32::max);
                     ui.horizontal(|ui| {
-                        let (g, _) = ui.allocate_exact_size(vec2(gutter, 34.0), Sense::hover());
+                        let (g, _) = ui.allocate_exact_size(vec2(gutter, row_height), Sense::hover());
                         let mut gutter_ui = ui.new_child(egui::UiBuilder::new().max_rect(g));
                         let rlock = crate::icons::button(&mut gutter_ui, "lock", 17.0, track_locked, "Lock track");
                         let track_target = track_id.map_or_else(|| json!({"layers":layers.iter().map(|l|l.0).collect::<Vec<_>>()}), |id| json!({"trackId":id}));
@@ -2107,7 +2269,7 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                             .id_salt(("timeline-track-lane", doc.0, row_id))
                             .scroll_offset(egui::vec2(scroll_x, 0.0))
                             .show(ui, |ui| {
-                                let (lane, _) = ui.allocate_exact_size(vec2(lane_width, 34.0), Sense::hover());
+                                let (lane, _) = ui.allocate_exact_size(vec2(lane_width, row_height), Sense::hover());
                                 let painter = ui.painter_at(lane);
                                 painter.rect_filled(lane, 0.0, tokens.field);
                                 painter.line_segment([lane.left_bottom(), lane.right_bottom()], egui::Stroke::new(1.0, tokens.separator));
@@ -2143,13 +2305,7 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                                         let clip_rect = draw_clip(ui, app, timeline, doc, layer_id, &layer.name, clip, lane, editable, &tokens);
                                         marquee_candidates.push((layer_id, clip_rect));
                                         paint_clip_thumbnails(app, ui, &document, layer, range, clip_rect);
-                                        ui.painter_at(lane).with_clip_rect(clip_rect.intersect(lane)).text(
-                                            clip_rect.left_center(),
-                                            egui::Align2::LEFT_CENTER,
-                                            format!("{} · Video", layer.name),
-                                            egui::FontId::proportional(11.0),
-                                            tokens.text,
-                                        );
+                                        paint_timeline_clip_label(ui, clip_rect, &format!("▶ {}", layer.name), &tokens);
                                     } else if let Some(range) = range {
                                         let start = range.start;
                                         let end = range.end;
@@ -2202,35 +2358,13 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                                             egui::Color32::from_rgb(83, 124, 154)
                                         };
                                         painter.rect_filled(rect.intersect(lane), 3.0, if selected { tokens.accent } else { color });
-                                        painter.with_clip_rect(rect.intersect(lane)).text(
-                                            rect.left_center(),
-                                            egui::Align2::LEFT_CENTER,
-                                            format!(
-                                                "{} · {}",
-                                                layer.name,
-                                                if layer.video.is_some() {
-                                                    "Video"
-                                                } else if matches!(layer.content, photostore_doc::LayerContent::Smart(_)) {
-                                                    "Smart Object"
-                                                } else {
-                                                    "Clip"
-                                                }
-                                            ),
-                                            egui::FontId::proportional(11.0),
-                                            tokens.text,
-                                        );
                                         paint_clip_thumbnails(app, ui, &document, layer, Some(range), rect);
-                                        painter.with_clip_rect(rect.intersect(lane)).text(
-                                            rect.left_center(),
-                                            egui::Align2::LEFT_CENTER,
-                                            format!(
-                                                "{} · {}",
-                                                layer.name,
-                                                if matches!(layer.content, photostore_doc::LayerContent::Smart(_)) { "Smart Object" } else { "Clip" }
-                                            ),
-                                            egui::FontId::proportional(11.0),
-                                            tokens.text,
-                                        );
+                                        let label = if matches!(layer.content, photostore_doc::LayerContent::Smart(_)) {
+                                            format!("◇ {}", layer.name)
+                                        } else {
+                                            format!("▧ {}", layer.name)
+                                        };
+                                        paint_timeline_clip_label(ui, rect, &label, &tokens);
                                         if response.clicked() {
                                             if razor_mode {
                                                 report_timeline_result(app, |app| app.with_document(doc, |app| {
@@ -2314,6 +2448,18 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                                                 let _ = app
                                                     .with_document(doc, |app| app.run("layer.smartObjects.convertToSmartObject", json!({"layer":layer_id.0})));
                                                 ui.close();
+                                            }
+                                            ui.separator();
+                                            for (label, ripple) in [(tl!("Delete Clip"), false), (tl!("Ripple Delete (close gap)"), true)] {
+                                                if ui.button(label).clicked() {
+                                                    let targets = delete_targets(app, doc, layer_id, timeline);
+                                                    report_timeline_result(app, |app| {
+                                                        app.with_document(doc, |app| {
+                                                            app.run("timeline.editor.delete", json!({"layers":targets,"audio":[],"ripple":ripple}))
+                                                        })
+                                                    });
+                                                    ui.close();
+                                                }
                                             }
                                         });
                                     }

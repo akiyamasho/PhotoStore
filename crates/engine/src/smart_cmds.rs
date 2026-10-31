@@ -431,7 +431,7 @@ fn source_image_at_time_inner(file_name: &str, bytes: &[u8], fmt: PixelFormat, t
         }
         let mut doc = (*cached_doc).clone();
         if has_linked_movie {
-            crate::video_cmds::sync_plain(&mut doc);
+            crate::video_cmds::sync_plain_for_nested(&mut doc);
             if !crate::video_cmds::linked_frames_ready(&doc) {
                 return Err(other("linked movie source frame is unavailable or still loading"));
             }
@@ -456,7 +456,7 @@ fn source_image_at_time_inner(file_name: &str, bytes: &[u8], fmt: PixelFormat, t
         }
         let mut doc = (*cached_doc).clone();
         if has_linked_movie {
-            crate::video_cmds::sync_plain(&mut doc);
+            crate::video_cmds::sync_plain_for_nested(&mut doc);
             if !crate::video_cmds::linked_frames_ready(&doc) {
                 return Err(other("linked movie source frame is unavailable or still loading"));
             }
@@ -478,7 +478,7 @@ fn source_image_at_time_inner(file_name: &str, bytes: &[u8], fmt: PixelFormat, t
     if let Some(t) = &mut doc.timeline {
         t.current = frame;
     }
-    crate::video_cmds::sync_plain(&mut doc);
+    crate::video_cmds::sync_plain_for_nested(&mut doc);
     if !crate::video_cmds::linked_frames_ready(&doc) {
         return Err(other("linked movie source frame is unavailable or still loading"));
     }

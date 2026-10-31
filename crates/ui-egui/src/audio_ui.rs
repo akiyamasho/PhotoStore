@@ -11,6 +11,7 @@ use std::path::Path;
 const AUDIO_EXTENSIONS: &[&str] = &["wav", "mp3", "m4a", "aac", "flac", "aiff", "aif", "ogg", "opus", "mp4", "mov", "webm", "mkv", "avi", "m4v"];
 const NAME_WIDTH: f32 = 164.0;
 const LANE_HEIGHT: f32 = 32.0;
+const TIMELINE_AUDIO_ROW_HEIGHT: f32 = 48.0;
 const RULER_HEIGHT: f32 = 24.0;
 
 #[derive(Clone, Copy, Debug)]
@@ -221,8 +222,9 @@ fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, doc: DocId, clip: &AudioClip,
     };
     let painter = ui.painter_at(lane);
     painter.rect_filled(rect.intersect(lane), 3.0, fill);
-    let waveform_visible = rect.intersect(lane).intersect(ui.clip_rect()).width() >= 8.0;
-    let bin_count = (rect.width().ceil() as usize * 2).clamp(16, 4096);
+    let visible = rect.intersect(lane).intersect(ui.clip_rect());
+    let waveform_visible = visible.width() >= 8.0;
+    let bin_count = (visible.width().ceil() as usize * 2).clamp(16, 4096);
     if waveform_visible {
         match photostore_engine::audio_waveform_cache::request(&clip.path, bin_count) {
             Ok(waveform) if !waveform.bins.is_empty() => {
@@ -239,9 +241,11 @@ fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, doc: DocId, clip: &AudioClip,
                 };
                 let mid = rect.center().y;
                 let half = (rect.height() * 0.43).max(1.0);
-                let count = (rect.width().ceil() as usize).max(1);
+                let count = (visible.width().ceil() as usize).max(1);
                 for pixel in 0..count {
-                    let output_frame = ((pixel as f64 + 0.5) / count as f64 * clip.duration_seconds * fps).round().max(0.0) as usize;
+                    let x = visible.left() + pixel as f32 + 0.5;
+                    let fraction = ((x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0) as f64;
+                    let output_frame = (fraction * clip.duration_seconds * fps).round().max(0.0) as usize;
                     let source_time = clip.trim_in_seconds + playback.source_delta_seconds(output_frame, fps);
                     let f = (source_time / source_duration).clamp(0.0, 1.0);
                     let index = ((f * waveform.bins.len() as f64) as usize).min(waveform.bins.len() - 1);
@@ -249,7 +253,6 @@ fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, doc: DocId, clip: &AudioClip,
                     let volume = clip.volume.min(1.0) as f32;
                     let peak = (bin.peak.clamp(0.0, 1.0) * volume * half).clamp(0.0, half);
                     let rms = (bin.rms.clamp(0.0, 1.0) * volume * half).clamp(0.0, half);
-                    let x = rect.left() + pixel as f32 + 0.5;
                     painter.line_segment([pos2(x, mid - peak), pos2(x, mid + peak)], egui::Stroke::new(1.0, Color32::from_white_alpha(125)));
                     painter.line_segment([pos2(x, mid - rms), pos2(x, mid + rms)], egui::Stroke::new(1.0, Color32::WHITE));
                 }
@@ -261,7 +264,19 @@ fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, doc: DocId, clip: &AudioClip,
             }
         }
     }
-    painter.text(rect.left_center(), egui::Align2::LEFT_CENTER, &clip.name, egui::FontId::proportional(11.0), t.text);
+    let label = format!("♪ {}", clip.name);
+    let label_width = (label.chars().count() as f32 * 7.0 + 14.0).min((visible.width() - 8.0).max(0.0));
+    if label_width >= 24.0 {
+        let label_rect = Rect::from_min_size(pos2(visible.left() + 4.0, visible.center().y - 10.0), vec2(label_width, 20.0)).intersect(visible);
+        painter.rect_filled(label_rect, 2.0, Color32::from_black_alpha(150));
+        painter.with_clip_rect(label_rect).text(
+            label_rect.left_center() + egui::vec2(5.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(12.0),
+            t.text,
+        );
+    }
     if response.clicked() {
         let multi = ui.input(|i| i.modifiers.shift || i.modifiers.command || i.modifiers.ctrl);
         let mut selected = if multi { selected_clip_ids(&ctx, doc) } else { Vec::new() };
@@ -373,6 +388,19 @@ fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, doc: DocId, clip: &AudioClip,
         }
         if ui.button(tl!("Delete clip")).clicked() {
             dispatch(app, "timeline.removeAudioClip", json!({"clip": clip.id}));
+            ui.close();
+        }
+        if ui.button(tl!("Ripple Delete (close gap)")).clicked() {
+            let mut selected = selected_clip_ids(&ctx, doc);
+            if !selected.contains(&clip.id) {
+                selected = vec![clip.id];
+            }
+            if let Err(error) = app.with_document(doc, |app| {
+                app.run("timeline.editor.delete", json!({"layers":[],"audio":selected,"ripple":true}))
+            }) {
+                app.ui.status = error;
+                app.ui.status_error = true;
+            }
             ui.close();
         }
     });
@@ -500,7 +528,7 @@ pub fn show_workspace(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline,
     let playhead = timeline.frame_start_seconds(timeline.current);
     for track in tracks {
         ui.horizontal(|ui| {
-            let (gutter, _) = ui.allocate_exact_size(vec2(gutter_width, 34.0), Sense::hover());
+            let (gutter, _) = ui.allocate_exact_size(vec2(gutter_width, TIMELINE_AUDIO_ROW_HEIGHT), Sense::hover());
             let mut left = ui.new_child(egui::UiBuilder::new().max_rect(gutter));
             if crate::icons::button(&mut left, if track.muted { "volume-x" } else { "volume-2" }, 18.0, track.muted, "Mute audio track").clicked() {
                 dispatch(app, "timeline.setAudioTrack", json!({"document":doc.0,"track":track.id,"muted":!track.muted}));
@@ -520,7 +548,7 @@ pub fn show_workspace(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline,
                 .id_salt(("timeline-audio-lane", doc.0, track.id))
                 .scroll_offset(egui::vec2(scroll_x, 0.0))
                 .show(ui, |ui| {
-                    let (lane, _) = ui.allocate_exact_size(vec2(lane_width, 34.0), Sense::hover());
+                    let (lane, _) = ui.allocate_exact_size(vec2(lane_width, TIMELINE_AUDIO_ROW_HEIGHT), Sense::hover());
                     let painter = ui.painter_at(lane);
                     painter.rect_filled(lane, 0.0, tokens.field);
                     painter.line_segment([lane.left_bottom(), lane.right_bottom()], egui::Stroke::new(1.0, tokens.separator));

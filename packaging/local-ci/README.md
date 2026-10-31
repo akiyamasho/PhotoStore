@@ -1,5 +1,7 @@
 # PhotoStore local CI watcher
 
+> **Paused local scheduler — 2026-11-01:** Routine delivery overwrites the normal PhotoStore app directly. Keep this legacy scheduler disabled and unloaded; push, tag, or release publication must not trigger a build. `--bootstrap` is first-use-only; `--observe-only` does not advance an existing baseline. Do not resume without explicit user authorization and a supported no-replay handoff. This release does not change watcher code.
+
 This opt-in macOS LaunchAgent polls the fixed `akiyamasho/PhotoStore` repository with `gh` every 60 seconds. It watches trusted `main` and the newest published, non-draft, non-prerelease GitHub release. Tags, drafts, prereleases, pull requests, and release creation never trigger production promotion.
 
 The watcher lives outside the changing checkout, uses persistent checkouts under `~/Library/Application Support/PhotoStore/local-ci/checkouts`, one `fcntl.flock`, one heavy Rust job, the shared target `/Users/computer/Desktop/dev/PhotoStore/target`, and `CARGO_BUILD_JOBS=1 RAYON_NUM_THREADS=1 nice -n 10`. `--bootstrap` records current baselines without building, preventing stale replay. `--observe-only` reads metadata only and performs zero builds and installs. It does not launch apps or copy/log credentials.

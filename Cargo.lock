@@ -4173,7 +4173,7 @@ dependencies = [
 
 [[package]]
 name = "photostore"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "arboard",
  "async-io",
@@ -4215,7 +4215,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-affinity"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "crc32fast",
  "flate2",
@@ -4225,7 +4225,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-algo"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "photostore-color",
  "photostore-geom",
@@ -4238,7 +4238,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-automation"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "base64",
  "cap-std",
@@ -4260,7 +4260,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-cli"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "photostore-automation",
  "photostore-codecs",
@@ -4274,7 +4274,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-cms"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "moxcms",
  "rayon",
@@ -4282,7 +4282,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-codecs"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "exr",
  "flate2",
@@ -4303,7 +4303,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-color"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "photostore-cms",
  "serde",
@@ -4311,7 +4311,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-compose"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "criterion",
  "photostore-color",
@@ -4326,7 +4326,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-doc"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "photostore-color",
  "photostore-geom",
@@ -4337,7 +4337,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-engine"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "blake3",
  "flate2",
@@ -4369,7 +4369,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-format"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "blake3",
  "flate2",
@@ -4388,14 +4388,14 @@ dependencies = [
 
 [[package]]
 name = "photostore-geom"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "photostore-gpu"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "half",
  "log",
@@ -4412,14 +4412,14 @@ dependencies = [
 
 [[package]]
 name = "photostore-heif"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "heic-rs",
 ]
 
 [[package]]
 name = "photostore-io"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "blake3",
  "crc32fast",
@@ -4448,14 +4448,14 @@ dependencies = [
 
 [[package]]
 name = "photostore-ops"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "photostore-doc",
 ]
 
 [[package]]
 name = "photostore-paint"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "photostore-color",
  "photostore-geom",
@@ -4466,7 +4466,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-plugins"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "photostore-color",
  "photostore-geom",
@@ -4481,7 +4481,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-psd"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "flate2",
  "photostore-psd",
@@ -4492,7 +4492,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-raster"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "photostore-color",
  "photostore-geom",
@@ -4502,7 +4502,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-raw"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "flate2",
  "jxl-oxide",
@@ -4515,7 +4515,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-tablet"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "block2 0.6.2",
  "objc2 0.6.4",
@@ -4527,7 +4527,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-testkit"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "memory-stats",
  "photostore-color",
@@ -4538,7 +4538,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-text"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "flate2",
  "parley",
@@ -4552,7 +4552,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-ui-egui"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "base64",
  "eframe",
@@ -4589,7 +4589,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-vector"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "photostore-color",
  "photostore-doc",
@@ -4600,7 +4600,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-web"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "eframe",
  "egui",
@@ -7433,7 +7433,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "serde",
  "serde_json",

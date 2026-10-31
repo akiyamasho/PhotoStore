@@ -945,11 +945,37 @@ pub fn decode_single_frame(path: impl AsRef<Path>, index: u64, format: PixelForm
     if index > i64::MAX as u64 {
         return Err(MediaBackendError::InvalidInput("frame index is too large".into()));
     }
-    let bytes = decode_bytes(path.as_ref(), &info, index)?;
+    let seconds = index as f64 * info.fps.den as f64 / info.fps.num as f64;
+    let bytes = decode_bytes_at(path.as_ref(), &info, seconds, &format!("frame {index}"), false)?;
+    Ok(Surface::from_interleaved(PixelFormat::RGBA8, Rect::from_xywh(0, 0, info.width, info.height), &bytes).convert(format))
+}
+
+/// Decode the frame at a source presentation time without converting that time back to a
+/// nominal frame index. Linked timeline movies use this path so VFR seeks retain their clock.
+pub fn decode_single_frame_at(path: impl AsRef<Path>, seconds: f64, format: PixelFormat) -> Result<Surface> {
+    if !seconds.is_finite() || seconds < 0.0 {
+        return Err(MediaBackendError::InvalidInput("source timestamp must be finite and non-negative".into()));
+    }
+    let info = probe(path.as_ref())?;
+    decode_single_frame_at_with_info(path.as_ref(), &info, seconds, format)
+}
+
+/// The bounded movie cache retains source-identity-qualified probe metadata so decoding each
+/// visible frame does not launch another ffprobe process. Public callers still probe normally.
+pub(crate) fn decode_single_frame_at_with_info(path: &Path, info: &MediaInfo, seconds: f64, format: PixelFormat) -> Result<Surface> {
+    if !seconds.is_finite() || seconds < 0.0 || seconds > info.duration_seconds {
+        return Err(MediaBackendError::InvalidInput("source timestamp must be finite and within the movie duration".into()));
+    }
+    let bytes = decode_bytes_at(path, info, seconds, &format!("timestamp {seconds:.9}s"), true)?;
     Ok(Surface::from_interleaved(PixelFormat::RGBA8, Rect::from_xywh(0, 0, info.width, info.height), &bytes).convert(format))
 }
 
 fn decode_bytes(path: &Path, info: &MediaInfo, index: u64) -> Result<Vec<u8>> {
+    let seek = index as f64 * info.fps.den as f64 / info.fps.num as f64;
+    decode_bytes_at(path, info, seek, &format!("frame {index}"), false)
+}
+
+fn decode_bytes_at(path: &Path, info: &MediaInfo, seconds: f64, requested: &str, presentation_time: bool) -> Result<Vec<u8>> {
     let exe = resolve_binary("PHOTOSTORE_FFMPEG", "ffmpeg").ok_or(MediaBackendError::Unsupported)?;
     let size = (info.width as u64)
         .checked_mul(info.height as u64)
@@ -958,15 +984,25 @@ fn decode_bytes(path: &Path, info: &MediaInfo, index: u64) -> Result<Vec<u8>> {
     if size > MAX_FRAME_BYTES {
         return Err(MediaBackendError::InvalidInput("decoded frame exceeds 512 MiB".into()));
     }
-    let seek = format!("{:.9}", index as f64 * info.fps.den as f64 / info.fps.num as f64);
+    // Input seeking is microsecond-based. Do not seek past a sub-microsecond target.
+    let seek = if presentation_time { format!("{:.6}", (seconds * 1_000_000.0).floor() / 1_000_000.0) } else { format!("{seconds:.9}") };
     let mut command = Command::new(exe);
     command.args(["-v", "error", "-threads", "1", "-filter_threads", "1", "-protocol_whitelist", "file,pipe"]);
+    if presentation_time {
+        // Accurate -ss alone discards the held frame and can show the following frame early.
+        // Keep original presentation timestamps (rebased to the file start), decode from the
+        // preceding keyframe, and select the held frame at the requested nanosecond clock.
+        // Only one output frame is requested; the filter retains bounded adjacent input frames.
+        command.args(["-copyts", "-start_at_zero", "-noaccurate_seek"]);
+    }
     if let Some(codec) = decoder_codec(info) {
         command.args(["-c:v", codec]);
     }
+    command.args(["-ss", &seek, "-i"]).arg(path);
+    if presentation_time {
+        command.args(["-vf", &format!("settb=1/1000000000,setpts=PTS-{seconds:.9}/TB,fps=fps=1:start_time=0:round=up:eof_action=pass")]);
+    }
     let mut child = command
-        .args(["-ss", &seek, "-i"])
-        .arg(path)
         .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -987,7 +1023,7 @@ fn decode_bytes(path: &Path, info: &MediaInfo, index: u64) -> Result<Vec<u8>> {
         return Err(command_error(status, &stderr, "ffmpeg"));
     }
     if data.len() != size as usize {
-        return Err(MediaBackendError::Process(format!("ffmpeg returned {} bytes, expected {size}", data.len())));
+        return Err(MediaBackendError::Process(format!("ffmpeg returned {} bytes for {requested}, expected {size}", data.len())));
     }
     Ok(data)
 }

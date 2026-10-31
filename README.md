@@ -10,11 +10,12 @@ PhotoStore is a Rust-native image editor maintained as a personal fork of PhotoC
 
 Download the macOS Apple Silicon package from [PhotoStore releases](https://github.com/akiyamasho/PhotoStore/releases). For a local install, use Rust stable 1.95+:
 
-The 0.18.3 Apple Silicon macOS app adds the selection-scoped Generative Fill context bar. Stable-release
+The 0.19.0 Apple Silicon macOS app includes the video timeline workspace and drawing, clipboard,
+cursor, and PSD timelapse fixes. Stable-release
 checks are available under **Help → Check for Updates…** using your existing GitHub CLI (`gh`)
 authentication. The app and CLI are signed with a persistent
 local PhotoStore certificate, not Developer ID and not notarized. See [in-app update details](docs/app-updates.md)
-and the [0.18.3 release record](docs/releases/0.18.3.md).
+and the [0.19.0 release record](docs/releases/0.19.0.md).
 
 ```sh
 CARGO_BUILD_JOBS=1 cargo install --path apps/photostore --bin photostore --locked
@@ -31,11 +32,16 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 
 ## Current published release
 
-PhotoStore 0.18.3 adds a selection-only, non-modal Generative Fill context bar with guarded document
-and selection state. [Download 0.18.3](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.18.3). The
-[0.18.3 release record](docs/releases/0.18.3.md) documents verification, artifacts, and known limits.
-The previous [0.18.2 release](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.18.2) added linked,
-lazy movie footage and smoother sparse brush curves.
+PhotoStore 0.19.0 brings the compact video timeline, selected-clip/keyframe editing, linked media,
+explicit ripple deletion, presentation-time movie sampling, smoother brush input, PSD/PSB timelapse
+persistence, cursor recovery, rename text clipboard support, and 1 px brush decrease into the normal
+PhotoStore installation. [Download 0.19.0](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.19.0).
+The [release record](docs/releases/0.19.0.md) distinguishes implementation and artifact evidence from
+native manual acceptance. The [timeline design record](docs/design/2026-11-01/README.md) contains
+synthetic design concepts, not application screenshots.
+
+The previous [0.18.3 release](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.18.3) added the
+selection-scoped Generative Fill context bar, retained in this release.
 
 ## Generative Fill
 

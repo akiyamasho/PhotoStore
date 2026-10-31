@@ -247,7 +247,28 @@ fn frame_thumbnails(app: &mut PhotoStoreApp, ctx: &egui::Context, tl: &photostor
     let mut preview_succeeded = false;
     for local in 0..frame_count {
         let frame = start + local;
-        let key = format!("{key_prefix}:{frame}");
+        let linked = video.and_then(|v| v.movie_backing.as_ref().map(|_| v));
+        let source_seconds = if linked.is_some() {
+            let Some(layer) = st.active_layer.and_then(|id| st.doc.layer(id)) else {
+                preview_error = Some("active linked movie layer is missing".into());
+                ids.push(None);
+                continue;
+            };
+            match photostore_engine::source_time_for_layer(&st.doc, layer, frame) {
+                Ok(seconds) => Some(seconds),
+                Err(error) => {
+                    preview_error = Some(error.to_string());
+                    ids.push(None);
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
+        let key = source_seconds.map_or_else(
+            || format!("{key_prefix}:{frame}"),
+            |seconds| format!("{key_prefix}:{frame}:t{}", (seconds * 1_000_000_000.0).round().max(0.0) as u64),
+        );
         if let Some((_, texture)) = app.ui.timeline.frame_thumbs.iter().find(|(k, _)| k == &key) {
             ids.push(Some(texture.id()));
             continue;
@@ -257,12 +278,15 @@ fn frame_thumbnails(app: &mut PhotoStoreApp, ctx: &egui::Context, tl: &photostor
             continue;
         }
         misses += 1;
-        let linked = video.and_then(|v| v.movie_backing.as_ref().map(|_| v));
         let image = if let Some(v) = linked {
-            let source_index = v.movie_backing.as_ref().map_or(frame, |m| m.trim_in_frame.saturating_add(frame).min(m.trim_out_frame));
+            let Some(source_seconds) = source_seconds else {
+                preview_error = Some("linked movie source time is unavailable".into());
+                ids.push(None);
+                continue;
+            };
             let surface = match &v.source {
                 photostore_doc::VideoSource::File { path } => {
-                    match photostore_engine::movie_cache::frame_thumbnail(path, source_index, st.doc.pixel_format()) {
+                    match photostore_engine::movie_cache::frame_thumbnail_at_seconds(path, source_seconds, st.doc.pixel_format()) {
                         Ok(surface) => surface,
                         Err(error) => {
                             ctx.request_repaint();
@@ -568,10 +592,21 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
             }
             Some(tl) => {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(tl!("Mode")).color(t.text_dim));
                     let frame_mode = matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation);
-                    if ui.selectable_label(!frame_mode, tl!("Video Timeline")).clicked() { act = Some(("timeline.setMode", json!({"mode":"video"}))); }
-                    if ui.selectable_label(frame_mode, tl!("Frame Animation")).clicked() { act = Some(("timeline.setMode", json!({"mode":"frameAnimation"}))); }
+                    let active_mode = if frame_mode { tl!("Frame Animation") } else { tl!("Video Timeline") };
+                    ui.menu_button(RichText::new(format!("{} ▾", active_mode)).strong().color(t.text), |ui| {
+                        ui.weak(tl!("Active timeline mode"));
+                        ui.separator();
+                        let (label, mode) = if frame_mode {
+                            (tl!("Convert to Video Timeline"), "video")
+                        } else {
+                            (tl!("Convert to Frame Animation"), "frameAnimation")
+                        };
+                        if ui.button(label).clicked() {
+                            act = Some(("timeline.setMode", json!({"mode":mode})));
+                            ui.close();
+                        }
+                    });
                     ui.separator();
                     ui.menu_button(tl!("Settings"), |ui| {
                     let loop_label = match tl.loop_mode {
@@ -1064,12 +1099,30 @@ pub fn media_bin(app: &mut PhotoStoreApp, parent: &mut Ui) {
                         let frame = egui::Frame::group(ui.style()).fill(if selected { tokens.accent.gamma_multiply(0.14) } else { tokens.field });
                         frame.show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                let thumb_key = format!("media-bin:{}:{}:{}", doc_id.0, layer_id.0, history_pair(app, doc_id));
+                                let base_thumb_key = format!("media-bin:{}:{}:{}", doc_id.0, layer_id.0, history_pair(app, doc_id));
+                                let movie_source_seconds = layer.video.as_ref().and_then(|video| {
+                                    video.movie_backing.as_ref().map(|_| photostore_engine::source_time_for_layer(&doc, layer, current))
+                                });
+                                let thumb_key = match &movie_source_seconds {
+                                    Some(Ok(seconds)) => format!("{base_thumb_key}:{}", (*seconds * 1_000_000_000.0).round().max(0.0) as u64),
+                                    _ => base_thumb_key.clone(),
+                                };
+                                let thumb_rect = egui::Rect::from_min_size(ui.available_rect_before_wrap().min, vec2(56.0, 42.0));
+                                let thumb_visible = ui.is_rect_visible(thumb_rect);
                                 let texture = app.ui.timeline.frame_thumbs.iter().find(|(key, _)| key == &thumb_key).map(|(_, tex)| tex.id()).or_else(|| {
+                                    if !thumb_visible {
+                                        return None;
+                                    }
                                     let surface = if let Some(video) = layer.video.as_ref() {
-                                        if let (Some(movie), photostore_doc::VideoSource::File { path }) = (&video.movie_backing, &video.source) {
-                                            let source_frame = photostore_engine::source_frame_for_layer(&doc, layer, current).unwrap_or(movie.trim_in_frame);
-                                            match photostore_engine::movie_cache::frame_thumbnail(path, source_frame, doc.pixel_format()) {
+                                        if video.movie_backing.is_some() && let photostore_doc::VideoSource::File { path } = &video.source {
+                                            let Some(Ok(source_seconds)) = movie_source_seconds.as_ref() else {
+                                                if let Some(Err(error)) = movie_source_seconds.as_ref() {
+                                                    app.ui.status = error.to_string();
+                                                    app.ui.status_error = true;
+                                                }
+                                                return None;
+                                            };
+                                            match photostore_engine::movie_cache::frame_thumbnail_at_seconds(path, *source_seconds, doc.pixel_format()) {
                                                 Ok(Some(surface)) => Some(surface),
                                                 Ok(None) => {
                                                     ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));

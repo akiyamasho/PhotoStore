@@ -121,7 +121,7 @@ pub use timeline_editor_cmds::{
     preview_move_plan as timeline_move_plan,
     sample_property as sample_timeline_property,
 };
-pub use video_cmds::{render_video_with, sample_keyframe_transform, source_frame_for_layer, sync as sync_video};
+pub use video_cmds::{render_video_with, sample_keyframe_transform, source_frame_for_layer, source_time_for_layer, sync as sync_video};
 pub mod vp_cmds;
 pub mod warp_cmds;
 pub mod web_cmds;

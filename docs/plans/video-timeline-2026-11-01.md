@@ -1,6 +1,6 @@
 # Video timeline workflow: research, design, and proposal (2026-11-01)
 
-**Status:** research and design specification only. Issue [#23](https://github.com/akiyamasho/PhotoStore/issues/23) remains open. This document does not claim that the generated design is implemented, that prior implementation has been visually accepted, or that PhotoStore has Photoshop/CapCut parity. No code, build, or new QA is part of this pass.
+**Status:** The initial research/design pass was followed by explicit user authorization to implement all open issues and enhancements, push, tag, release, and reinstall the normal PhotoStore app. The 0.19.0 pass integrates the existing major overhaul with additional timeline layout/editing/cache improvements. The generated image remains a design reference, never a runtime capture or manual acceptance. Implementation and delivery evidence is recorded in [0.19.0](../releases/0.19.0.md). Proposed architecture and performance targets below remain distinguished from shipped behavior.
 
 - [Generated design concept and provenance](../design/2026-11-01/README.md)
 - [Timeline workspace status and prior implementation evidence](../timeline-workflow.md)
@@ -125,7 +125,7 @@ Proposed acceptance targets for a later implementation/device record: UI event+p
 
 ## Delivery order and later acceptance
 
-This request is scoped to research/specification and design. No implementation is authorized by this plan itself. If implementation is requested separately, use dependency-ordered, bounded phases:
+The user subsequently authorized implementation and release. Use the following dependency order when a phase changes the relevant subsystem; reuse the already implemented document, edit, and media systems rather than replacing them merely to follow a diagram:
 
 1. **Mode identity and layout:** explicit mode switch/status, fixed ruler/gutter and responsive workspace; reuse current Video/Frame renderers.
 2. **Media and timeline semantics:** source/clip/track identities, rational PTS mapping, linked audio, offline source and transaction-safe edit commands. Must precede polish that suggests unsupported editing.
@@ -143,4 +143,4 @@ Dependencies are one-way in that order for cross-cutting time/storage semantics;
 | Smart Objects | Existing editable Smart Object and transform code exists. | Consistent nested source time/link semantics remain to be specified and accepted. |
 | Export | Existing video render paths and prior work documented in timeline workflow. | Exact originals/audio/work-area/missing-source acceptance for this request is outstanding. |
 
-Later manual acceptance should use disposable synthetic projects and supported known media fixtures, cover both modes, multiple adjacent clips, image/still holds, audio synchronization/waveforms, Smart contents, undo, keys, zoom/scroll/narrow layouts, offline relink, save/reopen and export. Capture reproducible device/build/media details. Use targeted tests only for actual implementation boundaries. This plan did not run tests, builds, screenshots, or manual acceptance.
+Later manual acceptance should use disposable synthetic projects and supported known media fixtures, cover both modes, multiple adjacent clips, image/still holds, audio synchronization/waveforms, Smart contents, undo, keys, zoom/scroll/narrow layouts, offline relink, save/reopen and export. Capture reproducible device/build/media details. Use targeted tests only for actual implementation boundaries. The initial plan ran no tests, builds, screenshots, or manual acceptance. The later release receipt records the actual compiler/artifact evidence; computer use, screenshots, and native manual acceptance are unavailable for this session.

@@ -610,6 +610,17 @@ pub(crate) fn remap_timeline_layer(doc: &mut photostore_doc::Document, old: Laye
     Ok(())
 }
 fn shift_track_suffix(doc: &mut photostore_doc::Document, track_id: u64, from_frame: usize, delta: i64, cmd: &str) -> Result<()> {
+    shift_track_suffix_impl(doc, track_id, from_frame, delta, cmd, true)
+}
+
+fn shift_track_suffix_impl(
+    doc: &mut photostore_doc::Document,
+    track_id: u64,
+    from_frame: usize,
+    delta: i64,
+    cmd: &str,
+    move_linked_audio: bool,
+) -> Result<()> {
     if delta == 0 { return Ok(()); }
     let (updates, linked, fps) = {
         let timeline = doc.timeline.as_ref().ok_or(EngineError::NoDocument)?;
@@ -629,7 +640,7 @@ fn shift_track_suffix(doc: &mut photostore_doc::Document, track_id: u64, from_fr
                 updates.push((range.clone(), start as usize, end as usize));
             }
         }
-        (updates, timeline.linked_selection, f64::from(timeline.fps.max(0.001)))
+        (updates, timeline.linked_selection && move_linked_audio, f64::from(timeline.fps.max(0.001)))
     };
     let mut ids = std::collections::HashSet::new();
     let mut state_ranges = std::collections::HashMap::new();
@@ -667,6 +678,152 @@ fn shift_track_suffix(doc: &mut photostore_doc::Document, track_id: u64, from_fr
         }
     }
     crate::video_cmds::sync(doc);
+    Ok(())
+}
+
+/// Close gaps after a timeline deletion, carrying following clips and their animation state.
+/// Main-track magnet already performs its established compaction in `repack_main_track`.
+fn ripple_delete_suffixes(
+    doc: &mut photostore_doc::Document,
+    removed_layers: &std::collections::HashSet<LayerId>,
+    selected_audio: &[u64],
+    cmd: &str,
+) -> Result<()> {
+    let (snapshot, linked, fps, magnet) = {
+        let timeline = doc.timeline.as_ref().ok_or(EngineError::NoDocument)?;
+        (timeline.clone(), timeline.linked_selection, f64::from(timeline.fps.max(0.001)), timeline.main_track_magnet)
+    };
+
+    let mut removed_audio: std::collections::HashSet<u64> = selected_audio.iter().copied().collect();
+    for track in &snapshot.audio_tracks {
+        for clip in &track.clips {
+            if selected_audio.contains(&clip.id) && (!clip.start_seconds.is_finite() || clip.start_seconds < 0.0 || !clip.duration_seconds.is_finite() || clip.duration_seconds <= 0.0) {
+                return Err(bad(cmd, format!("audio clip {} has invalid timeline bounds", clip.id)));
+            }
+            if linked && clip.linked_video.is_some_and(|id| removed_layers.contains(&id)) {
+                removed_audio.insert(clip.id);
+            }
+        }
+    }
+
+    let mut visual_gaps = Vec::<(u64, usize, usize)>::new();
+    {
+        for track in snapshot.visual_tracks.iter().filter(|track| !(magnet && track.kind == VisualTrackKind::Main)) {
+            let mut gaps: Vec<_> = snapshot.layer_ranges.iter()
+                .filter(|range| track.layers.contains(&range.layer) && removed_layers.contains(&range.layer))
+                .map(|range| (range.start, range.end))
+                .collect();
+            gaps.sort_unstable();
+            let mut merged: Vec<(usize, usize)> = Vec::new();
+            for (start, end) in gaps {
+                if start >= end || end > 1_000_000 {
+                    return Err(bad(cmd, "a deleted visual clip has invalid timeline bounds"));
+                }
+                if let Some(last) = merged.last_mut().filter(|last| start <= last.1) {
+                    last.1 = last.1.max(end);
+                } else {
+                    merged.push((start, end));
+                }
+            }
+            for (start, end) in merged.into_iter().rev() {
+                visual_gaps.push((track.id, start, end));
+            }
+        }
+    }
+    for (track, start, end) in visual_gaps {
+        shift_track_suffix_impl(doc, track, end, -((end - start) as i64), cmd, false)?;
+    }
+
+    // Compute the net visual movement after all selected gaps have been removed. This also
+    // captures descendant ranges moved with a group, without shifting the same keys twice.
+    let mut visual_shifts: std::collections::HashMap<LayerId, i64> = doc.timeline.as_ref().map_or_else(
+        std::collections::HashMap::new,
+        |timeline| timeline.layer_ranges.iter().filter_map(|range| {
+            snapshot.layer_ranges.iter().find(|old| old.layer == range.layer)
+                .map(|old| (range.layer, old.start as i64 - range.start as i64))
+                .filter(|(_, delta)| *delta != 0)
+        }).collect(),
+    );
+    let mut main_shifts = std::collections::HashMap::<LayerId, i64>::new();
+    if magnet {
+        if let Some(track) = snapshot.visual_tracks.iter().find(|track| track.kind == VisualTrackKind::Main) {
+            let mut ranges: Vec<_> = track.layers.iter().filter(|id| !removed_layers.contains(id))
+                .filter_map(|id| snapshot.layer_ranges.iter().find(|range| range.layer == *id).cloned())
+                .collect();
+            ranges.sort_by_key(|range| (range.start, range.layer));
+            let mut cursor = 0usize;
+            for range in ranges {
+                let shift = range.start as i64 - cursor as i64;
+                if shift != 0 {
+                    let mut tree = std::collections::HashSet::new();
+                    if let Some(layer) = doc.layer(range.layer) { collect_tree_ids(layer, &mut tree); }
+                    for id in tree {
+                        if visual_shifts.get(&id).is_some_and(|existing| *existing != shift) {
+                            return Err(bad(cmd, "ripple delete would move a clip inconsistently across tracks"));
+                        }
+                        main_shifts.insert(id, shift);
+                        visual_shifts.insert(id, shift);
+                    }
+                }
+                cursor = cursor.checked_add(range.end.saturating_sub(range.start))
+                    .filter(|end| *end <= 1_000_000)
+                    .ok_or_else(|| bad(cmd, "ripple delete would exceed timeline bounds"))?;
+            }
+        }
+    }
+
+    // Audio tracks ripple on their own clock. When linked selection also moves a visual clip,
+    // require both track edits to agree instead of silently desynchronizing the linked pair.
+    for track_snapshot in &snapshot.audio_tracks {
+        let mut intervals: Vec<(f64, f64)> = track_snapshot.clips.iter()
+            .filter(|clip| removed_audio.contains(&clip.id))
+            .map(|clip| (clip.start_seconds, clip.start_seconds + clip.duration_seconds))
+            .collect();
+        for (start, end) in &intervals {
+            if !start.is_finite() || !end.is_finite() || *start < 0.0 || end <= start {
+                return Err(bad(cmd, "a deleted audio clip has invalid timeline bounds"));
+            }
+        }
+        intervals.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut merged: Vec<(f64, f64)> = Vec::new();
+        for (start, end) in intervals.drain(..) {
+            if let Some(last) = merged.last_mut().filter(|last| start <= last.1 + 1e-9) {
+                last.1 = last.1.max(end);
+            } else {
+                merged.push((start, end));
+            }
+        }
+        let Some(track) = doc.timeline.as_mut().and_then(|timeline| timeline.audio_tracks.iter_mut().find(|track| track.id == track_snapshot.id)) else {
+            return Err(bad(cmd, "an audio track disappeared during ripple delete"));
+        };
+        for clip in &mut track.clips {
+            if removed_audio.contains(&clip.id) { continue; }
+            let audio_shift = merged.iter().filter(|(_, end)| *end <= clip.start_seconds + 1e-9).map(|(start, end)| end - start).sum::<f64>();
+            let visual_shift = if linked { clip.linked_video.and_then(|id| visual_shifts.get(&id)).copied().unwrap_or(0) as f64 / fps } else { 0.0 };
+            if linked && magnet && let Some(main_shift) = clip.linked_video.and_then(|id| main_shifts.get(&id)) {
+                let repack_shift = *main_shift as f64 / fps;
+                if audio_shift > 0.0 && (audio_shift - repack_shift).abs() > 1e-8 {
+                    return Err(bad(cmd, format!("ripple delete would desynchronize linked audio clip {}", clip.id)));
+                }
+                // repack_main_track owns linked-audio movement for Main clips after deletion.
+                continue;
+            }
+            if linked && clip.linked_video.is_some() && audio_shift > 0.0 && visual_shift == 0.0 {
+                return Err(bad(cmd, format!("ripple delete would move linked audio clip {} without its video; select the linked visual clips or disable linked selection", clip.id)));
+            }
+            if audio_shift > 0.0 && visual_shift > 0.0 && (audio_shift - visual_shift).abs() > 1e-8 {
+                return Err(bad(cmd, format!("ripple delete would desynchronize linked audio clip {}", clip.id)));
+            }
+            let shift = if visual_shift > 0.0 { visual_shift } else { audio_shift };
+            if shift == 0.0 { continue; }
+            let start = clip.start_seconds - shift;
+            let end = start + clip.duration_seconds;
+            if !start.is_finite() || start < 0.0 || !end.is_finite() || end * fps > 1_000_000.0 {
+                return Err(bad(cmd, format!("ripple delete would move audio clip {} outside timeline bounds", clip.id)));
+            }
+            clip.start_seconds = start;
+        }
+    }
     Ok(())
 }
 fn check_unlocked(doc: &photostore_doc::Document, id: LayerId, cmd: &str) -> Result<()> {
@@ -1902,7 +2059,7 @@ fn copy(s: &mut Session, p: &Value, cut: bool) -> Result<Value> {
     s.timeline_clipboard = Some(snapshots);
     s.timeline_audio_clipboard = Some(audio_snapshots);
     if cut {
-        delete_clips(s, &selected, &selected_audio, cmd)?;
+        delete_clips(s, &selected, &selected_audio, false, cmd)?;
     }
     full_info(s, json!({"layers":selected,"audio":selected_audio,"count":selected.len()+selected_audio.len()}))
 }
@@ -2018,17 +2175,26 @@ fn paste_attributes(s: &mut Session, p: &Value) -> Result<Value> {
     })?;
     full_info(s, json!({"layers":selected,"count":selected.len()}))
 }
-fn delete_clips(s: &mut Session, selected: &[LayerId], selected_audio: &[u64], cmd: &str) -> Result<()> {
+fn delete_clips(s: &mut Session, selected: &[LayerId], selected_audio: &[u64], ripple: bool, cmd: &str) -> Result<()> {
     s.edit("Delete Timeline Clips", |doc, _| {
         require_video_mode(doc, cmd)?;
         for id in selected {
             check_unlocked(doc, *id, cmd)?;
+        }
+        let timeline = doc.timeline.as_ref().ok_or(EngineError::NoDocument)?;
+        for id in selected_audio {
+            if !timeline.audio_tracks.iter().any(|track| track.clips.iter().any(|clip| clip.id == *id)) {
+                return Err(bad(cmd, format!("audio clip {id} does not exist in this document")));
+            }
         }
         let mut tree_ids = std::collections::HashSet::new();
         for id in selected {
             if let Some(layer) = doc.layer(*id) {
                 collect_tree_ids(layer, &mut tree_ids);
             }
+        }
+        if ripple {
+            ripple_delete_suffixes(doc, &tree_ids, selected_audio, cmd)?;
         }
         let linked = doc.timeline.as_ref().is_some_and(|t| t.linked_selection);
         fn remove(layers: &mut Vec<Layer>, ids: &[LayerId]) {
@@ -2074,6 +2240,7 @@ fn delete_clips(s: &mut Session, selected: &[LayerId], selected_audio: &[u64], c
 }
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "timeline.editor.delete";
+    let ripple = p.get("ripple").and_then(Value::as_bool).unwrap_or(false);
     let selected = if p.get("layers").is_some() {
         ids(s, p, cmd)?
     } else if p.get("audio").is_some() {
@@ -2098,7 +2265,7 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     if selected.is_empty() && audio.is_empty() {
         return Err(bad(cmd, "select at least one visual or audio clip"));
     }
-    delete_clips(s, &selected, &audio, cmd)?;
+    delete_clips(s, &selected, &audio, ripple, cmd)?;
     full_info(s, json!({"layers":selected,"audio":audio}))
 }
 pub(crate) fn split_linked_audio(
@@ -3222,7 +3389,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("timeline.editor.cut", "Cut Timeline Clips", "{layers?:[id]}", |s, p| copy(s, p, true)),
         spec!("timeline.editor.paste", "Paste Timeline Clips", "{frame?:playhead,trackId?:id}", |s, p| paste(s, p)),
         spec!("timeline.editor.duplicate", "Duplicate Timeline Clips", "{layers?:[id],audio?:[clipId],frame?:playhead,trackId?:id}", |s, p| duplicate(s, p)),
-        spec!("timeline.editor.delete", "Delete Timeline Clips", "{layers?:[id],audio?:[clipId]}", |s, p| delete(s, p)),
+        spec!("timeline.editor.delete", "Delete Timeline Clips", "{layers?:[id],audio?:[clipId],ripple?:bool}", |s, p| delete(s, p)),
         spec!("timeline.editor.split", "Split Selected Timeline Clips", "{layers?:[id],frame?:playhead}", |s, p| split(s, p, false)),
         spec!("timeline.editor.splitAll", "Split All Eligible Timeline Clips", "{frame?:playhead}", |s, p| split(s, p, true)),
         spec!("timeline.editor.key.move", "Move Timeline Keyframes", "{keys:[{layer,property,frame}],deltaFrames}", |s, p| key_move(s, p)),
@@ -3313,6 +3480,116 @@ mod main_track_tests {
         let audio = &timeline.audio_tracks[0].clips[0];
         assert_eq!(audio.linked_video, Some(third));
         assert!((audio.start_seconds - 3.0 / 30.0).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod ripple_delete_tests {
+    use super::*;
+
+    #[test]
+    fn ripple_delete_moves_non_main_clips_audio_and_keys_atomically_with_main_magnet_enabled() {
+        let mut session = Session::new();
+        session.execute("file.new", json!({"width":8,"height":8,"depth":8,"background":"transparent"})).unwrap();
+        let first = session.active().unwrap().doc.layers[0].id;
+        let second = LayerId(session.execute("layer.new.layer", json!({"name":"Following overlay"})).unwrap()["layer"].as_u64().unwrap());
+        let main_first = LayerId(session.execute("layer.new.layer", json!({"name":"Main first"})).unwrap()["layer"].as_u64().unwrap());
+        let main_second = LayerId(session.execute("layer.new.layer", json!({"name":"Main second"})).unwrap()["layer"].as_u64().unwrap());
+        session.execute("timeline.create", json!({"duration":30,"fps":30.0})).unwrap();
+        for (layer, start, end) in [(first,0,4),(second,8,12),(main_first,0,4),(main_second,4,8)] {
+            session.execute("timeline.setLayerRange", json!({"layer":layer.0,"start":start,"end":end})).unwrap();
+        }
+        ensure_tracks(std::sync::Arc::make_mut(&mut session.active_mut().unwrap().doc)).unwrap();
+        let overlay_track = session.execute("timeline.editor.track.create", json!({"name":"Overlay","kind":"overlay"})).unwrap()["affected"]["trackId"].as_u64().unwrap();
+        let timeline_info = session.execute("timeline.info", json!({})).unwrap()["timeline"].clone();
+        let main_track = timeline_info["visualTracks"].as_array().unwrap().iter().find(|track| track["kind"] == "main").unwrap()["id"].as_u64().unwrap();
+        session.execute("timeline.editor.setTrack", json!({"layers":[first.0,second.0],"trackId":overlay_track})).unwrap();
+        session.execute("timeline.editor.setTrack", json!({"layers":[main_first.0,main_second.0],"trackId":main_track})).unwrap();
+        session.execute("timeline.setFrame", json!({"frame":9})).unwrap();
+        session.execute("timeline.setPositionAnimation", json!({"layer":second.0,"enabled":true})).unwrap();
+        session.execute("timeline.setPositionKeyframe", json!({"layer":second.0,"frame":9,"x":2,"y":4})).unwrap();
+        session.execute("timeline.setPositionKeyframe", json!({"layer":second.0,"frame":11,"x":4,"y":7})).unwrap();
+        session.execute("timeline.editor.setModes", json!({"mainTrackMagnet":true,"linkedSelection":true})).unwrap();
+        {
+            let state = session.active_mut().unwrap();
+            let doc = std::sync::Arc::make_mut(&mut state.doc);
+            doc.layer_mut(second).unwrap().locks.all = true;
+            doc.timeline.as_mut().unwrap().audio_tracks.push(photostore_doc::AudioTrack {
+                id: 1,
+                name: "Overlay audio".into(),
+                muted: false,
+                clips: vec![photostore_doc::AudioClip {
+                    id: 1,
+                    name: "Following audio".into(),
+                    path: "source.wav".into(),
+                    start_seconds: 8.0 / 30.0,
+                    trim_in_seconds: 0.0,
+                    duration_seconds: 4.0 / 30.0,
+                    source_duration_seconds: 10.0,
+                    speed: 1.0,
+                    speed_curve: Vec::new(),
+                    speed_curve_offset_frames: 0,
+                    volume: 1.0,
+                    fade_in_seconds: 0.0,
+                    fade_out_seconds: 0.0,
+                    muted: false,
+                    linked_video: Some(second),
+                    envelope_offset_seconds: 0.0,
+                    envelope_duration_seconds: Some(4.0 / 30.0),
+                }],
+            });
+        }
+
+        assert!(session.execute("timeline.editor.delete", json!({"layers":[first.0],"ripple":true})).is_err(), "a locked suffix clip blocks ripple atomically");
+        {
+            let doc = &session.active().unwrap().doc;
+            let timeline = doc.timeline.as_ref().unwrap();
+            assert!(timeline.layer_ranges.iter().any(|range| range.layer == first && (range.start,range.end)==(0,4)));
+            assert!(timeline.layer_ranges.iter().any(|range| range.layer == second && (range.start,range.end)==(8,12)));
+            assert_eq!(doc.layer(second).unwrap().position_animation.as_ref().unwrap().keys[0].frame, 9);
+            assert!((timeline.audio_tracks[0].clips[0].start_seconds - 8.0/30.0).abs() < 1e-9);
+        }
+
+        {
+            let state = session.active_mut().unwrap();
+            std::sync::Arc::make_mut(&mut state.doc).layer_mut(second).unwrap().locks.all = false;
+        }
+        session.execute("timeline.editor.delete", json!({"layers":[first.0],"ripple":true})).unwrap();
+        let state = session.active().unwrap();
+        let doc = &state.doc;
+        let timeline = doc.timeline.as_ref().unwrap();
+        assert!(!timeline.layer_ranges.iter().any(|range| range.layer == first));
+        assert!(timeline.layer_ranges.iter().any(|range| range.layer == second && (range.start,range.end)==(4,8)));
+        let keys = &doc.layer(second).unwrap().position_animation.as_ref().unwrap().keys;
+        assert_eq!((keys[0].frame,keys[1].frame),(5,7));
+        assert!((timeline.audio_tracks[0].clips[0].start_seconds - 4.0/30.0).abs() < 1e-9);
+        assert_eq!(timeline.layer_ranges.iter().find(|range| range.layer == main_first).map(|range| (range.start,range.end)), Some((0,4)));
+        assert_eq!(timeline.layer_ranges.iter().find(|range| range.layer == main_second).map(|range| (range.start,range.end)), Some((4,8)));
+        assert!(session.undo(), "one undo restores the deleted clip and the complete ripple transaction");
+        let restored = &session.active().unwrap().doc;
+        assert!(restored.layer(first).is_some());
+        let timeline = restored.timeline.as_ref().unwrap();
+        assert!(timeline.layer_ranges.iter().any(|range| range.layer == second && (range.start,range.end)==(8,12)));
+        let keys = &restored.layer(second).unwrap().position_animation.as_ref().unwrap().keys;
+        assert_eq!((keys[0].frame,keys[1].frame),(9,11));
+        assert!((timeline.audio_tracks[0].clips[0].start_seconds - 8.0/30.0).abs() < 1e-9);
+        {
+            let state = session.active_mut().unwrap();
+            let doc = std::sync::Arc::make_mut(&mut state.doc);
+            let track = &mut doc.timeline.as_mut().unwrap().audio_tracks[0];
+            let mut preceding = track.clips[0].clone();
+            preceding.id = 2;
+            preceding.start_seconds = 0.0;
+            preceding.linked_video = None;
+            track.clips.push(preceding);
+        }
+        assert!(session.execute("timeline.editor.delete", json!({"audio":[2],"ripple":true})).is_err(),
+            "audio-only ripple must not desynchronize a following linked video");
+        let restored = &session.active().unwrap().doc;
+        let timeline = restored.timeline.as_ref().unwrap();
+        assert_eq!(timeline.audio_tracks[0].clips.len(), 2);
+        assert!((timeline.audio_tracks[0].clips[0].start_seconds - 8.0/30.0).abs() < 1e-9);
+        assert!(timeline.layer_ranges.iter().any(|range| range.layer == second && (range.start,range.end)==(8,12)));
     }
 }
 
