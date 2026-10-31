@@ -29,6 +29,17 @@ struct Cached {
 /// document closes or the pointer leaves the canvas; a later widget's cursor takes precedence.
 pub(crate) struct CursorLifecycle;
 
+#[derive(Clone, Copy, Default)]
+struct FocusRecovery {
+    was_unfocused: bool,
+    pending_cursor_refresh: bool,
+    last_focus_loss_frame: Option<u64>,
+}
+
+fn focus_recovery_id() -> egui::Id {
+    egui::Id::new("photostore-tool-cursor-focus-recovery")
+}
+
 impl egui::plugin::Plugin for CursorLifecycle {
     fn debug_name(&self) -> &'static str {
         "PhotoStore tool cursor"
@@ -39,7 +50,34 @@ impl egui::plugin::Plugin for CursorLifecycle {
     }
 
     fn on_end_pass(&mut self, ui: &mut egui::Ui) {
-        ui.ctx().output_mut(|o| {
+        let ctx = ui.ctx();
+        let viewport_id = ctx.viewport_id();
+        let frame_nr = ctx.cumulative_frame_nr_for(viewport_id);
+        let (focused, pointer_inside, lost_focus_event) =
+            ctx.input(|i| (i.focused, i.pointer.hover_pos().is_some(), i.events.iter().any(|event| matches!(event, egui::Event::WindowFocused(false)))));
+        let recovery_id = focus_recovery_id().with(viewport_id);
+        let mut state = ctx.data(|data| data.get_temp::<FocusRecovery>(recovery_id).unwrap_or_default());
+        if lost_focus_event && state.last_focus_loss_frame != Some(frame_nr) {
+            state.last_focus_loss_frame = Some(frame_nr);
+            state.was_unfocused = true;
+            state.pending_cursor_refresh = true;
+        }
+        match focused {
+            false => {
+                state.was_unfocused = true;
+                state.pending_cursor_refresh = true;
+            }
+            true => {
+                if state.was_unfocused {
+                    state.pending_cursor_refresh = true;
+                }
+                state.was_unfocused = false;
+            }
+        }
+
+        // Resolve the final cursor before refreshing native cursor rectangles. Widget cursor
+        // requests win over tool cursor images, and the bitmap fallback is made visible here.
+        let final_visible = ctx.output_mut(|o| {
             if o.cursor_image.is_some() {
                 if o.cursor_icon == CursorIcon::None {
                     // None marks our request until all widgets have had their say. A backend
@@ -49,7 +87,18 @@ impl egui::plugin::Plugin for CursorLifecycle {
                     o.cursor_image = None;
                 }
             }
+            o.cursor_icon != CursorIcon::None
         });
+
+        if state.pending_cursor_refresh && focused && pointer_inside && !ctx.will_discard() {
+            // egui-winit skips unchanged icons, and macOS winit also caches icon/visibility.
+            // A visibility edge invalidates native cursor rectangles after an OS focus reset;
+            // both commands run this pass so the current widgets' final cursor wins.
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(!final_visible));
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(final_visible));
+            state.pending_cursor_refresh = false;
+        }
+        ctx.data_mut(|data| data.insert_temp(recovery_id, state));
     }
 }
 
