@@ -493,7 +493,7 @@ fn validate_recording_frame(bytes: &[u8], settings: &photostore_doc::RecordingSe
     Ok(())
 }
 
-pub(crate) fn validate_recording(r: &Recording) -> Result<()> {
+pub fn validate_recording(r: &Recording) -> Result<()> {
     validate_recording_settings(&r.settings)?;
     if r.error.as_ref().is_some_and(|e| e.len() > MAX_RECORDING_TEXT) {
         return Err(FormatError::LimitExceeded("recording error exceeds 4096 bytes".into()));

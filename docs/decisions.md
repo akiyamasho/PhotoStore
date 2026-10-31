@@ -516,3 +516,46 @@ Left trims can restore retained source within timeline and source bounds. Previe
 share `ClipPlayback::extend_left`, including curve-offset restoration and bounded first-speed
 extension. Cross-document clipboard paste maps a source Main row to the destination Main row;
 magnet mode controls repacking, and native files retain the one-Main-track invariant.
+
+## 2026-10-31: Timelapse persistence inside PSD/PSB (#24)
+
+Action-driven recording remains serializable document data. PSD/PSB saves now carry a versioned
+PhotoStore payload in a standard `8BIM` image resource rather than requiring a separate recording
+file. Resource ID 4001 is in Adobe's plug-in range; the exact name `PhotoStore.TimeLapse`, `PSTL`
+signature, and payload version distinguish it from other plug-ins using the same numeric ID.
+This is an original PhotoStore extension based on [Adobe's public PSD specification](https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/).
+
+The binary envelope stores small JSON settings and length-prefixed encoded frames and action
+labels, retaining enabled state, optional errors, and layer privacy exclusions by exported PSD
+layer ID. Privacy-only metadata does not enable or initialize recording. The native-format
+recording validator is shared with this path; metadata size contributes to PSD/PSB selection.
+Current supported metadata regenerates from live state so purging cannot restore stale history.
+Unrelated resources and malformed/newer PhotoStore payloads remain opaque and preserved, with
+warnings when a recognized payload cannot be loaded. Normal byte exports reject invalid live
+recordings before writing a file. The low-level document-to-PSD model conversion retains its
+existing warning-returning API.
+
+No Photoshop-specific content is replaced or required for playback of the ordinary artwork.
+Manual Photoshop open/re-save preservation and native UI acceptance remain unverified. See
+[action recording](action-recording.md) for the storage and interoperability limits.
+
+## 2026-10-31: Moving-input brush smoothing (#20)
+
+The user's follow-up recording shows angular curved strokes at a reported 35% smoothing and reports
+that drawing circles is unusable. The earlier curve reconstruction remains in place, but its input
+filter treated every new pointer endpoint as a stationary target for the entire preceding time
+interval. Synthetic substeps also reused the endpoint's timestamp and stylus values. Equivalent
+movement could therefore change with event partitioning, before curve reconstruction ran.
+
+For timed exponential smoothing, integrate the existing first-order filter against a linearly
+moving pointer between consecutive samples. Preserve the existing smoothing strength with time
+constant `-16 / ln(min(amount, 0.95))` milliseconds and interpolate stylus channels and time at each
+bounded substep. This changes the filter's moving-input model; it does not invent missing native
+pointer samples. Stationary catch-up, endpoint completion, pulled-string mode, and the untimed
+fallback retain their existing contracts. Zero smoothing is unchanged; aliased Pencil strokes
+continue to bypass curve reconstruction. The shared generator still owns live preview and
+committed brush strokes.
+
+The focused reproduction concerns equivalent timed paths and the severe drawing defect. Synthetic
+path evidence does not establish native mouse/tablet input acceptance. The issue remains open until
+the change is landed and the reporter's native drawing workflow is accepted.

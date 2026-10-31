@@ -651,30 +651,97 @@ fn smoothing_reconstructs_a_bounded_curve_through_sparse_corners() {
 
 #[test]
 fn smoothing_pulls_by_time_not_by_how_often_the_device_reports() {
-    // The pointer jumps 100 px and is held there for 32 ms, reported at 1000 Hz or about 60 Hz.
-    let cfg = Smoothing { amount: 0.8, catch_up: true, catch_up_on_end: false, ..Default::default() };
-    let run = |interval: f64| {
+    // Both streams describe the same linearly moving pointer, with different sample partitions.
+    // A filter that treats each endpoint as the target for its entire preceding interval drifts
+    // badly on the irregular partition (about 81 px versus 88 px at 35% smoothing).
+    let cfg = Smoothing { amount: 0.35, catch_up: true, catch_up_on_end: false, ..Default::default() };
+    let run = |samples: &[StrokePoint]| {
         let mut s = Smoother::new(&cfg, 1.0);
         let mut out = Vec::new();
-        s.push(StrokePoint::new(0.0, 0.0, 1.0), &mut out);
-        let mut t = 0.0;
-        while t < 32.0 {
-            t += interval;
-            s.push(StrokePoint { time: t, ..StrokePoint::new(100.0, 0.0, 1.0) }, &mut out);
+        for p in samples {
+            s.push(*p, &mut out);
+        }
+        out
+    };
+    let start = StrokePoint { time: 0.0, ..StrokePoint::new(0.0, 0.0, 0.2) };
+    let end = StrokePoint { time: 32.0, ..StrokePoint::new(100.0, 0.0, 1.0) };
+    let irregular_mid = StrokePoint { time: 8.0, ..StrokePoint::new(25.0, 0.0, 0.4) };
+    let sparse_path = run(&[start, end]);
+    let irregular_path = run(&[start, irregular_mid, end]);
+    let sparse = sparse_path.last().map_or(0.0, |p| p.x);
+    let irregular = irregular_path.last().map_or(0.0, |p| p.x);
+    let tau = -16.0 / 0.35_f64.ln();
+    let expected = 100.0 - 100.0 * tau / 32.0 + 100.0 * tau / 32.0 * (-32.0 / tau).exp();
+    assert!((sparse - expected).abs() < 1e-4, "sparse {sparse}, expected {expected}");
+    assert!((irregular - expected).abs() < 1e-4, "irregular {irregular}, expected {expected}");
+    for point in sparse_path.iter().chain(&irregular_path) {
+        let expected_pressure = 0.2 + 0.8 * (point.time / 32.0) as f32;
+        assert!((point.pressure - expected_pressure).abs() < 1e-6, "pressure/time interpolation: {point:?}");
+    }
+    for path in [&sparse_path, &irregular_path] {
+        assert!(path.windows(2).all(|w| w[1].time > w[0].time), "substeps have increasing input times: {path:?}");
+        assert!(path.windows(2).all(|w| w[1].pressure >= w[0].pressure), "substeps retain monotonic pressure: {path:?}");
+    }
+
+    // A stationary target still catches up according to the same time constant, independent of
+    // how often held samples arrive.
+    let hold_cfg = Smoothing { amount: 0.8, catch_up: true, catch_up_on_end: false, ..Default::default() };
+    let held = |times: &[f64]| {
+        let mut s = Smoother::new(&hold_cfg, 1.0);
+        let mut out = Vec::new();
+        s.push(StrokePoint { time: 0.0, ..StrokePoint::new(0.0, 0.0, 1.0) }, &mut out);
+        s.push(StrokePoint { time: 0.0, ..StrokePoint::new(100.0, 0.0, 1.0) }, &mut out);
+        for &time in times {
+            s.push(StrokePoint { time, ..StrokePoint::new(100.0, 0.0, 1.0) }, &mut out);
         }
         out.last().map_or(0.0, |p| p.x)
     };
-    let (fast, slow) = (run(1.0), run(16.0));
-    // Two 16 ms steps of a 0.2 pull: 1 - 0.8² = 36 % of the way.
-    assert!((slow - 36.0).abs() < 1e-4, "{slow}");
-    assert!((fast - slow).abs() < 1e-4, "1000 Hz {fast} vs 60 Hz {slow}");
+    let tau = -16.0 / 0.8_f64.ln();
+    let expected = 100.0 - 80.0 * (-32.0 / tau).exp();
+    assert!((held(&[32.0]) - expected).abs() < 1e-4);
+    assert!((held(&[8.0, 16.0, 24.0, 32.0]) - expected).abs() < 1e-4);
+
     // Without timestamps each point is one step, as before.
     let mut s = Smoother::new(&cfg, 1.0);
     let mut out = Vec::new();
     for x in [0.0, 100.0] {
         s.push(StrokePoint::new(x, 0.0, 1.0), &mut out);
     }
-    assert!((out.last().map_or(0.0, |p| p.x) - 20.0).abs() < 1e-4);
+    assert!((out.last().map_or(0.0, |p| p.x) - 65.0).abs() < 1e-4);
+}
+
+#[test]
+fn smoothing_tracks_a_sparse_irregular_circle_without_sample_rate_drift() {
+    let cfg = Smoothing { amount: 0.35, catch_up_on_end: false, ..Default::default() };
+    let circle: Vec<StrokePoint> = (0..=8)
+        .map(|i| {
+            let angle = f64::from(i) * std::f64::consts::TAU / 8.0;
+            StrokePoint { time: f64::from(i) * 32.0, ..StrokePoint::new(100.0 + angle.cos() * 50.0, 100.0 + angle.sin() * 50.0, 1.0) }
+        })
+        .collect();
+    let mut irregular = vec![circle[0]];
+    for pair in circle.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        // Split each straight input segment at uneven temporal fractions. This is the same
+        // piecewise-linear pointer path with more frequent OS samples.
+        for f in [0.25, 0.75] {
+            irregular.push(StrokePoint { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, time: a.time + (b.time - a.time) * f, ..a });
+        }
+        irregular.push(b);
+    }
+    let run = |points: &[StrokePoint]| {
+        let mut smoother = Smoother::new(&cfg, 1.0);
+        let mut output = Vec::new();
+        for point in points {
+            smoother.push(*point, &mut output);
+        }
+        output
+    };
+    let sparse = run(&circle);
+    let irregular = run(&irregular);
+    let a = sparse.last().unwrap();
+    let b = irregular.last().unwrap();
+    assert!((a.x - b.x).hypot(a.y - b.y) < 1e-6, "sparse ({}, {}), irregular ({}, {})", a.x, a.y, b.x, b.y);
 }
 
 #[test]

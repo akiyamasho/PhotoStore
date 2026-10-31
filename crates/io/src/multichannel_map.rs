@@ -107,6 +107,30 @@ pub(crate) fn document_to_psd(doc: &Document, force_psb: bool) -> (PsdFile, Vec<
     if let Some(x) = &doc.metadata.xmp {
         resources.push(ImageResource::new(ids::XMP, x.as_bytes().to_vec()));
     }
+    if doc.recording.is_some() {
+        match crate::psd_recording::encode(doc.recording.as_ref(), &[]) {
+            Ok(data) => {
+                let mut resource = ImageResource::new(crate::psd_recording::RESOURCE_ID, data);
+                resource.name = crate::psd_recording::RESOURCE_NAME.to_vec();
+                resources.push(resource);
+            }
+            Err(error) => warnings.push(format!("PSD model omitted invalid PhotoStore recording metadata ({error}); byte export rejects it")),
+        }
+    }
+    for (id, name, data) in &doc.metadata.psd_resources {
+        if matches!(*id, ids::RESOLUTION_INFO | ids::XMP | 1006 | 1045 | crate::channel_map::DISPLAY_INFO | crate::channel_map::DISPLAY_INFO_OLD) {
+            continue;
+        }
+        if *id == crate::psd_recording::RESOURCE_ID
+            && name.as_bytes() == crate::psd_recording::RESOURCE_NAME
+            && matches!(crate::psd_recording::parse(data), crate::psd_recording::Parsed::Recording { .. })
+        {
+            continue;
+        }
+        let mut resource = ImageResource::new(*id, data.to_vec());
+        resource.name = crate::psd_export::legacy_name(name);
+        resources.push(resource);
+    }
     resources.push(version_info_resource(true));
     let color_mode_data = photostore_psd::hdr::color_mode_data_for_depth(header.depth);
     let file = PsdFile {

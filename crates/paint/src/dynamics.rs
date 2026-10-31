@@ -105,20 +105,39 @@ impl Smoother {
             // Without Stroke Catch-Up the brush stops while the pointer pauses (Photoshop).
             return;
         }
-        let (iters, step) = if dt > 0.0 && dt.is_finite() {
-            let steps = dt / SMOOTHING_STEP_MS;
-            let iters = steps.ceil().clamp(1.0, 64.0);
-            // Each of `iters` moves covers `steps / iters` steps' worth of pull.
-            (iters as usize, 1.0 - (1.0 - a).powf(steps.min(64.0) / iters))
+        if dt > 0.0 && dt.is_finite() {
+            // Input samples describe a moving pointer between q and p, not a pointer that
+            // teleported to p at q.time and stayed there. Integrate the first-order exponential
+            // filter against that linear input exactly. This makes the result independent of how
+            // an otherwise identical straight input segment is split into device samples.
+            let q = prev_input.unwrap_or(p);
+            let residual = amount.min(0.95);
+            let tau = -SMOOTHING_STEP_MS / residual.ln();
+            let delta_x = p.x - q.x;
+            let delta_y = p.y - q.y;
+            let iters = (dt / SMOOTHING_STEP_MS).ceil().clamp(1.0, 64.0) as usize;
+            let mut cur = pos;
+            for i in 1..=iters {
+                let f = i as f64 / iters as f64;
+                let elapsed = dt * f;
+                let z = elapsed / tau;
+                let one_minus_decay = -(-z).exp_m1();
+                // `f - (tau / dt) * (1 - exp(-z))` loses precision when z is tiny.
+                // Its series starts at f*z/2, so use that form for short intervals.
+                let moving_target_weight =
+                    if z.abs() < 1e-4 { f * (z * 0.5 - z * z / 6.0 + z * z * z / 24.0 - z * z * z * z / 120.0) } else { f * (1.0 - one_minus_decay / z) };
+                let mut sample = lerp_pt(&q, &p, f);
+                sample.x = pos.x + (q.x - pos.x) * one_minus_decay + delta_x * moving_target_weight;
+                sample.y = pos.y + (q.y - pos.y) * one_minus_decay + delta_y * moving_target_weight;
+                cur = sample;
+                out.push(sample);
+            }
+            self.pos = Some(cur);
         } else {
-            (1, a)
-        };
-        let mut cur = pos;
-        for _ in 0..iters {
-            cur = StrokePoint { x: cur.x + (p.x - cur.x) * step, y: cur.y + (p.y - cur.y) * step, ..p };
+            let cur = StrokePoint { x: pos.x + (p.x - pos.x) * a, y: pos.y + (p.y - pos.y) * a, ..p };
             out.push(cur);
+            self.pos = Some(cur);
         }
-        self.pos = Some(cur);
     }
 
     /// Is Stroke Catch-Up still pulling the brush towards a pointer that has stopped? Then the

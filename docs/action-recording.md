@@ -3,7 +3,7 @@
 Native action recording was implemented for the PhotoStore 0.7.0 milestone. The current 0.12.0
 policy defaults recording off. The public behavior reference is Procreate's [Video handbook](https://help.procreate.com/procreate/handbook/actions/actions-video), [Canvas handbook](https://help.procreate.com/procreate/handbook/actions/actions-canvas), and [recording-quality guidance](https://help.procreate.com/articles/drvany-adjust-time-lapse-recording-quality): recording is configured when a canvas is created, can be paused, replayed, and exported, and records committed artwork changes rather than a screen capture.
 
-PhotoStore records committed canvas actions through the session edit commit hook. The menu path is **Actions › Video**. This is canvas-action frame storage, separate from command-macro recording and replay. Undo, UI-only commands, cursor or selection movement, and wall-clock sampling are excluded. Recording settings and captured frames persist as native `.pcraft` document data; the command Actions list is unrelated. A new or imported foreign document cannot recreate progress recorded before it was opened in PhotoStore.
+PhotoStore records committed canvas actions through the session edit commit hook. The menu path is **Actions › Video**. This is canvas-action frame storage, separate from command-macro recording and replay. Undo, UI-only commands, cursor or selection movement, and wall-clock sampling are excluded. Recording settings and captured frames persist as native `.pcraft` document data and as PhotoStore metadata inside PSD/PSB files; the command Actions list is unrelated. Reopening a PhotoStore-saved PSD restores its stored recording. A foreign document without that metadata cannot recreate progress recorded before it was opened in PhotoStore.
 
 New canvases default to recording disabled and reset the New Document checkbox to off each time the
 dialog opens. The explicit API and presets can opt in, and existing stored enabled documents retain
@@ -21,6 +21,26 @@ Layers marked **Private Time-lapse Layer** are excluded from future captured fra
 The native encoders use JPEG quality 45, 75, or 94 for Low, Good, and Studio, PNG for Lossless, and HEVC export settings with CRF 28, 21, 16, or RGB lossless. A codec proof established one-frame 16×16 gbrp HEVC Lossless pixel equivalence. These are codec and compiler checks, not a claim of broad UI acceptance.
 
 The implementation is a native, action-driven recording path with bounded memory, deterministic replay/export, and explicit privacy behavior. The current 0.12.0 source pass defaults recording off, has approved preview captures, and is published and installed. Full native visual QA, UI parity, and full Procreate parity remain unverified.
+
+## PSD/PSB recording metadata (2026-10-31)
+
+PhotoStore stores recording settings, enabled state, pause/error state, action labels, and encoded
+JPEG/PNG frames inside the PSD/PSB image-resources section. The PhotoStore resource also keeps
+per-layer recording exclusions using the PSD's layer IDs, including when recording is not enabled.
+Saving a purged recording writes its current empty frame list. Existing artwork, layer data, and
+XMP remain independent of this resource.
+
+This uses the plug-in resource range in [Adobe's public PSD specification](https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/).
+The resource has a PhotoStore name, signature, and version so unrelated plug-in metadata is not
+treated as a recording. Recognized recordings are validated against the existing frame, byte, and
+text limits. An invalid recording cannot be silently discarded by the normal PSD save path.
+Malformed or newer metadata produces an import warning and remains preserved as opaque metadata;
+the artwork still opens. Such metadata is not replayable by this version.
+
+The file remains a standard layered PSD/PSB; Photoshop has no PhotoStore timelapse playback UI.
+Opening and re-saving this resource in Photoshop has not been manually verified, and another
+application may remove custom metadata when it re-saves a file. Keep an original PhotoStore save
+when round-tripping through other software. Recording remains off by default.
 
 ## Conditional default assessment (2026-10-12)
 

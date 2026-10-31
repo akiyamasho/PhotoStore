@@ -48,6 +48,7 @@ mod pdn;
 pub mod pixels;
 mod psd_export;
 mod psd_import;
+mod psd_recording;
 pub mod raw;
 pub mod slices_map;
 pub mod smart_map;
@@ -284,6 +285,7 @@ pub fn export(doc: &Document, name_or_ext: &str, opts: &ExportOptions) -> Result
         return Ok(ExportResult { bytes: photostore_format::save_to_bytes(doc, &previews)?, warnings: Vec::new() });
     }
     if ext == "psd" || ext == "psb" {
+        validate_psd_recording_export(doc)?;
         let o = PsdExportOptions { force_psb: opts.force_psb || ext == "psb", ..Default::default() };
         let (mut file, mut warnings) = document_to_psd_with(doc, &o);
         if !doc.metadata.text.is_empty() {
@@ -297,9 +299,18 @@ pub fn export(doc: &Document, name_or_ext: &str, opts: &ExportOptions) -> Result
     }
     let format = photostore_codecs::from_extension(&ext).ok_or_else(|| IoError::UnknownFormat(name_or_ext.to_string()))?;
     if format == photostore_codecs::Format::Tiff && opts.tiff_layers && tiff_layers::would_write_layers(doc) {
+        validate_psd_recording_export(doc)?;
         return tiff_layers::export_layered(doc, opts);
     }
     flat::export_flat(doc, format, opts)
+}
+
+fn validate_psd_recording_export(doc: &Document) -> Result<(), IoError> {
+    let private_count = doc.walk().iter().filter(|(_, _, layer)| layer.private_recording).count();
+    if doc.recording.is_some() || private_count > 0 {
+        crate::psd_recording::encoded_len(doc.recording.as_ref(), private_count).map_err(IoError::Unsupported)?;
+    }
+    Ok(())
 }
 
 /// The PSD's merged composite as straight RGBA floats (row-major), converted

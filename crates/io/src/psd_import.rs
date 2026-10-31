@@ -557,9 +557,24 @@ pub fn psd_to_document_with(file: &PsdFile, ctl: &photostore_raster::Interrupt) 
     let multichannel = mode == ColorMode::Multichannel && h.depth != 1;
     let depth = if layered || multichannel { sample_for_depth(h.depth) } else { SampleType::U8 };
     let mut doc = Document::new("Untitled", Size::new(h.width, h.height), mode, depth);
+    let mut recording_payload = None;
 
     // Resources.
     for r in &file.resources {
+        if r.id == crate::psd_recording::RESOURCE_ID && r.name == crate::psd_recording::RESOURCE_NAME && r.data.starts_with(b"PSTL") {
+            match crate::psd_recording::parse(&r.data) {
+                crate::psd_recording::Parsed::Recording { recording, private_layer_ids } => recording_payload = Some((recording, private_layer_ids)),
+                crate::psd_recording::Parsed::Unsupported => {
+                    warnings.push("PhotoStore time-lapse metadata uses a newer version; it was preserved but not loaded".into());
+                    doc.metadata.psd_resources.push((r.id, String::from_utf8_lossy(&r.name).into_owned(), Arc::new(r.data.clone())));
+                }
+                crate::psd_recording::Parsed::Malformed(reason) => {
+                    warnings.push(format!("PhotoStore time-lapse metadata is invalid ({reason}); artwork opened without recording"));
+                    doc.metadata.psd_resources.push((r.id, String::from_utf8_lossy(&r.name).into_owned(), Arc::new(r.data.clone())));
+                }
+            }
+            continue;
+        }
         match r.id {
             ids::RESOLUTION_INFO => {
                 if let Ok(ri) = photostore_psd::ResolutionInfo::from_bytes(&r.data) {
@@ -820,6 +835,21 @@ pub fn psd_to_document_with(file: &PsdFile, ctl: &photostore_raster::Interrupt) 
     cx.warnings.extend(comp_warnings);
     // Slices (resource 1050), after layer ids are known; the raw data stays for verbatim export.
     crate::slices_map::import(&mut doc);
+    if let Some((recording, private_ids)) = recording_payload {
+        let private_ids: std::collections::HashSet<u32> = private_ids.into_iter().collect();
+        fn apply_private(layers: &mut [Layer], ids: &std::collections::HashSet<u32>) {
+            for layer in layers {
+                if layer.psd_id.is_some_and(|id| ids.contains(&id)) {
+                    layer.private_recording = true;
+                }
+                if let LayerContent::Group(group) = &mut layer.content {
+                    apply_private(&mut group.children, ids);
+                }
+            }
+        }
+        apply_private(&mut doc.layers, &private_ids);
+        doc.recording = recording;
+    }
     // Character and paragraph styles from the type layers' engine data.
     cx.warnings.extend(crate::text_styles_map::import(&mut doc));
 

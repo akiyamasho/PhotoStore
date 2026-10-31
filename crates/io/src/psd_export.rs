@@ -1010,7 +1010,7 @@ fn effects_unchanged(l: &Layer) -> Option<bool> {
     Some(m == l.effects.enabled && items == l.effects.items)
 }
 
-fn legacy_name(s: &str) -> Vec<u8> {
+pub(crate) fn legacy_name(s: &str) -> Vec<u8> {
     s.chars().map(|c| if c.is_ascii() && !c.is_ascii_control() { c as u8 } else { b'?' }).take(255).collect()
 }
 
@@ -1216,6 +1216,11 @@ pub(crate) fn estimate_psd_size(doc: &Document) -> Option<u64> {
         .checked_add(u64::try_from(doc.icc_profile.as_ref().map_or(0, |profile| profile.len())).ok()?)?
         .checked_add(u64::try_from(doc.metadata.xmp.as_ref().map_or(0, String::len)).ok()?)?
         .checked_add(u64::try_from(doc.metadata.exif.as_ref().map_or(0, |data| data.len())).ok()?)?;
+    let private_count = doc.walk().iter().filter(|(_, _, layer)| layer.private_recording).count();
+    if doc.recording.is_some() || private_count > 0 {
+        let payload_len = crate::psd_recording::encoded_len(doc.recording.as_ref(), private_count).ok()?;
+        structural_bytes = structural_bytes.checked_add(u64::try_from(payload_len).ok()?)?;
+    }
     for (_, name, data) in &doc.metadata.psd_resources {
         structural_bytes = structural_bytes.checked_add(u64::try_from(name.len()).ok()?)?.checked_add(u64::try_from(data.len()).ok()?)?;
     }
@@ -1477,6 +1482,12 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
         ex.warnings.push(warning);
     }
     for (id, name, data) in &doc.metadata.psd_resources {
+        if *id == crate::psd_recording::RESOURCE_ID
+            && name.as_bytes() == crate::psd_recording::RESOURCE_NAME
+            && matches!(crate::psd_recording::parse(data), crate::psd_recording::Parsed::Recording { .. })
+        {
+            continue;
+        }
         // Layer comps: the preserved list while unchanged, else regenerated (or dropped) below.
         if *id == crate::comps_map::LAYER_COMPS && comps_resource.is_some() {
             continue;
@@ -1500,6 +1511,18 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
         let mut r = ImageResource::new(*id, data.to_vec());
         r.name = legacy_name(name);
         resources.push(r);
+    }
+    let private_ids: Vec<u32> =
+        doc.walk().into_iter().filter_map(|(_, _, layer)| layer.private_recording.then(|| ex.layer_ids.get(&layer.id).copied()).flatten()).collect();
+    if doc.recording.is_some() || !private_ids.is_empty() {
+        match crate::psd_recording::encode(doc.recording.as_ref(), &private_ids) {
+            Ok(data) => {
+                let mut resource = ImageResource::new(crate::psd_recording::RESOURCE_ID, data);
+                resource.name = crate::psd_recording::RESOURCE_NAME.to_vec();
+                resources.push(resource);
+            }
+            Err(error) => ex.warnings.push(format!("PSD model omitted invalid PhotoStore recording metadata ({error}); byte export rejects it")),
+        }
     }
     if let Some(data) = crate::annotations_map::fresh_scale_resource(doc) {
         resources.push(ImageResource::new(crate::annotations_map::MEASUREMENT_SCALE, data));
