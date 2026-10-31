@@ -15,7 +15,7 @@ below describe the first implementation pass.
 | [#20 — Drawing strokes remain angular despite smoothing with tablet pen and mouse](https://github.com/akiyamasho/PhotoStore/issues/20) | Reopened after the user's 35% smoothing report and inability to draw circles. Corrected the timed filter to follow moving input analytically, preserving interpolated time and pressure before curve reconstruction. | Local implementation; six smoothing regressions and one live/committed chunked-rendering regression passed. Native mouse/tablet acceptance remains outstanding; issue stays open. |
 | [#24 — Save timelapse recording history with the PSD](https://github.com/akiyamasho/PhotoStore/issues/24) | Persist recording settings, encoded frames, action labels, pause/error state, and layer recording exclusions in a namespaced PSD/PSB image resource. | Local implementation; five focused persistence regressions passed. Photoshop open/re-save acceptance remains unverified; issue stays open. |
 | [#23 — Major overhaul: CapCut timeline workspace, full shortcuts, and keyframing](https://github.com/akiyamasho/PhotoStore/issues/23) | Existing implementation and development-build receipts are recorded in [timeline workflow](timeline-workflow.md). Manual visual, interaction, and export acceptance remain outstanding. | Remains open; this timelapse change does not establish timeline acceptance. |
-| [#25 — Active tool cursor sometimes resets after switching apps](https://github.com/akiyamasho/PhotoStore/issues/25) | User reports intermittent arrow cursor after Alt-Tab while a tool remains selected. Added per-viewport focus recovery that refreshes native cursor visibility after the final cursor is resolved. Tool, build, OS, input device, and exact switch-key mapping remain Unknown. | Local implementation; required development build pending. Native app-switch acceptance remains outstanding; issue stays open. |
+| [#25 — Active tool cursor sometimes resets after switching apps](https://github.com/akiyamasho/PhotoStore/issues/25) | User reports intermittent arrow cursor after Alt-Tab while a tool remains selected. Added per-viewport focus recovery that refreshes native cursor visibility after the final cursor is resolved. Tool, build, OS, input device, and exact switch-key mapping remain Unknown. | Local implementation and required development build passed. Native app-switch acceptance remains outstanding; issue stays open. |
 
 The report creation and duplicate report update used the explicitly invoked PhotoStore bug-report
 workflow. Unreported build, device, reproduction, and error details remain Unknown. A reviewed still
@@ -106,3 +106,14 @@ dependencies. No discretionary cursor tests or screenshot passes were added or r
 acceptance is the default. On a disposable document, select a Brush or another tool, switch to
 another application and back, and check that the cursor returns correctly over the canvas and that
 toolbar, text, resize, and dialog cursors still take precedence. This manual pass has not been run.
+
+The single incremental development build passed in 114.462 seconds from exact source commit
+`a387feb51d63b3749f892af046de592403105b2d`. The staged runtime is
+`a387feb51d63b3749f892af046de592403105b2d-8184edd6c3af42a5`, with fingerprint
+`8184edd6c3af42a5b9b5db5eeced37a77045b79cec19dbc68f3fac7a08cdfb43`.
+Log: `/private/tmp/photostore-cursor-dev-build.log`. It includes the earlier smoothing and PSD
+recording fixes. The pending record was read back successfully, and the previous pending binary
+remains available. The running controlled child was untouched. Load the pending runtime using the
+save/quit/`./dev --background` instructions above. No release or production installation was made.
+After staging, local CI remained disabled and unloaded, with no pending CI development or release
+jobs. No issue was closed or source pushed; all four inventory issues remain open.
