@@ -70,7 +70,7 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
     let mut output_texture: Option<wgpu::Texture> = None;
     let mut cadence_start: Option<Instant> = None;
     let mut lateness_ms = Vec::new();
-    let mut expected_pixels = Vec::new();
+    let mut verification_doc = None;
     let mut callback = |doc: &Document| -> photostore_engine::Result<()> {
         let bounds = doc.bounds();
         if bounds.is_empty() || bounds.width() <= 0 || bounds.height() <= 0 {
@@ -145,17 +145,20 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
             }
         }
         if frame + 1 == doc.timeline.as_ref().map_or(frames, |t| frames.min(t.duration)) {
-            for (x, y) in [(0, 0), (width / 3, height / 3), (width / 2, height / 2), (width - 1, height - 1)] {
-                let pixel = photostore_compose::render(doc, Rect::from_xywh(x as i32, y as i32, 1, 1));
-                if let Some(color) = pixel.px.first() {
-                    expected_pixels.push((x, y, *color));
-                }
-            }
+            verification_doc = Some(doc.clone());
         }
         Ok(())
     };
     let mut report = measure_with_frame_callback(&paths, frames, ALLOWANCE_BYTES, &mut callback).map_err(|e| e.to_string())?;
     drop(callback);
+    let doc_size = dimensions.ok_or("GPU playback measurement produced no completed frames")?;
+    let doc = verification_doc.ok_or("GPU measurement omitted its final reference document")?;
+    let (width, height) = doc_size;
+    let mut expected_pixels = Vec::new();
+    for (x, y) in [(0, 0), (width / 3, height / 3), (width / 2, height / 2), (width - 1, height - 1)] {
+        let pixel = photostore_compose::render(&doc, Rect::from_xywh(x as i32, y as i32, 1, 1));
+        if let Some(color) = pixel.px.first() { expected_pixels.push((x, y, *color)); }
+    }
     let cold_gpu_ms = gpu_ms.first().copied().unwrap_or(0.0);
     let mut warm_gpu_ms = gpu_ms.iter().skip(1).copied().collect::<Vec<_>>();
     warm_gpu_ms.sort_by(f64::total_cmp);
@@ -169,7 +172,6 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
     let late_p95 = ordered_lateness.get(((ordered_lateness.len().saturating_sub(1)) as f64 * 0.95).round() as usize).copied().unwrap_or(0.0);
     let target = output_texture.as_ref().ok_or("GPU measurement did not produce an output texture")?;
     let verification = verify_pixels(&device, &queue, target, acc_format, &expected_pixels)?;
-    let doc_size = dimensions.ok_or("GPU playback measurement produced no completed frames")?;
     let source_values = report.get("sources").and_then(Value::as_array).ok_or("engine playback report omitted source details")?;
     let full_resolution = source_values.iter().all(|s| {
         s.get("width").and_then(Value::as_u64) == Some(u64::from(doc_size.0)) && s.get("height").and_then(Value::as_u64) == Some(u64::from(doc_size.1))

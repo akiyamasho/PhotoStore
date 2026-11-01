@@ -94,6 +94,7 @@ fn measure_sources_inner(
     let mut polls = 0usize;
     let mut max_bytes = 0usize;
     let mut max_decoder_bytes = 0usize;
+    let mut first_frame_tiles = Vec::new();
     let mut sampled_pixels = Vec::new();
     sampled_pixels.try_reserve_exact(8 * 16 * photostore_geom::TILE_SIZE as usize * 4)
         .map_err(|_| EngineError::Other("could not reserve the bounded playback observation buffer".into()))?;
@@ -119,6 +120,15 @@ fn measure_sources_inner(
         }
         let ready_ms = begin.elapsed().as_secs_f64() * 1000.0;
         let state = session.active().ok_or(EngineError::NoDocument)?;
+        // Full encoded fidelity of one original source, including edge padding. Do this
+        // during cold preparation, before the callback anchors any paced deadlines.
+        if frame == 0 {
+            let surface = state.doc.layer(layer_ids[0]).and_then(|l| l.surface())
+                .ok_or_else(|| EngineError::Other("measurement first frame has no surface".into()))?;
+            first_frame_tiles = surface.tiles().map(|(c, tile)| {
+                json!({"tx":c.tx,"ty":c.ty,"hash":blake3::hash(tile.bytes()).to_hex().to_string()})
+            }).collect();
+        }
         if let Some(on_frame) = on_frame.as_deref_mut() {
             on_frame(&state.doc)?;
         }
@@ -154,7 +164,7 @@ fn measure_sources_inner(
     Ok(json!({"path":path,"width":info.width,"height":info.height,"codec":info.codec_name,"sourceFps":{"numerator":info.fps.num,"denominator":info.fps.den},
         "frames":count,"preparationMs":preparation_ms,"coldFirstFrameMs":waits[0],"warmP50Ms":percentile(0.5),"warmP95Ms":percentile(0.95),"warmFramesPerSecond":(count-1) as f64/warm_seconds,
         "elapsedSeconds":elapsed,"polls":polls,"persistentDecoderLaunches":crate::media_backend::preview_stream_launches().saturating_sub(launches),"decodeProcessLaunches":crate::media_backend::decode_process_launches().saturating_sub(decode_launches),"distinctSampledPixelHashes":hashes[0].len(),"distinctHashesPerLayer":hashes.iter().map(HashSet::len).collect::<Vec<_>>(),"layerPropertiesPreserved":properties_preserved,"sources":sources,"layerCount":layer_ids.len(),
-        "maxRetainedDerivedBytes":max_bytes,"maxEstimatedDecoderSessionBytes":max_decoder_bytes,"retainedBudgetBytes":crate::media_budget::status().total_limit_bytes,
+        "maxRetainedDerivedBytes":max_bytes,"maxEstimatedDecoderSessionBytes":max_decoder_bytes,"retainedBudgetBytes":crate::media_budget::status().total_limit_bytes,"firstFrameEncodedTiles":first_frame_tiles,
         "historyUnchanged":state.history.past_len()==0,"clean":state.saved_revision==state.revision,"requestWaitMs":waits,"decodeReadyWaitMs":decode_waits,"pixelHashSampling":{"maximumTilesPerLayer":8,"rowStride":16,"entireSelectedRows":true},"previewWorkers":crate::movie_cache::worker_count(),"configuredPreviewWorkers":crate::media_budget::preview_worker_count(),"activeDecodeLimit":crate::media_budget::decoder_parallelism(),
         "scope":"Headless decode/cache/document presentation preparation, original geometry and exact timestamps. Excludes native GPU/paint/display/input/audio-device output; throughput is not native playback FPS."}))
 }

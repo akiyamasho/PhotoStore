@@ -70,6 +70,8 @@ pub struct MediaInfo {
     pub has_audio: bool,
     pub codec_name: Option<String>,
     #[serde(default)]
+    pub pixel_format: Option<String>,
+    #[serde(default)]
     pub time_base: Option<Rational>,
     #[serde(default)]
     pub color_transfer: Option<String>,
@@ -86,7 +88,6 @@ pub(crate) fn ensure_sdr(info:&MediaInfo)->Result<()> {
 }
 
 fn decoded_surface(info:&MediaInfo,bytes:&[u8],format:PixelFormat,width:u32,height:u32)->Result<Surface> {
-    use photostore_cms::{Curve,Transform,Intent,builtin::Builtin};
     ensure_sdr(info)?;
     let expected = u64::from(width).checked_mul(u64::from(height)).and_then(|n| n.checked_mul(4))
         .filter(|&n| width > 0 && height > 0 && width <= MAX_DIMENSION && height <= MAX_DIMENSION && n <= MAX_FRAME_BYTES)
@@ -95,6 +96,22 @@ fn decoded_surface(info:&MediaInfo,bytes:&[u8],format:PixelFormat,width:u32,heig
     if bytes.len() != expected {
         return Err(MediaBackendError::InvalidInput(format!("decoded movie frame has {} bytes; expected {expected}", bytes.len())));
     }
+    decoded_surface_from_rgba(info, Some(bytes), None, format, width, height)
+}
+
+fn decoded_surface_rgb24(info:&MediaInfo,bytes:&[u8],format:PixelFormat,width:u32,height:u32)->Result<Surface> {
+    ensure_sdr(info)?;
+    let expected=u64::from(width).checked_mul(u64::from(height))
+        .filter(|&n|width>0&&height>0&&width<=MAX_DIMENSION&&height<=MAX_DIMENSION&&n<=MAX_FRAME_BYTES/4)
+        .and_then(|n|n.checked_mul(3))
+        .and_then(|n|usize::try_from(n).ok()).ok_or_else(||MediaBackendError::InvalidInput("decoded movie frame dimensions exceed supported bounds".into()))?;
+    if bytes.len()!=expected {return Err(MediaBackendError::InvalidInput(format!("decoded RGB24 movie frame has {} bytes; expected {expected}",bytes.len())));}
+    decoded_surface_from_rgba(info,None,Some(bytes),format,width,height)
+}
+
+fn decoded_surface_from_rgba(info:&MediaInfo,rgba_bytes:Option<&[u8]>,rgb24_bytes:Option<&[u8]>,format:PixelFormat,width:u32,height:u32)->Result<Surface> {
+    use photostore_cms::{Curve,Transform,Intent,builtin::Builtin};
+    ensure_sdr(info)?;
     let primaries=match info.color_primaries.as_deref() {
         None|Some("unknown"|"unspecified"|"bt709")=>0,
         Some("bt2020")=>1,
@@ -107,7 +124,14 @@ fn decoded_surface(info:&MediaInfo,bytes:&[u8],format:PixelFormat,width:u32,heig
         Some("linear")=>2,Some("gamma22")=>3,Some("gamma28")=>4,
         Some(other)=>return Err(MediaBackendError::InvalidInput(format!("unsupported video transfer `{other}`; convert a derived Rec.709 SDR copy first"))),
     };
-    if primaries==0 && transfer==0 {return Ok(Surface::from_interleaved(PixelFormat::RGBA8,Rect::from_xywh(0,0,width,height),bytes).convert(format));}
+    let source = || -> Result<Surface> {
+        let region=Rect::from_xywh(0,0,width,height);
+        if let Some(bytes)=rgba_bytes {return Ok(Surface::from_interleaved(PixelFormat::RGBA8,region,bytes));}
+        if let Some(bytes)=rgb24_bytes {return Surface::try_from_interleaved_rgb24(region,bytes,None)
+            .ok_or_else(||MediaBackendError::InvalidInput("invalid decoded RGB24 frame geometry or byte count".into()));}
+        Err(MediaBackendError::InvalidInput("decoded frame has no pixel data".into()))
+    };
+    if primaries==0 && transfer==0 {return Ok(source()?.convert(format));}
     type Entry=std::sync::OnceLock<std::result::Result<std::sync::Arc<Transform>,String>>;
     static COLOR:[Entry;15]=[const{std::sync::OnceLock::new()};15];
     let transform=COLOR[primaries*5+transfer].get_or_init(|| {
@@ -132,10 +156,11 @@ fn decoded_surface(info:&MediaInfo,bytes:&[u8],format:PixelFormat,width:u32,heig
             for i in 0..256 {for channel in 0..3 {ramps[channel][i]=output[i*3+channel];}}
             ramps
         });
-        return Ok(Surface::from_interleaved_rgba8_lut(Rect::from_xywh(0,0,width,height),bytes,ramps));
+        if let Some(bytes)=rgba_bytes {return Ok(Surface::from_interleaved_rgba8_lut(Rect::from_xywh(0,0,width,height),bytes,ramps));}
+        if let Some(bytes)=rgb24_bytes {return Surface::try_from_interleaved_rgb24(Rect::from_xywh(0,0,width,height), bytes, Some(ramps)).ok_or_else(||MediaBackendError::InvalidInput("invalid RGB24 frame for LUT conversion".into()));}
     }
     let rgb_format=PixelFormat{mode:photostore_color::ColorMode::Rgb,sample:format.sample,alpha:true};
-    let surface=Surface::from_interleaved(PixelFormat::RGBA8,Rect::from_xywh(0,0,width,height),bytes).convert(rgb_format);
+    let surface=source()?.convert(rgb_format);
     Ok(crate::color_cmds::convert_surface(&surface,photostore_color::ColorMode::Rgb,rgb_format,transform).convert(format))
 }
 
@@ -364,7 +389,7 @@ pub fn probe(path: impl AsRef<Path>) -> Result<MediaInfo> {
             "-protocol_whitelist",
             "file,pipe",
             "-show_entries",
-            "stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,time_base,color_transfer,color_primaries,color_space,duration,nb_frames:format=duration",
+            "stream=codec_type,codec_name,width,height,pix_fmt,avg_frame_rate,r_frame_rate,time_base,color_transfer,color_primaries,color_space,duration,nb_frames:format=duration",
             "-of",
             "json",
         ])
@@ -440,6 +465,7 @@ pub fn probe(path: impl AsRef<Path>) -> Result<MediaInfo> {
         frame_count,
         has_audio: streams.iter().any(|s| s.get("codec_type").and_then(Value::as_str) == Some("audio")),
         codec_name,
+        pixel_format: video.get("pix_fmt").and_then(Value::as_str).map(str::to_owned),
         time_base: video.get("time_base").and_then(Value::as_str).and_then(|s| parse_rational(s).ok()),
         color_transfer: video.get("color_transfer").and_then(Value::as_str).map(str::to_owned),
         color_primaries: video.get("color_primaries").and_then(Value::as_str).map(str::to_owned),
@@ -1036,6 +1062,10 @@ fn decoder_codec(info: &MediaInfo) -> Option<&'static str> {
     }
 }
 
+fn opaque_8bit_source(info:&MediaInfo)->bool {
+    matches!(info.pixel_format.as_deref(),Some("yuv420p"|"yuv422p"|"yuv444p"|"yuv440p"|"yuv411p"|"yuv410p"|"yuvj420p"|"yuvj422p"|"yuvj444p"|"yuvj440p"|"nv12"))
+}
+
 fn parse_rational(s: &str) -> Result<Rational> {
     let mut it = s.split('/');
     let n = it.next().and_then(|x| x.parse::<u64>().ok());
@@ -1111,6 +1141,7 @@ pub(crate) struct PreviewDecoder {
     format:PixelFormat,
     width:u32,
     height:u32,
+    rgb24:bool,
 }
 /// `settb` rounds rational source PTS to nanoseconds. With upward output rounding, a
 /// +fraction-of-a-nanosecond rescale error otherwise shifts every third 30 fps frame into
@@ -1125,7 +1156,10 @@ impl PreviewDecoder {
         ensure_sdr(info)?;
         if !seconds.is_finite() || seconds<0.0 || seconds>=info.duration_seconds || !step.is_finite() || !(0.001..=10.0).contains(&step)
             || width==0 || height==0 || width>MAX_DIMENSION || height>MAX_DIMENSION {return Err(MediaBackendError::InvalidInput("invalid sequential preview geometry/time".into()));}
-        let per=(width as usize).checked_mul(height as usize).and_then(|n|n.checked_mul(4)).filter(|n|*n<=MAX_FRAME_BYTES as usize)
+        let rgb24=opaque_8bit_source(info);
+        if u64::from(width)*u64::from(height)>MAX_FRAME_BYTES/4 {return Err(MediaBackendError::InvalidInput("sequential RGBA surface exceeds the decode allocation bound".into()));}
+        let channels=if rgb24 {3usize}else{4usize};
+        let per=(width as usize).checked_mul(height as usize).and_then(|n|n.checked_mul(channels)).filter(|n|*n<=MAX_FRAME_BYTES as usize)
             .ok_or_else(||MediaBackendError::InvalidInput("sequential frame dimensions exceed the decode allocation bound".into()))?;
         let exe=resolve_binary("PHOTOSTORE_FFMPEG","ffmpeg").ok_or(MediaBackendError::Unsupported)?;
         let mut command=Command::new(exe);
@@ -1134,7 +1168,8 @@ impl PreviewDecoder {
         command.args(["-ss",&format!("{:.6}",(seconds*1_000_000.0).floor()/1_000_000.0),"-i"]).arg(path);
         let mut filter=preview_sampling_filter(seconds, step);
         if (width,height)!=(info.width,info.height) {filter.push_str(&format!(",scale={width}:{height}:flags=bilinear"));}
-        let mut child=command.args(["-map","0:v:0","-an","-sn","-dn","-vf",&filter,"-f","rawvideo","-pix_fmt","rgba","pipe:1"])
+        let pixel_format=if rgb24 {"rgb24"}else{"rgba"};
+        let mut child=command.args(["-map","0:v:0","-an","-sn","-dn","-vf",&filter,"-f","rawvideo","-pix_fmt",pixel_format,"pipe:1"])
             .stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     DECODE_PROCESS_LAUNCHES.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
         let stderr=stderr_drain(&mut child);
@@ -1158,7 +1193,7 @@ impl PreviewDecoder {
             }
         }) {Ok(reader)=>reader,Err(error)=>{let _=child.kill();let _=child.wait();return Err(error.into());}};
         PREVIEW_STREAM_LAUNCHES.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-        Ok(Self{child,receiver:Some(receiver),reader:Some(reader),stderr,info:info.clone(),format,width,height})
+        Ok(Self{child,receiver:Some(receiver),reader:Some(reader),stderr,info:info.clone(),format,width,height,rgb24})
     }
     fn read_raw(&mut self)->Result<Option<Vec<u8>>> {
         let packet=self.receiver.as_ref().ok_or_else(||MediaBackendError::Process("preview stream retired".into()))?
@@ -1172,7 +1207,7 @@ impl PreviewDecoder {
             }
         }
     }
-    pub(crate) fn next_frame(&mut self)->Result<Option<Surface>> {self.read_raw()?.map(|bytes|decoded_surface(&self.info,&bytes,self.format,self.width,self.height)).transpose()}
+    pub(crate) fn next_frame(&mut self)->Result<Option<Surface>> {self.read_raw()?.map(|bytes|if self.rgb24 {decoded_surface_rgb24(&self.info,&bytes,self.format,self.width,self.height)}else{decoded_surface(&self.info,&bytes,self.format,self.width,self.height)}).transpose()}
     pub(crate) fn skip_frame(&mut self)->Result<bool> {Ok(self.read_raw()?.is_some())}
 }
 impl Drop for PreviewDecoder {
@@ -1786,7 +1821,7 @@ fn append_audio_args(cmd: &mut Command, clips: &[AudioMixClip], output_duration:
 
 #[cfg(test)]mod scalable_color_boundary {
     #[test]fn scalable_playback_transfer_lut_matches_full_cms_and_alpha(){
-        let info=super::MediaInfo{width:4,height:1,fps:super::Rational::new(30,1),duration_seconds:1.0,frame_count:Some(30),has_audio:false,codec_name:None,time_base:None,color_transfer:Some("bt709".into()),color_primaries:Some("bt709".into()),color_space:Some("bt709".into())};
+        let info=super::MediaInfo{width:4,height:1,fps:super::Rational::new(30,1),duration_seconds:1.0,frame_count:Some(30),has_audio:false,codec_name:None,pixel_format:None,time_base:None,color_transfer:Some("bt709".into()),color_primaries:Some("bt709".into()),color_space:Some("bt709".into())};
         let bytes=[24,80,210,127,129,42,0,255,255,1,200,200,18,230,111,0];
         let region=photostore_geom::Rect::from_xywh(0,0,4,1);
         let fast=super::decoded_surface(&info,&bytes,photostore_color::PixelFormat::RGBA8,4,1).unwrap().to_interleaved(region);

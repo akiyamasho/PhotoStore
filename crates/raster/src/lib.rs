@@ -497,6 +497,37 @@ impl Surface {
         out
     }
 
+    /// Build an opaque RGBA8 surface directly from tightly packed RGB24 bytes.
+    /// Returns `None` when geometry or the exact source byte count is invalid.
+    pub fn try_from_interleaved_rgb24(r: Rect, bytes: &[u8], ramps: Option<&[[u8; 256]; 3]>) -> Option<Self> {
+        if r.x0 < 0 || r.y0 < 0 || r.x1 <= r.x0 || r.y1 <= r.y0 { return None; }
+        let width = usize::try_from(r.width()).ok()?;
+        let height = usize::try_from(r.height()).ok()?;
+        if width == 0 || height == 0 { return None; }
+        let expected = width.checked_mul(height)?.checked_mul(3)?;
+        if bytes.len() != expected { return None; }
+        let mut out = Self::new(PixelFormat::RGBA8);
+        for coordinate in r.tiles() {
+            let tile_rect = coordinate.rect().intersect(&r);
+            let span = tile_rect.width() as usize;
+            let tile = out.tile_mut(coordinate);
+            for y in tile_rect.y0..tile_rect.y1 {
+                let source = (((y - r.y0) as usize) * width + (tile_rect.x0 - r.x0) as usize) * 3;
+                let destination = (((y - coordinate.ty * TILE_SIZE) as usize * TILE_SIZE as usize)
+                    + (tile_rect.x0 - coordinate.tx * TILE_SIZE) as usize) * 4;
+                let source_row = &bytes[source..source + span * 3];
+                let target_row = &mut tile.data[destination..destination + span * 4];
+                for (src, dst) in source_row.chunks_exact(3).zip(target_row.chunks_exact_mut(4)) {
+                    if let Some(lut) = ramps {
+                        dst[0] = lut[0][src[0] as usize]; dst[1] = lut[1][src[1] as usize]; dst[2] = lut[2][src[2] as usize];
+                    } else { dst[..3].copy_from_slice(src); }
+                    dst[3] = 255;
+                }
+            }
+        }
+        Some(out)
+    }
+
     /// Write interleaved encoded bytes (same format as the surface) into `r`.
     pub fn write_interleaved(&mut self, r: Rect, bytes: &[u8]) {
         let bpp = self.format.bytes_per_pixel();

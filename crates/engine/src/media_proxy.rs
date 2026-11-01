@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Mutex, OnceLock},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
@@ -121,6 +121,22 @@ struct SourceRevision {
 }
 
 static BUILD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+// Preview polls this choice for every active layer. Avoid opening settings.json at
+// frame cadence; in-app writes refresh immediately and external edits within 250 ms.
+static PREVIEW_SETTINGS: OnceLock<Mutex<Option<(PathBuf, Instant, Settings)>>> = OnceLock::new();
+
+fn preview_settings(root: &Path) -> Result<Settings> {
+    let mut cache = PREVIEW_SETTINGS.get_or_init(|| Mutex::new(None)).lock()
+        .map_err(|_| EngineError::Other("media preview settings lock unavailable".into()))?;
+    if let Some((path, read_at, settings)) = cache.as_ref() {
+        if path == root && read_at.elapsed() < Duration::from_millis(250) {
+            return Ok(settings.clone());
+        }
+    }
+    let settings = load_settings(root)?;
+    *cache = Some((root.to_path_buf(), Instant::now(), settings.clone()));
+    Ok(settings)
+}
 
 fn cache_root() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("PHOTOSTORE_MEDIA_CACHE_DIR") {
@@ -163,7 +179,11 @@ fn save_settings(root: &Path, settings: &Settings) -> Result<()> {
     fs::rename(&temp, &target).map_err(|error| {
         let _ = fs::remove_file(&temp);
         EngineError::Other(format!("could not replace media proxy settings: {error}"))
-    })
+    })?;
+    if let Ok(mut cache) = PREVIEW_SETTINGS.get_or_init(|| Mutex::new(None)).lock() {
+        *cache = Some((root.to_path_buf(), Instant::now(), settings.clone()));
+    }
+    Ok(())
 }
 
 fn write_owned_temp(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -271,14 +291,14 @@ pub fn resolve(source: &str, quality: ProxyQuality) -> Result<Option<ProxyInfo>>
 /// Return the persisted preview-quality choice. It does not change any source/export path.
 pub fn preview_quality() -> Result<PreviewQuality> {
     let root = cache_root()?;
-    Ok(load_settings(&root)?.quality)
+    Ok(preview_settings(&root)?.quality)
 }
 
 /// Resolve the selected on-disk proxy only when disk proxies are explicitly enabled. `None`
 /// means the caller should decode the original source at the requested preview quality.
 pub fn preview_source(source: &str) -> Result<Option<ProxyInfo>> {
     let root = cache_root()?;
-    let settings = load_settings(&root)?;
+    let settings = preview_settings(&root)?;
     if !settings.enabled {
         return Ok(None);
     }

@@ -718,6 +718,16 @@ impl<'a> Planner<'a> {
     /// the canvas (beyond that, compositing everywhere costs less than the copy back).
     fn local_clip(&self, layer: &Layer) -> Option<Rect> {
         let canvas = self.cx.canvas;
+        // Full-size changing movie/Smart previews have fresh tiles each frame. Exact
+        // content bounds scan transparent edge padding, only to decide to draw the whole
+        // canvas anyway. Allocated tile bounds are a conservative, scan-free upper bound.
+        if let Some(surface) = layer.surface() {
+            let allocated = surface.tile_bounds().intersect(&canvas);
+            if u64::from(allocated.width()) * u64::from(allocated.height())
+                > u64::from(canvas.width()) * u64::from(canvas.height()) / 2 {
+                return None;
+            }
+        }
         let b = bounds::composite_bounds(layer, canvas)?;
         (b.width() as u64 * b.height() as u64 * 2 <= canvas.width() as u64 * canvas.height() as u64).then_some(b)
     }
