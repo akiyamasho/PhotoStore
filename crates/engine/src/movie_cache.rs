@@ -74,7 +74,7 @@ struct Cache {
     seen_source_errors: VecDeque<String>,
     pending: HashSet<Key>,
     latest_current: HashMap<ConsumerKey, Key>,
-    protected_current: HashMap<ConsumerKey, (Key, std::time::Instant)>,
+    protected_current: HashMap<ConsumerKey, (Vec<Key>, std::time::Instant)>,
     protected_current_order: VecDeque<ConsumerKey>,
     pending_current: HashMap<ConsumerKey, HashSet<Key>>,
     media_info: HashMap<SourceIdentity, crate::media_backend::MediaInfo>,
@@ -603,12 +603,19 @@ fn prune_protected_current(state:&mut Cache,now:std::time::Instant) {
     state.protected_current_order.retain(|owner|state.protected_current.contains_key(owner));
 }
 
-fn record_protected_current(state:&mut Cache,owner:&ConsumerKey,key:&Key) {
+fn record_protected_current(state:&mut Cache,owner:&ConsumerKey,keys:&[Key]) {
     let now=std::time::Instant::now();
     prune_protected_current(state,now);
+    let protected_keys=if keys.len()==1 {
+        state.protected_current.get(owner).and_then(|(existing,_)| {
+            existing.iter().position(|key|key==&keys[0]).map(|at|existing[at..].iter().take(3).cloned().collect())
+        }).unwrap_or_else(||keys.to_vec())
+    } else {
+        keys.iter().take(3).cloned().collect()
+    };
     state.protected_current.remove(owner);
     state.protected_current_order.retain(|existing|existing!=owner);
-    state.protected_current.insert(owner.clone(),(key.clone(),now));
+    state.protected_current.insert(owner.clone(),(protected_keys,now));
     state.protected_current_order.push_back(owner.clone());
     while state.protected_current_order.len()>PROTECTED_CURRENT_LIMIT {
         if let Some(old)=state.protected_current_order.pop_front(){state.protected_current.remove(&old);}
@@ -617,7 +624,7 @@ fn record_protected_current(state:&mut Cache,owner:&ConsumerKey,key:&Key) {
 
 fn is_pinned_current(state:&Cache,key:&Key)->bool {
     state.latest_current.values().any(|requested|requested==key)
-        || state.protected_current.values().any(|(requested,_)|requested==key)
+        || state.protected_current.values().any(|(requested,_)|requested.contains(key))
 }
 
 fn clear_pending_current(state: &mut Cache, owner: &ConsumerKey, key: &Key) {
@@ -962,7 +969,7 @@ pub fn frame_at_times_for_consumer_scaled(
     let work_times;
     {
         let mut state = cache().lock().map_err(|_| "movie frame cache is unavailable".to_owned())?;
-        record_protected_current(&mut state, &owner, &keys[0]);
+        record_protected_current(&mut state, &owner, &keys);
         for key in &keys {
             if let Some((surface, _, _)) = state.frames.get(key).cloned() {
                 state.frame_order.retain(|cached| cached != key);
@@ -1055,7 +1062,7 @@ fn frame_with_position(path: &str, position: Position, fmt: PixelFormat, thumbna
     let owner = key.consumer(consumer);
     if let Ok(mut state) = cache().lock() {
         if !thumbnail && consumer.is_some() {
-            record_protected_current(&mut state, &owner, &key);
+            record_protected_current(&mut state, &owner, std::slice::from_ref(&key));
         }
         if !thumbnail && consumer.is_some()
             && state.pending_current.get(&owner).is_some_and(|pending| pending.contains(&key))

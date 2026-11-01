@@ -877,10 +877,21 @@ impl Compositor {
         let canvas = doc.bounds();
         let region = region.intersect(&canvas);
         let plan = plan(doc)?;
-        self.check_fx(doc, &plan)?;
         self.pooled_uploads = cfg!(not(target_arch = "wasm32")) && flush
             && self.acc_format == wgpu::TextureFormat::Rgba32Float
             && !self.normal_stack_disabled && normal_stack::recognize(&plan).is_some();
+        let mut regular_page = TILE_SIZE as u32;
+        while regular_page * 2 <= self.max_dim.min(PAGE) { regular_page *= 2; }
+        let page = if self.pooled_uploads { regular_page.min(CHUNK) } else { regular_page };
+        if self.page != page {
+            // Smaller transfer cells start GPU work sooner; all original texels still render.
+            // Cell coordinates change with page size, so cached page keys must be rebuilt.
+            self.page = page;
+            self.chunk = CHUNK.min(page);
+            self.residents.clear();
+            self.fx.clear();
+        }
+        self.check_fx(doc, &plan)?;
         if self.pooled_uploads {
             // Every pooled source belongs to a recognized stack of at most eight pages per
             // cell. Wait for the preceding pooled frame before reusing its mapped arena.
@@ -931,7 +942,7 @@ impl Compositor {
             cells.sort_by_key(focused);
         }
         let flush_bytes = FLUSH_BYTES.min(self.memory_budget() / 8).max(16 << 20);
-        let flush_bytes = if self.pooled_uploads { flush_bytes.min(64 << 20) } else { flush_bytes };
+        let flush_bytes = if self.pooled_uploads { flush_bytes.min(16 << 20) } else { flush_bytes };
         stats.cells = cells.len();
         // The previous intermediate submit (waited for before the next is queued; the web has
         // no blocking wait and relies on the browser's own scheduling).
@@ -966,14 +977,19 @@ impl Compositor {
                 let index = queue.submit([done.finish()]);
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some(prev) = last_submit.replace(index) {
-                    match &self.health {
+                    if self.pooled_uploads {
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| device.poll(wgpu::PollType::Wait {
+                            submission_index: Some(prev), timeout: Some(std::time::Duration::from_secs(30)),
+                        }))).map_err(|_| Unsupported("GPU transfer batch failed".into()))?
+                            .map_err(|error| Unsupported(format!("GPU transfer batch failed: {error}")))?;
+                    } else { match &self.health {
                         Some(h) => {
                             h.wait(device, Some(prev));
                         }
                         None => {
                             let _ = device.poll(wgpu::PollType::Wait { submission_index: Some(prev), timeout: None });
                         }
-                    }
+                    } }
                 }
                 #[cfg(target_arch = "wasm32")]
                 let _ = index;
