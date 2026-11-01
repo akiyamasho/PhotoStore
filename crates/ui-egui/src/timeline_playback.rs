@@ -5,6 +5,7 @@
 //! snapshots.
 
 use std::time::Duration;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use egui::Context;
 use photostore_doc::{Timeline, TimelineLoop, TimelineMode};
@@ -44,6 +45,10 @@ pub(crate) struct Runtime {
     loop_cycle: usize,
     reverse_audio_reported: bool,
     reverse_leg: bool,
+    preroll: bool,
+    preroll_decoded: bool,
+    preroll_submitted: bool,
+    visual_ready: Arc<AtomicBool>,
 }
 
 impl Default for Runtime {
@@ -78,6 +83,10 @@ impl Default for Runtime {
             loop_cycle: 0,
             reverse_audio_reported: false,
             reverse_leg: false,
+            preroll: false,
+            preroll_decoded: false,
+            preroll_submitted: false,
+            visual_ready: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -102,6 +111,10 @@ impl Runtime {
         self.clock_frame = None;
         self.reverse_audio_reported = false;
         self.reverse_leg = false;
+        self.preroll = false;
+        self.preroll_decoded = false;
+        self.preroll_submitted = false;
+        self.visual_ready = Arc::new(AtomicBool::new(false));
     }
 
     pub(crate) fn stop_audio(&mut self) {
@@ -305,7 +318,16 @@ impl Runtime {
         self.rebuild_boundaries(t, fallback);
         self.started_at = now;
         self.start_offset = self.frame_start(t, self.start_frame) - self.frame_start(t, t.work_start);
-        if let Err(error) = self.start_audio(t, &doc_arc, doc, self.start_frame) {
+        self.preroll = false;
+        if matches!(t.mode, TimelineMode::Video) {
+            self.stop_audio();
+            self.clock_frame = Some(self.start_frame);
+            self.preroll = true;
+            self.preroll_decoded = false;
+            self.preroll_submitted = false;
+            self.visual_ready = Arc::new(AtomicBool::new(false));
+            self.pending_frame = Some(self.start_frame);
+        } else if let Err(error) = self.start_audio(t, &doc_arc, doc, self.start_frame) {
             app.ui.status = format!("Audio preview: {error}");
             app.ui.status_error = true;
         }
@@ -363,7 +385,16 @@ impl Runtime {
             self.start_offset = self.frame_start(t, self.start_frame) - self.frame_start(t, t.work_start);
             self.loop_cycle = 0;
             self.pending_frame = None;
-            if self.direction >= 0
+            self.preroll = false;
+            if matches!(t.mode, TimelineMode::Video) {
+                self.stop_audio();
+                self.clock_frame = Some(self.start_frame);
+                self.preroll = true;
+                self.preroll_decoded = false;
+                self.preroll_submitted = false;
+                self.visual_ready = Arc::new(AtomicBool::new(false));
+                self.pending_frame = Some(self.start_frame);
+            } else if self.direction >= 0
                 && let Err(error) = self.start_audio(t, &doc_arc, doc, self.start_frame)
             {
                 app.ui.status = format!("Audio preview: {error}");
@@ -373,6 +404,45 @@ impl Runtime {
             self.expected_revision = revision;
             self.expected_frame = t.current;
             self.origin_history = history;
+        }
+        if self.preroll {
+            let requested = self.start_frame;
+            if !self.preroll_decoded {
+                match app.run("timeline.presentFrame", json!({"frame": requested})) {
+                    Ok(result) if result.get("ready").and_then(serde_json::Value::as_bool) == Some(true) => {
+                        self.preroll_decoded = true;
+                        self.pending_frame = None;
+                        self.expected_frame = requested;
+                        self.expected_revision = app.session.active().map_or(revision, |st| st.revision);
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        self.stop();
+                        app.ui.status = format!("Video preview: {error}");
+                        app.ui.status_error = true;
+                        return;
+                    }
+                }
+            }
+            if self.preroll_decoded && self.preroll_submitted
+                && let Some(gpu) = app.gpu.as_ref()
+            { gpu.poll_completion_callbacks(); }
+            if self.preroll_decoded && self.visual_ready.load(Ordering::Acquire) {
+                let start = std::time::Instant::now();
+                let fresh = app.session.active().map(|state| state.doc.clone());
+                if self.direction >= 0
+                    && let Some(fresh) = fresh
+                    && let Some(timeline) = fresh.timeline.as_ref()
+                    && let Err(error) = self.start_audio(timeline, &fresh, doc, self.start_frame)
+                {
+                    app.ui.status = format!("Audio preview: {error}");
+                    app.ui.status_error = true;
+                }
+                self.started_at = now + start.elapsed().as_secs_f64();
+                self.preroll = false;
+            }
+            ctx.request_repaint_after(Duration::from_millis(6));
+            return;
         }
         if let Some(audio) = self.audio.as_mut() {
             let device_elapsed = audio.position_seconds().map(|seconds| self.audio_clock_base + seconds);
@@ -468,7 +538,20 @@ impl Runtime {
         ctx.request_repaint_after(Duration::from_millis(16));
     }
 
-    pub(crate) fn loading(&self) -> bool { self.pending_frame.is_some() }
+    pub(crate) fn loading(&self) -> bool { self.preroll || self.pending_frame.is_some() }
+
+    /// Called only by the primary canvas after the exact decoded frame is scheduled for display.
+    pub(crate) fn take_preroll_signal(&mut self, doc: photostore_doc::DocId, frame: usize) -> Option<Arc<AtomicBool>> {
+        if !self.preroll || !self.preroll_decoded || self.preroll_submitted || self.visual_ready.load(Ordering::Acquire)
+            || self.origin_doc != Some(doc) || self.expected_frame != frame
+        { return None; }
+        self.preroll_submitted = true;
+        Some(self.visual_ready.clone())
+    }
+
+    pub(crate) fn retry_preroll_presentation(&mut self) {
+        if self.preroll { self.preroll_submitted = false; }
+    }
 
     /// The wall/audio-clock target used by timeline indicators. The document's `current` remains
     /// the exact frame whose pixels are currently ready for display.

@@ -152,6 +152,20 @@ impl GpuCanvas {
         self.health.fault()
     }
 
+    /// Release a playback pre-roll once queued canvas work has drained. The callback owns only
+    /// the synchronization flag and egui context; it never retains the app or document data.
+    pub fn when_submitted_work_done(&self, ready: std::sync::Arc<std::sync::atomic::AtomicBool>, ctx: egui::Context) -> bool {
+        if self.fault().is_some() { return false; }
+        self.rs.queue.on_submitted_work_done(move || {
+            ready.store(true, std::sync::atomic::Ordering::Release);
+            ctx.request_repaint();
+        });
+        true
+    }
+
+    /// Drive completion callbacks without waiting or submitting a new render.
+    pub fn poll_completion_callbacks(&self) { self.health.poll(&self.rs.device); }
+
     /// Free every GPU resource the canvas holds (compositor pages, document textures, LUTs) after
     /// a fault; the paint callback draws nothing from then on.
     pub fn release(&self) {

@@ -2533,6 +2533,8 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
     // canvas image rather than be painted over it (which would double-composite transparency).
     let onion_texture = ensure_onion_skin(app, &painter, idx, output);
     let mut on_gpu = false;
+    let mut on_gpu_document = false;
+    let mut cpu_document_drawn = false;
     // A flipped view draws through the CPU path (the GPU canvas shader has no mirroring).
     // Rotation stays on the GPU: it is a view uniform, not a CPU blit.
     let gpu_ok = crate::gpu_canvas::gpu_view_ok(flip, view.rotation);
@@ -2567,6 +2569,7 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
         crate::gpu_canvas::GpuCanvas::paint(&painter, rect, params);
     } else if onion_texture.is_none() && gpu_ok && ensure_gpu(app, idx, visible_doc_rect(&xf)) {
         on_gpu = true;
+        on_gpu_document = true;
         app.perf.gpu = true;
         // Shadow, checkerboard, document and pixel grid in one custom shader (gpu_canvas.rs).
         let params = crate::gpu_canvas::ViewParams {
@@ -2613,6 +2616,7 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
         }
         let tex = onion_texture.or_else(|| ensure_texture(app, &ctx, idx, output).map(|(tex, _scale)| tex));
         if let Some(tex) = tex {
+            cpu_document_drawn = onion_texture.is_none();
             if rotated {
                 paint_mapped_image(&painter, &xf, tex, Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), size, Color32::WHITE);
             } else {
@@ -3252,6 +3256,22 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
     crate::rotate_view::overlay(app, &ctx, &painter, &xf, &mut view, &response);
     if primary {
         app.ui.views[idx] = view.clone();
+        if video_preview && (on_gpu_document || cpu_document_drawn)
+            && app.session.active().is_some_and(|st| st.doc.id == doc.id && st.doc.timeline.as_ref().is_some_and(|t| Some(t.current) == doc.timeline.as_ref().map(|x| x.current)))
+            && let Some(signal) = app.timeline_playback.take_preroll_signal(doc.id, doc.timeline.as_ref().map_or(usize::MAX, |t| t.current))
+        {
+            if on_gpu_document {
+                let queued = app.gpu.as_ref().is_some_and(|gpu| gpu.when_submitted_work_done(signal.clone(), ctx.clone()));
+                if !queued {
+                    app.timeline_playback.retry_preroll_presentation();
+                    ctx.request_repaint();
+                }
+            } else {
+                // CPU-composited image is now present in the egui paint list.
+                signal.store(true, std::sync::atomic::Ordering::Release);
+                ctx.request_repaint();
+            }
+        }
     }
     view
 }
