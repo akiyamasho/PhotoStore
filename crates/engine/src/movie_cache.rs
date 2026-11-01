@@ -157,9 +157,11 @@ impl WorkerQueue {
         let warm:HashSet<_>=streams.iter().map(|stream|stream.owner.clone()).collect();
         let active:Vec<_>=queues.active_owners.iter().filter(|owner|queues.assignments.get(*owner)==Some(&worker_index)).cloned().collect();
         for owner in active { queues.active_owners.remove(&owner); }
-        let assignments=&queues.assignments;
-        queues.warm_owners.retain(|owner|assignments.get(owner)!=Some(&worker_index));
-        queues.warm_owners.extend(warm);
+        {
+            let Queues { assignments, warm_owners, .. } = &mut *queues;
+            warm_owners.retain(|owner|assignments.get(owner)!=Some(&worker_index));
+            warm_owners.extend(warm);
+        }
         Self::prune_assignments(&mut queues);
     }
 
