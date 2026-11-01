@@ -934,10 +934,14 @@ impl Compositor {
                     .map_err(|error| Unsupported(format!("GPU upload completion failed: {error}")))?;
             }
             if self.upload_belt.is_none() || self.upload_storage != self.buffer_sources {
+                // Buffer-stack source slices are capped by one 1024² RGBA8 page (4 MiB).
+                // Two fit in an 8 MiB chunk, which avoids zeroing a full 32 MiB chunk for
+                // short edge cells; full eight-source cells can span four chunks.
+                let chunk_size = if self.buffer_sources { 8 << 20 } else { 32 << 20 };
                 self.upload_belt = Some(if self.buffer_sources {
-                    wgpu::util::StagingBelt::new_with_buffer_usages(device.clone(), 32 << 20,
+                    wgpu::util::StagingBelt::new_with_buffer_usages(device.clone(), chunk_size,
                         wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::STORAGE)
-                } else { wgpu::util::StagingBelt::new(device.clone(), 32 << 20) });
+                } else { wgpu::util::StagingBelt::new(device.clone(), chunk_size) });
                 self.upload_storage = self.buffer_sources;
             }
         }
