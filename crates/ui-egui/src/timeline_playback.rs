@@ -574,7 +574,20 @@ impl Runtime {
         if completed && self.pending_frame.is_none() && app.session.active().and_then(|st| st.doc.timeline.as_ref()).is_some_and(|t| t.current == frame) {
             self.stop();
         }
-        ctx.request_repaint_after(Duration::from_millis(if self.pending_frame.is_some() { 6 } else { 16 }));
+        let ceiling = Duration::from_millis(if self.pending_frame.is_some() { 6 } else { 16 });
+        let next_tick = if matches!(self.mode, TimelineMode::Video) {
+            // Wake at the next project-frame boundary. A fixed 16 ms poll can arrive just
+            // before a 30 fps boundary and then wait another whole UI tick, causing uneven
+            // presentation even when preparation fits the frame budget. Audio remains the
+            // clock; this only schedules the next opportunity to sample it.
+            let clock = if self.direction < 0 { elapsed } else { self.start_offset + elapsed };
+            let phase = (clock * self.fps).rem_euclid(1.0);
+            let seconds = (1.0 - phase) / self.fps;
+            if seconds.is_finite() {
+                Duration::from_secs_f64(seconds.clamp(0.001, ceiling.as_secs_f64()))
+            } else { ceiling }
+        } else { ceiling };
+        ctx.request_repaint_after(next_tick);
     }
 
     pub(crate) fn loading(&self) -> bool {

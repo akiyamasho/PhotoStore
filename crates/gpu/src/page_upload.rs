@@ -27,11 +27,11 @@ pub(super) fn pack(jobs: Vec<Job>) -> Result<(), Unsupported> {
     if jobs.is_empty() {
         return Ok(());
     }
-    // Shared-memory source buffers contain whole, already packed tiles. Sending each small
-    // transfer cell through an external rayon pool adds a blocking wake/join barrier per cell
-    // and competes with the decoder pool. Copy these tiles directly on the compositor worker;
-    // the row-repacking path below still benefits from parallel work.
     if jobs.iter().all(|job| job.tile_major) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(pool) = assist_pool() {
+            return pool.pack(jobs);
+        }
         return jobs.into_iter().try_for_each(pack_one);
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -43,11 +43,141 @@ pub(super) fn pack(jobs: Vec<Job>) -> Result<(), Unsupported> {
 }
 
 fn pack_one(mut job: Job) -> Result<(), Unsupported> {
-    let result = pack_one_inner(&mut job);
+    // A panic while touching a mapped range must still unmap the buffer. In the assisted path
+    // it must also become a completed job, or the caller could wait forever for the batch.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pack_one_inner(&mut job)))
+        .unwrap_or_else(|_| Err(Unsupported("page upload packing panicked".into())));
     if job.unmap_after {
         job.buffer.unmap();
     }
     result
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct AssistPool {
+    shared: Arc<AssistShared>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct AssistShared {
+    latest: std::sync::Mutex<(u64, Option<Arc<AssistBatch>>)>,
+    ready: std::sync::Condvar,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct AssistBatch {
+    jobs: std::sync::Mutex<Vec<Job>>,
+    done: std::sync::Mutex<AssistCompletion>,
+    finished: std::sync::Condvar,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct AssistCompletion {
+    remaining: usize,
+    error: Option<Unsupported>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl AssistPool {
+    fn new() -> Option<Self> {
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let helpers = if cores >= 8 { 3 } else if cores >= 4 { 1 } else { 0 };
+        if helpers == 0 {
+            return None;
+        }
+        let shared = Arc::new(AssistShared {
+            latest: std::sync::Mutex::new((0, None)),
+            ready: std::sync::Condvar::new(),
+        });
+        let mut started = 0;
+        for index in 0..helpers {
+            let worker_shared = Arc::clone(&shared);
+            if std::thread::Builder::new()
+                .name(format!("photostore-upload-assist-{index}"))
+                .spawn(move || assist_worker(worker_shared))
+                .is_ok()
+            {
+                started += 1;
+            }
+        }
+        (started != 0).then_some(Self { shared })
+    }
+
+    fn pack(&self, jobs: Vec<Job>) -> Result<(), Unsupported> {
+        let count = jobs.len();
+        let batch = Arc::new(AssistBatch {
+            jobs: std::sync::Mutex::new(jobs),
+            done: std::sync::Mutex::new(AssistCompletion { remaining: count, error: None }),
+            finished: std::sync::Condvar::new(),
+        });
+        {
+            let mut latest = lock_unpoisoned(&self.shared.latest);
+            latest.0 = latest.0.wrapping_add(1);
+            latest.1 = Some(Arc::clone(&batch));
+            self.shared.ready.notify_all();
+        }
+
+        // The caller participates immediately. Completion counts jobs, not helper wakeups, so
+        // this never waits for an idle helper after the caller has drained the queue.
+        drain_assist_batch(&batch);
+        let mut completion = lock_unpoisoned(&batch.done);
+        while completion.remaining != 0 {
+            completion = batch.finished.wait(completion).unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        match completion.error.take() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn assist_worker(shared: Arc<AssistShared>) {
+    let mut seen = 0;
+    loop {
+        let batch = {
+            let mut latest = lock_unpoisoned(&shared.latest);
+            while latest.0 == seen {
+                latest = shared.ready.wait(latest).unwrap_or_else(std::sync::PoisonError::into_inner);
+            }
+            seen = latest.0;
+            latest.1.as_ref().map(Arc::clone)
+        };
+        if let Some(batch) = batch {
+            drain_assist_batch(&batch);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn drain_assist_batch(batch: &AssistBatch) {
+    loop {
+        let job = lock_unpoisoned(&batch.jobs).pop();
+        let Some(job) = job else { break };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pack_one(job)))
+            .unwrap_or_else(|_| Err(Unsupported("page upload worker panicked".into())));
+        let mut completion = lock_unpoisoned(&batch.done);
+        if let Err(error) = result {
+            if completion.error.is_none() {
+                completion.error = Some(error);
+            }
+        }
+        completion.remaining -= 1;
+        if completion.remaining == 0 {
+            batch.finished.notify_all();
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn lock_unpoisoned<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn assist_pool() -> Option<&'static AssistPool> {
+    static POOL: std::sync::OnceLock<Option<AssistPool>> = std::sync::OnceLock::new();
+    POOL.get_or_init(AssistPool::new).as_ref()
 }
 
 fn pack_one_inner(job: &mut Job) -> Result<(), Unsupported> {
