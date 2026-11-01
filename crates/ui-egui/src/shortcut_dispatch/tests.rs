@@ -254,8 +254,8 @@ fn common_shortcuts_work_after_clicking_panels() {
         press(&mut h, "Cmd+=");
         assert!(h.state().current_zoom() > z, "{place:?}: ⌘+ zooms in");
         let rulers = h.state().ui.extras.rulers;
-        press(&mut h, "Cmd+R");
-        assert_ne!(h.state().ui.extras.rulers, rulers, "{place:?}: ⌘R toggles rulers");
+        press(&mut h, "Cmd+Alt+Shift+R");
+        assert_ne!(h.state().ui.extras.rulers, rulers, "{place:?}: ⌥⇧⌘R toggles rulers");
         let layers = h.state().ui.panels.layers;
         press(&mut h, "F7");
         assert_ne!(h.state().ui.panels.layers, layers, "{place:?}: F7 toggles Layers");

@@ -85,6 +85,7 @@ pub mod jobs_ui;
 pub mod kys_import;
 pub mod lasso_ui;
 pub mod layer_menu_ui;
+pub mod layer_copy_ui;
 pub mod layer_pick_ui;
 pub mod layer_props_ui;
 mod layer_reveal;
@@ -471,6 +472,8 @@ pub struct PhotoStoreApp {
     pub(crate) tab_strip: Option<canvas::TabStrip>,
     /// Files dropped on the canvas still to place, one Free Transform at a time.
     pub(crate) drop_places: std::collections::VecDeque<egui::DroppedFileHandle>,
+    /// Movie drops queued against the document that received each drop.
+    pub(crate) drop_movies: std::collections::VecDeque<file_open::PendingMovieDrop>,
     /// The document each of `ui.views` belongs to, as of the last [`Self::sync_views`].
     view_docs: Vec<DocId>,
     pub fps: f32,
@@ -535,6 +538,8 @@ pub struct PhotoStoreApp {
     /// The OS clipboard was already read for the paste in flight (Edit › Paste positions it first),
     /// so `run` doesn't read it a second time.
     pub(crate) clip_read_for_paste: bool,
+    /// Copy Layer popup captures document and layer identities when it opens.
+    pub(crate) copy_layer_dialog: Option<layer_copy_ui::Dialog>,
     /// Pointer position over the canvas (document px), for the Info panel and status bar.
     pub(crate) hover_doc: Option<[f64; 2]>,
     pub(crate) clone_preview: Option<crate::canvas::ClonePreviewCache>,
@@ -632,6 +637,7 @@ impl PhotoStoreApp {
             drop_canvas_rect: None,
             tab_strip: None,
             drop_places: Default::default(),
+            drop_movies: Default::default(),
             view_docs: Vec::new(),
             fps: 0.0,
             last_frame_time: 0.0,
@@ -661,6 +667,7 @@ impl PhotoStoreApp {
             os_clip_sig: None,
             clip_external: false,
             clip_read_for_paste: false,
+            copy_layer_dialog: None,
             transform_preview: None,
             move_mods: Default::default(),
             style_preview: None,
@@ -1341,6 +1348,7 @@ impl eframe::App for PhotoStoreApp {
             self.open_dropped(ctx, dropped, at);
         }
         self.place_next_dropped(ctx);
+        file_open::drain_movie_drops(self);
         // The control transport wakes the UI on arrival (ctx.request_repaint); only poll while a
         // screenshot is pending. (Polling every 50 ms here made idle apps render at 20 fps.)
         if !self.pending_screenshots.is_empty() {
@@ -1464,6 +1472,7 @@ impl eframe::App for PhotoStoreApp {
         workspace_ui::windows(self, &ctx);
         palette::show(self, &ctx);
         dialogs::show(self, &ctx);
+        layer_copy_ui::show(self, &ctx);
         recording_ui::windows(self, &ctx);
         jobs_ui::dialog(self, &ctx);
         discard_ui::show(self, &ctx);

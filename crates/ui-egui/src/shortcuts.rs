@@ -41,6 +41,7 @@ pub fn pretty(s: &str) -> String {
     s.split('+')
         .map(|p| match (p, mac) {
             ("Cmd", true) => "⌘".to_string(),
+            ("Ctrl", true) => "⌃".to_string(),
             ("Cmd", false) => "Ctrl".to_string(),
             ("Shift", true) => "⇧".to_string(),
             ("Alt", true) => "⌥".to_string(),
@@ -155,7 +156,7 @@ pub const TIMELINE_SHORTCUTS: &[(&str, &str, Option<&str>)] = &[
     ("timeline.editor.ungroup", "Ungroup selected layers", Some("Cmd+Shift+G")),
     ("timeline.editor.makeCompound", "Convert selection to Smart Object", Some("Alt+G")),
     ("timeline.editor.unpackCompound", "Convert Smart Object to layers", Some("Alt+Shift+G")),
-    ("timeline.editor.speedPanel", "Show clip speed controls", Some("Cmd+R")),
+    ("timeline.editor.speedPanel", "Show clip speed controls", None),
     ("timeline.editor.speedCurve", "Show speed curve controls", Some("Shift+B")),
     ("timeline.editor.audioVolumeUp", "Raise selected audio by 0.1 dB", Some("Cmd+.")),
     ("timeline.editor.audioVolumeDown", "Lower selected audio by 0.1 dB", Some("Cmd+,")),
@@ -242,7 +243,7 @@ pub fn capcut_reference_mapping(action: &str, binding: &str) -> String {
         "Deselect" => "Clear work area and selection · Alt+X",
         "Group" => "Group selected layers · Cmd+G",
         "Ungroup" => "Ungroup layers · Cmd+Shift+G",
-        "Show speed panel" => "Selected clip speed inspector · Cmd+R",
+        "Show speed panel" => "Selected clip speed inspector · no default shortcut",
         "Curve speed" => "Variable speed curve editor · Shift+B",
         "Create compound clip (subproject)" => "Convert selected layer to Smart Object · Alt+G",
         "Undo compound clip (subproject)" => "Convert Smart Object to layers · Alt+Shift+G",
@@ -332,7 +333,34 @@ fn dispatch_timeline_shortcuts(app: &mut PhotoStoreApp, ctx: &egui::Context) -> 
         let keys = app.session.prefs().shortcuts_for(id, default.as_deref());
         for raw in keys {
             let Some(shortcut) = parse(&raw) else { continue };
-            if !consume(ctx, &shortcut) {
+            // A video canvas shares the timeline's persistent shortcut context. Space over the
+            // canvas belongs to hold_keys/canvas panning; it must not also toggle playback.
+            let pointer_on_canvas = shortcut.logical_key == Key::Space
+                && (app.drop_canvas_rect.is_some_and(|rect| ctx.input(|input| input.pointer.hover_pos()).is_some_and(|pointer| rect.contains(pointer)))
+                    || crate::canvas::hand_pan_active(app, ctx));
+            if pointer_on_canvas {
+                continue;
+            }
+            let pressed = if *id == "timeline.editor.playPause" {
+                // egui can emit repeated Space keydowns during a long press. Consume repeats so
+                // they cannot leak to global shortcuts, but toggle playback only on the first.
+                ctx.input_mut(|input| {
+                    let mut first_press = false;
+                    input.events.retain(|event| {
+                        let egui::Event::Key { key, pressed: true, repeat, modifiers, .. } = event else { return true };
+                        if key_matches(&shortcut, *key, *modifiers) {
+                            first_press |= !*repeat;
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                    first_press
+                })
+            } else {
+                consume(ctx, &shortcut)
+            };
+            if !pressed {
                 continue;
             }
             let Some((document, active_layer, selected_layers)) = app.session.active().map(|st| (st.doc.clone(), st.active_layer, st.selected_layers.clone()))
@@ -1134,7 +1162,7 @@ pub fn handle(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     // Dialogs (and Liquify's panel while one of its controls has focus) keep canvas zoom; a
     // focused text field keeps its keys.
     let liquify_focus = app.distort.liquify.is_some() && focus != Focus::None;
-    if liquify_focus || !app.ui.dialogs.is_empty() || app.discard.is_some() {
+    if liquify_focus || !app.ui.dialogs.is_empty() || app.copy_layer_dialog.is_some() || app.discard.is_some() {
         if focus != Focus::Text {
             nav_keys(app, ctx);
         }
@@ -1512,7 +1540,7 @@ mod tests {
         } else {
             assert_eq!(new, "New document…     Ctrl+N");
         }
-        assert_eq!(tip_label(&app, "Rulers", "view.rulers"), format!("Rulers  ({})", pretty("Cmd+R")));
+        assert_eq!(tip_label(&app, "Rulers", "view.rulers"), format!("Rulers  ({})", pretty("Cmd+Alt+Shift+R")));
         // A user override is picked up…
         app.session.prefs.edit(|p| p.shortcuts.insert("file.new".into(), "Cmd+Shift+N".into()));
         assert_eq!(command_label(&app, "New document…", "file.new"), format!("New document…     {}", pretty("Cmd+Shift+N")));

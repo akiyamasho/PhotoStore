@@ -2320,6 +2320,42 @@ fn hdr_preview(app: &PhotoStoreApp, doc: &photostore_doc::Document) -> Option<[f
     app.session.color.hdr_preview(doc).map(|h| [h.exposure, h.gamma])
 }
 
+/// A canvas-owned Hand gesture uses pointer displacement from the actual press, including the
+/// movement before egui's drag threshold. It stays captured across the canvas edge and releases
+/// with its button, independently of key repeat or a Space release during the drag.
+#[derive(Clone, Copy)]
+struct CanvasPan {
+    button: PointerButton,
+    last: egui::Pos2,
+}
+pub(crate) fn hand_pan_active(app: &PhotoStoreApp, ctx: &egui::Context) -> bool {
+    app.session.active().is_some_and(|state| ctx.data(|data| data.get_temp::<CanvasPan>(egui::Id::new(("canvas-pan", ctx.viewport_id(), state.doc.id.0)))).is_some())
+}
+fn hand_pan_delta(ctx: &egui::Context, response: &egui::Response, hand: bool, key: egui::Id) -> Option<egui::Vec2> {
+    let previous = ctx.data(|data| data.get_temp::<CanvasPan>(key));
+    let (position, button, origin, owned, down, released) = ctx.input(|input| {
+        let pointer = &input.pointer;
+        let button = previous.map(|pan| pan.button).unwrap_or_else(|| {
+            if pointer.middle_down() || pointer.button_pressed(PointerButton::Middle) { PointerButton::Middle } else { PointerButton::Primary }
+        });
+        (pointer.latest_pos(), button, pointer.press_origin(), response.is_pointer_button_down_on(), pointer.button_down(button), pointer.button_released(button))
+    });
+    let Some(position) = position else {
+        ctx.data_mut(|data| data.remove::<CanvasPan>(key));
+        return None;
+    };
+    if (!down && !released) || (previous.is_none() && (!hand || !owned || origin.is_none_or(|p| !response.rect.contains(p)))) {
+        ctx.data_mut(|data| data.remove::<CanvasPan>(key));
+        return None;
+    }
+    let last = previous.map_or_else(|| origin.unwrap_or(position), |pan| pan.last);
+    ctx.data_mut(|data| {
+        if down { data.insert_temp(key, CanvasPan { button, last: position }); }
+        else { data.remove::<CanvasPan>(key); }
+    });
+    Some(position - last)
+}
+
 /// Draw one canvas view and handle its input. `primary` = main window (tools active).
 pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect: Rect, mut view: View, primary: bool) -> View {
     let ctx = ui.ctx().clone();
@@ -2380,6 +2416,101 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
             ctx.data_mut(|data| data.remove::<u64>(egui::Id::new("timeline-scoped-context")));
         }
     }
+    // Resolve navigation against the previous camera, then draw this frame at the new camera.
+    // Under an open dialog the canvas widget is inert, but the image still pans and zooms.
+    let under_dialog = !app.ui.dialogs.is_empty();
+    let free_hover = under_dialog && crate::dialogs::free_pointer_over(&ctx, rect).is_some();
+    // Navigation (wheel_nav.rs): scroll pans (⇧ or ⌘/Ctrl sideways); pinch and ⌥-scroll zoom around the pointer.
+    let wheel = crate::wheel_nav::read(&ctx, app.session.prefs().general.zoom_with_scroll_wheel);
+    // The wheel also scrolls over the scrollbars drawn on top of the canvas (last frame's hover).
+    let bars_id = egui::Id::new(("pc-canvas-bars-hover", idx));
+    let over_bars = ctx.data(|d| d.get_temp::<bool>(bars_id)).unwrap_or(false);
+    if response.hovered() || free_hover || over_bars {
+        let pointer = ui.input(|i| i.pointer.hover_pos());
+        match (wheel, pointer) {
+            (Some(crate::wheel_nav::Wheel::Zoom(f)), Some(p)) => {
+                // At a limit the view stays put, as in Photoshop: a notch past 12800 % neither
+                // zooms nor slides the image towards the pointer.
+                let nz = crate::zoom_levels::clamp(view.zoom * f, view.doc_size);
+                if nz != view.zoom {
+                    zoom_about(&mut view, &xf, p, nz, false, ppp);
+                }
+            }
+            (Some(crate::wheel_nav::Wheel::Pan(scroll)), _) => {
+                let d = xf.unmap_vec(scroll) / (view.zoom / ppp);
+                view.center[0] -= d.x;
+                view.center[1] -= d.y;
+            }
+            _ => {}
+        }
+        let rotate_trackpad = app.session.prefs().enhanced_controls.rotate_view_with_trackpad;
+        if let Some(delta) = crate::rotate_view::trackpad_delta(&ctx, rotate_trackpad) {
+            let next = view.rotation + delta;
+            if next.is_finite() {
+                view.rotation = crate::rotate_view::wrap_deg(next);
+            }
+        }
+    }
+
+    // Pen pressure/tilt for this frame's tool events (mouse = 1.0), unless Preferences › Tools ›
+    // Use Tablet Pressure is off; the pen's eraser end selects the Eraser.
+    app.stylus.use_pressure = app.session.prefs().tools.use_tablet_pressure;
+    let curve = app.session.prefs().tools.pressure_curve.clone();
+    app.stylus.set_pressure_curve(&curve);
+    app.stylus.update_for_frame(ui.ctx().cumulative_frame_nr(), &ui.input(|i| i.events.clone()));
+    crate::stylus::Stylus::sync_eraser_tool(app);
+    // A Magnetic Lasso border left behind by a tool or document switch is dropped.
+    crate::magnetic_lasso_ui::frame(app);
+    // Held keys (hold_keys.rs): Space repositions a crop frame, marquee, lasso or shape being
+    // drawn; otherwise Space is the Hand and ⌘Space / ⌘⌥Space the Zoom tool while held.
+    let reposition = crate::hold_keys::reposition_held(app, &ctx);
+    crate::crop_ui::set_space(app, reposition);
+    // ⌘ (Ctrl) held: a temporary Straighten with the Crop tool.
+    crate::crop_straighten::set_held(app, !ctx.text_edit_focused() && ui.input(|i| i.modifiers.command));
+    // A tab switched this frame drops the other document's pending crop (#1918).
+    crate::crop_ui::cancel_stale(app);
+    crate::crop_ui::ensure_frame(app);
+    let mut drawing = crate::crop_ui::active(app);
+    if let Some(d) = app.drag.as_mut().filter(|d| crate::hold_keys::repositions(d.tool)) {
+        d.reposition = reposition;
+        drawing = true;
+    }
+    let temporary = crate::hold_keys::for_frame(app, &ctx, drawing || crate::type_transform::active(app));
+    let space_pan = temporary == Some(crate::hold_keys::Temporary::Hand);
+    let middle = ui.input(|i| i.pointer.middle_down());
+    let tool = match temporary {
+        Some(t) => t.tool(),
+        None if middle => Tool::Hand,
+        None => app.ui.tool,
+    };
+    // ⌘ held: this frame's gestures go to the Move tool (`PhotoStoreApp::active_tool`). The Hand
+    // and Zoom never reach `tool_event`, so only the Move needs the state machine to know.
+    app.tool_override = (temporary == Some(crate::hold_keys::Temporary::Move)).then_some(Tool::Move);
+    // Zoom direction: the temporary zoom key decides, else ⌥ (Zoom tool).
+    let zoom_out = |alt: bool| match temporary {
+        Some(crate::hold_keys::Temporary::ZoomOut) => true,
+        Some(crate::hold_keys::Temporary::ZoomIn) => false,
+        _ => alt,
+    };
+
+    let dialog_panning = if under_dialog {
+        let picking = primary && (crate::color_picker_ui::top(app).is_some() || crate::adjust_dialog::picker_armed(app));
+        let range_picking = primary && app.ui.dialogs.last().is_some_and(|d| crate::color_range_ui::owns(&d.fields) && crate::color_range_ui::controls(&d.fields).sampling);
+        crate::dialogs::pan_delta(&ctx, rect, app.ui.tool == Tool::Hand && !picking && !range_picking)
+    } else { None };
+    let hand_panning = if !under_dialog {
+        hand_pan_delta(&ctx, &response, tool == Tool::Hand, egui::Id::new(("canvas-pan", ctx.viewport_id(), doc.id.0)))
+    } else { None };
+    if let Some(delta) = dialog_panning.or(hand_panning) {
+        let delta = xf.unmap_vec(delta) / (view.zoom / ppp);
+        view.center[0] -= delta.x;
+        view.center[1] -= delta.y;
+    }
+    // Apply bounds to the camera being displayed, avoiding a next-frame correction at edges.
+    if !app.session.prefs().tools.overscroll {
+        crate::scrollbars::clamp_view(&mut view, rect.size(), ppp);
+    }
+    let xf = ViewXform { rect, zoom: view.zoom / ppp, center: view.center, flip, rotation: view.rotation };
     let painter = ui.painter_at(rect);
 
     match crate::prefs_ui::pasteboard_color(app) {
@@ -2608,82 +2739,6 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
         }
     }
 
-    // Under an open dialog the canvas widget is inert, but the image still pans and zooms.
-    let under_dialog = !app.ui.dialogs.is_empty();
-    let free_hover = under_dialog && crate::dialogs::free_pointer_over(&ctx, rect).is_some();
-    // Navigation (wheel_nav.rs): scroll pans (⇧ or ⌘/Ctrl sideways); pinch and ⌥-scroll zoom around the pointer.
-    let wheel = crate::wheel_nav::read(&ctx, app.session.prefs().general.zoom_with_scroll_wheel);
-    // The wheel also scrolls over the scrollbars drawn on top of the canvas (last frame's hover).
-    let bars_id = egui::Id::new(("pc-canvas-bars-hover", idx));
-    let over_bars = ctx.data(|d| d.get_temp::<bool>(bars_id)).unwrap_or(false);
-    if response.hovered() || free_hover || over_bars {
-        let pointer = ui.input(|i| i.pointer.hover_pos());
-        match (wheel, pointer) {
-            (Some(crate::wheel_nav::Wheel::Zoom(f)), Some(p)) => {
-                // At a limit the view stays put, as in Photoshop: a notch past 12800 % neither
-                // zooms nor slides the image towards the pointer.
-                let nz = crate::zoom_levels::clamp(view.zoom * f, view.doc_size);
-                if nz != view.zoom {
-                    zoom_about(&mut view, &xf, p, nz, false, ppp);
-                }
-            }
-            (Some(crate::wheel_nav::Wheel::Pan(scroll)), _) => {
-                let d = xf.unmap_vec(scroll) / (view.zoom / ppp);
-                view.center[0] -= d.x;
-                view.center[1] -= d.y;
-            }
-            _ => {}
-        }
-        let rotate_trackpad = app.session.prefs().enhanced_controls.rotate_view_with_trackpad;
-        if let Some(delta) = crate::rotate_view::trackpad_delta(&ctx, rotate_trackpad) {
-            let next = view.rotation + delta;
-            if next.is_finite() {
-                view.rotation = crate::rotate_view::wrap_deg(next);
-            }
-        }
-    }
-
-    // Pen pressure/tilt for this frame's tool events (mouse = 1.0), unless Preferences › Tools ›
-    // Use Tablet Pressure is off; the pen's eraser end selects the Eraser.
-    app.stylus.use_pressure = app.session.prefs().tools.use_tablet_pressure;
-    let curve = app.session.prefs().tools.pressure_curve.clone();
-    app.stylus.set_pressure_curve(&curve);
-    app.stylus.update_for_frame(ui.ctx().cumulative_frame_nr(), &ui.input(|i| i.events.clone()));
-    crate::stylus::Stylus::sync_eraser_tool(app);
-    // A Magnetic Lasso border left behind by a tool or document switch is dropped.
-    crate::magnetic_lasso_ui::frame(app);
-    // Held keys (hold_keys.rs): Space repositions a crop frame, marquee, lasso or shape being
-    // drawn; otherwise Space is the Hand and ⌘Space / ⌘⌥Space the Zoom tool while held.
-    let reposition = crate::hold_keys::reposition_held(app, &ctx);
-    crate::crop_ui::set_space(app, reposition);
-    // ⌘ (Ctrl) held: a temporary Straighten with the Crop tool.
-    crate::crop_straighten::set_held(app, !ctx.text_edit_focused() && ui.input(|i| i.modifiers.command));
-    // A tab switched this frame drops the other document's pending crop (#1918).
-    crate::crop_ui::cancel_stale(app);
-    crate::crop_ui::ensure_frame(app);
-    let mut drawing = crate::crop_ui::active(app);
-    if let Some(d) = app.drag.as_mut().filter(|d| crate::hold_keys::repositions(d.tool)) {
-        d.reposition = reposition;
-        drawing = true;
-    }
-    let temporary = crate::hold_keys::for_frame(app, &ctx, drawing || crate::type_transform::active(app));
-    let space_pan = temporary == Some(crate::hold_keys::Temporary::Hand);
-    let middle = ui.input(|i| i.pointer.middle_down());
-    let tool = match temporary {
-        Some(t) => t.tool(),
-        None if middle => Tool::Hand,
-        None => app.ui.tool,
-    };
-    // ⌘ held: this frame's gestures go to the Move tool (`PhotoStoreApp::active_tool`). The Hand
-    // and Zoom never reach `tool_event`, so only the Move needs the state machine to know.
-    app.tool_override = (temporary == Some(crate::hold_keys::Temporary::Move)).then_some(Tool::Move);
-    // Zoom direction: the temporary zoom key decides, else ⌥ (Zoom tool).
-    let zoom_out = |alt: bool| match temporary {
-        Some(crate::hold_keys::Temporary::ZoomOut) => true,
-        Some(crate::hold_keys::Temporary::ZoomIn) => false,
-        _ => alt,
-    };
-
     if under_dialog {
         // With a colour dialog picker armed the image is its eyedropper, whatever the tool; Space
         // and the middle button still pan. Curves uses the same merged-composite sampler as the
@@ -2693,10 +2748,7 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
         let range_picking =
             primary && app.ui.dialogs.last().is_some_and(|d| crate::color_range_ui::owns(&d.fields) && crate::color_range_ui::controls(&d.fields).sampling);
         let hand = app.ui.tool == Tool::Hand && !picking && !range_picking;
-        if let Some(d) = crate::dialogs::pan_delta(&ctx, rect, hand) {
-            let d = xf.unmap_vec(d) / (view.zoom / ppp);
-            view.center[0] -= d.x;
-            view.center[1] -= d.y;
+        if dialog_panning.is_some() {
             ctx.set_cursor_icon(crate::tool_cursor::hand(&ctx, true));
         } else if free_hover && (space_pan || hand) {
             ctx.set_cursor_icon(crate::tool_cursor::hand(&ctx, false));
@@ -2725,10 +2777,7 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
             crate::color_range_ui::canvas_eyedropper(app, &ctx, p, press);
         }
     }
-    if tool == Tool::Hand && response.dragged() {
-        let d = xf.unmap_vec(response.drag_delta()) / (view.zoom / ppp);
-        view.center[0] -= d.x;
-        view.center[1] -= d.y;
+    if hand_panning.is_some() {
         // The tool cursors below are skipped while panning: the fist is set here (#2196).
         ctx.set_cursor_icon(crate::tool_cursor::hand(&ctx, true));
     } else if primary && !bar_active {

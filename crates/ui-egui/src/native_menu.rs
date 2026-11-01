@@ -974,7 +974,7 @@ mod tests {
         let synced = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let mut app = app(true);
         let ctx = egui::Context::default();
-        let rulers = Chord::parse("Cmd+R").unwrap();
+        let rulers = Chord::parse("Cmd+Alt+Shift+R").unwrap();
         app.services.native_menu = Some(NativeMenu::new(Box::new(Fake { synced: synced.clone(), events: vec![Event::Key(rulers)] })));
         let before = app.ui.extras.rulers;
         let mut raw = egui::RawInput::default();

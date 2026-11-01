@@ -7,6 +7,7 @@
 
 use crate::{PhotoStoreApp, notices};
 use photostore_engine::file_cmds::{is_template, untitled_name};
+use photostore_doc::DocId;
 
 /// A request from the operating system, delivered by the platform shell through
 /// [`Services::os_events`](crate::Services::os_events).
@@ -33,6 +34,41 @@ pub enum DropTarget {
     Elsewhere,
 }
 
+/// Movie import queued against the document that received the drop.
+#[derive(Clone, Debug)]
+pub(crate) struct PendingMovieDrop {
+    pub(crate) document: DocId,
+    pub(crate) path: String,
+    pub(crate) name: String,
+}
+
+pub(crate) fn queue_movie_drop(app: &mut PhotoStoreApp, path: String, name: String) -> Result<(), String> {
+    let document = app.session.active().ok_or("no document")?.doc.id;
+    app.drop_movies.push_back(PendingMovieDrop { document, path, name });
+    Ok(())
+}
+
+/// Start one movie import at a time, binding it to the document captured when dropped.
+pub(crate) fn drain_movie_drops(app: &mut PhotoStoreApp) {
+    if app.ui.transform.is_some() || app.drag.is_some() || !app.ui.dialogs.is_empty() || app.copy_layer_dialog.is_some() || app.discard.is_some() { return; }
+    let Some(next) = app.drop_movies.front().cloned() else { return };
+    let Some(index) = app.session.documents().iter().position(|st| st.doc.id == next.document) else {
+        app.drop_movies.pop_front();
+        app.open_failed(&next.name, "the document receiving this dropped movie was closed");
+        return;
+    };
+    if app.session.job_on(next.document).is_some() { return; }
+    let previous = app.session.active_index();
+    app.session.set_active(index);
+    let result = crate::jobs_ui::run(app, "layer.videoLayers.newVideoLayerFromFile", serde_json::json!({"path": next.path, "createTimeline": false}));
+    if let Some(previous) = previous { app.session.set_active(previous); }
+    match result {
+        Ok(_) => { app.drop_movies.pop_front(); }
+        Err(error) if error.contains("still running") || error.contains("second background job") => {}
+        Err(error) => { app.drop_movies.pop_front(); app.open_failed(&next.name, &error); }
+    }
+}
+
 /// A dropped file's name ("dropped" when it has none).
 fn dropped_name(f: &egui::DroppedFileHandle) -> String {
     f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped".into())
@@ -48,6 +84,11 @@ fn is_media_file(path: &str) -> bool {
     let ext = ext.to_ascii_lowercase();
     photostore_engine::media_backend::supported_video_extensions().contains(&ext.as_str())
         || photostore_engine::media_backend::supported_audio_extensions().contains(&ext.as_str())
+}
+
+fn is_movie_path_name(path: &str) -> bool {
+    let Some(ext) = std::path::Path::new(path).extension().and_then(|ext| ext.to_str()) else { return false };
+    photostore_engine::media_backend::supported_video_extensions().contains(&ext.to_ascii_lowercase().as_str())
 }
 
 impl PhotoStoreApp {
@@ -154,12 +195,25 @@ impl PhotoStoreApp {
     /// absolute path, read in bounded reads (#375) rather than egui's whole-file read.
     pub fn open_dropped(&mut self, ctx: &egui::Context, files: Vec<egui::DroppedFileHandle>, at: Option<egui::Pos2>) {
         let target = self.drop_target(ctx, at);
+        // Native winit drops may omit their position. Route those movies to the open document;
+        // a known modal/other-window drop, tab-strip drop, and explicit File › Open stay separate.
+        let movie_to_document = matches!(target, DropTarget::Canvas) || (at.is_none() && self.session.active().is_some() && self.ui.chrome.home.is_none() && self.jobs.focus.is_none() && self.ui.dialogs.is_empty() && self.copy_layer_dialog.is_none() && self.discard.is_none());
         let mut slot = match target {
             DropTarget::Tabs(slot) => Some(slot),
             DropTarget::Canvas | DropTarget::Elsewhere => None,
         };
         for f in files {
             let name = dropped_name(&f);
+            if movie_to_document && is_movie_path_name(&name) && !crate::preset_files_ui::is_preset_file(&name) {
+                if f.path().is_absolute() {
+                    if let Err(error) = queue_movie_drop(self, f.path().to_string_lossy().into_owned(), name.clone()) {
+                        self.open_failed(&name, &error);
+                    }
+                } else {
+                    self.open_failed(&name, "dropping a movie into a document requires a local file path");
+                }
+                continue;
+            }
             if target == DropTarget::Canvas && !crate::preset_files_ui::is_preset_file(&name) && !is_media_file(&name) {
                 self.drop_places.push_back(f);
                 continue;

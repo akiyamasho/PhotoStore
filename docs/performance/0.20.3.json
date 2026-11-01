@@ -1,0 +1,28 @@
+{
+  "status": "Two focused data-preservation checks passed; production compiler/build and delivery pending",
+  "checks": [
+    {
+      "args": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "photostore-engine",
+        "--lib",
+        "layer_workflow_boundary",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "seconds": 435.342
+    }
+  ],
+  "test_result": {
+    "passed": 2,
+    "failed": 0,
+    "runtime_seconds": 1.43
+  },
+  "scope": "Synthetic source and disposable documents only: deferred import native persistence/activation/audio/range/work area/atomic failure/undo; same/cross-document source-preserving copy/catalog IDs/placement/undo. No broad QA, CUA, live capture or native physical input/device acceptance."
+}

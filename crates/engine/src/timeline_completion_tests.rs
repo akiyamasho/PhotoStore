@@ -282,3 +282,84 @@ fn scalable_playback_real_size_presentation_throughput_under_cache_pressure() {
     eprintln!("SCALABLE_PLAYBACK_PRESSURE {}",serde_json::to_string(&result).unwrap());
     crate::media_budget::configure(8usize<<30);
 }
+
+#[test]
+fn layer_workflow_boundary_deferred_video_roundtrip_activation_and_undo() {
+    let Some(path) = fixture() else { return };
+    let mut session = Session::new();
+    session.execute("file.new", json!({"width":64,"height":64})).unwrap();
+    let result = session.execute("layer.videoLayers.newVideoLayerFromFile", json!({"path":path,"createTimeline":false})).unwrap();
+    let layer = photostore_doc::LayerId(result["layer"].as_u64().unwrap());
+    let doc = &session.active().unwrap().doc;
+    assert!(doc.timeline.is_none(), "a document drop must not implicitly create a timeline");
+    assert!(doc.layer(layer).unwrap().video.as_ref().unwrap().playback.awaiting_video_timeline);
+    assert!(doc.media_assets.iter().any(|asset| asset.metadata.as_ref().is_some_and(|metadata| metadata.audio.is_some())));
+    let bytes = photostore_format::save_to_bytes(doc, &Default::default()).unwrap();
+    let loaded = photostore_format::load_from_bytes(&bytes).unwrap();
+    let mut reopened = Session::new();
+    reopened.add_document(loaded, None);
+    reopened.execute("timeline.createFrameAnimation", json!({"duration":30})).unwrap();
+    reopened.execute("timeline.setFrame", json!({"frame":10})).unwrap();
+    let doc = &reopened.active().unwrap().doc;
+    assert_eq!(crate::source_time_for_layer(doc, doc.layer(layer).unwrap(), 10).unwrap(), crate::source_time_for_layer(doc, doc.layer(layer).unwrap(), 0).unwrap(), "Frame Animation must keep a deferred movie static");
+    let before = (**doc).clone();
+    reopened.execute("timeline.create", json!({})).unwrap();
+    let doc = &reopened.active().unwrap().doc;
+    let timeline = doc.timeline.as_ref().unwrap();
+    assert_eq!(timeline.duration, 90);
+    assert_eq!(timeline.work_end, 90, "the full imported clip must be playable, not only the original default 30 frames");
+    assert!(timeline.layer_ranges.iter().any(|range| range.layer==layer && range.end==90));
+    assert!(!doc.layer(layer).unwrap().video.as_ref().unwrap().playback.awaiting_video_timeline);
+    let audio: Vec<_> = timeline.audio_tracks.iter().flat_map(|track| &track.clips).filter(|clip| clip.linked_video==Some(layer)).collect();
+    assert_eq!(audio.len(), 1);
+    assert!(audio[0].asset_id.is_some());
+    assert!(reopened.undo());
+    assert_eq!(*reopened.active().unwrap().doc, before, "activation and linked audio must undo as one edit");
+    reopened.edit("Oversized source boundary fixture", |doc, _| {
+        let video = doc.layer_mut(layer).unwrap().video.as_mut().unwrap();
+        let backing = video.movie_backing.as_mut().unwrap();
+        backing.frame_count = 1_000_000;
+        backing.trim_out_frame = 999_999;
+        Ok(())
+    }).unwrap();
+    let before = reopened.active().unwrap().doc.clone();
+    let history = reopened.active().unwrap().history.past_len();
+    assert!(reopened.execute("timeline.create", json!({"fps":1000})).is_err());
+    assert_eq!(reopened.active().unwrap().doc, before, "failed activation must not replace the old timeline or partial audio");
+    assert_eq!(reopened.active().unwrap().history.past_len(), history);
+}
+
+#[test]
+fn layer_workflow_boundary_copy_preserves_source_and_catalog_identity() {
+    let Some(path) = fixture() else { return };
+    let mut session = Session::new();
+    session.execute("file.new", json!({"width":64,"height":64})).unwrap();
+    let result = session.execute("layer.videoLayers.newVideoLayerFromFile", json!({"path":path,"createTimeline":false})).unwrap();
+    let layer = photostore_doc::LayerId(result["layer"].as_u64().unwrap());
+    let source = session.active().unwrap().doc.clone();
+    let source_asset = source.layer(layer).unwrap().video.as_ref().unwrap().asset_id.unwrap();
+    session.execute("file.new", json!({"width":64,"height":64})).unwrap();
+    let destination_background = session.active().unwrap().doc.layers[0].id;
+    let result = session.execute("layer.copyToDocument", json!({"source":0,"document":1,"layers":[layer.0],"above":destination_background.0,"name":"Copied movie"})).unwrap();
+    let copy = photostore_doc::LayerId(result["layers"][0].as_u64().unwrap());
+    assert_eq!(session.documents()[0].doc, source, "a copy must preserve the source document");
+    let target = &session.active().unwrap().doc;
+    let asset = target.layer(copy).unwrap().video.as_ref().unwrap().asset_id.unwrap();
+    assert_ne!(asset, source_asset, "catalog identities belong to their destination document");
+    let original_asset = source.media_assets.iter().find(|asset| asset.id==source_asset).unwrap();
+    let copied_asset = target.media_assets.iter().find(|entry| entry.id==asset).unwrap();
+    assert_eq!(copied_asset.path, original_asset.path);
+    assert_eq!(copied_asset.metadata, original_asset.metadata);
+    assert!(target.timeline.is_none());
+    assert!(session.undo());
+    assert!(session.active().unwrap().doc.media_assets.is_empty());
+    session.set_active(0);
+    let above = session.active().unwrap().doc.layers[0].id;
+    let result = session.execute("layer.copyToDocument", json!({"source":0,"document":0,"allowSame":true,"layers":[layer.0],"above":above.0,"name":"Placed copy"})).unwrap();
+    let copy = photostore_doc::LayerId(result["layers"][0].as_u64().unwrap());
+    assert_eq!(session.active().unwrap().doc.layers[1].id, copy);
+    assert_eq!(session.active().unwrap().doc.layer(copy).unwrap().video.as_ref().unwrap().asset_id, Some(source_asset));
+    let before = session.active().unwrap().doc.clone();
+    assert!(session.execute("layer.copyToDocument", json!({"document":0,"allowSame":true,"layers":[layer.0],"above":999_999})).is_err());
+    assert_eq!(session.active().unwrap().doc, before);
+}

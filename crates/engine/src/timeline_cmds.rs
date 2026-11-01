@@ -159,29 +159,96 @@ pub(crate) fn rate_param(cmd:&str,p:&Value)->Result<Option<photostore_doc::Ratio
 
 fn create(s: &mut Session, p: &Value) -> Result<Value> {
     let duration = duration_param("timeline.create", p)?.unwrap_or(30);
-    let fps = fps_param("timeline.create", p)?.unwrap_or(30.0);
-    let rate = rate_param("timeline.create",p)?;
+    let fps_explicit = fps_param("timeline.create", p)?;
+    let rate_explicit = rate_param("timeline.create",p)?;
+    let imported_rate = if fps_explicit.is_none() && rate_explicit.is_none() && mode_is_video(p) {
+        s.active().and_then(|st| st.doc.walk().into_iter().find_map(|(_, _, layer)| {
+            let video = layer.video.as_ref()?.movie_backing.as_ref()?;
+            let asset_id = layer.video.as_ref()?.asset_id?;
+            let source_rate = st.doc.media_assets.iter().find(|asset| asset.id == asset_id)?.metadata.as_ref()?.video.as_ref()?.frame_rate;
+            (video.frame_count > 0 && source_rate.valid()).then_some(source_rate)
+        }))
+    } else { None };
+    let rate = rate_explicit.or(imported_rate);
+    let fps = fps_explicit.unwrap_or_else(|| rate.map(|rate| rate.as_f64() as f32).unwrap_or(30.0));
     let mode = match p.get("mode").and_then(Value::as_str) {
         Some("frameAnimation") | Some("frame-animation") => TimelineMode::FrameAnimation,
         _ => TimelineMode::Video,
     };
-    if s.active().is_some_and(|st| st.doc.walk().iter().any(|(_, _, l)| l.position_animation.is_some() || l.transform_animation.is_some()))
-    {
-        s.edit("Create Timeline", |doc, _| {
-            let current = doc.timeline.as_ref().map_or(0, |t| t.current);
+    s.edit("Create Timeline", |doc, _| {
+        if doc.walk().iter().any(|(_, _, layer)| layer.position_animation.is_some() || layer.transform_animation.is_some()) {
+            let current = doc.timeline.as_ref().map_or(0, |timeline| timeline.current);
             crate::video_cmds::sync(doc);
             freeze_and_clear_owned_position(&mut doc.layers, current);
             crate::smart_transform_cmds::clear_tracks(&mut doc.layers);
-            let mut next = Timeline::new(duration, fps);
-            next.rational_rate=rate;
-            next.mode = mode;
-            doc.timeline = Some(next);
-            crate::video_cmds::sync(doc);
-            Ok(())
-        })?;
-        return info(s);
+        }
+        let mut next = Timeline::new(duration, fps);
+        next.rational_rate = rate;
+        next.mode = mode;
+        doc.timeline = Some(next);
+        if mode == TimelineMode::Video { activate_imported_movies(doc, false)?; }
+        crate::video_cmds::sync(doc);
+        Ok(())
+    })?;
+    info(s)
+}
+
+fn mode_is_video(p: &Value) -> bool {
+    !matches!(p.get("mode").and_then(Value::as_str), Some("frameAnimation") | Some("frame-animation"))
+}
+
+pub(crate) fn activate_imported_movies(doc: &mut Document, deferred_only: bool) -> Result<()> {
+    let Some(timeline_fps) = doc.timeline.as_ref().filter(|t| t.mode == TimelineMode::Video).map(|t| t.project_rate().as_f64()) else { return Ok(()) };
+    let mut sources = Vec::new();
+    for (_, _, layer) in doc.walk() {
+        let Some(video) = layer.video.as_ref().filter(|v| v.movie_backing.is_some() && (!deferred_only || v.playback.awaiting_video_timeline)) else { continue };
+        let Some(backing) = video.movie_backing.as_ref() else { continue };
+        let asset = video.asset_id.and_then(|id| doc.media_assets.iter().find(|asset| asset.id == id));
+        let source_fps = asset.and_then(|a| a.metadata.as_ref()).and_then(|m| m.video.as_ref()).map(|v| v.frame_rate.as_f64()).unwrap_or(f64::from(video.fps));
+        let source_fps = if source_fps.is_finite() && source_fps > 0.0 { source_fps } else { 30.0 };
+        let count = backing.trim_out_frame.saturating_sub(backing.trim_in_frame).saturating_add(1);
+        let interpreted_fps = f64::from(video.fps);
+        let interpreted_fps = if (interpreted_fps - source_fps).abs() <= source_fps * 1e-6 { source_fps } else { interpreted_fps };
+        let speed = interpreted_fps / source_fps;
+        if !speed.is_finite() || !(0.01..=100.0).contains(&speed) {
+            return Err(bad("timeline.create", "imported movie has an unsupported interpreted frame rate".into()));
+        }
+        let seconds = count as f64 / interpreted_fps;
+        let frame_count = (seconds * timeline_fps - 1e-8).ceil().max(1.0);
+        if !frame_count.is_finite() || frame_count > MAX_DURATION as f64 {
+            return Err(bad("timeline.create", "imported movie exceeds the timeline frame limit at this project rate".into()));
+        }
+        let frames = frame_count as usize;
+        let path = asset.map(|a| a.path.clone()).or_else(|| match &video.source { photostore_doc::VideoSource::File { path } => Some(path.clone()), _ => None });
+        let audio = asset.and_then(|a| a.metadata.as_ref()).and_then(|m| m.audio.as_ref()).map(|a| a.duration_seconds);
+        let audio_duration = audio.map(|d| seconds.min((d - backing.trim_in_frame as f64 / source_fps).max(0.0) / speed)).unwrap_or(0.0);
+        sources.push((layer.id, video.asset_id, frames, path, audio, backing.trim_in_frame as f64 / source_fps, audio_duration, speed));
     }
-    with_timeline(s, |t| { let mut next = Timeline::new(duration, fps); next.rational_rate=rate; next.mode = mode; *t = Some(next); })
+    for (layer, ..) in &sources {
+        if let Some(video) = doc.layer_mut(*layer).and_then(|layer| layer.video.as_mut()) { video.playback.awaiting_video_timeline = false; }
+    }
+    let Some(timeline) = doc.timeline.as_mut() else { return Ok(()) };
+    let previous_duration = timeline.duration;
+    for (layer, asset_id, frames, path, source_audio_duration, trim_in, audio_duration, speed) in sources {
+        timeline.duration = timeline.duration.max(frames).min(MAX_DURATION);
+        if !timeline.layer_ranges.iter().any(|range| range.layer == layer) {
+            timeline.layer_ranges.push(LayerTimelineRange { layer, start: 0, end: frames.min(timeline.duration), enabled: true, playback: None });
+        }
+        if let (Some(path), Some(source_duration)) = (path, source_audio_duration)
+            && audio_duration > 0.0
+            && !timeline.audio_tracks.iter().flat_map(|track| &track.clips).any(|clip| clip.linked_video == Some(layer))
+        {
+            let (_, clip_id) = crate::audio_cmds::add_linked_movie_audio(timeline, layer, path, source_duration, trim_in, audio_duration, 0.0, speed)?;
+            if let Some(asset_id) = asset_id {
+                if let Some(clip) = timeline.audio_tracks.iter_mut().flat_map(|track| track.clips.iter_mut()).find(|clip| clip.id == clip_id) {
+                    clip.asset_id = Some(asset_id);
+                }
+            }
+        }
+    }
+    if timeline.work_end == previous_duration { timeline.work_end = timeline.duration; }
+    timeline.clamp();
+    Ok(())
 }
 
 fn create_frame_animation(s: &mut Session, p: &Value) -> Result<Value> {
@@ -494,6 +561,7 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
                 if t.frame_delays_ms.len() < t.duration { t.frame_delays_ms.resize(t.duration, 0); }
             }
             freeze_and_clear_owned_position(&mut doc.layers, current);
+            activate_imported_movies(doc, true)?;
             crate::video_cmds::sync(doc);
             Ok(doc.timeline.clone())
         },

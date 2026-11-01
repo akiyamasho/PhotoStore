@@ -3419,3 +3419,8 @@ fontWeight	Italic	斜体
 	Quick Selection found nothing there	クイック選択ではそこに何も見つかりませんでした
 	Object Selection found nothing there — try a tighter rectangle	オブジェクト選択ではそこに何も見つかりませんでした — より狭い長方形で試してください
 	No subject found — try a rectangle around the object	被写体が見つかりません — オブジェクトを囲む長方形を試してください
+
+	Copy Layer…	レイヤーをコピー…
+	Copy Layer	レイヤーをコピー
+	Insert above	このレイヤーの上に挿入
+	Name (optional)	名前（任意）

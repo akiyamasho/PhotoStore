@@ -383,6 +383,7 @@ fn source_clock_seconds(cur: usize, timeline_fps: f64, video: &VideoData, range:
 }
 
 fn source_index(cur: usize, timeline_fps: f64, video: &VideoData, range: Option<&photostore_doc::LayerTimelineRange>) -> usize {
+    let cur = if video.playback.awaiting_video_timeline { 0 } else { cur };
     let seconds = source_clock_seconds(cur, timeline_fps, video, range);
     if !video.frame_delays_ms.iter().any(|delay| *delay > 0) {
         return (seconds * f64::from(video.fps.max(0.001)) + 1e-9).floor() as usize;
@@ -422,7 +423,7 @@ fn linked_source_seconds(cur: usize, timeline_fps: f64, video: &VideoData, range
         || backing.frame_count == 0 || backing.trim_in_frame > backing.trim_out_frame || backing.trim_in_frame >= backing.frame_count {
         return Err(EngineError::Other("linked movie has invalid source frame-rate or trim metadata".into()));
     }
-    let relative = source_clock_seconds(cur, timeline_fps, video, range);
+    let relative = source_clock_seconds(if video.playback.awaiting_video_timeline { 0 } else { cur }, timeline_fps, video, range);
     let seconds = (backing.trim_in_frame as f64 + relative * interpreted_fps) / native_fps;
     if !seconds.is_finite() || seconds < 0.0 {
         return Err(EngineError::Other("linked movie has an invalid source-time mapping".into()));
@@ -1409,6 +1410,11 @@ fn new_from_file(s: &mut Session, p: &Value) -> Result<Value> {
             msg: "fps must be a finite number above 0 and at most 1000".into(),
         })? as f32,
     };
+    let create_timeline = match p.get("createTimeline") {
+        None => true,
+        Some(Value::Bool(value)) => *value,
+        Some(_) => return Err(EngineError::BadParams { cmd: "layer.videoLayers.newVideoLayerFromFile".into(), msg: "createTimeline must be a boolean".into() }),
+    };
     let fmt = s.active().ok_or(EngineError::NoDocument)?.doc.pixel_format();
     if is_movie_path(&path) {
         let start = optional_index(p, "start", "layer.videoLayers.newVideoLayerFromFile")?;
@@ -1434,22 +1440,41 @@ fn new_from_file(s: &mut Session, p: &Value) -> Result<Value> {
                         msg: "interpreted/original fps ratio must be in 0.01..=100".into(),
                     });
                 }
-                if doc.timeline.is_none() {
+                // A canvas drop may add an editable, file-backed video layer without
+                // implicitly changing the document's editing mode. File › Open and the
+                // explicit New Video Layer command retain their legacy timeline behavior.
+                if doc.timeline.is_none() && create_timeline {
                     doc.timeline = Some(Timeline::new(n, source_fps));
                 }
-                if let Some(t) = &mut doc.timeline {
-                    t.duration = t.duration.max(media_duration_in_timeline_frames(n, source_fps, t.fps));
+                if let Some(t) = &mut doc.timeline
+                    && t.mode == photostore_doc::TimelineMode::Video
+                {
+                    let previous_duration = t.duration;
+                    let duration = (n as f64 / override_fps.unwrap_or(original_fps) * t.project_rate().as_f64() - 1e-8).ceil().max(1.0);
+                    if !duration.is_finite() || duration > 1_000_000.0 {
+                        return Err(EngineError::Other("imported movie exceeds the 1000000-frame timeline limit at this project rate".into()));
+                    }
+                    t.duration = t.duration.max(duration as usize);
+                    if t.work_end == previous_duration { t.work_end = t.duration; }
                     t.clamp();
                 }
                 let name = doc.next_layer_name(Path::new(&path).file_stem().and_then(|s| s.to_str()).unwrap_or("Movie"));
                 let mut l = Layer::raster(name, fmt);
                 let mut v = VideoData::new(vec![preview], source_fps);
+                v.playback.awaiting_video_timeline = !create_timeline && !doc.timeline.as_ref().is_some_and(|timeline| timeline.mode == photostore_doc::TimelineMode::Video);
                 v.movie_backing = Some(backing);
                 v.source = photostore_doc::VideoSource::File { path: canonical_path.clone() };
                 l.video = Some(v);
                 let id = doc.insert_above(*active, l);
                 *active = Some(id);
-                if info.has_audio {
+                if let Some(t) = &mut doc.timeline
+                    && t.mode == photostore_doc::TimelineMode::Video
+                    && !t.layer_ranges.iter().any(|range| range.layer == id)
+                {
+                    let end = (n as f64 / override_fps.unwrap_or(original_fps) * t.project_rate().as_f64() - 1e-8).ceil().max(1.0) as usize;
+                    t.layer_ranges.push(photostore_doc::LayerTimelineRange { layer: id, start: 0, end: end.min(t.duration), enabled: true, playback: None });
+                }
+                if info.has_audio && doc.timeline.as_ref().is_some_and(|t| t.mode == photostore_doc::TimelineMode::Video) {
                     let audio = crate::media_backend::probe_audio(&canonical_path).map_err(media_error)?;
                     let audio_remaining = (audio.duration_seconds - source_trim).max(0.0);
                     let audio_duration = output_duration.min(audio_remaining / playback_speed);

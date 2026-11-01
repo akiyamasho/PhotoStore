@@ -98,13 +98,42 @@ pub fn canvas_buttons(app: &mut PhotoStoreApp, response: &Response, tool: Tool) 
     let right_stroke = erase && app.drag.is_some();
     let right_start = erase && response.drag_started_by(PointerButton::Secondary);
     let right_click = response.secondary_clicked();
-    if right_click
-        && !erase
-        && !layer_menu
-        && has_brush_picker(tool)
-        && let Some(p) = response.interact_pointer_pos()
+    // A pen can move past egui's click threshold while its barrel button is held. Route the
+    // actual secondary press, not a release-classified click, so hover jitter cannot cancel it.
+    let pressed_at = response.ctx.input(|input| input.events.iter().find_map(|event| match event {
+        egui::Event::PointerButton { pos, button: PointerButton::Secondary, pressed: true, .. }
+            if response.rect.contains(*pos) && (response.hovered() || response.is_pointer_button_down_on()) => Some(*pos),
+        _ => None,
+    }));
+    let picker_gesture = egui::Id::new("brush-picker-secondary-gesture");
+    let mut consumed = response.ctx.data(|data| data.get_temp::<bool>(picker_gesture)).unwrap_or(false);
+    if !erase && !layer_menu && !resizing && !crate::brush_resize::is_right_gesture(mods)
+        && app.ui.transform.is_none() && has_brush_picker(tool)
+        && let Some(position) = pressed_at
     {
-        app.ui.brush_picker = Some([p.x, p.y]);
+        // If the side button arrived during contact, preserve the stroke already sampled and
+        // consume the rest of this physical gesture instead of painting behind the picker.
+        let finish = app.drag.as_ref().filter(|drag| drag.tool.is_brushlike()).map(|drag| {
+            let point = drag.points.last().map_or(drag.start, |p| [p[0], p[1]]);
+            (point, drag.modifiers)
+        });
+        if let Some((point, modifiers)) = finish {
+            crate::canvas::tool_event(app, crate::canvas::ToolEvent::Up { x: point[0], y: point[1] }, modifiers);
+        }
+        app.ui.brush_picker = Some([position.x, position.y]);
+        response.ctx.data_mut(|data| {
+            data.insert_temp(egui::Id::new("brush-picker-opened-frame"), response.ctx.cumulative_frame_nr());
+            data.insert_temp(picker_gesture, true);
+        });
+        response.ctx.request_repaint();
+        consumed = true;
+    }
+    if consumed {
+        if response.ctx.input(|input| !input.pointer.primary_down() && !input.pointer.secondary_down()) {
+            response.ctx.data_mut(|data| data.remove::<bool>(picker_gesture));
+        }
+        app.secondary_erase = false;
+        return Buttons::default();
     }
     let erase_click = erase && right_click;
     app.secondary_erase = right_start || erase_click;
@@ -186,7 +215,8 @@ pub fn show_picker(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     // just being open: a press elsewhere closes the picker in the same click that closes the menu.
     let press = ctx.input(|i| i.pointer.any_pressed().then(|| i.pointer.interact_pos()).flatten());
     let on_menu = press.is_some_and(|p| ctx.layer_id_at(p).is_some_and(|l| l.order == egui::Order::Foreground));
-    let outside = press.is_some_and(|p| !area.response.rect.contains(p) && !crate::brush_picker::on_chip(ctx, p)) && !on_menu;
+    let just_opened = ctx.data(|data| data.get_temp::<u64>(egui::Id::new("brush-picker-opened-frame"))) == Some(ctx.cumulative_frame_nr());
+    let outside = !just_opened && press.is_some_and(|p| !area.response.rect.contains(p) && !crate::brush_picker::on_chip(ctx, p)) && !on_menu;
     if outside || key_close || area.inner {
         crate::brush_picker::close(&mut app.ui);
     }

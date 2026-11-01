@@ -1,0 +1,19 @@
+{
+  "date": "2026-11-01",
+  "tool": "image_gen.imagegen built-in",
+  "model": "not exposed by tool",
+  "initial": {
+    "prompt": "Use case: ui-mockup. Create an original PhotoStore desktop workflow design reference with two clearly separated panels in a landscape bitmap. No input images, no private artwork, no characters, no logos. Restrained dark-gray image editor with blue selection accents and simple abstract geometric canvas content. Left panel: a compact modal titled 'Copy Layer', shortcut caption 'Cmd + Shift + R'. Fields 'Source: Shape layer', 'Name: Shape layer copy', 'Document: Untitled-2' dropdown, 'Above layer: Background' dropdown, buttons 'Cancel' and 'Copy'. Show a Layers dock with the new copied layer above Background. Preserve source content/editability; this is a nondestructive copy. Right panel: an MP4 file ghost being dropped on an existing document canvas, creating a selected Video layer in its existing Layers dock without another document tab. The Timeline panel is closed and a small explanatory callout says 'Static preview until Video Timeline is created'. A smaller after-state below shows the same editable Video layer on a Video Timeline after creation, with linked audio and a clip strip. Keep one canvas and clear document identity per state. Footer text 'Synthetic design reference — not a product screenshot'. Precise typography, compact professional spacing; avoid exaggerated decorative controls. This design reference guides a Rust egui app's copy popup and existing-document video import behavior.",
+    "referenced_image_paths": [],
+    "output": "initial.png",
+    "status": "Superseded after user corrected shortcut"
+  },
+  "final": {
+    "prompt": "Edit this synthetic PhotoStore workflow board. Change the popup shortcut from 'Cmd + Shift + R' to 'Cmd + Ctrl + R'. Add a clear small separate caption 'Cmd + R: duplicate in the same document'. Preserve the copy dialog's source/name/document/above-layer destination controls and Copy/Cancel buttons. In the popup example Document should be 'Untitled-2', representing a selectable target open document. Keep video dropping into the existing document as an editable Video layer with static preview until Video Timeline creation, and linked audio on timeline creation. Keep all synthetic geometric artwork, restrained dark gray/blue styling, and synthetic-reference footer. No private artwork, no known characters, no logos. Make no implementation/performance claim.",
+    "referenced_image_paths": [
+      "/Users/computer/.codex/generated_images/01a1929b-da58-73e1-befa-89506b9577f7/exec-b3843966-1a20-4080-b352-c1d15e3b841c.png"
+    ],
+    "output": "workflow.png"
+  },
+  "inspection": "Inspected before implementation. Final shortcut is Cmd+Ctrl+R; Cmd+R directly duplicates within the current document. Concept's explanatory same-document wording and illustrative copy placement are incomplete: actual popup must support other open documents and insert above its selected destination layer. Keep source layers editable, use a new copied layer rather than overwrite pixels, and preserve existing native File Open/tab behavior separately from dropping video on an open document. Video layer retains its source and static first-frame preview without implicitly creating a timeline. On explicit Video Timeline creation, reconcile video ranges and linked source audio. Synthetic geometry only; no private image or known character input. This is a design reference, not screenshot/test evidence."
+}

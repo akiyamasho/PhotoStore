@@ -93,3 +93,6 @@ Files copied into `corpus/` by hand (tiff, exr, raw) must be MIT, BSD or CC0.
 | `docs/design/2026-11-01/timeline-completion/workflow.png` | OpenAI built-in GPT Image, generated for this task | Generated design reference; exact prompt and provenance in the adjacent `prompt.json`. No external input images, private artwork or character references. Not a running-app screenshot. |
 
 | `docs/design/2026-11-01/smooth-playback/workflow.png` | Original GPT Image design reference; built-in image_gen, 2026-11-01 | Generated synthetic asset, no third-party artwork or input images | Exact prompt and inspection: sibling `prompt.json`; not a product screenshot or measured performance evidence |
+
+| `docs/design/2026-11-01/layer-workflows/{initial,workflow}.png` | OpenAI built-in GPT Image; synthetic original design and corrected shortcut edit | Generated design reference, not application capture; exact prompts, actual reference array and inspection in adjacent `prompt.json`. Initial variant superseded by user shortcut correction. |
+| `docs/design/2026-11-01/canvas-input/workflow.png` | OpenAI built-in GPT Image; synthetic original canvas/pen workflow | Generated reference with no input images/private artwork/known characters; exact prompt and inspection in adjacent `prompt.json`. No native-device verification claim. |

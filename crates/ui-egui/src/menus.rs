@@ -35,7 +35,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("edit.transform.distort", "Distort", &["Edit", "Transform"], None),
     ("edit.transform.perspective", "Perspective", &["Edit", "Transform"], None),
     ("select.selectAndMask", "Select and Mask…", &["Select"], Some("Cmd+Alt+R")),
-    ("view.rulers", "Rulers", &["View"], Some("Cmd+R")),
+    ("view.rulers", "Rulers", &["View"], Some("Cmd+Alt+Shift+R")),
+    ("ui.layerCopy", "Copy Layer…", &["Layer"], if cfg!(target_os = "macos") { Some("Cmd+Ctrl+R") } else { None }),
     ("view.show.grid", "Grid", &["View", "Show"], Some("Cmd+'")),
     ("view.show.guides", "Guides", &["View", "Show"], Some("Cmd+;")),
     ("view.snap", "Snap", &["View"], Some("Cmd+Shift+;")),
@@ -166,6 +167,9 @@ pub(crate) fn invoke_unguarded(app: &mut PhotoStoreApp, ctx: &egui::Context, id:
     }
     if id == "ui.symmetryTransform" {
         return crate::symmetry_ui::begin(app).map(|_| Value::Null);
+    }
+    if id == "ui.layerCopy" {
+        return crate::layer_copy_ui::open(app).map(|_| Value::Null);
     }
     if id == crate::generative_fill_ui::COMMAND && params.as_object().is_none_or(|o| o.is_empty()) {
         return crate::generative_fill_ui::open_bar(app, ctx);

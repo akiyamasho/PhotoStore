@@ -1,10 +1,7 @@
-//! Copy layers into another open document (#589): what Photoshop does when layers are dragged from
-//! the Layers panel, or with the Move tool from the canvas, onto another document's tab or window.
-//! Photoshop has no menu item for it; `layer.copyToDocument` is the command the drag dispatches and
-//! agents call.
+//! Copy layers into an open document, optionally the source itself, as one nondestructive edit.
 //!
 //! The copies keep their names, content, masks, styles and blending; they land above the
-//! destination's active layer as one history step there, and the destination becomes the active
+//! chosen destination layer as one history step there, and the destination becomes the active
 //! document. Pixels are converted to the destination's colour profile (Color Settings' intent and
 //! black point compensation) and bit depth, as Photoshop converts dragged layers.
 
@@ -27,7 +24,7 @@ fn bad(msg: impl Into<String>) -> EngineError {
 fn enabled(s: &Session) -> std::result::Result<(), String> {
     let d = s.active().ok_or("no document open")?;
     d.active_layer.ok_or("no active layer")?;
-    if s.documents().len() < 2 { Err("no other document is open".into()) } else { Ok(()) }
+    Ok(())
 }
 
 /// A document index param (`None` when absent), checked against the open documents.
@@ -66,7 +63,8 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
         Some(i) => i,
         None => s.active_index().ok_or(EngineError::NoDocument)?,
     };
-    if src == dest {
+    let allow_same = p.get("allowSame").and_then(Value::as_bool).unwrap_or(false);
+    if src == dest && !allow_same {
         return Err(bad("the destination is the source document (use layer.duplicate)"));
     }
     let (from, to) = (&s.documents()[src], &s.documents()[dest]);
@@ -107,15 +105,17 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
         }
         copies.layers.push(l);
     }
-    // Contents IDs belong to a document. Preserve sharing within this batch, without joining
-    // pre-existing objects in the destination (including another opening of the same file).
-    let mut contents = HashMap::new();
-    let smart_ids: Vec<_> = copies.walk().into_iter().filter_map(|(_, _, l)| matches!(l.content, LayerContent::Smart(_)).then_some(l.id)).collect();
-    for id in smart_ids {
-        if let Some(l) = copies.layer_mut(id)
-            && let LayerContent::Smart(sm) = &mut l.content
-        {
-            sm.contents_id = *contents.entry(sm.contents_id).or_insert_with(SmartContentsId::fresh);
+    // Contents IDs belong to a document. Preserve sharing within the same document; when
+    // crossing documents, remap as a batch without joining pre-existing destination objects.
+    if src != dest {
+        let mut contents = HashMap::new();
+        let smart_ids: Vec<_> = copies.walk().into_iter().filter_map(|(_, _, l)| matches!(l.content, LayerContent::Smart(_)).then_some(l.id)).collect();
+        for id in smart_ids {
+            if let Some(l) = copies.layer_mut(id)
+                && let LayerContent::Smart(sm) = &mut l.content
+            {
+                sm.contents_id = *contents.entry(sm.contents_id).or_insert_with(SmartContentsId::fresh);
+            }
         }
     }
     if (copies.mode, &copies.icc_profile) != (ddoc.mode, &ddoc.icc_profile) {
@@ -149,12 +149,52 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
             crate::vector_cmds::translate_vectors(&snapshot, l, f64::from(dx), f64::from(dy));
         }
     }
+    let above = match p.get("above") {
+        Some(v) => {
+            let id = v.as_u64().map(LayerId).ok_or_else(|| bad("`above` must be a layer id"))?;
+            if ddoc.layer(id).is_none() { return Err(EngineError::NoLayer(id)); }
+            Some(id)
+        }
+        None => to.active_layer,
+    };
+    let rename = p.get("name").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
+    if rename.is_some() && copies.layers.len() != 1 {
+        return Err(bad("`name` can only be used when copying one layer"));
+    }
+    if let (Some(name), Some(layer)) = (rename, copies.layers.first_mut()) { layer.name = name.to_owned(); }
+    // Catalog identities are document-owned. Rebind copied video sources as a batch, retaining
+    // source revision/fingerprint/metadata without probing files or joining unrelated identities.
+    let mut media_assets = Vec::new();
+    if src != dest {
+        let mut media_ids = HashMap::new();
+        let video_ids: Vec<_> = copies.walk().into_iter().filter_map(|(_, _, layer)| layer.video.is_some().then_some(layer.id)).collect();
+        for id in video_ids {
+            if let Some(video) = copies.layer_mut(id).and_then(|layer| layer.video.as_mut()) {
+                if let Some(old) = video.asset_id {
+                    if let Some(source) = sdoc.media_assets.iter().find(|asset| asset.id == old) {
+                        let new_id = *media_ids.entry(old).or_insert_with(|| {
+                            let mut asset = source.clone();
+                            asset.id = photostore_doc::MediaAssetId::fresh();
+                            let id = asset.id;
+                            media_assets.push(asset);
+                            id
+                        });
+                        video.asset_id = Some(new_id);
+                    } else { video.asset_id = None; }
+                }
+            }
+        }
+    }
+    if ddoc.media_assets.len().checked_add(media_assets.len()).is_none_or(|count| count > 4096) {
+        return Err(bad("copy would exceed the destination's 4096 external source catalog limit"));
+    }
     let patterns: Vec<_> = sdoc.patterns.iter().filter(|pat| !ddoc.patterns.iter().any(|d| d.id == pat.id)).cloned().collect();
     s.set_active(dest);
     let label = if ids.len() == 1 { "Duplicate Layer" } else { "Duplicate Layers" };
     let edited = s.edit(label, |doc, active| {
         doc.patterns.extend(patterns);
-        let mut above = *active;
+        doc.media_assets.extend(media_assets);
+        let mut above = above;
         let mut new = Vec::with_capacity(copies.layers.len());
         for l in copies.layers {
             let id = doc.insert_above(above, l);
@@ -162,6 +202,7 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
             new.push(id);
         }
         *active = above;
+        crate::timeline_cmds::activate_imported_movies(doc, true)?;
         Ok(new)
     });
     // Nothing changed: the source stays the active document.
@@ -180,7 +221,7 @@ pub fn specs() -> Vec<CommandSpec> {
         label: "Copy Layers to Document",
         menu: &[],
         shortcut: None,
-        params: r##"{"document":index (destination),"layers":[id,…]?=the source's selected layers,"source":index?=active,"center":bool=false (centre on the destination's canvas),"at":[x,y]? (centre the copies on this point),"offset":[dx,dy]?=[0,0] (from their place in the source)}"##,
+        params: r##"{"document":index (destination),"layers":[id,…]?=the source's selected layers,"source":index?=active,"above":layer id?=destination active layer,"allowSame":bool=false (allow copying into the source document),"name":str?=rename one copied layer,"center":bool=false (centre on the destination's canvas),"at":[x,y]? (centre the copies on this point),"offset":[dx,dy]?=[0,0] (from their place in the source)}"##,
         enabled,
         run: copy_to_document,
         journal: true,

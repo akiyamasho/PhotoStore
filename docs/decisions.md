@@ -688,3 +688,19 @@ retained all 180 distinct sampled frame hashes with one decoder each. Normal 0.2
 verified, published and atomically installed from exact source `018567faf9ed2f2e181f6d05dc74ff6dd5542ffb`.
 See the [delivery/performance record](releases/0.20.2.md); headless evidence does not establish native
 UI/audio acceptance. Scheduler suppression continues through documentation-only delivery.
+
+
+## 2026-11-01: Explicit layer destinations, deferred movies and direct canvas input
+
+Cmd+R directly duplicates layers; macOS Cmd+Ctrl+R opens a stable-identity Copy Layer modal.
+Destination insertion stays in the command registry, with atomic source-preserving edits and
+cross-document media/Smart identity rebinding. Import dropped movies into the existing document
+through queued DocId-bound jobs; preserve absent/Frame Animation timelines with a serializable
+optional playback marker. Explicit Video activation builds ranges and linked audio from retained
+catalog metadata in the same transaction, including complete default work-area extent.
+
+Pan input must update the camera before rendering it. A secondary press owns brush-picker opening,
+so pen hover jitter does not cancel a release-classified click; the opening event cannot dismiss
+the popup or leave a stray paint gesture. Preserve resize/erase/layer-pick intent and sampled
+stroke data. The [implementation record](plans/layer-input-workflows-2026-11-01.md) distinguishes
+source implementation, focused data boundaries and pending native device acceptance.

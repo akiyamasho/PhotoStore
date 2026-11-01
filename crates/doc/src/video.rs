@@ -548,6 +548,9 @@ impl PartialEq for VideoData {
 /// Source playback controls for a video layer.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VideoPlayback {
+    /// A dropped source remains a static preview until explicit Video Timeline activation.
+    #[serde(default)]
+    pub awaiting_video_timeline: bool,
     #[serde(default)]
     pub source_in_seconds: f64,
     #[serde(default = "default_playback_speed")]
@@ -556,7 +559,7 @@ pub struct VideoPlayback {
 
 impl Default for VideoPlayback {
     fn default() -> Self {
-        Self { source_in_seconds: 0.0, speed: 1.0 }
+        Self { awaiting_video_timeline: false, source_in_seconds: 0.0, speed: 1.0 }
     }
 }
 
