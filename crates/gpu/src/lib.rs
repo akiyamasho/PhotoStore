@@ -1790,7 +1790,9 @@ fn write_dense_direct_page(
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("pc_dense_movie_upload"),
         size: length as u64,
-        usage: wgpu::BufferUsages::COPY_SRC,
+        // MAP_WRITE maps this allocation directly. With only COPY_SRC, wgpu creates a
+        // second initialization buffer and copies it into this one on unmap.
+        usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: true,
     });
     let slice = buffer.slice(..);
