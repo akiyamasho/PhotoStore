@@ -91,3 +91,5 @@ Files copied into `corpus/` by hand (tiff, exr, raw) must be MIT, BSD or CC0.
 | --- | --- | --- |
 | CPAL 0.18.2 native audio output, with coreaudio-rs / dasp_sample and platform bindings resolved in Cargo.lock | [RustAudio/CPAL](https://github.com/RustAudio/cpal), its authors and contributors | Apache-2.0; dependency licence notices remain with the Cargo sources and bundled dependency licence records. Original PhotoStore bounded PCM feeder and sample-clock integration. |
 | `docs/design/2026-11-01/timeline-completion/workflow.png` | OpenAI built-in GPT Image, generated for this task | Generated design reference; exact prompt and provenance in the adjacent `prompt.json`. No external input images, private artwork or character references. Not a running-app screenshot. |
+
+| `docs/design/2026-11-01/smooth-playback/workflow.png` | Original GPT Image design reference; built-in image_gen, 2026-11-01 | Generated synthetic asset, no third-party artwork or input images | Exact prompt and inspection: sibling `prompt.json`; not a product screenshot or measured performance evidence |
