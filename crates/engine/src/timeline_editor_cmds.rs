@@ -1720,7 +1720,7 @@ fn extract_audio(s: &mut Session, p: &Value) -> Result<Value> {
         t.audio_tracks.push(photostore_doc::AudioTrack {
             id: track_id,
             name: "Extracted Audio".into(),
-            owner_layer: Some(layer),
+            owner_layer: Some(id),
             muted: false,
             clips: vec![photostore_doc::AudioClip {
                 asset_id: None,

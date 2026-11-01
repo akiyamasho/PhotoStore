@@ -593,7 +593,7 @@ pub fn audio_mix_for_document_range(doc: &photostore_doc::Document, start: f64, 
     audio_mix_for_range_with_owner_visibility(timeline, start, end, |owner, a, b| {
         if owner.is_none() { return Ok(vec![(a, b)]); }
         if !cached.borrow().contains_key(&owner) {
-            let intervals = authored_visibility_intervals(doc, timeline, owner, start, end, boundaries.as_deref())?;
+            let intervals = authored_visibility_intervals(doc, timeline, owner, start, end, boundaries.as_ref())?;
             cached.borrow_mut().insert(owner, intervals);
         }
         Ok(cached.borrow().get(&owner).into_iter().flatten().filter_map(|(lo, hi)| {

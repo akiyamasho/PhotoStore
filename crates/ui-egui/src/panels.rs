@@ -1918,7 +1918,7 @@ fn layers(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                 }
                 let row = RowSel { selected: selection.contains(&l.id), primary: active == Some(l.id), multi: selection.len() > 1 };
                 let top = ui.cursor().top();
-                layer_row(app, &ctx, ui, &doc, l, depth, row, audio_layers.contains(&l.id), &mut actions);
+                layer_row(app, &ctx, ui, &doc, l, depth, row, audio_layers.contains(&l.id) && l.video.is_none() && matches!(&l.content, LayerContent::Raster(surface) if surface.tile_count() == 0), &mut actions);
                 if reveal == Some(l.id) {
                     crate::layer_reveal::scroll_to_row(ui, top);
                 }
