@@ -84,8 +84,7 @@ audio properties.
 Perspective/warp animation remains unsupported. Transform keys use the source-center pivot. The
 0.19.0 limitation that guarded conversion while Transform animation was enabled is addressed in the
 current source pass by sampling affine Smart Transform into editable frame snapshots while retaining
-the Smart Object source. Its focused test is authored but has not yet run against the integrated
-source. During the earlier development pass, the required PhotoStore-dev build passed in 6m03s from the source SHA above. Its
+the Smart Object source. Its focused persistence test passed during the later 0.20.0/0.20.1 delivery passes. During the earlier development pass, the required PhotoStore-dev build passed in 6m03s from the source SHA above. Its
 runtime binary was `5aa7c4a3566a3825bb1acb191e9279bd556dec21-216e5754fdbb8689`; its guarded reload
 was deferred because the existing PhotoStore-dev process had open documents. The later consolidated
 runtime `a387feb51d63b3749f892af046de592403105b2d-8184edd6c3af42a5` includes this overhaul plus the
@@ -98,11 +97,11 @@ passed 1/1 each during the implementation pass; they did not all run against the
 SHA. Manual visual, interaction and export acceptance remain outstanding. Do not claim full
 CapCut/Photoshop parity or close issue #23 until acceptance is complete.
 
-## Current source: scalable playback and authoring (0.20.1 delivery pending)
+## Current source: scalable playback and authoring (0.20.2 delivery pending)
 
 This current-source pass follows the published 0.20.0 app and CLI. The [scalable playback plan](plans/scalable-playback-2026-11-01.md)
 and [GPT Image workflow reference](design/2026-11-01/smooth-playback/workflow.png), generated and
-inspected before implementation, describe the intended architecture. The [0.20.1 candidate receipt](releases/0.20.1.md)
+inspected before implementation, describe the intended architecture. The [0.20.2 cadence receipt](releases/0.20.2.md)
 records source changes and current verification status. The generated board is synthetic design
 material, not a product capture or measured result.
 
@@ -127,8 +126,10 @@ The decoder's 8-bit intermediate and applicable format, codec, archive and decom
 also remain. No total-RAM, zero-copy GPU, HDR, or achieved-FPS claim follows from these source
 changes.
 
-Focused compilation/tests, the representative 1080p/4K after-change headless measurement, the one
-production app+CLI build, artifact checks and delivery are pending. The local pre-change CLI
-baseline averaged 563.41 ms per warm 1080p exact presentation and 1,713.18 ms at 4K on the recorded
-M1 Max host; this is blocking document presentation preparation, not native playback FPS. No native
-UI/audio acceptance is available yet. Keep issue #23 open until the user accepts the workflow.
+Eleven focused critical checks and the production 0.20.1 build/installation passed. Subsequent
+production hash inspection confirmed a cadence defect, despite improved latency: 180 requests
+contained only 120 distinct source frames. The corrected nanosecond-rounding boundary passed an
+additional original-frame-by-frame regression at 30 and 30000/1001 fps, with seeks/tail/VFR holds.
+The 0.20.2 production build and full-180-frame evidence remain pending. The pre-change warm blocking
+exact-seek baseline was 640.39 ms for 1080p and 1,929.93 ms for 4K (five noninitial requests each),
+not native playback FPS. Native UI/audio acceptance remains pending; keep #23 open.

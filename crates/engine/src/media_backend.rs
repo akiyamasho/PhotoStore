@@ -1107,6 +1107,14 @@ pub(crate) struct PreviewDecoder {
     width:u32,
     height:u32,
 }
+/// `settb` rounds rational source PTS to nanoseconds. With upward output rounding, a
+/// +fraction-of-a-nanosecond rescale error otherwise shifts every third 30 fps frame into
+/// the following output slot. Bias by one tick of the cache clock before upward rounding:
+/// this preserves the held-frame rule outside its 1 ns quantization boundary and keeps
+/// exact rational cadence, including after a seek. It is not half-frame/nearest sampling.
+fn preview_sampling_filter(seconds: f64, step: f64) -> String {
+    format!("settb=1/1000000000,setpts=PTS-{seconds:.9}/TB-1,fps=fps={:.12}:start_time=0:round=up:eof_action=pass", 1.0 / step)
+}
 impl PreviewDecoder {
     pub(crate) fn start(path:&Path,info:&MediaInfo,seconds:f64,step:f64,format:PixelFormat,width:u32,height:u32)->Result<Self> {
         ensure_sdr(info)?;
@@ -1119,7 +1127,7 @@ impl PreviewDecoder {
         command.args(["-v","error","-nostdin","-threads","2","-filter_threads","1","-protocol_whitelist","file,pipe","-copyts","-start_at_zero","-noaccurate_seek"]);
         if let Some(codec)=decoder_codec(info) {command.args(["-c:v",codec]);}
         command.args(["-ss",&format!("{:.6}",(seconds*1_000_000.0).floor()/1_000_000.0),"-i"]).arg(path);
-        let mut filter=format!("settb=1/1000000000,setpts=PTS-{seconds:.9}/TB,fps=fps={:.12}:start_time=0:round=up:eof_action=pass",1.0/step);
+        let mut filter=preview_sampling_filter(seconds, step);
         if (width,height)!=(info.width,info.height) {filter.push_str(&format!(",scale={width}:{height}:flags=bilinear"));}
         let mut child=command.args(["-map","0:v:0","-an","-sn","-dn","-vf",&filter,"-f","rawvideo","-pix_fmt","rgba","pipe:1"])
             .stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
@@ -1188,7 +1196,7 @@ pub(crate) fn decode_preview_window(path: &Path, info: &MediaInfo, seconds: f64,
     command.args(["-v","error","-threads","1","-filter_threads","1","-protocol_whitelist","file,pipe","-copyts","-start_at_zero","-noaccurate_seek"]);
     if let Some(codec) = decoder_codec(info) { command.args(["-c:v", codec]); }
     command.args(["-ss", &format!("{:.6}",(seconds * 1_000_000.0).floor()/1_000_000.0), "-i"]).arg(path);
-    let mut filter = format!("settb=1/1000000000,setpts=PTS-{seconds:.9}/TB,fps=fps={:.12}:start_time=0:round=up:eof_action=pass", 1.0/step);
+    let mut filter = preview_sampling_filter(seconds, step);
     if (width,height) != (info.width,info.height) { filter.push_str(&format!(",scale={width}:{height}:flags=bilinear")); }
     let mut child = command.args(["-vf",&filter,"-frames:v",&bounded.to_string(),"-f","rawvideo","-pix_fmt","rgba","pipe:1"])
         .stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
@@ -1780,5 +1788,53 @@ fn append_audio_args(cmd: &mut Command, clips: &[AudioMixClip], output_duration:
         let full=super::decoded_surface(&info,&bytes,photostore_color::PixelFormat::RGBA16,4,1).unwrap().convert(photostore_color::PixelFormat::RGBA8).to_interleaved(region);
         for (index,(a,b)) in fast.iter().zip(&full).enumerate(){assert!((*a as i16-*b as i16).abs()<=1,"CMS mismatch at {index}: {a}/{b}");}
         for index in [3,7,11,15] {assert_eq!(fast[index],bytes[index]);}
+    }
+}
+
+#[cfg(test)]
+mod preview_cadence_boundary {
+    use super::*;
+    #[test]
+    fn preview_cadence_preserves_every_original_frame_and_vfr_holds() {
+        if std::env::var_os("PHOTOSTORE_MEDIA_CACHE_DIR").is_none() { return; }
+        let Some(exe) = resolve_binary("PHOTOSTORE_FFMPEG", "ffmpeg") else { return; };
+        let format = PixelFormat::RGBA8;
+        let rect = photostore_geom::Rect::from_xywh(0, 0, 32, 32);
+        for (rate, step) in [("30", 1.0 / 30.0), ("30000/1001", 1001.0 / 30000.0)] {
+            let base = std::env::temp_dir().join(format!("photostore-cadence-{}-{}", std::process::id(), rate.replace('/', "-")));
+            let path = base.with_extension("nut");
+            let vfr = base.with_extension("vfr.nut");
+            for (destination, variable) in [(&path, false), (&vfr, true)] {
+                let mut command = Command::new(&exe);
+                command.args(["-v", "error", "-y", "-f", "lavfi", "-i", &format!("testsrc=size=32x32:rate={rate}:duration=1")]);
+                if variable { command.args(["-vf", "select='not(eq(mod(n,3),2))'", "-fps_mode", "vfr"]); }
+                assert!(command.args(["-c:v", "ffv1", "-threads", "1"]).arg(destination).status().unwrap().success());
+            }
+            let info = probe(&path).unwrap();
+            let originals = decode_sequence_range(&path, 0, 29, format, 16 << 20, |_, _| true).unwrap();
+            let reference: Vec<_> = originals.iter().map(|surface| surface.to_interleaved(rect)).collect();
+            assert_eq!(reference.len(), 30);
+            assert_eq!(reference.iter().take(15).collect::<std::collections::HashSet<_>>().len(), 15);
+            for start in [0usize, 7, 24] {
+                let mut decoder = PreviewDecoder::start(&path, &info, start as f64 * step, step, format, 32, 32).unwrap();
+                for frame in start..(start + 6) {
+                    let actual = decoder.next_frame().unwrap().unwrap().to_interleaved(rect);
+                    assert_eq!(actual, reference[frame], "{rate}: source frame {frame} after seek {start} must not repeat its predecessor");
+                }
+            }
+            let batch = decode_preview_window(&path, &info, 0.0, step, 8, format, 32, 32).unwrap();
+            for (frame, surface) in batch.iter().enumerate() { assert_eq!(surface.to_interleaved(rect), reference[frame]); }
+            let info = probe(&vfr).unwrap();
+            let mut decoder = PreviewDecoder::start(&vfr, &info, 0.0, step, format, 32, 32).unwrap();
+            for frame in 0..15 {
+                let held = if frame % 3 == 2 { frame - 1 } else { frame };
+                assert_eq!(decoder.next_frame().unwrap().unwrap().to_interleaved(rect), reference[held], "{rate}: VFR held frame at output {frame}");
+            }
+            // A genuinely earlier target must retain the previous source, not use nearest-frame selection.
+            let mut decoder = PreviewDecoder::start(&path, &probe(&path).unwrap(), step - 0.000001, step, format, 32, 32).unwrap();
+            assert_eq!(decoder.next_frame().unwrap().unwrap().to_interleaved(rect), reference[0]);
+            std::fs::remove_file(path).unwrap();
+            std::fs::remove_file(vfr).unwrap();
+        }
     }
 }

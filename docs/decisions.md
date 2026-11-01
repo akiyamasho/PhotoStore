@@ -666,5 +666,19 @@ These source changes and the headless `media.performance.measure` diagnostic are
 [0.20.1 release record](releases/0.20.1.md). Pre-change local CLI timings are not native playback
 FPS. Eleven unique focused critical checks passed, including >64 MiB authored metadata with save/undo,
 exact export/Smart boundaries, and 1080p/4K preparation under default and tight cache budgets.
-Final production measurements/delivery and native user acceptance remain pending; do not call
-the timeline complete or issue #23 accepted on headless evidence.
+The signed production build was published/installed as 0.20.1, but its pixel-diversity result
+subsequently exposed repeated-frame cadence from timestamp rounding. Latency improved; native
+acceptance and complete cadence were not established. A corrected follow-up is required.
+
+
+## 2026-11-01: Preserve rational cadence across the nanosecond preview clock
+
+The 0.20.1 production metrics exposed 120 distinct sampled frames from 180 requests of an actual
+180-distinct-frame 30 fps fixture. Direct FFmpeg full-frame comparison confirmed repeated frames.
+Nanosecond PTS rescaling followed by upward output-grid rounding must not turn sub-nanosecond
+rescale error into a complete frame delay. Bias one nanosecond tick before upward rounding in
+both sequential and bounded preview windows, retaining held-frame behavior outside the cache
+clock's quantization boundary. Keep exact/manual sampling and original export separate. Compare
+complete sequences against original indexed decoding at 30 and 30000/1001 fps, including seeks,
+tail, VFR gaps and an earlier target; require complete fixture diversity in production evidence.
+Latency alone cannot satisfy cadence acceptance. See [0.20.2](releases/0.20.2.md).

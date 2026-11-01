@@ -1,0 +1,31 @@
+{
+  "status": "Cadence regression passed; final production measurements/delivery pending",
+  "scope": "Pure decoder rounding correction following 0.20.1; preserves scalability work and prior evidence separately. Headless output is not native displayed FPS.",
+  "critical_regression": [
+    {
+      "args": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "photostore-engine",
+        "--lib",
+        "preview_cadence_preserves_every_original_frame_and_vfr_holds",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "seconds": 165.277
+    }
+  ],
+  "cases": [
+    "30 fps and 30000/1001 fps, lossless 32\u00d732 synthetic originals",
+    "Every original indexed frame after start, middle and tail seeks",
+    "Bounded preview window matches indexed originals",
+    "VFR missing-frame holds and a target 1 microsecond before a boundary"
+  ],
+  "inherited_critical_evidence": "0.20.1.json",
+  "production_measurements": null
+}

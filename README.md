@@ -10,12 +10,12 @@ PhotoStore is a Rust-native image editor maintained as a personal fork of PhotoC
 
 Download the macOS Apple Silicon package from [PhotoStore releases](https://github.com/akiyamasho/PhotoStore/releases). For a local install, use Rust stable 1.95+:
 
-The 0.20.1 Apple Silicon macOS app adds persistent preview decoding, shared frame data and
-adaptive media caching, and removes fixed 64 MiB timeline-authoring rejections. Stable-release
+The 0.20.2 Apple Silicon macOS app adds persistent preview decoding, shared frame data and
+adaptive media caching, preserves full preview cadence, and removes fixed 64 MiB timeline-authoring rejections. Stable-release
 checks are available under **Help → Check for Updates…** using your existing GitHub CLI (`gh`)
 authentication. The app and CLI are signed with a persistent
 local PhotoStore certificate, not Developer ID and not notarized. See [in-app update details](docs/app-updates.md)
-and the [0.20.1 release record](docs/releases/0.20.1.md).
+and the [0.20.2 release record](docs/releases/0.20.2.md).
 
 ```sh
 CARGO_BUILD_JOBS=1 cargo install --path apps/photostore --bin photostore --locked
@@ -32,12 +32,12 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 
 ## Current published release
 
-PhotoStore 0.20.1 improves movie presentation preparation through persistent decoding, shared
+PhotoStore 0.20.2 improves movie presentation preparation through persistent decoding, shared
 copy-on-write pixel and animation data, and playback-aware background scheduling. Large frame
 conversion/tween operations use the configured Memory Usage allowance with background cancellation
 and atomic undo, replacing their fixed 64 MiB threshold.
-[Download 0.20.1](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.1).
-The [release record](docs/releases/0.20.1.md) separates measured core performance from pending
+[Download 0.20.2](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.2).
+The [release record](docs/releases/0.20.2.md) separates measured core performance from pending
 native playback acceptance. See the [implementation plan](docs/plans/scalable-playback-2026-11-01.md)
 and [generated design reference](docs/design/2026-11-01/smooth-playback/workflow.png).
 Derived media borrows an adaptive cache budget; it is not a total process-memory cap. Native v3

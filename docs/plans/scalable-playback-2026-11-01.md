@@ -1,6 +1,6 @@
 # Smooth playback and scalable editing — issue #23 (2026-11-01)
 
-Status: plan/design landed before code changes; implementation and 11 focused critical checks completed, production delivery and native acceptance pending. The user rejected 0.20.0 playback as too slow, supplied a 4.44-second recording, asked for CapCut-like responsiveness, and explicitly asked to remove the 64 MB limit, preserve Photoshop/CapCut-style editing plus drawing and editable Smart Objects, plan thoroughly, then sweep. Prior push/release/tag/normal-app installation authorization continues. #23 remains the sole open issue in the complete paginated inventory.
+Status: plan/design landed before code changes; scalability implementation and 11 focused critical checks completed and released as 0.20.1. Subsequent production hash inspection exposed a cadence defect; the narrow 0.20.2 frame-complete regression passed; its production delivery is pending. Native acceptance remains pending. The user rejected 0.20.0 playback as too slow, supplied a 4.44-second recording, asked for CapCut-like responsiveness, and explicitly asked to remove the 64 MB limit, preserve Photoshop/CapCut-style editing plus drawing and editable Smart Objects, plan thoroughly, then sweep. Prior push/release/tag/normal-app installation authorization continues. #23 remains the sole open issue in the complete paginated inventory.
 
 ## Evidence and diagnosis
 
