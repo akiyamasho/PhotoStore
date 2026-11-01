@@ -1,10 +1,10 @@
 # Video timeline completion: source and media architecture (2026-11-01)
 
-**Status:** Implementation changes for the current #23 scope are integrated in the working tree. Five focused engine and two format boundary checks passed; the production build is pending. This document records implemented architecture and its limits; it does not claim a successful build, native acceptance, benchmark result, or published 0.20.0 release. Issue #23 remains open for user acceptance.
+**Status:** Implemented, built, published and installed as [0.20.0](../releases/0.20.0.md), exact source `19ce7efbbfe4cdbc8df004bec3a77fb0b4353a46`. Five engine and two format boundary checks passed. This document records delivered architecture and its limits; native user acceptance and performance targets remain pending. Issue #23 remains open for that acceptance.
 
 - Earlier user-facing research/design: [timeline workflow proposal](video-timeline-2026-11-01.md)
 - Product-level status: [timeline workspace](../timeline-workflow.md)
-- Candidate release receipt: [0.20.0](../releases/0.20.0.md)
+- Release receipt: [0.20.0](../releases/0.20.0.md)
 - GPT Image references and provenance: [design README](../design/2026-11-01/README.md)
 
 ## Scope and design boundary
@@ -85,13 +85,13 @@ Heavy derived-media work is limited to two active decoder slots. Background deco
 
 These files describe ownership points, not a claim of complete feature parity in every shell. User-visible document mutations stay on the shared command path.
 
-## Verification and acceptance still pending
+## Evidence and remaining acceptance
 
-Five unique focused engine checks and two format checks passed in the primary-owned run/retry; see the [release evidence](../releases/0.20.0.md). The remaining evidence is:
+Five unique focused engine checks and two format checks passed in the primary-owned run/retry; see the [release evidence](../releases/0.20.0.md). The evidence and remaining acceptance areas are:
 
 - Format migration and native roundtrip passed (2 focused checks); see the release evidence.
-- The required production compiler/build and its exact source/artifact receipts.
+- The one production build, artifact verification, publication, and normal-app/CLI installation passed; exact evidence is in the release receipt.
 - Native UI inspection at representative window sizes; relink, mode, playback, and interaction acceptance; audio device testing; or installed-release export comparison.
 - Measured decode latency, playback FPS, memory behavior under long sessions, or performance improvement over the prior build.
 
-The design image is not a screenshot. The 0.19.0 receipts are historical and do not verify these source changes. Record tests/build evidence and artifact SHA in the candidate release receipt only after the primary completes those steps. Issue #23 remains open for final user native workflow acceptance.
+The design image is not a screenshot. The 0.19.0 receipts are historical and do not verify these source changes. The release receipt records the exact test/build evidence and artifact hashes. Issue #23 remains open for final user native workflow acceptance.

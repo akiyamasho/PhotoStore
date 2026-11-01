@@ -607,3 +607,37 @@ The user replaced the consolidated dev-delivery policy with direct local overwri
 0.19.0 keeps the existing serializable layer/range/track data and command registry. Linked movie preview, thumbnails and export share a source presentation-time mapping that preserves interpreted FPS and trim, with native timestamps retained through a bounded single-frame decode. FFmpeg accurate seek alone can return the following frame early; the presentation path retains preceding-keyframe timestamps and selects the held frame, while legacy indexed frame-stack APIs remain intact. Nested Smart Object instances do not coalesce their independent source times. Canvas requests coalesce only for explicit namespaced consumers; current frames outrank queued thumbnails. The resident-frame cache remains 160 MiB, not a total-process memory guarantee.
 
 `timeline.editor.delete` accepts optional `ripple: true`; default deletion is unchanged. Ripple edits operate atomically on track suffixes, preserve keys and linked audio, reject locked/out-of-range or inconsistent linked edits, and undo as one edit. Main-track magnet retains sole ownership of Main compaction. The UI exposes explicit mode/conversion labels and Ripple Delete actions; no screenshot or native visual acceptance is claimed.
+
+## 2026-11-01: Complete timeline source architecture and exact presentation
+
+PhotoStore 0.20.0 adds a document-owned external `MediaAssetId` catalog with source revisions,
+fingerprints and stream metadata. Existing typed `LayerId` visual instances and audio instance IDs
+remain the clip/link authority; sharing a source does not link all its placements. Native format v3
+persists this catalog, rational project rates and affine frame snapshots, migrating v1/v2 paths and
+timing. Older readers reject v3. Relink/sync/insert are bounded, undoable registry operations; native
+archives may still save offline with retained references and the last preview.
+
+The transport retains one exact pending decoded frame until ready, then catches up to the clock.
+Cache completion revisions do not restart transport/audio or create authored history. Current-frame
+work is prioritized; uniform forward requests use bounded decode windows. Shared RAII reservations
+cap retained derived movie/Smart caches at 160 MiB, thumbnails at 64 MiB and waveforms at 32 MiB,
+256 MiB total. This excludes document pixels, transient decode buffers and driver/process overhead.
+Two derived decode slots allow at most one background job. Optional half/quarter disk proxies are
+revision-bound, capped at 10 GiB, and never replace sources or satisfy missing-original output.
+
+Native audio uses a bounded 48 kHz stereo CPAL callback clock when supported, with streaming ffplay
+and monotonic fallback. Output and pixel-baking operations materialize originals; preview proxies
+cannot become authored pixels through export, rasterize, merge/flatten/stamp or clipboard copy.
+Affine Smart animation can convert between Video and Frame Animation while retaining editable
+sources; perspective/warp animation stays guarded. Tagged SDR sources pass through working space
+and Rec.709 output transfer/primaries/matrix; the decoder retains its 8-bit intermediate. Unsupported
+HDR conversion fails explicitly. Transparent MP4 output requires an explicit background.
+
+The fresh GPT Image workflow reference was generated and inspected before implementation. Five
+engine/two format boundary checks passed, then the normal app and CLI were built once from exact
+source `19ce7efbbfe4cdbc8df004bec3a77fb0b4353a46`, published and atomically installed. See the
+[0.20.0 receipt](releases/0.20.0.md) and [architecture record](plans/video-timeline-completion-2026-11-01.md).
+Native visual/input/audio-device acceptance and representative-project performance are unverified;
+the 64×64 synthetic fixture's first cold request exceeded the proposed 250 ms goal. Issue #23 stays
+open for user acceptance. The scheduler remains disabled/unloaded with no pending work; no resume
+or build replay is permitted by publication or this documentation-only follow-up.
