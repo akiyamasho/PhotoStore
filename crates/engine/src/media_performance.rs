@@ -128,7 +128,12 @@ fn measure_sources_inner(
                 let mut hash = blake3::Hasher::new();
                 let stride = surface.tile_count() / 8 + 1;
                 for (_, (_, tile)) in surface.tiles().enumerate().filter(|(index, _)| index % stride == 0).take(8) {
-                    hash.update(tile.bytes());
+                    // Bounded spatial observation, rather than hashing megabytes per layer
+                    // inside a paced playback loop. Pixel fidelity is checked separately.
+                    let row_bytes = photostore_geom::TILE_SIZE as usize * surface.format().bytes_per_pixel();
+                    for row in (0..photostore_geom::TILE_SIZE as usize).step_by(16) {
+                        hash.update(&tile.bytes()[row * row_bytes..(row + 1) * row_bytes]);
+                    }
                 }
                 hashes[index].insert(hash.finalize());
             }
@@ -147,7 +152,7 @@ fn measure_sources_inner(
         "frames":count,"preparationMs":preparation_ms,"coldFirstFrameMs":waits[0],"warmP50Ms":percentile(0.5),"warmP95Ms":percentile(0.95),"warmFramesPerSecond":(count-1) as f64/warm_seconds,
         "elapsedSeconds":elapsed,"polls":polls,"persistentDecoderLaunches":crate::media_backend::preview_stream_launches().saturating_sub(launches),"decodeProcessLaunches":crate::media_backend::decode_process_launches().saturating_sub(decode_launches),"distinctSampledPixelHashes":hashes[0].len(),"distinctHashesPerLayer":hashes.iter().map(HashSet::len).collect::<Vec<_>>(),"layerPropertiesPreserved":properties_preserved,"sources":sources,"layerCount":layer_ids.len(),
         "maxRetainedDerivedBytes":max_bytes,"maxEstimatedDecoderSessionBytes":max_decoder_bytes,"retainedBudgetBytes":crate::media_budget::status().total_limit_bytes,
-        "historyUnchanged":state.history.past_len()==0,"clean":state.saved_revision==state.revision,"requestWaitMs":waits,"decodeReadyWaitMs":decode_waits,"previewWorkers":crate::movie_cache::worker_count(),"configuredPreviewWorkers":crate::media_budget::preview_worker_count(),"activeDecodeLimit":crate::media_budget::decoder_parallelism(),
+        "historyUnchanged":state.history.past_len()==0,"clean":state.saved_revision==state.revision,"requestWaitMs":waits,"decodeReadyWaitMs":decode_waits,"pixelHashSampling":{"maximumTilesPerLayer":8,"rowStride":16,"entireSelectedRows":true},"previewWorkers":crate::movie_cache::worker_count(),"configuredPreviewWorkers":crate::media_budget::preview_worker_count(),"activeDecodeLimit":crate::media_budget::decoder_parallelism(),
         "scope":"Headless decode/cache/document presentation preparation, original geometry and exact timestamps. Excludes native GPU/paint/display/input/audio-device output; throughput is not native playback FPS."}))
 }
 pub(crate) fn specs() -> Vec<CommandSpec> {

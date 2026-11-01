@@ -45,6 +45,9 @@ original geometry; do not pass the throughput gate by silently lowering source r
   files just to draw every frame. Nonlinear speed and trim sampling must remain aligned.
 - Host-sized workers must use their actual successfully started count for assignments so a thread
   creation failure cannot leave a source permanently queued for a nonexistent worker.
+- For plain Normal RGBA8 stacks, fuse source-over composition into one FP32 pass per chunk only
+  after recognizing the exact planner slot graph. Unsupported features keep the general path.
+  Pack mapped transfers in row order; keep source/current-frame and GPU bounds authoritative.
 - GPU measurement must reject software/CPU adapters, include queue completion, use a bounded wait,
   report adapter/format/uploads and compare a few final pixels. Avoid per-frame CPU readback.
   This is stronger than decode-only timing but does not prove display scanout, sound-device output,

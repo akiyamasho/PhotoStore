@@ -34,6 +34,7 @@
 
 pub mod bounds;
 mod fx;
+mod normal_stack;
 pub mod health;
 pub mod plan;
 
@@ -96,6 +97,8 @@ pub struct Stats {
     pub tiles_uploaded: usize,
     /// Whole-page transfers replacing dense groups of per-tile writes.
     pub dense_page_uploads: usize,
+    /// Chunks whose supported Normal stack was composed in one pass.
+    pub fused_chunks: usize,
     pub bytes_uploaded: usize,
     /// Effect layers whose shape was (re)rendered, fully or partially.
     pub fx_shapes: usize,
@@ -384,6 +387,8 @@ fn texture_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, views: &
 /// GPU compositor. Create once per device; call [`Compositor::render`] per refresh.
 pub struct Compositor {
     kit: Kit,
+    normal_stack: Option<normal_stack::Pipelines>,
+    normal_stack_disabled: bool,
     pool: Vec<(wgpu::Texture, wgpu::TextureView)>,
     residents: HashMap<ResKey, Resident>,
     fx: HashMap<FxKey, FxEntry>,
@@ -590,6 +595,8 @@ impl Compositor {
         let dummy = Tex::new(device, "pc_compose_dummy", 1, 1, wgpu::TextureFormat::Rgba8Unorm, wgpu::TextureUsages::TEXTURE_BINDING).view;
         Self {
             kit: Kit { pipelines, bgl0, bgl1, dummy },
+            normal_stack: None,
+            normal_stack_disabled: false,
             pool: Vec::new(),
             residents: HashMap::new(),
             fx: HashMap::new(),
@@ -1112,6 +1119,10 @@ impl Compositor {
             });
             let v = t.create_view(&Default::default());
             self.pool.push((t, v));
+        }
+
+        if self.try_run_normal_stack(device, queue, encoder, plan, &bound, chunks, stats, sink) {
+            return;
         }
 
         // Uniforms: chunk records, then one record per pass.
@@ -1723,17 +1734,21 @@ fn write_dense_direct_page(device: &wgpu::Device, encoder: &mut wgpu::CommandEnc
     });
     let slice = buffer.slice(..);
     let mut data = slice.get_mapped_range_mut().ok()?;
+    let mut mapped = data.slice(..);
     let tile_row = TILE_SIZE as usize * bpp;
-    for (coordinate, tile) in tiles {
-        let rect = coordinate.rect();
-        let x = (rect.x0 - region.x0) as usize * bpp;
-        let y = (rect.y0 - region.y0) as usize;
+    let mut ordered = tiles.iter().collect::<Vec<_>>();
+    ordered.sort_unstable_by_key(|(coordinate, _)| (coordinate.ty, coordinate.tx));
+    let columns = region.width() as usize / TILE_SIZE as usize;
+    for (tile_y, strip) in ordered.chunks_exact(columns).enumerate() {
         for row in 0..TILE_SIZE as usize {
-            let to = (y + row) * stride + x;
             let from = row * tile_row;
-            data.slice(to..to + tile_row).copy_from_slice(&tile.bytes()[from..from + tile_row]);
+            for (tile_x, (_, tile)) in strip.iter().enumerate() {
+                let to = (tile_y * TILE_SIZE as usize + row) * stride + tile_x * tile_row;
+                mapped.slice(to..to + tile_row).copy_from_slice(&tile.bytes()[from..from + tile_row]);
+            }
         }
     }
+    drop(mapped);
     drop(data);
     buffer.unmap();
     encoder.copy_buffer_to_texture(

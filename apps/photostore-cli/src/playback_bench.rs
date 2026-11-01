@@ -59,6 +59,7 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
     let mut uploaded_bytes = 0usize;
     let mut uploaded_tiles = 0usize;
     let mut dense_page_uploads = 0usize;
+    let mut fused_chunks = 0usize;
     let mut render_chunks = 0usize;
     let mut dimensions: Option<(u32, u32)> = None;
     let mut output_texture: Option<wgpu::Texture> = None;
@@ -120,6 +121,7 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
         uploaded_bytes = uploaded_bytes.saturating_add(stats.bytes_uploaded);
         uploaded_tiles = uploaded_tiles.saturating_add(stats.tiles_uploaded);
         dense_page_uploads = dense_page_uploads.saturating_add(stats.dense_page_uploads);
+        fused_chunks = fused_chunks.saturating_add(stats.fused_chunks);
         render_chunks = render_chunks.saturating_add(stats.chunks);
         let frame = doc.timeline.as_ref().map_or(0, |t| t.current);
         if let Some(rate) = rate {
@@ -177,6 +179,7 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
                 "bytesUploaded": uploaded_bytes,
                 "tilesUploaded": uploaded_tiles,
             "densePageUploads": dense_page_uploads,
+                "fusedChunks": fused_chunks,
                 "compositeChunks": render_chunks,
                 "coldCompositeWaitMs": cold_gpu_ms,
                 "compositeWaitP50Ms": percentile(0.50),
