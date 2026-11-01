@@ -125,7 +125,7 @@ fn conversion_moves_single_root_frame_state_to_replacement_smart_layer() {
     let mut s = session(8);
     let id = s.active().unwrap().active_layer.unwrap();
     let mut timeline = Timeline::new(2, 24.0);
-    timeline.frame_states = vec![vec![FrameLayerState::legacy(id, true, 0.35)], vec![FrameLayerState::legacy(id, false, 0.8)]];
+    timeline.frame_states = vec![vec![FrameLayerState::legacy(id, true, 0.35)], vec![FrameLayerState::legacy(id, false, 0.8)]].into();
     set_timeline(&mut s, timeline);
     let new_id = convert(&mut s);
     let states = &s.active().unwrap().doc.timeline.as_ref().unwrap().frame_states;
@@ -139,7 +139,7 @@ fn conversion_preserves_property_frames_in_child_and_remaps_parent() {
     let mut timeline = Timeline::new(2, 24.0);
     let mut first = FrameLayerState::legacy(id, true, 0.5);
     first.position = Some((7, 9));
-    timeline.property_frames = vec![vec![first], vec![FrameLayerState::legacy(id, false, 0.8)]];
+    timeline.property_frames = vec![vec![first], vec![FrameLayerState::legacy(id, false, 0.8)]].into();
     set_timeline(&mut s, timeline);
     let new_id = convert(&mut s);
     let parent = &s.active().unwrap().doc.timeline.as_ref().unwrap().property_frames;
@@ -235,7 +235,7 @@ fn conversion_keeps_fill_and_color_overlay_owned_by_child_once() {
     state.blend = Some(BlendMode::Multiply);
     state.fill_opacity = Some(0.5);
     state.effects = Some(photostore_doc::FrameEffectsState { enabled: effects.enabled, items: effects.items.clone(), reference: effects.reference });
-    timeline.property_frames = vec![vec![state], vec![FrameLayerState::legacy(id, true, 0.5)]];
+    timeline.property_frames = vec![vec![state], vec![FrameLayerState::legacy(id, true, 0.5)]].into();
     set_timeline(&mut s, timeline);
     sync_doc(&mut s);
     let before = flat(&s);

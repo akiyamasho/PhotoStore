@@ -25,30 +25,27 @@ pub(crate) fn surfaces(doc: &Document, mut visit: impl FnMut(&Surface)) {
     }
 }
 
+/// Stable live allocation identities for pixels and shared authored frame metadata.
+pub(crate) fn allocations(doc:&Document,mut visit:impl FnMut(usize,usize)) {
+    surfaces(doc,|surface|{for (_,tile) in surface.tiles(){visit(Arc::as_ptr(tile) as usize,tile.bytes().len());}});
+    if let Some(timeline)=&doc.timeline {for bank in [&timeline.frame_states,&timeline.property_frames] {
+        if !bank.is_empty(){visit(bank.allocation_key(),bank.retained_bytes());}
+    }}
+}
+
 impl Tiles {
     pub(crate) fn add(&mut self, doc: &Document) {
-        surfaces(doc, |surface| {
-            for (_, tile) in surface.tiles() {
-                let count = self.refs.entry(Arc::as_ptr(tile) as usize).or_insert_with(|| {
-                    self.bytes += tile.bytes().len() as u128;
-                    (0, tile.bytes().len())
-                });
-                count.0 += 1;
-            }
+        allocations(doc,|key,bytes|{
+            let count=self.refs.entry(key).or_insert_with(||{self.bytes+=bytes as u128;(0,bytes)});
+            count.0+=1;
         });
     }
 
     pub(crate) fn remove(&mut self, doc: &Document) {
-        surfaces(doc, |surface| {
-            for (_, tile) in surface.tiles() {
-                let key = Arc::as_ptr(tile) as usize;
-                if let Some(count) = self.refs.get_mut(&key) {
-                    count.0 -= 1;
-                    if count.0 == 0 {
-                        self.bytes -= count.1 as u128;
-                        self.refs.remove(&key);
-                    }
-                }
+        allocations(doc,|key,_|{
+            if let Some(count)=self.refs.get_mut(&key){
+                count.0-=1;
+                if count.0==0 {self.bytes-=count.1 as u128;self.refs.remove(&key);}
             }
         });
     }
@@ -63,13 +60,8 @@ impl Tiles {
     pub(crate) fn bytes_with(&self, current: &Document) -> u128 {
         let mut total = self.bytes;
         let mut seen = HashSet::new();
-        surfaces(current, |surface| {
-            for (_, tile) in surface.tiles() {
-                let key = Arc::as_ptr(tile) as usize;
-                if !self.refs.contains_key(&key) && seen.insert(key) {
-                    total += tile.bytes().len() as u128;
-                }
-            }
+        allocations(current,|key,bytes|{
+            if !self.refs.contains_key(&key) && seen.insert(key){total+=bytes as u128;}
         });
         total
     }

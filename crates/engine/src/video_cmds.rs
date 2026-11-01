@@ -138,15 +138,15 @@ pub(crate) fn open_linked_movie(
     }
     let preview_bytes = crate::movie_cache::estimated_frame_bytes(info.width, info.height, fmt)
         .ok_or_else(|| EngineError::Other("linked movie preview frame size overflows addressable memory".into()))?;
-    if preview_bytes > crate::movie_cache::FRAME_BUDGET_BYTES {
+    if preview_bytes > crate::movie_cache::frame_budget_bytes() {
         return Err(EngineError::Other(format!(
             "linked movie preview frame exceeds the {} MiB resident-frame limit; reduce source dimensions before importing",
-            crate::movie_cache::FRAME_BUDGET_BYTES / (1024 * 1024)
+            crate::movie_cache::frame_budget_bytes() / (1024 * 1024)
         )));
     }
     ctx.check()?;
     let mut frames =
-        crate::media_backend::decode_sequence_range(path, first, first, fmt, crate::movie_cache::FRAME_BUDGET_BYTES as u64, |_, _| !ctx.cancelled())
+        crate::media_backend::decode_sequence_range(path, first, first, fmt, crate::movie_cache::frame_budget_bytes() as u64, |_, _| !ctx.cancelled())
             .map_err(media_error)?;
     let preview = frames.pop().ok_or_else(|| EngineError::Other("movie decoder returned no first frame".into()))?;
     let original_fps = if info.fps.valid() { info.fps.as_f64() as f32 } else { source_fps };
@@ -178,7 +178,8 @@ pub fn sync_plain(doc: &mut Document) {
 /// Nested Smart Object instances may sample the same child layer at different times in one
 /// composite. Preserve all of those requests instead of coalescing them as one canvas consumer.
 pub(crate) fn sync_plain_for_nested(doc: &mut Document) {
-    sync_plain_impl(doc, false, false);
+    let namespaced=crate::movie_cache::consumer_namespace()!=0;
+    sync_plain_impl(doc,namespaced,namespaced);
 }
 
 fn sync_plain_impl(doc: &mut Document, coalesce: bool, prefetch: bool) {
@@ -465,6 +466,39 @@ fn linked_frame_status(doc: &Document) -> Result<bool> {
     Ok(true)
 }
 
+/// Queue/look up linked movie frames before cloning a presentation candidate. A not-ready poll
+/// touches only metadata/queues and shared tiles, not every layer/property snapshot in a clone.
+pub(crate) fn request_presentation_frame(doc:&Document,frame:usize)->Result<bool> {
+    let Some(timeline)=&doc.timeline else{return Ok(true)};
+    let fps=timeline.project_rate().as_f64();
+    let states=if timeline.mode==photostore_doc::TimelineMode::FrameAnimation {timeline.frame_states.get(frame)}else{timeline.property_frames.get(frame)};
+    let visible=|layer:&Layer| {
+        let range=timeline.layer_ranges.iter().find(|range|range.layer==layer.id);
+        let authored=states.and_then(|states|states.iter().find(|state|state.layer==layer.id)).map(|state|state.visible);
+        let enabled=range.map_or_else(||authored.unwrap_or(layer.visible),|range|range.enabled && frame>=range.start && frame<range.end.max(range.start.saturating_add(1)) && authored.unwrap_or(true));
+        enabled && !timeline.visual_tracks.iter().any(|track|track.muted && track.layers.contains(&layer.id))
+    };
+    let mut ready=true;
+    for (path,_,layer) in doc.walk() {
+        let Some(video)=layer.video.as_ref().filter(|video|video.movie_backing.is_some()) else{continue};
+        if !visible(layer) || !(1..path.len()).all(|depth|doc.layer_at(&path[..depth]).is_some_and(&visible)){continue;}
+        check_live_movie_source(doc,video).map_err(EngineError::Other)?;
+        let photostore_doc::VideoSource::File{path}=&video.source else{return Err(EngineError::Other("linked movie has no original source".into()));};
+        let range=timeline.layer_ranges.iter().find(|range|range.layer==layer.id);
+        let seconds=linked_source_seconds(frame,fps,video,range)?;
+        let mut times=Vec::new();
+        if range.and_then(|range|range.playback.as_ref()).is_none_or(|playback|playback.speed_curve.is_empty()) {
+            let end=timeline.duration.min(range.map_or(usize::MAX,|range|range.end));
+            for at in frame..frame.saturating_add(16).min(end){times.push(linked_source_seconds(at,fps,video,range)?);}
+        }
+        use std::hash::{Hash,Hasher};
+        let mut identity=std::collections::hash_map::DefaultHasher::new();
+        (doc.id.0,layer.id.0,crate::movie_cache::consumer_namespace()).hash(&mut identity);
+        if movie_source_frame(path,seconds,PixelFormat{mode:photostore_color::ColorMode::Rgb,..doc.pixel_format()},Some(identity.finish()),&times).map_err(EngineError::Other)?.is_none(){ready=false;}
+    }
+    Ok(ready)
+}
+
 /// Exact-time playback sampling, including editable nested documents. A loading child must not
 /// be published as a current frame merely because its last-valid Smart Object preview exists.
 pub(crate) fn sync_for_presentation(doc: &mut Document) -> Result<bool> {
@@ -557,7 +591,7 @@ fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_f
                     if coalesce {
                         use std::hash::{Hash, Hasher};
                         let mut identity = std::collections::hash_map::DefaultHasher::new();
-                        (geometry.id.0, l.id.0).hash(&mut identity);
+                        (geometry.id.0, l.id.0,crate::movie_cache::consumer_namespace()).hash(&mut identity);
                         let range=ranges.iter().find(|r|r.layer==l.id);
                         let mut times=Vec::new();
                         if prefetch && range.and_then(|r|r.playback.as_ref()).is_none_or(|p|p.speed_curve.is_empty()) {

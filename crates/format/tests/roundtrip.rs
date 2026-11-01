@@ -524,7 +524,7 @@ fn video_layer_frames_survive_roundtrip() {
 }
 
 #[test]
-fn timeline_completion_data_boundary_v3_roundtrip_keeps_sources_clock_and_affine_snapshot() {
+fn scalable_playback_v3_roundtrip_keeps_sources_clock_and_affine_snapshot() {
     use photostore_doc::{FrameLayerState, MediaAssetFingerprint, MediaAssetMetadata, MediaAudioMetadata, MediaVideoMetadata, RationalRate, SmartObject, SmartSource, Timeline, VideoData, VideoSource};
     let mut doc = Document::new("Media bindings", photostore_geom::Size { width: 8, height: 6 }, ColorMode::Rgb, SampleType::U8);
     let mut timeline = Timeline::new(12, 24.0);
@@ -559,7 +559,7 @@ fn timeline_completion_data_boundary_v3_roundtrip_keeps_sources_clock_and_affine
         FrameLayerState { smart_transform: Some([1.0, 0.0, 0.0, 1.0, 3.0, 4.0]), ..FrameLayerState::legacy(movie_id, true, 1.0) },
         FrameLayerState::legacy(linked_id, true, 1.0),
     ];
-    doc.timeline.as_mut().unwrap().frame_states = vec![states];
+    doc.timeline.as_mut().unwrap().frame_states = vec![states].into();
     let bytes = save_to_bytes(&doc, &SaveOptions::default()).unwrap();
     let back = load_from_bytes(&bytes).unwrap();
     let rate = back.timeline.as_ref().unwrap().project_rate();

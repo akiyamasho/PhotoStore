@@ -624,6 +624,17 @@ pub fn same_pixels(a: &Document, b: &Document) -> bool {
     doc_pixels_equal(a, b) && walk(&a.layers, &b.layers, 0)
 }
 
+/// Compare only the currently presented content, including cached video pixels. Unlike authored
+/// edit classification this deliberately ignores future video-source frames during cache refresh.
+pub(crate) fn same_presented_pixels(a:&Document,b:&Document)->bool {
+    fn walk(a:&[Layer],b:&[Layer],depth:usize)->bool {
+        depth<256 && a.len()==b.len() && a.iter().zip(b).all(|(a,b)|layer_pixels_equal(a,b) && match(a.children(),b.children()){
+            (Some(a),Some(b))=>walk(a,b,depth+1),(None,None)=>true,_=>false,
+        })
+    }
+    doc_pixels_equal(a,b) && walk(&a.layers,&b.layers,0)
+}
+
 /// Pixels a single history step can have changed between `a` and `b` (the documents on either
 /// side of an undo or redo): the union of the change bounds of every layer whose pixels
 /// differ, so undoing a local edit recomposites only that area instead of the whole canvas.

@@ -641,3 +641,30 @@ Native visual/input/audio-device acceptance and representative-project performan
 the 64×64 synthetic fixture's first cold request exceeded the proposed 250 ms goal. Issue #23 stays
 open for user acceptance. The scheduler remains disabled/unloaded with no pending work; no resume
 or build replay is permitted by publication or this documentation-only follow-up.
+
+## 2026-11-01: Scalable preview and timeline authoring policy
+
+The playback follow-up keeps one source-authoritative document and transport clock. A preview
+decoder may retain a bounded sequential stream per consumer/source configuration and publish
+timestamped frames independently; it may not substitute a stale timestamp after a seek or relink.
+The UI clock continues to drive the visible timeline playhead and timecode while a pending exact
+frame is decoded. Canvas/document `current` remains the last fully ready frame, shown with a
+buffering state. Background thumbnails yield during playback. Exact export and authored pixels keep
+their original-source and color contracts.
+
+Derived media shares an evictable budget computed from the existing Memory Usage allowance and
+physical RAM; caches have no fixed thumbnail partition. The computed budget is not a process-wide
+memory cap. Remove the former 64 MiB rejection only from the four timeline snapshot-generation or
+conversion operations, replacing it with checked accounting, the user-configured allowance,
+cancellation, and atomic edit jobs. Keep unrelated codec/decompression and archive limits. The
+recording frame allocation bound is derived from configured frame geometry, while the existing
+256 MiB archive and 100,000-frame caps remain. Keep the 64-megapixel Smart affine guard until an
+allocation-preflight/tiled rendering path can safely replace it. Format manifest/blob/total limits
+remain separate and configurable through load options.
+
+These source changes and the headless `media.performance.measure` diagnostic are documented in the
+[0.20.1 release record](releases/0.20.1.md). Pre-change local CLI timings are not native playback
+FPS. Eleven unique focused critical checks passed, including >64 MiB authored metadata with save/undo,
+exact export/Smart boundaries, and 1080p/4K preparation under default and tight cache budgets.
+Final production measurements/delivery and native user acceptance remain pending; do not call
+the timeline complete or issue #23 accepted on headless evidence.

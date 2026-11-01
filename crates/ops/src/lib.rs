@@ -256,18 +256,26 @@ impl History {
 /// Bytes of the pixel tiles of `doc` (layers, masks, alpha channels) not already in `seen`.
 fn tile_bytes(doc: &Document, seen: &mut HashSet<usize>) -> usize {
     let mut n = 0usize;
-    tiles::surfaces(doc, |surface| {
-        for (_, tile) in surface.tiles() {
-            if seen.insert(Arc::as_ptr(tile) as usize) {
-                n = n.saturating_add(tile.bytes().len());
-            }
-        }
+    tiles::allocations(doc,|key,bytes|{
+        if seen.insert(key){n=n.saturating_add(bytes);}
     });
     n
 }
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn scalable_playback_history_counts_shared_frame_banks_once() {
+        let mut doc=photostore_doc::Document::new("metadata",photostore_doc::Size::new(1,1),photostore_doc::ColorMode::Rgb,photostore_doc::SampleType::U8);
+        let mut timeline=photostore_doc::Timeline::new(2,30.0);
+        timeline.frame_states=vec![vec![photostore_doc::FrameLayerState::legacy(photostore_doc::LayerId::fresh(),true,1.0)]].into();
+        doc.timeline=Some(timeline);let mut seen=std::collections::HashSet::new();
+        assert!(super::tile_bytes(&doc,&mut seen)>0);
+        let mut copy=doc.clone();assert_eq!(super::tile_bytes(&copy,&mut seen),0);
+        copy.timeline.as_mut().unwrap().frame_states[0][0].visible=false;
+        assert_eq!(super::tile_bytes(&copy,&mut seen),copy.timeline.as_ref().unwrap().frame_states.retained_bytes());
+    }
     use super::*;
     use photostore_doc::{Color, ColorMode, Layer, SampleType, Size};
 

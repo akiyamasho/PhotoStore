@@ -475,7 +475,8 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
         return;
     };
     let duration = timeline.duration_seconds().max(0.001);
-    let playhead = timeline.frame_start_seconds(timeline.current);
+    let display_frame = app.timeline_playback.display_frame(timeline);
+    let playhead = app.timeline_playback.display_time(timeline);
     ui.horizontal(|ui| {
         ui.label(RichText::new(tl!("Audio")).strong().color(t.text));
         if crate::widgets::secondary_button(ui, tl!("+ Track"), 72.0).clicked() {
@@ -505,7 +506,7 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
             for clip in &track.clips {
                 draw_clip(ui, app, doc, clip, lane, duration, playhead, timeline.project_rate().as_f64(), snap, &t);
             }
-            let x = lane.left() + lane.width() * timeline.current as f32 / timeline.duration.max(1) as f32;
+            let x = lane.left() + lane.width() * display_frame as f32 / timeline.duration.max(1) as f32;
             ui.painter_at(lane).line_segment([egui::pos2(x, lane.top()), egui::pos2(x, lane.bottom())], egui::Stroke::new(1.5, t.accent));
         });
     }
@@ -525,7 +526,8 @@ pub fn show_workspace(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline,
     let tokens = Tokens::get(ui.ctx());
     let tracks = timeline.audio_tracks.clone();
     let duration = timeline.duration_seconds().max(0.001);
-    let playhead = timeline.frame_start_seconds(timeline.current);
+    let display_frame = app.timeline_playback.display_frame(timeline);
+    let playhead = app.timeline_playback.display_time(timeline);
     for track in tracks {
         ui.horizontal(|ui| {
             let (gutter, _) = ui.allocate_exact_size(vec2(gutter_width, TIMELINE_AUDIO_ROW_HEIGHT), Sense::hover());
@@ -555,7 +557,7 @@ pub fn show_workspace(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline,
                     for clip in &track.clips {
                         draw_clip(ui, app, doc, clip, lane, duration, playhead, timeline.project_rate().as_f64(), snap, &tokens);
                     }
-                    let x = lane.left() + lane.width() * timeline.current as f32 / timeline.duration.max(1) as f32;
+                    let x = lane.left() + lane.width() * display_frame as f32 / timeline.duration.max(1) as f32;
                     painter.line_segment([pos2(x, lane.top()), pos2(x, lane.bottom())], egui::Stroke::new(1.5, tokens.accent));
                 });
             let _ = (scroll_id, out.state.offset);

@@ -16,7 +16,14 @@ use crate::{EngineError, Result, Session};
 
 const MAX_FRAMES: usize = 100_000;
 const MAX_ENCODED_BYTES: usize = 256 * 1024 * 1024;
-const MAX_DECODE_BYTES: usize = 64 * 1024 * 1024;
+
+fn recording_allocation_limit(width: u32, height: u32) -> Result<usize> {
+    let pixels = usize::try_from(u64::from(width).checked_mul(u64::from(height))
+        .ok_or_else(|| EngineError::Other("recording dimensions overflow addressable memory".into()))?)
+        .map_err(|_| EngineError::Other("recording dimensions exceed addressable memory".into()))?;
+    pixels.checked_mul(8).and_then(|bytes| bytes.checked_add(1 << 20))
+        .ok_or_else(|| EngineError::Other("recording codec allocation estimate overflowed".into()))
+}
 
 fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
     EngineError::BadParams { cmd: cmd.into(), msg: msg.into() }
@@ -108,13 +115,19 @@ fn fit_image(doc: &Document) -> Rgba8Image {
 }
 
 fn encode_image(img: &Rgba8Image, quality: RecordingQuality) -> Result<Vec<u8>> {
+    let limit = recording_allocation_limit(img.width, img.height)?;
     if quality == RecordingQuality::Lossless {
         let image = Image::from_u8(img.width, img.height, ChannelLayout::Rgba, img.pixels.clone()).map_err(|e| EngineError::Other(format!("recording PNG encode: {e}")))?;
-        return photostore_codecs::encode(&image, Format::Png, &EncodeOptions::default()).map_err(|e| EngineError::Other(format!("recording PNG encode: {e}")));
+        let encoded = photostore_codecs::encode(&image, Format::Png, &EncodeOptions::default()).map_err(|e| EngineError::Other(format!("recording PNG encode: {e}")))?;
+        if encoded.len() > limit { return Err(EngineError::Other("encoded recording frame exceeds its geometry-based codec bound".into())); }
+        return Ok(encoded);
     }
     let rgb: Vec<u8> = img.pixels.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
     let q = match quality { RecordingQuality::Low => 45, RecordingQuality::Good => 75, RecordingQuality::Studio => 94, RecordingQuality::Lossless => 100 };
-    photostore_codecs::web::encode_jpeg_rgb8(img.width, img.height, &rgb, q, false, true, None, None, None).map_err(|e| EngineError::Other(format!("recording JPEG encode: {e}")))
+    let encoded = photostore_codecs::web::encode_jpeg_rgb8(img.width, img.height, &rgb, q, false, true, None, None, None)
+        .map_err(|e| EngineError::Other(format!("recording JPEG encode: {e}")))?;
+    if encoded.len() > limit { return Err(EngineError::Other("encoded recording frame exceeds its geometry-based codec bound".into())); }
+    Ok(encoded)
 }
 
 fn capture_encoded(doc: &Document) -> Result<Vec<u8>> {
@@ -164,16 +177,20 @@ pub(crate) fn preserve_recording(from: &Document, to: &mut Document) {
 pub fn recording_frame_image(doc: &Document, index: usize) -> Result<Rgba8Image> {
     let recording = doc.recording.as_ref().ok_or_else(|| bad("recording.frame", "recording is unavailable"))?;
     let frame = recording.frames.get(index).ok_or_else(|| bad("recording.frame", "frame index is out of range"))?;
-    if frame.image.len() > MAX_DECODE_BYTES { return Err(EngineError::Other("recording frame exceeds the decode limit".into())); }
+    let (expected_w, expected_h) = recording.settings.resolution.dimensions();
+    let max_alloc = recording_allocation_limit(expected_w, expected_h)?;
+    if frame.image.len() > max_alloc { return Err(EngineError::Other("recording frame exceeds its geometry-based codec bound".into())); }
     let png = frame.image.starts_with(b"\x89PNG\r\n\x1a\n");
     let jpeg = frame.image.starts_with(b"\xff\xd8\xff");
     if !png && !jpeg { return Err(EngineError::Other("recording frame is not PNG or JPEG".into())); }
-    let (expected_w, expected_h) = recording.settings.resolution.dimensions();
-    let image = photostore_codecs::decode_with(&frame.image, &photostore_codecs::DecodeOptions { limits: Limits { max_width: expected_w, max_height: expected_h, max_pixels: u64::from(expected_w) * u64::from(expected_h), max_alloc: MAX_DECODE_BYTES as u64 }, ..Default::default() }).map_err(|e| EngineError::Other(format!("recording frame decode: {e}")))?;
+    let image = photostore_codecs::decode_with(&frame.image, &photostore_codecs::DecodeOptions { limits: Limits { max_width: expected_w, max_height: expected_h, max_pixels: u64::from(expected_w) * u64::from(expected_h), max_alloc: max_alloc as u64 }, ..Default::default() }).map_err(|e| EngineError::Other(format!("recording frame decode: {e}")))?;
     let rgba = image.convert(ChannelLayout::Rgba, SampleType::U8);
     let w = rgba.width(); let h = rgba.height();
     if (w, h) != recording.settings.resolution.dimensions() { return Err(EngineError::Other("recording frame dimensions do not match recording settings".into())); }
-    if rgba.data().len() > MAX_DECODE_BYTES { return Err(EngineError::Other("recording frame allocation exceeds the decode limit".into())); }
+    let expected_bytes = usize::try_from(u64::from(w).checked_mul(u64::from(h)).and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| EngineError::Other("recording frame decoded size overflowed".into()))?)
+        .map_err(|_| EngineError::Other("recording frame decoded size exceeds addressable memory".into()))?;
+    if rgba.data().len() != expected_bytes { return Err(EngineError::Other("recording frame allocation does not match its dimensions".into())); }
     Ok(Rgba8Image { width: w, height: h, pixels: rgba.data().to_vec() })
 }
 

@@ -137,7 +137,7 @@ struct CacheEntry {
 /// a smart object never decodes its contents again.
 static SOURCE_CACHE: Mutex<Vec<CacheEntry>> = Mutex::new(Vec::new());
 const CACHE_ENTRIES: usize = 32;
-const CACHE_BYTES: usize = crate::media_budget::MOVIE_FRAME_BUDGET_BYTES;
+fn source_cache_limit()->usize {crate::media_budget::retained_limit_bytes()}
 
 struct DecodedEntry {
     key: [u8; 32],
@@ -147,7 +147,7 @@ struct DecodedEntry {
 }
 static DECODE_CACHE: Mutex<Vec<DecodedEntry>> = Mutex::new(Vec::new());
 const DECODE_ENTRIES: usize = 8;
-const DECODE_BYTES: usize = crate::media_budget::MOVIE_FRAME_BUDGET_BYTES;
+fn decoded_cache_limit()->usize {crate::media_budget::retained_limit_bytes()}
 
 fn cache_key(bytes: &[u8], fmt: PixelFormat) -> CacheKey {
     (*blake3::hash(bytes).as_bytes(), fmt)
@@ -190,7 +190,7 @@ fn decode_cached(file_name: &str, bytes: &[u8]) -> Result<Arc<Document>> {
     if let Ok(mut c) = DECODE_CACHE.lock() {
         c.retain(|e| e.key != key);
         let size = decoded_size(&doc, bytes.len());
-        if size > DECODE_BYTES {
+        if size > decoded_cache_limit() {
             return Ok(Arc::new(doc));
         }
         let doc = Arc::new(doc);
@@ -200,7 +200,7 @@ fn decode_cached(file_name: &str, bytes: &[u8]) -> Result<Arc<Document>> {
         };
         let Some(budget)=budget else {return Ok(doc)};
         c.push(DecodedEntry { key, doc: doc.clone(), bytes: size, _budget:budget });
-        while c.len() > DECODE_ENTRIES || c.iter().map(|e| e.bytes).sum::<usize>() > DECODE_BYTES {
+        while c.len() > DECODE_ENTRIES || c.iter().map(|e| e.bytes).sum::<usize>() > decoded_cache_limit() {
             c.remove(0);
         }
         return Ok(doc);
@@ -255,7 +255,7 @@ fn cache_put(key: CacheKey, image: SourceImage) {
     let Some(budget)=budget else {return;};
     c.push(CacheEntry { key, image, decodes, _budget:budget });
     let size = |e: &CacheEntry| e.image.bounds.width() as usize * e.image.bounds.height() as usize * e.key.1.channels() * 4;
-    while c.len() > CACHE_ENTRIES || (c.len() > 1 && c.iter().map(size).sum::<usize>() > CACHE_BYTES) {
+    while c.len() > CACHE_ENTRIES || (c.len() > 1 && c.iter().map(size).sum::<usize>() > source_cache_limit()) {
         c.remove(0);
     }
 }
@@ -708,6 +708,7 @@ pub(crate) fn transform_source_bounds(doc: &Document, id: LayerId) -> Result<Opt
 }
 
 fn refresh_layer_at_time(doc: &Document, l: &mut Layer, time: Option<f64>, depth: usize) -> Result<bool> {
+    let _consumer_scope=crate::movie_cache::ConsumerScope::enter(doc.id.0,l.id.0);
     let LayerContent::Smart(sm) = &mut l.content else { return Ok(false) };
     let time = layer_source_time(doc, l.id, time);
     match render_at_time(doc, sm, time, depth)? {

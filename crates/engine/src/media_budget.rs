@@ -2,10 +2,37 @@
 use std::sync::Arc;
 use std::sync::{Condvar, Mutex, OnceLock};
 
-pub const TOTAL_BUDGET_BYTES: usize = 256 * 1024 * 1024;
-pub const MOVIE_FRAME_BUDGET_BYTES: usize = 160 * 1024 * 1024;
-pub const THUMBNAIL_BUDGET_BYTES: usize = 64 * 1024 * 1024;
-pub const WAVEFORM_BUDGET_BYTES: usize = 32 * 1024 * 1024;
+use std::sync::atomic::{AtomicUsize,Ordering};
+static RETAINED_LIMIT:AtomicUsize=AtomicUsize::new(0);
+static CONFIGURED_ALLOWANCE:AtomicUsize=AtomicUsize::new(8usize.saturating_mul(1<<30));
+
+fn physical_memory()->usize {
+    static MEMORY:OnceLock<usize>=OnceLock::new();
+    *MEMORY.get_or_init(|| {
+        #[cfg(target_os="macos")]
+        if let Ok(output)=std::process::Command::new("/usr/sbin/sysctl").args(["-n","hw.memsize"]).output() {
+            if let Some(bytes)=String::from_utf8(output.stdout).ok().and_then(|s|s.trim().parse::<u64>().ok()).and_then(|n|usize::try_from(n).ok()){return bytes;}
+        }
+        #[cfg(target_os="linux")]
+        if let Ok(text)=std::fs::read_to_string("/proc/meminfo") {
+            if let Some(bytes)=text.lines().find_map(|line|line.strip_prefix("MemTotal:")).and_then(|s|s.split_whitespace().next()).and_then(|s|s.parse::<usize>().ok()).and_then(|n|n.checked_mul(1024)){return bytes;}
+        }
+        16usize.saturating_mul(1<<30)
+    })
+}
+/// Optional retained media shares the existing Memory Usage policy. Categories borrow the
+/// common allowance; there is no fixed 64 MiB thumbnail or 256 MiB total editing ceiling.
+pub fn configure(allowance:usize) {
+    CONFIGURED_ALLOWANCE.store(allowance,Ordering::Relaxed);
+    let target=(allowance/4).min(physical_memory()/8).max(16<<20);
+    RETAINED_LIMIT.store(target,Ordering::Relaxed);
+}
+pub fn retained_limit_bytes()->usize {
+    let limit=RETAINED_LIMIT.load(Ordering::Relaxed);
+    if limit!=0{return limit;}
+    configure(CONFIGURED_ALLOWANCE.load(Ordering::Relaxed));
+    RETAINED_LIMIT.load(Ordering::Relaxed)
+}
 pub const MAX_HEAVY_DECODERS: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -25,11 +52,7 @@ impl MediaKind {
     }
 
     fn limit(self) -> usize {
-        match self {
-            Self::MovieFrame => MOVIE_FRAME_BUDGET_BYTES,
-            Self::Thumbnail => THUMBNAIL_BUDGET_BYTES,
-            Self::Waveform => WAVEFORM_BUDGET_BYTES,
-        }
+        retained_limit_bytes()
     }
 }
 
@@ -74,7 +97,7 @@ pub fn reserve(kind: MediaKind, bytes: usize) -> Option<Reservation> {
     let mut state = memory().lock().ok()?;
     let index = kind.index();
     let total = state.used.iter().copied().sum::<usize>();
-    if bytes > kind.limit().saturating_sub(state.used[index]) || bytes > TOTAL_BUDGET_BYTES.saturating_sub(total) {
+    if bytes > kind.limit().saturating_sub(state.used[index]) || bytes > retained_limit_bytes().saturating_sub(total) {
         return None;
     }
     state.used[index] = state.used[index].saturating_add(bytes);
@@ -98,7 +121,7 @@ impl Reservation {
         if bytes > inner.bytes {
             let extra = bytes - inner.bytes;
             let total = state.used.iter().copied().sum::<usize>();
-            if extra > inner.kind.limit().saturating_sub(state.used[index]) || extra > TOTAL_BUDGET_BYTES.saturating_sub(total) {
+            if extra > inner.kind.limit().saturating_sub(state.used[index]) || extra > retained_limit_bytes().saturating_sub(total) {
                 return false;
             }
             state.used[index] = state.used[index].saturating_add(extra);
@@ -200,7 +223,7 @@ pub fn status() -> BudgetStatus {
     let used = memory().lock().map(|state| state.used).unwrap_or_default();
     let active_heavy_decoders = decoders().0.lock().map(|state| state.active).unwrap_or(0);
     BudgetStatus {
-        total_limit_bytes: TOTAL_BUDGET_BYTES,
+        total_limit_bytes: retained_limit_bytes(),
         total_used_bytes: used.iter().copied().sum(),
         movie_frame_used_bytes: used[0],
         thumbnail_used_bytes: used[1],

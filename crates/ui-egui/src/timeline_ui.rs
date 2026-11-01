@@ -169,6 +169,7 @@ fn source_library(app:&mut PhotoStoreApp,ui:&mut Ui,doc:&photostore_doc::Documen
             ui.horizontal(|ui| {
                 let key=format!("source-card:{}:{}:{}",doc.id.0,asset.id.0,asset.revision);
                 let texture=app.ui.timeline.frame_thumbs.iter().find(|(k,_)|k==&key).map(|(_,t)|t.id()).or_else(|| {
+                    if app.ui.timeline.playing || app.timeline_playback.playing { return None; }
                     let layer=representative.and_then(|id|doc.layer(id))?;
                     let surface=layer.video.as_ref().and_then(|v|v.frames.first()).or_else(||layer.surface())?;
                     let image=crate::transform_tex::read_surface(surface,None,doc.bounds(),64).0;
@@ -231,7 +232,7 @@ pub(crate) fn media_preview_menu(app:&mut PhotoStoreApp,ui:&mut Ui) {
             app.ui.timeline.frame_thumbs.clear();
         }
         let budget=photostore_engine::media_budget::status();
-        ui.weak(format!("Resident media: {:.1} / 256 MiB",budget.total_used_bytes as f64/1048576.0));
+        ui.weak(format!("Resident media: {:.1} / {:.0} MiB",budget.total_used_bytes as f64/1048576.0,budget.total_limit_bytes as f64/1048576.0));
         ui.weak("Export always uses originals. Proxies never replace source files.");
         ui.weak("A missing or disabled proxy uses the original preview.");
     });
@@ -322,6 +323,22 @@ impl std::fmt::Debug for TimelineUi {
 fn frame_thumbnails(app: &mut PhotoStoreApp, ctx: &egui::Context, tl: &photostore_doc::Timeline) -> (usize, Vec<Option<egui::TextureId>>) {
     let Some(st) = app.session.active() else { return (0, Vec::new()) };
     let video = st.active_layer.and_then(|id| st.doc.layer(id)).and_then(|layer| layer.video.as_ref());
+    if app.ui.timeline.playing || app.timeline_playback.playing {
+        // Do not walk layers, hash timeline state, or inspect the decoder completion counter on
+        // every playback repaint. Reuse the current page's already-resident thumbnails only.
+        const PAGE: usize = 48;
+        let key_prefix = format!("{}:{}:{}", st.doc.id.0, app.ui.timeline.thumb_generation, video.map_or(tl.duration, |v| v.len()));
+        let total = video.map_or(tl.duration, |v| v.len());
+        let page = app.ui.timeline.thumb_page.min(total.saturating_sub(1) / PAGE);
+        app.ui.timeline.thumb_page = page;
+        let start = page * PAGE;
+        let frame_count = total.saturating_sub(start).min(PAGE);
+        let ids = (start..start + frame_count).map(|frame| {
+            let cached = format!("{key_prefix}:{frame}");
+            app.ui.timeline.frame_thumbs.iter().find(|(key, _)| key == &cached || key.starts_with(&format!("{cached}:t"))).map(|(_, tex)| tex.id())
+        }).collect();
+        return (start, ids);
+    }
     let history = (st.history.past_len(), st.history.future_len());
     let signature = {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -663,12 +680,13 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
     let have_doc = doc_snapshot.is_some();
     let layer_rows: Vec<(u64, String, bool)> =
         doc_snapshot.as_ref().map(|(doc, _)| doc.layers.iter().map(|l| (l.id.0, l.name.clone(), l.video.is_some())).collect()).unwrap_or_default();
+    let display_frame = tl.map_or(0, |timeline| app.timeline_playback.display_frame(timeline));
     let active_delay = doc_snapshot
         .as_ref()
         .and_then(|(doc, active)| active.and_then(|id| doc.layer(id)))
         .and_then(|l| l.video.as_ref())
-        .and_then(|v| v.frame_delays_ms.get(tl.map_or(0, |t| t.current)).copied());
-    let animation_delay = tl.and_then(|t| t.frame_delays_ms.get(t.current).copied());
+        .and_then(|v| v.frame_delays_ms.get(display_frame).copied());
+    let animation_delay = tl.and_then(|t| t.frame_delays_ms.get(display_frame).copied());
     let (thumb_start, frame_thumb_ids) = tl.map_or((0, Vec::new()), |timeline| frame_thumbnails(app, &ctx, timeline));
     let mut act: Option<(&str, Value)> = None;
     let active_doc_id = doc_snapshot.as_ref().map(|(doc, _)| doc.id);
@@ -771,7 +789,7 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                     ui.label(
                         RichText::new(crate::i18n::fmt(
                             crate::i18n::t("Frame {current} / {total}"),
-                            &[("current", &(tl.current + 1).to_string()), ("total", &tl.duration.to_string())],
+                            &[("current", &(display_frame + 1).to_string()), ("total", &tl.duration.to_string())],
                         ))
                         .color(t.text)
                         .monospace(),
@@ -781,7 +799,8 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                     }
                     if crate::icons::button(ui, "chevrons-right", 22.0, false, tl!("Last frame")).clicked() { act = Some(("timeline.setFrame", json!({"frame":tl.duration.saturating_sub(1)}))); }
                     ui.separator();
-                    let timecode = format!("{:02}:{:02}:{:02}", (tl.time() / 60.0) as u32, tl.time() as u32 % 60, tl.current % tl.fps.round().max(1.0) as usize);
+                    let display_time = app.timeline_playback.display_time(tl);
+                    let timecode = format!("{:02}:{:02}:{:02}", (display_time / 60.0) as u32, display_time as u32 % 60, display_frame % tl.fps.round().max(1.0) as usize);
                     ui.label(RichText::new(timecode).color(t.text_dim).monospace());
                     if matches!(tl.mode, photostore_doc::TimelineMode::Video) {
                         if ui.small_button("−").on_hover_text("Zoom out").clicked() { app.ui.timeline.zoom = (app.ui.timeline.zoom / 1.25).clamp(0.25, 8.0); }
@@ -832,7 +851,7 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                 ui.add_space(6.0);
                 // Scrubber: frame playhead across the duration.
                 if matches!(tl.mode, photostore_doc::TimelineMode::FrameAnimation) && tl.duration > 1 {
-                    let mut frame = tl.current as f64;
+                    let mut frame = display_frame as f64;
                     let resp = ui.add(egui::Slider::new(&mut frame, 0.0..=(tl.duration - 1) as f64).integer().show_value(false).text("playhead"));
                     if resp.changed() {
                         act = Some(("timeline.setFrame", json!({ "frame": frame as u64 })));
@@ -849,7 +868,7 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
                     let work_b = ruler.left() + ruler.width() * tl.work_end as f32 / tl.duration.max(1) as f32;
                     painter.rect_filled(egui::Rect::from_min_max(egui::pos2(work_a, ruler.top()), egui::pos2(work_b, ruler.bottom())), 0.0, t.accent.gamma_multiply(0.14));
                     for n in 0..=10 { let x = ruler.left() + ruler.width() * n as f32 / 10.0; painter.line_segment([egui::pos2(x, ruler.bottom() - 8.0), egui::pos2(x, ruler.bottom())], egui::Stroke::new(1.0, t.text_dim)); }
-                    let px = ruler.left() + ruler.width() * tl.current as f32 / tl.duration.saturating_sub(1).max(1) as f32;
+                    let px = ruler.left() + ruler.width() * display_frame as f32 / tl.duration.saturating_sub(1).max(1) as f32;
                     painter.line_segment([egui::pos2(px, ruler.top()), egui::pos2(px, ruler.bottom())], egui::Stroke::new(2.0, t.accent));
                     if response.clicked() || response.dragged() { if let Some(pos) = response.interact_pointer_pos() { let f = (((pos.x - ruler.left()) / ruler.width()).clamp(0.0, 1.0) * tl.duration.saturating_sub(1) as f32).round() as u64; act = Some(("timeline.setFrame", json!({"frame":f}))); } }
                 }

@@ -207,21 +207,30 @@ impl Fetch for LoadFetch<'_> {
     }
 
     fn blob(&mut self, hash: &str) -> Result<Arc<Vec<u8>>> {
+        self.blob_limited(hash, self.opts.max_blob_bytes)
+    }
+
+    fn blob_limited(&mut self, hash: &str, max_bytes: usize) -> Result<Arc<Vec<u8>>> {
+        let limit = max_bytes.min(self.opts.max_blob_bytes);
         if let Some(b) = self.blobs.get(hash) {
+            if b.len() > limit {
+                return Err(FormatError::LimitExceeded(format!("blob exceeds caller limit of {limit} bytes")));
+            }
             return Ok(b.clone());
         }
         if !is_valid_hash(hash) {
             return Err(FormatError::corrupt(format!("invalid blob hash `{hash}`")));
         }
         let path = blob_path(hash);
-        let z = self.src.get(&path, self.opts.max_blob_bytes)?;
+        let compressed_limit = limit.checked_add(64 * 1024).ok_or_else(|| FormatError::LimitExceeded("blob compressed-size bound overflow".into()))?;
+        let z = self.src.get(&path, compressed_limit)?;
         // Blob length is not in the manifest; the frame header bounds it and
-        // we cap at max_blob_bytes.
+        // we cap the decoded output at the caller's geometry/codec bound.
         let mut dec = ruzstd::decoding::StreamingDecoder::new(&z[..]).map_err(|e| FormatError::corrupt(format!("{path}: zstd: {e}")))?;
         let mut data = Vec::new();
-        (&mut dec).take(self.opts.max_blob_bytes as u64 + 1).read_to_end(&mut data).map_err(|e| FormatError::corrupt(format!("{path}: zstd: {e}")))?;
-        if data.len() > self.opts.max_blob_bytes {
-            return Err(FormatError::LimitExceeded(format!("{path} exceeds max_blob_bytes")));
+        (&mut dec).take(limit as u64 + 1).read_to_end(&mut data).map_err(|e| FormatError::corrupt(format!("{path}: zstd: {e}")))?;
+        if data.len() > limit {
+            return Err(FormatError::LimitExceeded(format!("{path} exceeds its caller size bound of {limit} bytes")));
         }
         self.account(data.len())?;
         if hash_bytes(&data) != hash {
@@ -536,7 +545,9 @@ impl PcraftWriter {
             crate::finite::Problem::NonFinite { path } => FormatError::NonFinite { path },
             crate::finite::Problem::Other(m) => FormatError::Unsupported(format!("manifest: {m}")),
         })?;
-        let manifest = serde_json::to_vec_pretty(&manifest)?;
+        // The native archive is a machine document. Compact JSON preserves the schema while
+        // avoiding repeated indentation/whitespace for large authored frame banks.
+        let manifest = serde_json::to_vec(&manifest)?;
         check_manifest_depth(&manifest)?;
         let stats = SaveStats { tiles_total: c.tiles.len(), blobs_total: c.blobs.len(), manifest_bytes: manifest.len(), ..Default::default() };
         let mut objects = BTreeMap::new();

@@ -14,6 +14,8 @@ pub mod analysis;
 pub mod blend_if;
 pub mod comps;
 pub mod effects;
+mod frame_snapshots;
+pub use frame_snapshots::FrameSnapshots;
 pub mod mode;
 pub mod pattern;
 pub mod recording;

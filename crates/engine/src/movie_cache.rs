@@ -14,8 +14,7 @@ use std::{
 use photostore_color::PixelFormat;
 use photostore_raster::Surface;
 
-pub const FRAME_BUDGET_BYTES: usize = 160 * 1024 * 1024;
-const CACHE_LIMIT: usize = FRAME_BUDGET_BYTES;
+pub fn frame_budget_bytes()->usize {crate::media_budget::retained_limit_bytes()}
 const ERROR_LIMIT: usize = 128;
 const REQUEST_LIMIT: usize = 16;
 const THUMBNAIL_REQUEST_LIMIT: usize = 4;
@@ -23,6 +22,7 @@ static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
 static WORKER: OnceLock<Option<WorkerChannels>> = OnceLock::new();
 static COMPLETION_GENERATION: AtomicU64 = AtomicU64::new(0);
 thread_local! { static NONBLOCKING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+thread_local! { static CONSUMER_NAMESPACE:std::cell::Cell<u64>=const{std::cell::Cell::new(0)}; }
 thread_local! { static LAST_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) }; }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -112,6 +112,9 @@ struct WorkerChannels {
 struct Queues {
     current: VecDeque<Job>,
     thumbnails: VecDeque<Job>,
+    assignments:HashMap<ConsumerKey,usize>,
+    assignment_order:VecDeque<ConsumerKey>,
+    next_worker:usize,
 }
 struct WorkerQueue {
     queues: Mutex<Queues>,
@@ -123,8 +126,16 @@ impl WorkerQueue {
         if job.thumbnail {
             if queues.thumbnails.len() >= THUMBNAIL_REQUEST_LIMIT { return Err(job); }
             queues.thumbnails.push_back(job);
-            self.ready.notify_one();
+            self.ready.notify_all();
             return Ok(None);
+        }
+        if job.consumer.is_some() {
+            let owner=job.consumer_key();
+            if !queues.assignments.contains_key(&owner) {
+                let worker=queues.next_worker%2;queues.next_worker=queues.next_worker.wrapping_add(1);
+                queues.assignments.insert(owner.clone(),worker);queues.assignment_order.push_back(owner);
+                while queues.assignment_order.len()>64 {if let Some(old)=queues.assignment_order.pop_front(){queues.assignments.remove(&old);}}
+            }
         }
         let replaced = job.consumer.and_then(|consumer| {
             let owner = job.key.consumer(Some(consumer));
@@ -135,17 +146,18 @@ impl WorkerQueue {
             return Err(job);
         }
         queues.current.push_back(job);
-        self.ready.notify_one();
+        self.ready.notify_all();
         Ok(replaced)
     }
 
-    fn pop(&self) -> Option<Job> {
-        let mut queues = self.queues.lock().ok()?;
+    fn pop(&self,worker_index:usize) -> Result<Option<Job>,()> {
+        let mut queues = self.queues.lock().map_err(|_|())?;
         loop {
-            if let Some(job) = queues.current.pop_front().or_else(|| queues.thumbnails.pop_front()) {
-                return Some(job);
-            }
-            queues = self.ready.wait(queues).ok()?;
+            let current=queues.current.iter().position(|job|job.consumer.is_none() || queues.assignments.get(&job.consumer_key()).copied().unwrap_or(0)==worker_index).and_then(|index|queues.current.remove(index));
+            if let Some(job)=current.or_else(||queues.thumbnails.pop_front()){return Ok(Some(job));}
+            let (next,timeout)=self.ready.wait_timeout(queues,std::time::Duration::from_secs(2)).map_err(|_|())?;
+            queues=next;
+            if timeout.timed_out(){return Ok(None);}
         }
     }
 
@@ -178,11 +190,27 @@ impl WorkerQueue {
         let Some(thumbnail_at) = queues.thumbnails.iter().position(|queued| queued.key == *key) else { return Err(()) };
         queues.thumbnails.remove(thumbnail_at);
         let replaced = replace_at.and_then(|at| queues.current.remove(at));
+        if !queues.assignments.contains_key(&owner) {
+            let worker=queues.next_worker%2;queues.next_worker=queues.next_worker.wrapping_add(1);
+            queues.assignments.insert(owner.clone(),worker);queues.assignment_order.push_back(owner);
+        }
         queues.current.push_back(Job { key: key.clone(), path: path.to_owned(), consumer: Some(consumer), thumbnail: false, source_generation, window: None });
-        self.ready.notify_one();
+        self.ready.notify_all();
         Ok(replaced)
     }
 }
+
+pub(crate) fn consumer_namespace()->u64 {CONSUMER_NAMESPACE.with(std::cell::Cell::get)}
+pub(crate) struct ConsumerScope(u64);
+impl ConsumerScope {
+    pub(crate) fn enter(document:u64,layer:u64)->Self {
+        use std::hash::{Hash,Hasher};
+        let previous=consumer_namespace();let mut hash=std::collections::hash_map::DefaultHasher::new();
+        (previous,document,layer).hash(&mut hash);
+        CONSUMER_NAMESPACE.with(|value|value.set(hash.finish().max(1)));Self(previous)
+    }
+}
+impl Drop for ConsumerScope {fn drop(&mut self){CONSUMER_NAMESPACE.with(|value|value.set(self.0));}}
 
 pub struct PreviewScope(bool);
 impl PreviewScope {
@@ -357,12 +385,11 @@ pub fn estimated_frame_bytes(width: u32, height: u32, format: PixelFormat) -> Op
     tw.checked_mul(th)?.checked_mul(tile.checked_mul(tile)?)?.checked_mul(format.bytes_per_pixel())
 }
 
-fn process_job(job: Job) {
+fn process_job(job: Job, stream:&mut Vec<SequentialStream>) {
     let owner = job.consumer_key();
     if !job.thumbnail && job.consumer.is_some()
         && let Ok(mut state) = cache().lock()
-        && (!state.latest_current.get(&owner).is_some_and(|key| job.contains_key(key))
-            || state.source_generation.get(&job.key.source.path).copied().unwrap_or(0) != job.source_generation)
+        && !job_current(&state,&job)
     {
         for key in job.keys() {
             clear_pending_current(&mut state, &owner, &key);
@@ -374,13 +401,11 @@ fn process_job(job: Job) {
         COMPLETION_GENERATION.fetch_add(1, Ordering::AcqRel);
         return;
     }
-    let decoded = match &job.window {
-        Some(window) => decode_window(&job.key, &job.path, window, job.thumbnail),
-        None => decode(&job.key, job.key.format, job.thumbnail).map(|(surface, reservation)| vec![(job.key.clone(), surface, reservation)]),
-    };
+    if let Some(window)=&job.window {process_stream_window(&job,window,stream);return;}
+    if !job.thumbnail {stream.retain(|active|active.owner!=job.consumer_key());}
+    let decoded=decode(&job.key,job.key.format,job.thumbnail).map(|(surface,reservation)|vec![(job.key.clone(),surface,reservation)]);
     if let Ok(mut state) = cache().lock() {
-        let current = (job.thumbnail || job.consumer.is_none() || state.latest_current.get(&owner).is_some_and(|key| job.contains_key(key)))
-            && state.source_generation.get(&job.key.source.path).copied().unwrap_or(0) == job.source_generation;
+        let current=job_current(&state,&job);
         for key in job.keys() {
             state.pending.remove(&key);
             if !job.thumbnail && job.consumer.is_some() { clear_pending_current(&mut state, &owner, &key); }
@@ -403,14 +428,114 @@ fn process_job(job: Job) {
             }
             Err(_) => {}
         }
-        if !job.thumbnail && job.consumer.is_some() && state.latest_current.get(&owner) == Some(&job.key) {
-            state.latest_current.remove(&owner);
-        }
         if !state.pending_current.contains_key(&owner) {
             state.latest_current.remove(&owner);
         }
     }
     COMPLETION_GENERATION.fetch_add(1, Ordering::AcqRel);
+}
+
+struct SequentialStream {
+    source:SourceIdentity,
+    owner:ConsumerKey,
+    last_used:std::time::Instant,
+    generation:u64,
+    format:PixelFormat,
+    output_size:(u32,u32),
+    start:f64,
+    step:f64,
+    next_index:usize,
+    decoder:crate::media_backend::PreviewDecoder,
+}
+impl SequentialStream {
+    fn next_time(&self)->f64 {self.start+self.next_index as f64*self.step}
+    fn compatible(&self,job:&Job,window:&FrameWindow,size:(u32,u32))->bool {
+        let gap=(window.times[0]-self.next_time())/self.step;
+        self.source==job.key.source && self.generation==job.source_generation && self.format==job.key.format
+            && self.output_size==size && (self.step-window.step_seconds).abs()<1e-9
+            && gap>=-1e-6 && gap<=32.0 && (gap-gap.round()).abs()<1e-6
+    }
+}
+fn job_current(state:&Cache,job:&Job)->bool {
+    state.source_generation.get(&job.key.source.path).copied().unwrap_or(0)==job.source_generation
+        && (job.thumbnail || job.consumer.is_none() || state.latest_current.get(&job.consumer_key()).is_some_and(|key| {
+            if job.contains_key(key){return true;}
+            match (&job.window,&key.position) {
+                (Some(window),Position::TimestampNanos(nanos))=>{
+                    let desired=*nanos as f64/1_000_000_000.0;
+                    desired>=window.times[0]-16.0*window.step_seconds-1e-8 && desired<=window.times.last().copied().unwrap_or(window.times[0])+1e-8
+                },
+                _=>false,
+            }
+        }))
+}
+/// Publish frames one at a time. Waiting for a whole multi-frame batch is visible latency.
+fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<SequentialStream>) {
+    streams.retain(|active|active.last_used.elapsed()<std::time::Duration::from_secs(2));
+    let mut stream=streams.iter().position(|active|active.owner==job.consumer_key()).map(|index|streams.remove(index));
+    let mut ended=false;
+    let result=(||->Result<(),String>{
+        let _permit=crate::media_budget::acquire_decoder(crate::media_budget::DecodePriority::Foreground).ok_or("preview decoder capacity unavailable")?;
+        let info=media_info_for(&job.key.source)?;
+        let size=job.key.output_size.unwrap_or((info.width,info.height));
+        let bytes=estimated_frame_bytes(size.0,size.1,job.key.format).ok_or("preview geometry overflow")?;
+        if bytes>frame_budget_bytes(){return Err("preview frame exceeds configured retained-media allowance".into());}
+        if stream.as_ref().is_none_or(|active|!active.compatible(job,window,size)) {
+            stream=None;
+            let decoder=crate::media_backend::PreviewDecoder::start(Path::new(&job.path),&info,window.times[0],window.step_seconds,job.key.format,size.0,size.1).map_err(|e|e.to_string())?;
+            stream=Some(SequentialStream{source:job.key.source.clone(),owner:job.consumer_key(),last_used:std::time::Instant::now(),generation:job.source_generation,format:job.key.format,output_size:size,start:window.times[0],step:window.step_seconds,next_index:0,decoder});
+        }
+        let active=stream.as_mut().ok_or("preview decoder unavailable")?;
+        let skip=((window.times[0]-active.next_time())/active.step).round().max(0.0) as usize;
+        for _ in 0..skip {if !active.decoder.skip_frame().map_err(|e|e.to_string())?{return Err("preview source ended before requested timestamp".into());}active.next_index+=1;}
+        for (index,key) in window.keys.iter().take(8).enumerate() {
+            if index>0 && WORKER.get().and_then(Option::as_ref).is_some_and(|worker|worker.queue.queues.lock().map(|queues|queues.current.iter().any(|queued|queued.consumer_key()!=job.consumer_key())).unwrap_or(false)){break;}
+            if !cache().lock().map(|state|job_current(&state,job)).unwrap_or(false){break;}
+            let reservation=match reserve_frame_bytes(bytes,false){
+                Ok(reservation)=>reservation,
+                Err(error)=>{
+                    let optional=cache().lock().map(|state|state.latest_current.get(&job.consumer_key()).is_some_and(|requested|state.frames.contains_key(requested))).unwrap_or(false);
+                    if index>0 || optional {break;} // Pause decode-ahead instead of evicting the requested frame.
+                    return Err(error);
+                }
+            };
+            let next=if ended {None}else{active.decoder.next_frame().map_err(|e|e.to_string())?};
+            let surface=match next {
+                Some(surface)=>surface,
+                None=>{
+                    ended=true;
+                    let Position::TimestampNanos(nanos)=&key.position else{return Err("sequential preview requires timestamps".into());};
+                    crate::media_backend::decode_single_frame_at_with_info_scaled(Path::new(&job.path),&info,*nanos as f64/1_000_000_000.0,job.key.format,size.0,size.1).map_err(|e|e.to_string())?
+                }
+            };
+            active.next_index+=1;
+            let mut state=cache().lock().map_err(|_|"preview cache unavailable")?;
+            if !job_current(&state,job){break;}
+            insert_frame(&mut state,key.clone(),surface,reservation)?;
+            state.pending.remove(key);
+            clear_pending_current(&mut state,&job.consumer_key(),key);
+            COMPLETION_GENERATION.fetch_add(1,Ordering::AcqRel);
+        }
+        Ok(())
+    })();
+    if let Ok(mut state)=cache().lock() {
+        if let Err(error)=result {
+            if job_current(&state,job) {
+                let requested=state.latest_current.get(&job.consumer_key()).filter(|key|job.contains_key(key)).cloned().unwrap_or_else(||job.key.clone());
+                insert_error(&mut state,requested,error);
+            }
+            stream=None;
+        }
+        if state.source_generation.get(&job.key.source.path).copied().unwrap_or(0)!=job.source_generation{stream=None;}
+        remove_job_pending(&mut state,job);
+        if !state.pending_current.contains_key(&job.consumer_key()) {state.latest_current.remove(&job.consumer_key());}
+    }
+    if !ended {if let Some(mut active)=stream {
+        active.last_used=std::time::Instant::now();
+        if streams.len()>=2{streams.remove(0);}
+        streams.push(active);
+    }}
+    COMPLETION_GENERATION.fetch_add(1,Ordering::AcqRel);
 }
 
 fn clear_pending_current(state: &mut Cache, owner: &ConsumerKey, key: &Key) {
@@ -433,8 +558,8 @@ fn remove_job_pending(state: &mut Cache, job: &Job) {
 
 fn insert_frame(state: &mut Cache, key: Key, surface: Surface, mut reservation: crate::media_budget::Reservation) -> Result<(), String> {
     let bytes = cache_bytes(&surface);
-    if bytes > CACHE_LIMIT {
-        return Err(format!("movie preview frame exceeds the {} MiB cache limit", CACHE_LIMIT / (1024 * 1024)));
+    if bytes > frame_budget_bytes() {
+        return Err(format!("movie preview frame exceeds the {} MiB cache limit", frame_budget_bytes() / (1024 * 1024)));
     }
     if !reservation.resize(bytes) {
         return Err("movie preview could not reserve its decoded frame within the shared media cache budget".into());
@@ -443,14 +568,14 @@ fn insert_frame(state: &mut Cache, key: Key, surface: Surface, mut reservation: 
         state.bytes = state.bytes.saturating_sub(previous);
         state.frame_order.retain(|cached| cached != &key);
     }
-    while state.bytes.saturating_add(bytes) > CACHE_LIMIT {
+    while state.bytes.saturating_add(bytes) > frame_budget_bytes() {
         let Some(old) = state.frame_order.pop_front() else { break };
         if let Some((_, old_bytes, _)) = state.frames.remove(&old) {
             state.bytes = state.bytes.saturating_sub(old_bytes);
         }
     }
-    if state.bytes.saturating_add(bytes) > CACHE_LIMIT {
-        return Err(format!("movie preview frame exceeds the {} MiB cache limit", CACHE_LIMIT / (1024 * 1024)));
+    if state.bytes.saturating_add(bytes) > frame_budget_bytes() {
+        return Err(format!("movie preview frame exceeds the {} MiB cache limit", frame_budget_bytes() / (1024 * 1024)));
     }
     state.bytes += bytes;
     state.frame_order.push_back(key.clone());
@@ -482,9 +607,12 @@ fn worker() -> Option<&'static WorkerChannels> {
                 if std::thread::Builder::new()
                     .name(format!("photostore-movie-preview-{worker_index}"))
                     .spawn(move || {
-                        while let Some(job) = thread_queue.pop() {
-                            process_job(job);
-                        }
+                        let mut stream=Vec::new();
+                        loop {match thread_queue.pop(worker_index){
+                            Ok(Some(job))=>process_job(job,&mut stream),
+                            Ok(None)=>stream.clear(), // Retire an idle owned decoder after two seconds.
+                            Err(())=>break,
+                        }}
                     })
                     .is_ok()
                 {
@@ -552,8 +680,8 @@ fn media_info_for(source: &SourceIdentity) -> Result<crate::media_backend::Media
 }
 
 fn reserve_frame_bytes(bytes: usize, thumbnail: bool) -> Result<crate::media_budget::Reservation, String> {
-    if bytes > CACHE_LIMIT {
-        return Err(format!("movie preview frame exceeds the {} MiB cache limit", CACHE_LIMIT / (1024 * 1024)));
+    if bytes > frame_budget_bytes() {
+        return Err(format!("movie preview frame exceeds the {} MiB cache limit", frame_budget_bytes() / (1024 * 1024)));
     }
     loop {
         let kind = if thumbnail {
@@ -566,14 +694,15 @@ fn reserve_frame_bytes(bytes: usize, thumbnail: bool) -> Result<crate::media_bud
         }
         let status = crate::media_budget::status();
         let (used, limit) = match kind {
-            crate::media_budget::MediaKind::MovieFrame => (status.movie_frame_used_bytes, crate::media_budget::MOVIE_FRAME_BUDGET_BYTES),
-            crate::media_budget::MediaKind::Thumbnail => (status.thumbnail_used_bytes, crate::media_budget::THUMBNAIL_BUDGET_BYTES),
-            crate::media_budget::MediaKind::Waveform => (status.waveform_used_bytes, crate::media_budget::WAVEFORM_BUDGET_BYTES),
+            crate::media_budget::MediaKind::MovieFrame => (status.movie_frame_used_bytes, status.total_limit_bytes),
+            crate::media_budget::MediaKind::Thumbnail => (status.thumbnail_used_bytes, status.total_limit_bytes),
+            crate::media_budget::MediaKind::Waveform => (status.waveform_used_bytes, status.total_limit_bytes),
         };
         let category_full = bytes > limit.saturating_sub(used);
         let Ok(mut state) = cache().lock() else { return Err("movie frame cache is unavailable".into()) };
         let old_index = state.frame_order.iter().position(|key| {
-            !category_full || state.frames.get(key).is_some_and(|(_, _, reservation)| reservation.kind() == kind)
+            !state.latest_current.values().any(|requested|requested==key)
+                && (!category_full || state.frames.get(key).is_some_and(|(_, _, reservation)| reservation.kind() == kind))
         });
         let Some(old_index) = old_index else {
             return Err("movie preview frame cannot fit in the shared derived-media cache".into());
@@ -601,10 +730,10 @@ fn decode(key: &Key, format: PixelFormat, thumbnail: bool) -> Result<(Surface, c
     let output_size = key.output_size.unwrap_or((info.width, info.height));
     let bytes = estimated_frame_bytes(output_size.0, output_size.1, format)
         .ok_or_else(|| format!("movie source `{path}` {label} size overflows addressable memory"))?;
-    if bytes > CACHE_LIMIT {
+    if bytes > frame_budget_bytes() {
         return Err(format!(
             "movie source `{path}` {label} requires an estimated {bytes} tiled bytes in this document format, exceeding the {} MiB preview limit",
-            CACHE_LIMIT / (1024 * 1024)
+            frame_budget_bytes() / (1024 * 1024)
         ));
     }
     let reservation = reserve_frame_bytes(bytes, thumbnail)?;
@@ -613,7 +742,7 @@ fn decode(key: &Key, format: PixelFormat, thumbnail: bool) -> Result<(Surface, c
             if key.output_size.is_some() {
                 return Err("frame-index proxy decoding is unavailable; use a source-time preview request".into());
             }
-            let mut frames = crate::media_backend::decode_sequence_range(path, *index as u64, *index as u64, format, CACHE_LIMIT as u64, |_, _| true)
+            let mut frames = crate::media_backend::decode_sequence_range(path, *index as u64, *index as u64, format, frame_budget_bytes() as u64, |_, _| true)
                 .map_err(|e| format!("movie source `{path}` frame {index} failed: {e}"))?;
             frames.pop().ok_or_else(|| format!("movie source `{path}` did not contain frame {index}"))
         }
@@ -640,11 +769,11 @@ fn decode_window(key: &Key, path: &str, window: &FrameWindow, thumbnail: bool) -
         .ok_or_else(|| "movie preview window output size overflows addressable memory".to_owned())?;
     let raw_frame_bytes = (output_size.0 as usize).checked_mul(output_size.1 as usize).and_then(|bytes| bytes.checked_mul(4))
         .ok_or_else(|| "movie preview window raw size overflows addressable memory".to_owned())?;
-    if retained_frame_bytes > CACHE_LIMIT {
-        return Err(format!("movie preview frame exceeds the {} MiB shared frame-cache limit", CACHE_LIMIT / (1024 * 1024)));
+    if retained_frame_bytes > frame_budget_bytes() {
+        return Err(format!("movie preview frame exceeds the {} MiB shared frame-cache limit", frame_budget_bytes() / (1024 * 1024)));
     }
     let per_frame = raw_frame_bytes.max(retained_frame_bytes).max(1);
-    let bounded_count = window.keys.len().min(8).min((32 * 1024 * 1024 / per_frame).max(1)).min((CACHE_LIMIT / retained_frame_bytes.max(1)).max(1));
+    let bounded_count = window.keys.len().min(8).min((32 * 1024 * 1024 / per_frame).max(1)).min((frame_budget_bytes() / retained_frame_bytes.max(1)).max(1));
     let mut reservations = Vec::with_capacity(bounded_count);
     for _ in 0..bounded_count {
         reservations.push(reserve_frame_bytes(retained_frame_bytes, thumbnail)?);
@@ -749,6 +878,7 @@ pub fn frame_at_times_for_consumer_scaled(
             }
         }
         generation = state.source_generation.get(&source.path).copied().unwrap_or(0);
+        if state.pending_current.contains_key(&owner){state.latest_current.insert(owner.clone(),keys[0].clone());}
         if cached.iter().all(Option::is_some) {
             return Ok(cached);
         }
@@ -771,7 +901,7 @@ pub fn frame_at_times_for_consumer_scaled(
         window: Some(FrameWindow { keys: work_keys.clone(), times: work_times, step_seconds: step }),
     };
     let mut state = cache().lock().map_err(|_| "movie frame cache is unavailable".to_owned())?;
-    state.latest_current.insert(owner.clone(), work_keys[0].clone());
+    state.latest_current.insert(owner.clone(), keys[0].clone());
     match worker.queue.push(job) {
         Ok(replaced) => {
             if let Some(replaced) = replaced {
@@ -782,8 +912,10 @@ pub fn frame_at_times_for_consumer_scaled(
             Ok(cached)
         }
         Err(_) => {
-            state.latest_current.remove(&owner);
-            Err("movie preview queue is full; try again shortly".into())
+            if !state.pending_current.contains_key(&owner){state.latest_current.remove(&owner);}
+            // A crowded multi-layer scene applies backpressure. Retrying after queued frames
+            // complete is normal buffering, not a source error that stops the transport.
+            Ok(cached)
         }
     }
 }

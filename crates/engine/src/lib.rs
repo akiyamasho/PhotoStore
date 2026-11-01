@@ -65,6 +65,7 @@ pub mod magnetic_cmds;
 pub mod mask_view_cmds;
 pub mod media_backend;
 pub mod media_budget;
+mod media_performance;
 pub mod media_proxy;
 mod media_asset_cmds;
 mod media_insert_cmds;
@@ -354,6 +355,8 @@ pub struct Session {
     pub clipboard: Option<edit_cmds::Clip>,
     /// Complete editable visual clip snapshots used by the timeline clipboard.
     pub timeline_clipboard: Option<Vec<TimelineClipSnapshot>>,
+    /// At most one uncommitted decoded presentation candidate, independent of authored state.
+    pending_presentation:Option<timeline_cmds::PendingPresentation>,
     /// Editable audio clip snapshots used by the timeline clipboard.
     pub timeline_audio_clipboard: Option<Vec<TimelineAudioClipSnapshot>>,
     /// Clip appearance and animation attributes, independent of the complete-media clipboard.
@@ -517,6 +520,7 @@ impl Session {
             self.cancel_jobs_on(id);
         }
         let d = self.docs.remove(index);
+        if self.pending_presentation.as_ref().is_some_and(|pending|pending.document==d.doc.id){self.pending_presentation=None;}
         self.active = if self.docs.is_empty() {
             None
         } else {
@@ -725,6 +729,7 @@ impl Session {
         let snapshot = st.doc.clone();
         let mut doc = (*snapshot).clone();
         video_cmds::sync(&mut doc);
+        if layer_multi_cmds::same_presented_pixels(&snapshot,&doc){return true;}
         let clean = st.saved_revision == st.revision;
         st.doc = Arc::new(doc);
         st.revision = st.revision.wrapping_add(1);

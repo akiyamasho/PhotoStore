@@ -470,6 +470,15 @@ fn validate_recording_settings(settings: &photostore_doc::RecordingSettings) -> 
 
 const MAX_RECORDING_TEXT: usize = 4096;
 
+fn recording_frame_codec_bound(settings: &photostore_doc::RecordingSettings) -> Result<usize> {
+    let (width, height) = settings.resolution.dimensions();
+    let pixels = u64::from(width).checked_mul(u64::from(height))
+        .ok_or_else(|| FormatError::corrupt("recording dimensions overflow"))?;
+    usize::try_from(pixels.checked_mul(8).and_then(|bytes| bytes.checked_add(1 << 20))
+        .ok_or_else(|| FormatError::corrupt("recording codec bound overflow"))?)
+        .map_err(|_| FormatError::LimitExceeded("recording codec bound exceeds addressable memory".into()))
+}
+
 fn recording_dimensions(bytes: &[u8], format: photostore_codecs::Format) -> Result<(u32, u32)> {
     match format {
         photostore_codecs::Format::Png => {
@@ -539,8 +548,11 @@ fn recording_dimensions(bytes: &[u8], format: photostore_codecs::Format) -> Resu
 }
 
 fn validate_recording_frame(bytes: &[u8], settings: &photostore_doc::RecordingSettings) -> Result<()> {
-    if bytes.len() > 64 << 20 {
-        return Err(FormatError::LimitExceeded("recording frame exceeds 64 MiB".into()));
+    let max_encoded = recording_frame_codec_bound(settings)?;
+    if bytes.len() > max_encoded {
+        return Err(FormatError::LimitExceeded(format!(
+            "recording frame exceeds its geometry-based codec bound of {max_encoded} bytes"
+        )));
     }
     let format = photostore_codecs::detect(bytes).ok_or_else(|| FormatError::corrupt("recording frame is not a recognized image"))?;
     if !matches!(format, photostore_codecs::Format::Png | photostore_codecs::Format::Jpeg) {
@@ -597,6 +609,8 @@ pub(crate) trait Fetch {
     /// Canonical (little-endian) tile bytes of the given expected length.
     fn tile(&mut self, hash: &str, len: usize) -> Result<Vec<u8>>;
     fn blob(&mut self, hash: &str) -> Result<Arc<Vec<u8>>>;
+    /// Blob with an additional caller-derived decoded-size bound.
+    fn blob_limited(&mut self, hash: &str, max_bytes: usize) -> Result<Arc<Vec<u8>>>;
 }
 
 pub(crate) fn hex(bytes: &[u8]) -> String {
@@ -1188,10 +1202,7 @@ impl Loader<'_> {
             if f.action.len() > MAX_RECORDING_TEXT {
                 return Err(FormatError::LimitExceeded("recording action label exceeds 4096 bytes".into()));
             }
-            let image = self.fetch.blob(&f.image)?;
-            if image.len() > 64 << 20 {
-                return Err(FormatError::LimitExceeded("recording frame exceeds 64 MiB".into()));
-            }
+            let image = self.fetch.blob_limited(&f.image, recording_frame_codec_bound(&m.settings)?)?;
             total = total.saturating_add(image.len() as u64);
             if total > 256 << 20 {
                 return Err(FormatError::LimitExceeded("recording exceeds 256 MiB".into()));

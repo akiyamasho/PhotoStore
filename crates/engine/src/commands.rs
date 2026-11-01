@@ -1227,6 +1227,7 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::media_asset_cmds::specs());
     v.extend(crate::media_insert_cmds::specs());
     v.extend(crate::media_proxy::specs());
+    v.extend(crate::media_performance::specs());
     v.extend(crate::timeline_editor_cmds::specs());
     v.extend(crate::video_cmds::specs());
     v.extend(crate::position_cmds::specs());

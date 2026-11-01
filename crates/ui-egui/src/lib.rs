@@ -1246,19 +1246,26 @@ impl eframe::App for PhotoStoreApp {
         }
         let movie_generation = photostore_engine::movie_cache::completion_generation();
         if movie_generation != self.movie_preview_generation {
-            let has_linked_movie = self.session.active().is_some_and(|st| {
-                st.doc.walk().into_iter().any(|(_, _, layer)| {
-                    layer.video.as_ref().is_some_and(|v| v.movie_backing.is_some()) || matches!(&layer.content, photostore_doc::LayerContent::Smart(_))
-                })
-            });
-            if !has_linked_movie {
-                self.movie_preview_generation = movie_generation;
-            } else if self.session.refresh_linked_movie_preview() {
+            // Playback owns exact presentation commits. Decode-ahead/thumbnail completions
+            // should wake transport, not clone/re-sync and invalidate the current canvas again.
+            if self.timeline_playback.playing {
                 self.movie_preview_generation = movie_generation;
                 ctx.request_repaint();
             } else {
-                // A background edit owns the active document; retry the refresh after it settles.
-                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                let has_linked_movie = self.session.active().is_some_and(|st| {
+                    st.doc.walk().into_iter().any(|(_, _, layer)| {
+                        layer.video.as_ref().is_some_and(|v| v.movie_backing.is_some()) || matches!(&layer.content, photostore_doc::LayerContent::Smart(_))
+                    })
+                });
+                if !has_linked_movie {
+                    self.movie_preview_generation = movie_generation;
+                } else if self.session.refresh_linked_movie_preview() {
+                    self.movie_preview_generation = movie_generation;
+                    ctx.request_repaint();
+                } else {
+                    // A background edit owns the active document; retry the refresh after it settles.
+                    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                }
             }
         }
         if photostore_engine::movie_cache::pending_count() > 0 {

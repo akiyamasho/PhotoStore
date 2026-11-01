@@ -975,11 +975,11 @@ pub struct Timeline {
     pub onion_settings: OnionSkinSettings,
     /// Per-frame visibility/opacity snapshots used by Frame Animation mode.
     #[serde(default)]
-    pub frame_states: Vec<Vec<FrameLayerState>>,
+    pub frame_states: crate::FrameSnapshots,
     /// Property-only animation track used when converting between video and frame animation.
     /// Keeping this separate from decoded video surfaces preserves editable layer structure.
     #[serde(default)]
-    pub property_frames: Vec<Vec<FrameLayerState>>,
+    pub property_frames: crate::FrameSnapshots,
     #[serde(default)]
     pub frame_delays_ms: Vec<u32>,
     #[serde(default)]
@@ -1016,8 +1016,8 @@ impl Timeline {
             loop_count: None,
             onion_skin: false,
             onion_settings: OnionSkinSettings::default(),
-            frame_states: Vec::new(),
-            property_frames: Vec::new(),
+            frame_states: Vec::new().into(),
+            property_frames: Vec::new().into(),
             frame_delays_ms: vec![0; d.min(1_000_000)],
             layer_ranges: Vec::new(),
             audio_tracks: Vec::new(),

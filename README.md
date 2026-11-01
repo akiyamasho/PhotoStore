@@ -10,12 +10,12 @@ PhotoStore is a Rust-native image editor maintained as a personal fork of PhotoC
 
 Download the macOS Apple Silicon package from [PhotoStore releases](https://github.com/akiyamasho/PhotoStore/releases). For a local install, use Rust stable 1.95+:
 
-The 0.20.0 Apple Silicon macOS app adds decoded-frame timeline playback, a shared media source
-library, rational frame rates, bounded caches and optional disk proxies. Stable-release
+The 0.20.1 Apple Silicon macOS app adds persistent preview decoding, shared frame data and
+adaptive media caching, and removes fixed 64 MiB timeline-authoring rejections. Stable-release
 checks are available under **Help → Check for Updates…** using your existing GitHub CLI (`gh`)
 authentication. The app and CLI are signed with a persistent
 local PhotoStore certificate, not Developer ID and not notarized. See [in-app update details](docs/app-updates.md)
-and the [0.20.0 release record](docs/releases/0.20.0.md).
+and the [0.20.1 release record](docs/releases/0.20.1.md).
 
 ```sh
 CARGO_BUILD_JOBS=1 cargo install --path apps/photostore --bin photostore --locked
@@ -32,16 +32,22 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 
 ## Current published release
 
-PhotoStore 0.20.0 addresses the frozen movie canvas during timeline playback and adds source
-identity/relinking, exact project frame rates, shared derived-cache budgets, optional disk proxies,
-sample-clocked native audio, editable affine Smart animation baking, and original-source exports.
-[Download 0.20.0](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.0).
-The [release record](docs/releases/0.20.0.md) distinguishes implementation and artifact evidence from
-pending native manual acceptance. Native archives now use v3, with migration from v1/v2; older
-readers cannot open v3. The [timeline design record](docs/design/2026-11-01/README.md) contains
-synthetic design concepts, not application screenshots. The retained derived-cache cap is 256 MiB,
-not a total process-memory guarantee; HDR conversion remains unsupported.
+PhotoStore 0.20.1 improves movie presentation preparation through persistent decoding, shared
+copy-on-write pixel and animation data, and playback-aware background scheduling. Large frame
+conversion/tween operations use the configured Memory Usage allowance with background cancellation
+and atomic undo, replacing their fixed 64 MiB threshold.
+[Download 0.20.1](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.1).
+The [release record](docs/releases/0.20.1.md) separates measured core performance from pending
+native playback acceptance. See the [implementation plan](docs/plans/scalable-playback-2026-11-01.md)
+and [generated design reference](docs/design/2026-11-01/smooth-playback/workflow.png).
+Derived media borrows an adaptive cache budget; it is not a total process-memory cap. Native v3
+archives preserve editable layers, Smart Objects and timeline data with v1/v2 migration; older
+readers cannot open v3. HDR conversion and native CapCut-speed acceptance remain unsupported or
+unverified, respectively. Distinct codec, recording-archive and configurable load quotas remain.
 
+The previous [0.20.0 release](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.0) added
+source identity/relinking, rational project rates, optional proxies, sample-clocked native audio,
+affine Smart animation and original-source exports.
 The prior [0.19.0 release](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.19.0) includes
 rename text clipboard support, 1 px brush decrease, drawing, cursor and PSD timelapse fixes.
 

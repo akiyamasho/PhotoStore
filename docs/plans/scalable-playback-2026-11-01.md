@@ -1,6 +1,6 @@
 # Smooth playback and scalable editing — issue #23 (2026-11-01)
 
-Status: implementation plan prepared before code changes. The user rejected 0.20.0 playback as too slow, supplied a 4.44-second recording, asked for CapCut-like responsiveness, and explicitly asked to remove the 64 MB limit, preserve Photoshop/CapCut-style editing plus drawing and editable Smart Objects, plan thoroughly, then sweep. Prior push/release/tag/normal-app installation authorization continues. #23 remains the sole open issue in the complete paginated inventory.
+Status: plan/design landed before code changes; implementation and 11 focused critical checks completed, production delivery and native acceptance pending. The user rejected 0.20.0 playback as too slow, supplied a 4.44-second recording, asked for CapCut-like responsiveness, and explicitly asked to remove the 64 MB limit, preserve Photoshop/CapCut-style editing plus drawing and editable Smart Objects, plan thoroughly, then sweep. Prior push/release/tag/normal-app installation authorization continues. #23 remains the sole open issue in the complete paginated inventory.
 
 ## Evidence and diagnosis
 
@@ -30,6 +30,8 @@ The fresh [GPT Image workflow board](../design/2026-11-01/smooth-playback/workfl
 ### Cheap copies and conversion
 
 Identity conversion returns a shared tiled Surface clone with no per-pixel conversion. Preserve exact encoded bytes, HDR values and copy-on-write isolation; converting to a genuinely different format still uses the existing conversion semantics. Optimize common tagged Rec.709-to-sRGB video conversion with a cached transfer LUT only when equivalent primary/channel/bit-depth conditions hold; retain ICC conversion for other working spaces. Cache profile work by source/profile identity rather than reprocessing it during every pending poll.
+
+Authored frame snapshot banks also use copy-on-write ownership with the existing array serialization. Otherwise lifting the 64 MiB gate would make each document/presentation clone copy the entire large animation bank. History accounts each shared bank once by stable allocation identity with a cached estimate, alongside shared pixel tiles. Editing detaches; playback/history clones share. No native-format version change is required for this in-memory representation. The native writer uses compact JSON with the same schema, reducing large snapshot-manifest whitespace; the separate configurable native-loader manifest/decompression quotas remain input guards and must be recorded honestly.
 
 ### Persistent sequential decoder and early publication
 

@@ -58,7 +58,7 @@ fn frame_hash(doc: &Document) -> blake3::Hash {
 }
 
 #[test]
-fn timeline_completion_data_boundary_async_motion_and_original_export_preserve_document() {
+fn scalable_playback_async_motion_and_original_export_preserve_document() {
     let Some(path) = fixture() else { return };
     let info = crate::media_backend::probe(&path).unwrap();
     let mut doc = Document::new("motion", Size::new(64, 64), photostore_color::ColorMode::Rgb, SampleType::U8);
@@ -84,7 +84,7 @@ fn timeline_completion_data_boundary_async_motion_and_original_export_preserve_d
     let mut timings = Vec::new();
     {
         let _preview = crate::movie_cache::PreviewScope::enter();
-        for target in [15, 16, 30, 60] {
+        for target in [15, 16, 30, 60, 88, 89] {
             let begin = Instant::now();
             let mut misses = 0;
             loop {
@@ -100,6 +100,11 @@ fn timeline_completion_data_boundary_async_motion_and_original_export_preserve_d
             }
             timings.push((target, begin.elapsed().as_secs_f64() * 1000.0, misses));
             assert_ne!(frame_hash(&session.active().unwrap().doc), initial);
+            let shown=&session.active().unwrap().doc;
+            let time=crate::source_time_for_layer(shown,shown.layer(layer_id).unwrap(),target).unwrap();
+            let surface=crate::media_backend::decode_single_frame_at(&path,time,shown.pixel_format()).unwrap();
+            let mut exact=(**shown).clone();exact.layers[0].content=LayerContent::Raster(surface);
+            assert_eq!(frame_hash(shown),frame_hash(&exact),"streamed preview must retain the exact held source frame at {target}");
             let budget = crate::media_budget::status();
             assert!(budget.total_used_bytes <= budget.total_limit_bytes);
         }
@@ -108,6 +113,9 @@ fn timeline_completion_data_boundary_async_motion_and_original_export_preserve_d
     assert_eq!(state.history.past_len(), history);
     assert_eq!(state.content_revision, generation);
     assert_eq!(state.saved_revision, state.revision);
+    let before_refresh=session.active().unwrap().revision;
+    assert!(session.refresh_linked_movie_preview());
+    assert_eq!(session.active().unwrap().revision,before_refresh,"unchanged cached pixels must not force another canvas refresh");
     let output = std::env::temp_dir().join(format!("photostore-timeline-export-{}.mp4", std::process::id()));
     session.execute("file.export.renderVideo", json!({"path":output,"format":"mp4","start":15,"end":17,"background":"black","overwrite":true})).unwrap();
     let exported = crate::media_backend::probe(&output).unwrap();
@@ -118,7 +126,7 @@ fn timeline_completion_data_boundary_async_motion_and_original_export_preserve_d
     assert!((exported_audio.duration_seconds-3.0*1001.0/30000.0).abs()<0.002,"audio tail was truncated: {}",exported_audio.duration_seconds);
     assert_eq!(exported.color_transfer.as_deref(), Some("bt709"));
     assert_eq!(exported.color_primaries.as_deref(), Some("bt709"));
-    assert_eq!(session.active().unwrap().doc.timeline.as_ref().unwrap().current, 60);
+    assert_eq!(session.active().unwrap().doc.timeline.as_ref().unwrap().current, 89);
     assert_eq!(session.active().unwrap().history.past_len(), history);
     let old_time = crate::source_time_for_layer(&session.active().unwrap().doc, session.active().unwrap().doc.layer(layer_id).unwrap(), 30).unwrap();
     let old_audio = session.active().unwrap().doc.timeline.as_ref().unwrap().audio_tracks[0].clips[0].clone();
@@ -140,7 +148,7 @@ fn timeline_completion_data_boundary_async_motion_and_original_export_preserve_d
 }
 
 #[test]
-fn timeline_completion_data_boundary_smart_transform_bake_roundtrip_retains_editable_source() {
+fn scalable_playback_smart_transform_bake_roundtrip_retains_editable_source() {
     let mut session = Session::new();
     session.execute("file.new", json!({"width":64,"height":48,"depth":8})).unwrap();
     let mut inner = Document::new("source", Size::new(16, 12), photostore_color::ColorMode::Rgb, SampleType::U8);
@@ -186,7 +194,7 @@ fn timeline_completion_data_boundary_smart_transform_bake_roundtrip_retains_edit
 }
 
 #[test]
-fn timeline_completion_data_boundary_proxy_never_replaces_original_pixels() {
+fn scalable_playback_proxy_never_replaces_original_pixels() {
     let Some(path) = fixture() else { return };
     let original_bytes = std::fs::read(&path).unwrap();
     let mut session = Session::new();
@@ -239,4 +247,38 @@ fn timeline_completion_data_boundary_proxy_never_replaces_original_pixels() {
     assert_eq!(crate::media_proxy::status().unwrap().used_bytes, 0);
     assert_eq!(std::fs::read(&path).unwrap(), original_bytes, "cache operations must never touch source bytes");
     assert!(info.duration_seconds > 0.0);
+}
+
+#[test]
+fn scalable_playback_real_size_presentation_throughput() {
+    let Some(root)=std::env::var_os("PHOTOSTORE_SCALABLE_FIXTURES") else {eprintln!("Skipping real-size timing: set PHOTOSTORE_SCALABLE_FIXTURES to owned fixture directory");return;};
+    for label in ["1080p","4k"] {
+        let path=std::path::Path::new(&root).join(format!("photostore-playback-{label}-30fps.mp4"));
+        assert!(path.is_file(),"missing explicit benchmark fixture");
+        crate::movie_cache::clear();
+        let result=crate::media_performance::measure(path.to_str().unwrap(),90,8usize<<30).unwrap();
+        eprintln!("SCALABLE_PLAYBACK_MEASUREMENT {}",serde_json::to_string(&result).unwrap());
+        assert!(result["distinctSampledPixelHashes"].as_u64().unwrap()>10,"pixels must change, not just clock values");
+        assert_eq!(result["historyUnchanged"],true);assert_eq!(result["clean"],true);
+        assert!(result["persistentDecoderLaunches"].as_u64().unwrap()<=5,"forward playback must reuse a decoder");
+        assert!(result["decodeProcessLaunches"].as_u64().unwrap()<=5,"exact-frame fallbacks must not hide per-frame process launches");
+        assert!(result["maxRetainedDerivedBytes"].as_u64().unwrap()<=result["retainedBudgetBytes"].as_u64().unwrap());
+        if label=="1080p" {
+            assert!(result["warmFramesPerSecond"].as_f64().unwrap()>=27.0,"1080p core preparation is below the planned real-time goal");
+            assert!(result["warmP95Ms"].as_f64().unwrap()<=33.4,"1080p warm presentation misses the 30fps frame budget");
+        }
+    }
+}
+
+#[test]
+fn scalable_playback_real_size_presentation_throughput_under_cache_pressure() {
+    let Some(root)=std::env::var_os("PHOTOSTORE_SCALABLE_FIXTURES") else{return};
+    let path=std::path::Path::new(&root).join("photostore-playback-4k-30fps.mp4");
+    crate::movie_cache::clear();
+    let result=crate::media_performance::measure(path.to_str().unwrap(),12,256usize<<20).unwrap();
+    assert!(result["distinctSampledPixelHashes"].as_u64().unwrap()>3);
+    assert!(result["decodeProcessLaunches"].as_u64().unwrap()<=3,"a one-frame cache must backpressure instead of restarting for every frame");
+    assert!(result["maxRetainedDerivedBytes"].as_u64().unwrap()<=result["retainedBudgetBytes"].as_u64().unwrap());
+    eprintln!("SCALABLE_PLAYBACK_PRESSURE {}",serde_json::to_string(&result).unwrap());
+    crate::media_budget::configure(8usize<<30);
 }

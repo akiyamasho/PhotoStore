@@ -100,9 +100,7 @@ fn decoded_surface(info:&MediaInfo,bytes:&[u8],format:PixelFormat,width:u32,heig
         Some("linear")=>2,Some("gamma22")=>3,Some("gamma28")=>4,
         Some(other)=>return Err(MediaBackendError::InvalidInput(format!("unsupported video transfer `{other}`; convert a derived Rec.709 SDR copy first"))),
     };
-    let rgb_format=PixelFormat{mode:photostore_color::ColorMode::Rgb,sample:format.sample,alpha:true};
-    let surface=Surface::from_interleaved(PixelFormat::RGBA8,Rect::from_xywh(0,0,width,height),bytes).convert(rgb_format);
-    if primaries==0 && transfer==0 {return Ok(surface.convert(format));}
+    if primaries==0 && transfer==0 {return Ok(Surface::from_interleaved(PixelFormat::RGBA8,Rect::from_xywh(0,0,width,height),bytes).convert(format));}
     type Entry=std::sync::OnceLock<std::result::Result<std::sync::Arc<Transform>,String>>;
     static COLOR:[Entry;15]=[const{std::sync::OnceLock::new()};15];
     let transform=COLOR[primaries*5+transfer].get_or_init(|| {
@@ -114,6 +112,25 @@ fn decoded_surface(info:&MediaInfo,bytes:&[u8],format:PixelFormat,width:u32,heig
         };
         Transform::new(&profile,Builtin::Srgb.profile(),Intent::RelativeColorimetric,true).map(std::sync::Arc::new).map_err(|e|e.to_string())
     }).as_ref().map_err(|e|MediaBackendError::InvalidInput(format!("source video color transform failed: {e}")))?;
+    // Same RGB primaries: the transfer is separable. Build the exact CMS byte ramp once,
+    // then apply it directly to incoming RGBA8 instead of allocating/converting tiled float
+    // buffers for every frame. Other primaries/depths retain the full working-space transform.
+    if primaries==0 && format==PixelFormat::RGBA8 {
+        static RAMPS:[std::sync::OnceLock<[[u8;256];3]>;4]=[const{std::sync::OnceLock::new()};4];
+        let ramps=RAMPS[transfer-1].get_or_init(|| {
+            let input:Vec<u8>=(0..=255u8).flat_map(|v|[v;3]).collect();
+            let mut output=vec![0u8;input.len()];
+            transform.convert_bytes_many(photostore_cms::SampleKind::U8,vec![(&input,&mut output)],3,3,false);
+            let mut ramps=[[0u8;256];3];
+            for i in 0..256 {for channel in 0..3 {ramps[channel][i]=output[i*3+channel];}}
+            ramps
+        });
+        let mut converted=bytes.to_vec();
+        for pixel in converted.chunks_exact_mut(4) {for channel in 0..3 {pixel[channel]=ramps[channel][pixel[channel] as usize];}}
+        return Ok(Surface::from_interleaved(format,Rect::from_xywh(0,0,width,height),&converted));
+    }
+    let rgb_format=PixelFormat{mode:photostore_color::ColorMode::Rgb,sample:format.sample,alpha:true};
+    let surface=Surface::from_interleaved(PixelFormat::RGBA8,Rect::from_xywh(0,0,width,height),bytes).convert(rgb_format);
     Ok(crate::color_cmds::convert_surface(&surface,photostore_color::ColorMode::Rgb,rgb_format,transform).convert(format))
 }
 
@@ -1072,6 +1089,88 @@ fn decode_bytes(path: &Path, info: &MediaInfo, index: u64) -> Result<Vec<u8>> {
 /// Small constant-rate lookahead for preview only. The caller owns the exact timestamp keys;
 /// nonlinear/reverse mappings use single-frame sampling. One process amortizes decoder startup,
 /// while both the raw read and converted surfaces have a strict bounded window.
+static DECODE_PROCESS_LAUNCHES:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+pub fn decode_process_launches()->u64{DECODE_PROCESS_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed)}
+static PREVIEW_STREAM_LAUNCHES:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+pub fn preview_stream_launches()->u64 {PREVIEW_STREAM_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed)}
+enum PreviewPacket {Frame(Vec<u8>),Eof,Error(String)}
+
+/// A bounded sequential preview pipe. Only this owned child is stopped on seek/retirement.
+/// The two-packet channel and OS pipe exert backpressure; no full-file frame collection occurs.
+pub(crate) struct PreviewDecoder {
+    child:Child,
+    receiver:Option<mpsc::Receiver<PreviewPacket>>,
+    reader:Option<thread::JoinHandle<()>>,
+    stderr:mpsc::Receiver<Vec<u8>>,
+    info:MediaInfo,
+    format:PixelFormat,
+    width:u32,
+    height:u32,
+}
+impl PreviewDecoder {
+    pub(crate) fn start(path:&Path,info:&MediaInfo,seconds:f64,step:f64,format:PixelFormat,width:u32,height:u32)->Result<Self> {
+        ensure_sdr(info)?;
+        if !seconds.is_finite() || seconds<0.0 || seconds>=info.duration_seconds || !step.is_finite() || !(0.001..=10.0).contains(&step)
+            || width==0 || height==0 || width>MAX_DIMENSION || height>MAX_DIMENSION {return Err(MediaBackendError::InvalidInput("invalid sequential preview geometry/time".into()));}
+        let per=(width as usize).checked_mul(height as usize).and_then(|n|n.checked_mul(4)).filter(|n|*n<=MAX_FRAME_BYTES as usize)
+            .ok_or_else(||MediaBackendError::InvalidInput("sequential frame dimensions exceed the decode allocation bound".into()))?;
+        let exe=resolve_binary("PHOTOSTORE_FFMPEG","ffmpeg").ok_or(MediaBackendError::Unsupported)?;
+        let mut command=Command::new(exe);
+        command.args(["-v","error","-nostdin","-threads","2","-filter_threads","1","-protocol_whitelist","file,pipe","-copyts","-start_at_zero","-noaccurate_seek"]);
+        if let Some(codec)=decoder_codec(info) {command.args(["-c:v",codec]);}
+        command.args(["-ss",&format!("{:.6}",(seconds*1_000_000.0).floor()/1_000_000.0),"-i"]).arg(path);
+        let mut filter=format!("settb=1/1000000000,setpts=PTS-{seconds:.9}/TB,fps=fps={:.12}:start_time=0:round=up:eof_action=pass",1.0/step);
+        if (width,height)!=(info.width,info.height) {filter.push_str(&format!(",scale={width}:{height}:flags=bilinear"));}
+        let mut child=command.args(["-map","0:v:0","-an","-sn","-dn","-vf",&filter,"-f","rawvideo","-pix_fmt","rgba","pipe:1"])
+            .stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    DECODE_PROCESS_LAUNCHES.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+        let stderr=stderr_drain(&mut child);
+        let Some(mut stdout)=child.stdout.take() else {let _=child.kill();let _=child.wait();return Err(MediaBackendError::Process("sequential preview stdout unavailable".into()));};
+        let (sender,receiver)=mpsc::sync_channel(2);
+        let reader=match thread::Builder::new().name("photostore-preview-pipe".into()).spawn(move || {
+            loop {
+                let mut bytes=Vec::new();
+                if bytes.try_reserve_exact(per).is_err() {let _=sender.send(PreviewPacket::Error("cannot reserve sequential preview frame".into()));break;}
+                bytes.resize(per,0);
+                let mut offset=0;
+                while offset<per {
+                    match stdout.read(&mut bytes[offset..]) {
+                        Ok(0)=>{let _=sender.send(if offset==0 {PreviewPacket::Eof}else{PreviewPacket::Error("sequential decoder returned a truncated frame".into())});return;},
+                        Ok(n)=>offset+=n,
+                        Err(error) if error.kind()==io::ErrorKind::Interrupted=>{},
+                        Err(error)=>{let _=sender.send(PreviewPacket::Error(error.to_string()));return;},
+                    }
+                }
+                if sender.send(PreviewPacket::Frame(bytes)).is_err(){break;}
+            }
+        }) {Ok(reader)=>reader,Err(error)=>{let _=child.kill();let _=child.wait();return Err(error.into());}};
+        PREVIEW_STREAM_LAUNCHES.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+        Ok(Self{child,receiver:Some(receiver),reader:Some(reader),stderr,info:info.clone(),format,width,height})
+    }
+    fn read_raw(&mut self)->Result<Option<Vec<u8>>> {
+        let packet=self.receiver.as_ref().ok_or_else(||MediaBackendError::Process("preview stream retired".into()))?
+            .recv_timeout(std::time::Duration::from_secs(10)).map_err(|error|MediaBackendError::Process(format!("preview decoder stalled or closed: {error}")))?;
+        match packet {
+            PreviewPacket::Frame(bytes)=>Ok(Some(bytes)),
+            PreviewPacket::Error(error)=>Err(MediaBackendError::Process(error)),
+            PreviewPacket::Eof=>{
+                if let Ok(Some(status))=self.child.try_wait() {if !status.success(){return Err(command_error(status,&self.stderr.try_recv().unwrap_or_default(),"ffmpeg"));}}
+                Ok(None)
+            }
+        }
+    }
+    pub(crate) fn next_frame(&mut self)->Result<Option<Surface>> {self.read_raw()?.map(|bytes|decoded_surface(&self.info,&bytes,self.format,self.width,self.height)).transpose()}
+    pub(crate) fn skip_frame(&mut self)->Result<bool> {Ok(self.read_raw()?.is_some())}
+}
+impl Drop for PreviewDecoder {
+    fn drop(&mut self) {
+        // Disconnect a potentially blocked send before joining the reader; kill closes a read.
+        self.receiver.take();
+        let _=self.child.kill();let _=self.child.wait();
+        if let Some(reader)=self.reader.take(){let _=reader.join();}
+    }
+}
+
 pub(crate) fn decode_preview_window(path: &Path, info: &MediaInfo, seconds: f64, step: f64, count: usize, format: PixelFormat, width: u32, height: u32) -> Result<Vec<Surface>> {
     ensure_sdr(info)?;
     if !seconds.is_finite() || seconds < 0.0 || seconds >= info.duration_seconds || !step.is_finite() || !(0.001..=10.0).contains(&step)
@@ -1093,6 +1192,7 @@ pub(crate) fn decode_preview_window(path: &Path, info: &MediaInfo, seconds: f64,
     if (width,height) != (info.width,info.height) { filter.push_str(&format!(",scale={width}:{height}:flags=bilinear")); }
     let mut child = command.args(["-vf",&filter,"-frames:v",&bounded.to_string(),"-f","rawvideo","-pix_fmt","rgba","pipe:1"])
         .stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    DECODE_PROCESS_LAUNCHES.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
     let err_rx = stderr_drain(&mut child);
     let bytes = match child.stdout.take().map(|s| bounded_reader(s, per.saturating_mul(bounded).saturating_add(1))).transpose() {
         Ok(data) => data.unwrap_or_default(),
@@ -1147,6 +1247,7 @@ fn decode_bytes_at_size(path: &Path, info: &MediaInfo, seconds: f64, requested: 
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    DECODE_PROCESS_LAUNCHES.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
     let err_rx = stderr_drain(&mut child);
     let data = match child.stdout.take().map(|s| bounded_reader(s, size as usize + 1)).transpose() {
         Ok(v) => v.unwrap_or_default(),
@@ -1193,6 +1294,7 @@ pub fn decode_sequence(path: impl AsRef<Path>, format: PixelFormat, max_bytes: u
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    DECODE_PROCESS_LAUNCHES.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
     let err_rx = stderr_drain(&mut child);
     let mut stdout = match child.stdout.take() {
         Some(s) => s,
@@ -1273,6 +1375,7 @@ where
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    DECODE_PROCESS_LAUNCHES.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
     let mut guard = ChildGuard::new(child);
     let err_rx = stderr_drain(guard.child_mut().ok_or_else(|| MediaBackendError::Process("ffmpeg child unavailable".into()))?);
     let mut stdout = guard.child_mut().and_then(|c| c.stdout.take()).ok_or_else(|| MediaBackendError::Process("ffmpeg stdout unavailable".into()))?;
@@ -1666,4 +1769,16 @@ fn append_audio_args(cmd: &mut Command, clips: &[AudioMixClip], output_duration:
     let script = add_filter_complex(cmd, &filter)?;
     cmd.args(["-map", "[outa]"]);
     Ok(script)
+}
+
+#[cfg(test)]mod scalable_color_boundary {
+    #[test]fn scalable_playback_transfer_lut_matches_full_cms_and_alpha(){
+        let info=super::MediaInfo{width:4,height:1,fps:super::Rational::new(30,1),duration_seconds:1.0,frame_count:Some(30),has_audio:false,codec_name:None,time_base:None,color_transfer:Some("bt709".into()),color_primaries:Some("bt709".into()),color_space:Some("bt709".into())};
+        let bytes=[24,80,210,127,129,42,0,255,255,1,200,200,18,230,111,0];
+        let region=photostore_geom::Rect::from_xywh(0,0,4,1);
+        let fast=super::decoded_surface(&info,&bytes,photostore_color::PixelFormat::RGBA8,4,1).unwrap().to_interleaved(region);
+        let full=super::decoded_surface(&info,&bytes,photostore_color::PixelFormat::RGBA16,4,1).unwrap().convert(photostore_color::PixelFormat::RGBA8).to_interleaved(region);
+        for (index,(a,b)) in fast.iter().zip(&full).enumerate(){assert!((*a as i16-*b as i16).abs()<=1,"CMS mismatch at {index}: {a}/{b}");}
+        for index in [3,7,11,15] {assert_eq!(fast[index],bytes[index]);}
+    }
 }

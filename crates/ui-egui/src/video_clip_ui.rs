@@ -533,7 +533,8 @@ fn draw_key_value_graph(
                         }
                     }
                 }
-                let playhead_x = graph.left() + graph.width() * timeline.current.min(duration - 1) as f32 / duration as f32;
+                let display_frame = app.timeline_playback.display_frame(timeline);
+                let playhead_x = graph.left() + graph.width() * display_frame.min(duration - 1) as f32 / duration as f32;
                 painter.line_segment([pos2(playhead_x, graph.top()), pos2(playhead_x, graph.bottom())], egui::Stroke::new(1.0, theme.accent));
             });
         let _ = out.state.offset;
@@ -1211,6 +1212,7 @@ fn paint_clip_thumbnails(
         return;
     }
     let count = ((visible.width() / 58.0).ceil() as usize).clamp(1, 8);
+    let allow_cold_thumbnails = !(app.ui.timeline.playing || app.timeline_playback.playing);
     let revision=layer.video.as_ref().and_then(|v|v.asset_id).and_then(|id|document.media_assets.iter().find(|a|a.id==id)).map_or(0,|a|a.revision);
     let prefix = format!("timeline-clip-thumb:{}:{}:{}:", document.id.0, layer.id.0,revision);
     let mut textures: Vec<(usize, egui::TextureId)> = Vec::new();
@@ -1236,7 +1238,7 @@ fn paint_clip_thumbnails(
                 let source_nanos = (source_seconds * 1_000_000_000.0).round().max(0.0) as u64;
                 let key = format!("{prefix}movie:{}:{}", path, source_nanos);
                 let cached = app.ui.timeline.frame_thumbs.iter().find(|(k, _)| k == &key).map(|(_, tex)| tex.id());
-                let texture = cached.or_else(|| match photostore_engine::movie_cache::frame_thumbnail_at_seconds(path, source_seconds, document.pixel_format()) {
+                let texture = cached.or_else(|| if !allow_cold_thumbnails { None } else { match photostore_engine::movie_cache::frame_thumbnail_at_seconds(path, source_seconds, document.pixel_format()) {
                     Ok(Some(surface)) => {
                         let image = crate::timeline_ui::linked_movie_thumbnail(&surface, document.bounds());
                         let tex = crate::timeline_ui::load_thumbnail(ui.ctx(),key.clone(),image)?;
@@ -1253,7 +1255,7 @@ fn paint_clip_thumbnails(
                         app.ui.status_error = true;
                         None
                     }
-                });
+                }});
                 if let Some(texture) = texture {
                     textures.push((sample, texture));
                 }
@@ -1273,6 +1275,7 @@ fn paint_clip_thumbnails(
                     .min(video.frames.len() - 1);
                 let key = format!("{prefix}frame:{}:{}", app.ui.timeline.thumb_generation, index);
                 let texture = app.ui.timeline.frame_thumbs.iter().find(|(k, _)| k == &key).map(|(_, tex)| tex.id()).or_else(|| {
+                    if !allow_cold_thumbnails { return None; }
                     let image = crate::transform_tex::read_surface(&video.frames[index], None, document.bounds(), 64).0;
                     let tex = crate::timeline_ui::load_thumbnail(ui.ctx(),key.clone(),image)?;
                     let id = tex.id();
@@ -1287,6 +1290,7 @@ fn paint_clip_thumbnails(
     } else if let Some(surface) = layer.surface() {
         let key = format!("{prefix}still:{}:{}", history_snapshot(app, document.id).0, history_snapshot(app, document.id).1);
         let texture = app.ui.timeline.frame_thumbs.iter().find(|(k, _)| k == &key).map(|(_, tex)| tex.id()).or_else(|| {
+            if !allow_cold_thumbnails { return None; }
             let image = crate::transform_tex::read_surface(surface, None, document.bounds(), 64).0;
             let tex = crate::timeline_ui::load_thumbnail(ui.ctx(),key.clone(),image)?;
             let id = tex.id();
@@ -1628,7 +1632,8 @@ fn draw_property_lane(
                 });
             }
         }
-        let x = lane.left() + lane.width() * timeline.current as f32 / timeline.duration.max(1) as f32;
+        let display_frame = app.timeline_playback.display_frame(timeline);
+        let x = lane.left() + lane.width() * display_frame as f32 / timeline.duration.max(1) as f32;
         lane_painter.line_segment([pos2(x,lane.top()),pos2(x,lane.bottom())], egui::Stroke::new(1.5,tokens.accent));
         let key_button = ui.interact(Rect::from_min_size(pos2(gutter.left()+NAME_WIDTH-22.0,gutter.top()),vec2(22.0,gutter.height())), Id::new(("timeline-property-setkey",document.id.0,layer.id.0,label)), if editable {Sense::click()} else {Sense::hover()});
         if key_button.clicked() {
@@ -1747,7 +1752,8 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
                 tokens.text_dim,
             );
         }
-        let x = ruler.left() + ruler.width() * timeline.current as f32 / timeline.duration.max(1) as f32;
+        let display_frame = app.timeline_playback.display_frame(timeline);
+        let x = ruler.left() + ruler.width() * display_frame as f32 / timeline.duration.max(1) as f32;
         painter.line_segment([pos2(x, ruler.top()), pos2(x, ruler.bottom())], egui::Stroke::new(2.0, tokens.accent));
         if (response.clicked() || response.dragged())
             && let Some(point) = response.interact_pointer_pos()
@@ -1765,7 +1771,8 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
                 ui.painter_at(lane).rect_filled(lane, 2.0, tokens.field);
                 let editable = !document.effective_locks(layer).all && !document.effective_locks(layer).position;
                 draw_clip(ui, app, timeline, doc, layer, &name, clip, lane, editable, &tokens);
-                let x = lane.left() + lane.width() * timeline.current as f32 / timeline.duration.max(1) as f32;
+                let display_frame = app.timeline_playback.display_frame(timeline);
+                let x = lane.left() + lane.width() * display_frame as f32 / timeline.duration.max(1) as f32;
                 ui.painter_at(lane).line_segment([pos2(x, lane.top()), pos2(x, lane.bottom())], egui::Stroke::new(1.5, tokens.accent));
             });
         } else {
@@ -1865,7 +1872,8 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
                     egui::FontId::proportional(11.0),
                     tokens.text,
                 );
-                let x = lane.left() + lane.width() * timeline.current as f32 / timeline.duration.max(1) as f32;
+                let display_frame = app.timeline_playback.display_frame(timeline);
+                let x = lane.left() + lane.width() * display_frame as f32 / timeline.duration.max(1) as f32;
                 ui.painter_at(lane).line_segment([pos2(x, lane.top()), pos2(x, lane.bottom())], egui::Stroke::new(1.5, tokens.accent));
             });
         }
@@ -1919,6 +1927,7 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
     let mut close = false;
     let duration = timeline.duration.max(1);
     let frame = timeline.current.min(duration - 1);
+    let display_frame = app.timeline_playback.display_frame(timeline).min(duration - 1);
     let mut zoom = app.ui.timeline.zoom;
     if !zoom.is_finite() || zoom < 0.25 || zoom > 16.0 {
         zoom = 1.0;
@@ -1956,20 +1965,20 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                 }
                 if app.timeline_playback.loading() {
                     ui.spinner();
-                    ui.weak("Loading frame").on_hover_text("Waiting for the video preview. Late frames are skipped to keep pace with playback.");
+                    ui.weak("Buffering preview").on_hover_text("The playhead and timecode follow the playback clock. The canvas remains on its last ready frame until the requested preview is decoded.");
                 }
                 if !very_narrow_toolbar && crate::icons::button(ui, "chevrons-left", 20.0, false, "Previous frame (←)").clicked() {
                     action = Some(("timeline.previousFrame", json!({"document":doc.0})));
                 }
                 let timecode = format!(
                     "{:02}:{:02}:{:02}:{:02}",
-                    frame / timeline.project_rate().as_f64().round().max(1.0) as usize / 3600,
-                    frame / timeline.project_rate().as_f64().round().max(1.0) as usize / 60 % 60,
-                    frame / timeline.project_rate().as_f64().round().max(1.0) as usize % 60,
-                    frame % timeline.fps.round().max(1.0) as usize
+                    display_frame / timeline.project_rate().as_f64().round().max(1.0) as usize / 3600,
+                    display_frame / timeline.project_rate().as_f64().round().max(1.0) as usize / 60 % 60,
+                    display_frame / timeline.project_rate().as_f64().round().max(1.0) as usize % 60,
+                    display_frame % timeline.fps.round().max(1.0) as usize
                 );
                 if !very_narrow_toolbar {
-                    ui.label(RichText::new(timecode.clone()).monospace().color(tokens.text)).on_hover_text(format!("Non-drop timecode · {:.9} s · {}/{} fps",timeline.project_frame_seconds(frame),timeline.project_rate().numerator,timeline.project_rate().denominator));
+                    ui.label(RichText::new(timecode.clone()).monospace().color(tokens.text)).on_hover_text(format!("Non-drop timecode · {:.9} s · {}/{} fps",timeline.project_frame_seconds(display_frame),timeline.project_rate().numerator,timeline.project_rate().denominator));
                 }
                 if !very_narrow_toolbar && crate::icons::button(ui, "chevron-right", 20.0, false, "Next frame (→)").clicked() {
                     action = Some(("timeline.nextFrame", json!({"document":doc.0})));
@@ -2750,7 +2759,8 @@ fn draw_keyframe_pane(
                             }
                         });
                     }
-                    let playhead = lane.left() + lane.width() * timeline.current.min(duration - 1) as f32 / duration as f32;
+                    let display_frame = app.timeline_playback.display_frame(timeline);
+                    let playhead = lane.left() + lane.width() * display_frame.min(duration - 1) as f32 / duration as f32;
                     painter.line_segment([pos2(playhead, lane.top()), pos2(playhead, lane.bottom())], egui::Stroke::new(1.2, tokens.accent));
                     let blank = ui.interact(lane, egui::Id::new(("timeline-key-add-lane", doc.0, layer_id.0, property)), Sense::click());
                     if blank.clicked()

@@ -19,6 +19,9 @@ pub(crate) struct Runtime {
     expected_revision: u64,
     expected_frame: usize,
     pending_frame: Option<usize>,
+    /// Clock-selected frame for playhead/timecode painting. This can be ahead of the last frame
+    /// committed to the document while an exact preview request is waiting for decode.
+    clock_frame: Option<usize>,
     origin_history: (usize, usize),
     timing_signature: u64,
     fps: f64,
@@ -52,6 +55,7 @@ impl Default for Runtime {
             expected_revision: 0,
             expected_frame: 0,
             pending_frame: None,
+            clock_frame: None,
             origin_history: (0, 0),
             timing_signature: 0,
             fps: 30.0,
@@ -95,6 +99,7 @@ impl Runtime {
         }
         self.origin_doc = None;
         self.pending_frame = None;
+        self.clock_frame = None;
         self.reverse_audio_reported = false;
         self.reverse_leg = false;
     }
@@ -286,6 +291,7 @@ impl Runtime {
         self.expected_revision = revision;
         self.expected_frame = t.current;
         self.pending_frame = None;
+        self.clock_frame = Some(t.current);
         self.origin_history = history;
         self.timing_signature = Self::signature(t, fallback);
         self.fps = t.project_rate().as_f64();
@@ -394,6 +400,7 @@ impl Runtime {
             reverse = true;
             completed = target <= self.work_start;
         }
+        self.clock_frame = Some(frame.min(self.duration.saturating_sub(1)));
         let mut cycle_audio_started = false;
         if self.direction >= 0 && matches!(t.loop_mode, TimelineLoop::Loop | TimelineLoop::PingPong) {
             let span = if matches!(t.mode, TimelineMode::FrameAnimation) {
@@ -462,6 +469,17 @@ impl Runtime {
     }
 
     pub(crate) fn loading(&self) -> bool { self.pending_frame.is_some() }
+
+    /// The wall/audio-clock target used by timeline indicators. The document's `current` remains
+    /// the exact frame whose pixels are currently ready for display.
+    pub(crate) fn display_frame(&self, timeline: &Timeline) -> usize {
+        self.clock_frame.unwrap_or(timeline.current).min(timeline.duration.saturating_sub(1))
+    }
+
+    pub(crate) fn display_time(&self, timeline: &Timeline) -> f64 {
+        let frame = self.display_frame(timeline);
+        if self.playing { self.frame_start(timeline, frame) } else { timeline.frame_start_seconds(frame) }
+    }
 }
 
 pub(crate) fn tick(app: &mut PhotoStoreApp, ctx: &Context) {

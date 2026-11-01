@@ -98,11 +98,37 @@ passed 1/1 each during the implementation pass; they did not all run against the
 SHA. Manual visual, interaction and export acceptance remain outstanding. Do not claim full
 CapCut/Photoshop parity or close issue #23 until acceptance is complete.
 
-## Source completion pass for 0.20.0
+## Current source: scalable playback and authoring (0.20.1 delivery pending)
 
-The [completion plan](plans/video-timeline-completion-2026-11-01.md) records the implemented
-source-level additions and their resource/format boundaries. They have not yet been built into the
-installed app. The [0.20.0 candidate receipt](releases/0.20.0.md) leaves tests and the single
-production build with the primary delivery owner. Issue #23 remains open until the user accepts the
-native workflow. No benchmark, screenshot, hardware audio, HDR conversion, or full Photoshop/CapCut
-parity claim is made.
+This current-source pass follows the published 0.20.0 app and CLI. The [scalable playback plan](plans/scalable-playback-2026-11-01.md)
+and [GPT Image workflow reference](design/2026-11-01/smooth-playback/workflow.png), generated and
+inspected before implementation, describe the intended architecture. The [0.20.1 candidate receipt](releases/0.20.1.md)
+records source changes and current verification status. The generated board is synthetic design
+material, not a product capture or measured result.
+
+The working source now fast-paths identity `Surface::convert`, caches eligible video transfer
+ramps, and uses persistent sequential FFmpeg preview streams with per-frame publication and
+generation-aware requests. The transport clock drives visible timeline indicators independently
+from the last decoded document frame; buffering is explicit, and playback avoids starting cold
+filmstrip, animation-frame, or source-card thumbnail work. Existing project time mapping, exact
+seeks, original-source export, editable layers/Smart Objects, drawing canvas, and color-management
+contracts remain authoritative.
+
+Retained derived media now uses a shared adaptive budget targeted at one quarter of the existing
+Memory Usage allowance, capped at one eighth of physical RAM, with a 16 MiB floor. It replaces the
+previous fixed movie/thumbnail/waveform partitions; it is not a total application memory cap. Four
+timeline operations no longer reject estimates solely for exceeding 64 MiB. They use checked
+allowance accounting, fallible reservation and cancellable atomic edit jobs. Frame metadata uses
+copy-on-write banks while preserving the existing v3 serialized array form. Recording frame codec
+allocation is geometry-based; the 256 MiB recording archive and 100,000-frame limits remain.
+
+The separate 64-megapixel Smart affine-render guard remains pending a safe tiled/preflight renderer.
+The decoder's 8-bit intermediate and applicable format, codec, archive and decompression limits
+also remain. No total-RAM, zero-copy GPU, HDR, or achieved-FPS claim follows from these source
+changes.
+
+Focused compilation/tests, the representative 1080p/4K after-change headless measurement, the one
+production app+CLI build, artifact checks and delivery are pending. The local pre-change CLI
+baseline averaged 563.41 ms per warm 1080p exact presentation and 1,713.18 ms at 4K on the recorded
+M1 Max host; this is blocking document presentation preparation, not native playback FPS. No native
+UI/audio acceptance is available yet. Keep issue #23 open until the user accepts the workflow.

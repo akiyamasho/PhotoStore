@@ -554,6 +554,22 @@ impl Surface {
 
     /// Convert to another pixel format (depth and/or model; colour models via [`convert_pixel`]).
     pub fn convert(&self, to: PixelFormat) -> Surface {
+        // Format identity is a copy-on-write tile share, not a colour transform. Apart from
+        // avoiding millions of temporary vectors per movie frame, this preserves exact encoded
+        // samples (including high-bit/HDR data) rather than round-tripping them through floats.
+        if self.format == to { return self.clone(); }
+        if self.format.mode == to.mode && self.format.alpha == to.alpha {
+            let mut out=Surface::with_default(to,&self.default_pixel());
+            let channels=to.channels();
+            let samples=(TILE_SIZE*TILE_SIZE) as usize*channels;
+            for (coordinate,tile) in &self.tiles {
+                let destination=out.tile_mut(*coordinate);
+                for index in 0..samples {
+                    write_sample(&mut destination.data,to.sample,index,read_sample(&tile.data,self.format.sample,index));
+                }
+            }
+            return out;
+        }
         let mut out = Surface::with_default(to, &convert_pixel(&self.format, &to, &self.default_pixel()));
         let from_n = self.channels();
         let mut src = vec![0.0f32; from_n];
@@ -688,6 +704,24 @@ pub fn is_hdr(sample: SampleType) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn scalable_playback_identity_preserves_encoded_samples_and_cow() {
+        for depth in [photostore_color::SampleType::U8,photostore_color::SampleType::U16,photostore_color::SampleType::F32] {
+            let format=photostore_color::PixelFormat::new(photostore_color::ColorMode::Rgb,depth,true);
+            let mut source=super::Surface::new(format);
+            source.write_pixel(3,4,&[0.2,0.4,1.25,0.8]);
+            let rect=photostore_geom::Rect::from_xywh(0,0,8,8);
+            let before=source.to_interleaved(rect);
+            let mut converted=source.convert(format);
+            assert_eq!(converted.to_interleaved(rect),before);
+            let tile=source.tiles().next().unwrap().1;
+            assert!(std::sync::Arc::ptr_eq(tile,converted.tiles().next().unwrap().1));
+            converted.write_pixel(3,4,&[0.9,0.1,0.2,1.0]);
+            assert_eq!(source.to_interleaved(rect),before,"mutating the result must not alter source/undo tiles");
+            assert_ne!(converted.to_interleaved(rect),before);
+        }
+    }
     use super::*;
     use photostore_color::PixelFormat;
     use proptest::prelude::*;

@@ -1579,6 +1579,7 @@ impl Session {
     pub fn apply_prefs(&mut self) {
         let n = self.prefs().performance.history_states.max(1) as usize;
         let bytes = self.prefs().performance.history_budget_bytes();
+        crate::media_budget::configure(bytes);
         let budget = self.prefs().performance.effect_cache_mb as usize;
         for st in &mut self.docs {
             st.history.max_states = n;

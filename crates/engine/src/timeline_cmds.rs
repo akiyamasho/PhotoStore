@@ -47,6 +47,68 @@ fn bad(cmd: &str, msg: String) -> EngineError {
     EngineError::BadParams { cmd: cmd.into(), msg }
 }
 
+struct ByteCounter(usize);
+
+impl std::io::Write for ByteCounter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 = self.0.checked_add(bytes.len()).ok_or_else(|| std::io::Error::other("serialized size overflow"))?;
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+}
+
+fn serialized_size<T: serde::Serialize>(value: &T) -> Option<usize> {
+    let mut counter = ByteCounter(0);
+    serde_json::to_writer(&mut counter, value).ok()?;
+    Some(counter.0)
+}
+
+fn snapshot_bytes(state: &FrameLayerState) -> Option<usize> {
+    let effects = state.effects.as_ref().map_or(Some(0), |effects| {
+        std::mem::size_of::<photostore_doc::FrameEffectsState>()
+            .checked_add(serialized_size(&effects.items)?)?
+            .checked_add(64)
+    })?;
+    std::mem::size_of::<FrameLayerState>().checked_add(effects)
+}
+
+fn layer_snapshot_bytes(doc: &Document) -> Option<usize> {
+    let mut total = 0usize;
+    for (_, _, layer) in doc.walk() {
+        let effects = std::mem::size_of::<photostore_doc::FrameEffectsState>()
+            .checked_add(serialized_size(&layer.effects.items)?)?
+            .checked_add(64)?;
+        total = total.checked_add(std::mem::size_of::<FrameLayerState>().checked_add(effects)?)?;
+    }
+    Some(total)
+}
+
+fn frame_rows_bytes(rows: &[Vec<FrameLayerState>]) -> Option<usize> {
+    rows.iter().try_fold(0usize, |total, row| {
+        let row_bytes = row.iter().try_fold(std::mem::size_of::<Vec<FrameLayerState>>(), |sum, state| {
+            sum.checked_add(snapshot_bytes(state)?)
+        })?;
+        total.checked_add(row_bytes)
+    })
+}
+
+fn check_snapshot_budget(cmd: &str, requested: usize, allowance: usize) -> Result<()> {
+    if requested > allowance {
+        return Err(bad(cmd, format!(
+            "estimated operation allocation is {} bytes, above the configured Memory Usage allowance of {} bytes",
+            requested, allowance
+        )));
+    }
+    Ok(())
+}
+
+fn reserve<T>(values: &mut Vec<T>, additional: usize, cmd: &str, requested: usize, allowance: usize) -> Result<()> {
+    values.try_reserve_exact(additional).map_err(|_| bad(cmd, format!(
+        "could not reserve {} bytes for this operation; the configured Memory Usage allowance is {} bytes",
+        requested, allowance
+    )))
+}
+
 pub(crate) fn check_document(s: &Session, p: &Value, cmd: &str) -> Result<()> {
     if let Some(v) = p.get("document") {
         let id = v.as_u64().map(DocId).ok_or_else(|| bad(cmd, "`document` must be a document id".into()))?;
@@ -136,7 +198,7 @@ fn create_frame_animation(s: &mut Session, p: &Value) -> Result<Value> {
         {
             let mut state = Vec::new();
             collect_layer_states(&doc.layers, &mut state);
-            timeline.frame_states = vec![state];
+            timeline.frame_states = vec![state].into();
             timeline.duration = 1;
             timeline.work_start = 0;
             timeline.work_end = 1;
@@ -272,129 +334,171 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
     let mode = match p.get("mode").and_then(Value::as_str) {
         Some("video") => TimelineMode::Video,
         Some("frameAnimation") | Some("frame-animation") => TimelineMode::FrameAnimation,
-        _ => return Err(bad("timeline.setMode", "`mode` must be `video` or `frameAnimation`".into())),
+        _ => return Err(bad("timeline.setMode", "mode must be video or frameAnimation".into())),
     };
     if s.active().and_then(|st| st.doc.timeline.as_ref()).is_some_and(|t| t.mode == mode) {
         return info(s);
     }
+    let allowance = s.prefs().performance.history_budget_bytes();
+    let cmd = "timeline.setMode";
     if mode == TimelineMode::FrameAnimation {
-        // Materialize a property snapshot for every frame when entering animation mode. The
-        // source video surfaces stay owned by their video layers, so this does not flatten or
-        // duplicate the movie and preserves its timing and natural motion.
-        let out = s.edit("Convert to Frame Animation", |doc, _| {
-            crate::video_cmds::store(doc);
-            let duration = doc.timeline.as_ref().map_or(1, |t| t.duration).min(MAX_DURATION);
-            let owned_tracks = doc.walk().iter().filter(|(_, _, l)| l.opacity_animation.is_some()).count();
-            let owned_position_tracks = doc.walk().iter().filter(|(_, _, l)| l.position_animation.is_some()).count();
-            let owned_transform_tracks = doc.walk().iter().filter(|(_, _, l)| l.transform_animation.is_some()).count();
-            if owned_tracks > 0 || owned_position_tracks > 0 || owned_transform_tracks > 0 {
-                let dense_complete = doc.timeline.as_ref().is_some_and(|t| t.property_frames.len() >= duration);
-                let per_snapshot = doc.walk().iter().map(|(_, _, l)| std::mem::size_of::<FrameLayerState>() + l.effects.items.len().saturating_mul(512)).sum::<usize>();
-                let mut estimated = duration.saturating_mul(per_snapshot);
-                if dense_complete && owned_position_tracks == 0 && owned_transform_tracks == 0 {
-                    estimated = doc.timeline.as_ref().map(|t| t.property_frames.iter().take(duration).map(|row| row.iter().map(|state| std::mem::size_of::<FrameLayerState>() + state.effects.as_ref().map_or(0, |fx| fx.items.len().saturating_mul(512))).sum::<usize>()).sum()).unwrap_or(estimated);
-                }
-                let owned_ids: std::collections::HashSet<_> = doc.walk().iter().filter_map(|(_, _, l)| l.opacity_animation.as_ref().map(|_| l.id)).collect();
-                let missing = if let Some(t) = doc.timeline.as_ref() {
-                    t.property_frames.iter().take(duration).map(|row| owned_ids.iter().filter(|id| !row.iter().any(|state| state.layer == **id)).count()).sum::<usize>()
-                } else { duration.saturating_mul(owned_ids.len()) };
-                let per_missing = doc.walk().iter().filter(|(_, _, l)| l.opacity_animation.is_some()).map(|(_, _, l)| std::mem::size_of::<FrameLayerState>() + l.effects.items.len().saturating_mul(512)).max().unwrap_or(0);
-                estimated = estimated.saturating_add(missing.saturating_mul(per_missing));
-                if estimated > 64 * 1024 * 1024 { return Err(bad("timeline.setMode", "property frame conversion exceeds 64 MiB snapshot limit".into())); }
-            }
-            let original = doc.timeline.as_ref().map_or(0, |t| t.current);
-            let states = if owned_position_tracks == 0 && owned_transform_tracks == 0 && doc.timeline.as_ref().is_some_and(|t| t.property_frames.len() >= duration) {
-                doc.timeline.as_ref().map(|t| t.property_frames[..duration].to_vec()).unwrap_or_default()
-            } else {
-                let mut states = Vec::with_capacity(duration);
-                for frame in 0..duration {
+        return crate::jobs::edit_job(
+            s,
+            "Convert to Frame Animation",
+            move |doc, _, ctx| {
+                crate::video_cmds::store(doc);
+                let duration = doc.timeline.as_ref().map_or(1, |t| t.duration).min(MAX_DURATION);
+                let owned_position_tracks = doc.walk().iter().filter(|(_, _, l)| l.position_animation.is_some()).count();
+                let owned_transform_tracks = doc.walk().iter().filter(|(_, _, l)| l.transform_animation.is_some()).count();
+                let per_frame = layer_snapshot_bytes(doc).ok_or_else(|| bad(cmd, "frame snapshot size calculation overflowed".into()))?;
+                let row_headers = duration.checked_mul(std::mem::size_of::<Vec<FrameLayerState>>())
+                    .ok_or_else(|| bad(cmd, "frame snapshot size calculation overflowed".into()))?;
+                let generated_bytes = duration.checked_mul(per_frame).and_then(|bytes| bytes.checked_add(row_headers))
+                    .ok_or_else(|| bad(cmd, "frame snapshot size calculation overflowed".into()))?;
+                let existing_bytes = doc.timeline.as_ref().map_or(Some(0), |timeline| {
+                    frame_rows_bytes(&timeline.frame_states).and_then(|frame_bytes| {
+                        frame_rows_bytes(&timeline.property_frames)?.checked_add(frame_bytes)
+                    })
+                }).ok_or_else(|| bad(cmd, "existing timeline snapshot size calculation overflowed".into()))?;
+                let estimate = generated_bytes.checked_add(existing_bytes)
+                    .ok_or_else(|| bad(cmd, "frame snapshot size calculation overflowed".into()))?;
+                check_snapshot_budget(cmd, estimate, allowance)?;
+                let layer_count = doc.walk().len();
+                let original = doc.timeline.as_ref().map_or(0, |t| t.current);
+                let reusable = owned_position_tracks == 0 && owned_transform_tracks == 0
+                    && doc.timeline.as_ref().is_some_and(|t| t.property_frames.len() >= duration);
+                let mut states = Vec::new();
+                reserve(&mut states, duration, cmd, estimate, allowance)?;
+                if reusable {
+                    if let Some(rows) = doc.timeline.as_ref().map(|t| &t.property_frames[..duration]) {
+                        for row in rows {
+                            ctx.check()?;
+                            let mut copied = Vec::new();
+                            reserve(&mut copied, row.len(), cmd, estimate, allowance)?;
+                            copied.extend(row.iter().cloned());
+                            states.push(copied);
+                            if states.len() % 32 == 0 || states.len() == duration {
+                                ctx.progress(states.len() as f32 / duration.max(1) as f32, "Converting frame animation");
+                            }
+                        }
+                    }
+                } else {
                     let mut sample = doc.clone();
-                    if let Some(t) = &mut sample.timeline { t.current = frame; }
-                    crate::video_cmds::sync(&mut sample);
-                    validate_owned_position_snapshot(&sample.layers, false)?;
-                    let mut state = Vec::new();
-                    collect_layer_states(&sample.layers, &mut state);
-                    states.push(state);
+                    for frame in 0..duration {
+                        ctx.check()?;
+                        if let Some(t) = &mut sample.timeline { t.current = frame; }
+                        crate::video_cmds::sync(&mut sample);
+                        validate_owned_position_snapshot(&sample.layers, false)?;
+                        let mut state = Vec::new();
+                        reserve(&mut state, layer_count, cmd, estimate, allowance)?;
+                        collect_layer_states(&sample.layers, &mut state);
+                        states.push(state);
+                        if frame % 32 == 0 || frame + 1 == duration {
+                            ctx.progress((frame + 1) as f32 / duration.max(1) as f32, "Converting frame animation");
+                        }
+                    }
                 }
-                states
-            };
-            let mut states = states;
-            bake_owned_opacity(&mut states, &doc.layers);
-            crate::video_cmds::sync(doc);
-            if let Some(t) = &mut doc.timeline {
-                t.mode = mode;
-                t.frame_states = states;
-                t.current = original.min(t.duration.saturating_sub(1));
-            }
-            clear_owned_opacity(&mut doc.layers);
-            clear_owned_position(&mut doc.layers);
-            clear_owned_transform(&mut doc.layers);
-            crate::video_cmds::sync(doc);
-            Ok(())
-        })?;
-        let _ = out;
-        return info(s);
+                bake_owned_opacity(&mut states, &doc.layers);
+                crate::video_cmds::sync(doc);
+                if let Some(t) = &mut doc.timeline {
+                    t.mode = mode;
+                    t.frame_states = states.into();
+                    t.current = original.min(t.duration.saturating_sub(1));
+                }
+                clear_owned_opacity(&mut doc.layers);
+                clear_owned_position(&mut doc.layers);
+                clear_owned_transform(&mut doc.layers);
+                crate::video_cmds::sync(doc);
+                Ok(doc.timeline.clone())
+            },
+            |timeline| timeline_info_value(timeline.as_ref()),
+        );
     }
-    let out = s.edit("Convert to Video Timeline", |doc, _| {
-        crate::video_cmds::store(doc);
-        let current = doc.timeline.as_ref().map_or(0, |t| t.current);
-        if let Some(t) = &mut doc.timeline {
-            if !t.frame_states.is_empty() {
-                let source = std::mem::take(&mut t.frame_states);
-                let period_ms = 1000.0_f64 / t.project_rate().as_f64();
-                let delays: Vec<f64> = source.iter().enumerate().map(|(index, _)| {
-                    let delay = t.frame_delays_ms.get(index).copied().unwrap_or(0);
-                    if delay == 0 { period_ms } else { f64::from(delay) }
-                }).collect();
-                let total_ms = delays.iter().sum::<f64>();
-                let total = (total_ms / period_ms - 1e-9).ceil() as usize;
-                if total == 0 || total > MAX_DURATION { return Err(bad("timeline.setMode", format!("video conversion needs {total} CFR frames; maximum is {MAX_DURATION}"))); }
-                let per_frame_estimate = source.iter().map(|states| states.iter().map(|state| {
-                    std::mem::size_of::<photostore_doc::FrameLayerState>() + state.effects.as_ref().map_or(0, |fx| fx.items.len().saturating_mul(512))
-                }).sum::<usize>()).max().unwrap_or(0);
-                let estimate = total.saturating_mul(per_frame_estimate);
-                if estimate > 64 * 1024 * 1024 { return Err(bad("timeline.setMode", "video conversion exceeds 64 MiB property-track limit".into())); }
-                let project_fps=t.project_rate().as_f64();
-                let boundary = |frame: usize| ((delays.iter().take(frame.min(delays.len())).sum::<f64>() / 1000.0) * project_fps).floor() as usize;
-                let mut states = Vec::with_capacity(total);
-                let mut source_index = 0usize;
-                let mut end_ms = delays.first().copied().unwrap_or(period_ms);
-                for output in 0..total {
-                    let timestamp_ms = output as f64 * period_ms;
-                    while source_index + 1 < source.len() && timestamp_ms >= end_ms {
-                        source_index += 1;
-                        end_ms += delays[source_index];
+
+    crate::jobs::edit_job(
+        s,
+        "Convert to Video Timeline",
+        move |doc, _, ctx| {
+            crate::video_cmds::store(doc);
+            let current = doc.timeline.as_ref().map_or(0, |t| t.current);
+            if let Some(t) = &mut doc.timeline {
+                if !t.frame_states.is_empty() {
+                    let source = std::mem::take(&mut t.frame_states);
+                    let period_ms = 1000.0_f64 / t.project_rate().as_f64();
+                    let mut delays = Vec::new();
+                    let delay_bytes = source.len().checked_mul(std::mem::size_of::<f64>())
+                        .ok_or_else(|| bad(cmd, "frame delay size calculation overflowed".into()))?;
+                    reserve(&mut delays, source.len(), cmd, delay_bytes, allowance)?;
+                    for (index, _) in source.iter().enumerate() {
+                        let delay = t.frame_delays_ms.get(index).copied().unwrap_or(0);
+                        delays.push(if delay == 0 { period_ms } else { f64::from(delay) });
                     }
-                    states.push(source.get(source_index).cloned().unwrap_or_default());
-                }
-                let old_current = t.current;
-                let old_work_start = t.work_start;
-                let old_work_end = t.work_end;
-                let ranges = t.layer_ranges.iter().map(|r| (r.layer, boundary(r.start), boundary(r.end))).collect::<Vec<_>>();
-                t.property_frames = states;
-                t.current = boundary(old_current).min(total.saturating_sub(1));
-                t.duration = total;
-                t.work_start = boundary(old_work_start).min(total.saturating_sub(1));
-                t.work_end = boundary(old_work_end).clamp(t.work_start + 1, total);
-                for range in &mut t.layer_ranges {
-                    if let Some((_, start, end)) = ranges.iter().find(|(id, _, _)| *id == range.layer) {
-                        range.start = (*start).min(total.saturating_sub(1));
-                        range.end = (*end).clamp(range.start + 1, total);
+                    let total_ms = delays.iter().sum::<f64>();
+                    let total = (total_ms / period_ms - 1e-9).ceil() as usize;
+                    if total == 0 || total > MAX_DURATION {
+                        return Err(bad(cmd, format!("video conversion needs {total} CFR frames; maximum is {MAX_DURATION}")));
                     }
+                    let per_frame_estimate = source.iter().try_fold(0usize, |max, states| {
+                        let row = states.iter().try_fold(0usize, |sum, state| sum.checked_add(snapshot_bytes(state)?))?;
+                        Some(max.max(row))
+                    }).ok_or_else(|| bad(cmd, "video property snapshot size calculation overflowed".into()))?;
+                    let estimate = total.checked_mul(per_frame_estimate)
+                        .and_then(|bytes| total.checked_mul(std::mem::size_of::<Vec<FrameLayerState>>()).and_then(|headers| bytes.checked_add(headers)))
+                        .and_then(|bytes| total.checked_mul(std::mem::size_of::<u32>()).and_then(|delays| bytes.checked_add(delays)))
+                        .and_then(|bytes| bytes.checked_add(delay_bytes))
+                        .ok_or_else(|| bad(cmd, "video property snapshot size calculation overflowed".into()))?;
+                    check_snapshot_budget(cmd, estimate, allowance)?;
+                    let project_fps = t.project_rate().as_f64();
+                    let boundary = |frame: usize| ((delays.iter().take(frame.min(delays.len())).sum::<f64>() / 1000.0) * project_fps).floor() as usize;
+                    let mut states = Vec::new();
+                    reserve(&mut states, total, cmd, estimate, allowance)?;
+                    let mut source_index = 0usize;
+                    let mut end_ms = delays.first().copied().unwrap_or(period_ms);
+                    for output in 0..total {
+                        ctx.check()?;
+                        let timestamp_ms = output as f64 * period_ms;
+                        while source_index + 1 < source.len() && timestamp_ms >= end_ms {
+                            source_index += 1;
+                            end_ms += delays[source_index];
+                        }
+                        let source_row = source.get(source_index).map(Vec::as_slice).unwrap_or(&[]);
+                        let mut row = Vec::new();
+                        reserve(&mut row, source_row.len(), cmd, estimate, allowance)?;
+                        row.extend(source_row.iter().cloned());
+                        states.push(row);
+                        if output % 64 == 0 || output + 1 == total {
+                            ctx.progress((output + 1) as f32 / total.max(1) as f32, "Converting video timeline");
+                        }
+                    }
+                    let old_current = t.current;
+                    let old_work_start = t.work_start;
+                    let old_work_end = t.work_end;
+                    let ranges = t.layer_ranges.iter().map(|r| (r.layer, boundary(r.start), boundary(r.end))).collect::<Vec<_>>();
+                    t.property_frames = states.into();
+                    t.current = boundary(old_current).min(total.saturating_sub(1));
+                    t.duration = total;
+                    t.work_start = boundary(old_work_start).min(total.saturating_sub(1));
+                    t.work_end = boundary(old_work_end).clamp(t.work_start + 1, total);
+                    for range in &mut t.layer_ranges {
+                        if let Some((_, start, end)) = ranges.iter().find(|(id, _, _)| *id == range.layer) {
+                            range.start = (*start).min(total.saturating_sub(1));
+                            range.end = (*end).clamp(range.start + 1, total);
+                        }
+                    }
+                    let mut frame_delays = Vec::new();
+                    reserve(&mut frame_delays, total, cmd, estimate, allowance)?;
+                    frame_delays.resize(total, 0);
+                    t.frame_delays_ms = frame_delays;
                 }
-                t.frame_delays_ms = vec![0; total];
+                t.mode = mode;
+                if t.frame_delays_ms.len() < t.duration { t.frame_delays_ms.resize(t.duration, 0); }
             }
-            t.mode = mode;
-            // Delays are authoritative in frame animation. Keep them as exposure durations in
-            // the video property track so variable-delay animation survives the round trip.
-            if t.frame_delays_ms.len() < t.duration { t.frame_delays_ms.resize(t.duration, 0); }
-        }
-        freeze_and_clear_owned_position(&mut doc.layers, current);
-        crate::video_cmds::sync(doc);
-        Ok(())
-    })?;
-    let _ = out;
-    info(s)
+            freeze_and_clear_owned_position(&mut doc.layers, current);
+            crate::video_cmds::sync(doc);
+            Ok(doc.timeline.clone())
+        },
+        |timeline| timeline_info_value(timeline.as_ref()),
+    )
 }
 
 fn toggle_onion_skin(s: &mut Session) -> Result<Value> {
@@ -445,41 +549,82 @@ fn set_onion_skin_settings(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn make_frames_from_layers(s: &mut Session) -> Result<Value> {
-    let id = s.edit("Make Frames From Layers", |doc, active| {
-        let selected = (*active).ok_or(EngineError::NoDocument)?;
-        let current = doc.timeline.as_ref().map_or(0, |t| t.current);
-        crate::video_cmds::sync_plain(doc);
-        freeze_and_clear_owned_position(&mut doc.layers, current);
-        let background = doc.layers.first().filter(|l| l.name == "Background" && l.locks.position).map(|l| l.id);
-        let ids: Vec<_> = doc.layers.iter().map(|l| l.id).collect();
-        let source_ids: Vec<_> = doc.layers.iter().filter(|l| Some(l.id) != background).map(|l| l.id).collect();
-        if ids.len() > 10000 { return Err(EngineError::BadParams { cmd: "timeline.makeFramesFromLayers".into(), msg: "too many layers (maximum 10000)".into() }); }
-        let bytes = source_ids.len().saturating_mul(ids.len()).saturating_mul(std::mem::size_of::<FrameLayerState>());
-        if bytes > 64 * 1024 * 1024 { return Err(EngineError::BadParams { cmd: "timeline.makeFramesFromLayers".into(), msg: "layer snapshots exceed 64 MiB".into() }); }
-        if source_ids.is_empty() { return Err(EngineError::BadParams { cmd: "timeline.makeFramesFromLayers".into(), msg: "no non-background layers to convert".into() }); }
-        let current: Vec<_> = doc.layers.iter().map(|l| (l.visible, l.opacity)).collect();
-        let mut states = Vec::with_capacity(source_ids.len());
-        for source in &source_ids {
-            states.push(ids.iter().enumerate().map(|(slot, layer)| FrameLayerState {
-                layer: *layer,
-                visible: if Some(*layer) == background { current.get(slot).map_or(true, |v| v.0) } else { *layer == *source },
-                opacity: current.get(slot).map_or(1.0, |v| v.1),
-                position: doc.layer(*layer).and_then(photostore_doc::comps::layer_position),
-                video_position: doc.layer(*layer).and_then(|l| l.video.as_ref().map(|v| v.applied_translation)),
-                smart_transform: doc.layer(*layer).and_then(|l| match &l.content {photostore_doc::LayerContent::Smart(s)=>Some(s.transform.m),_=>None}),
-                blend: doc.layer(*layer).map(|l| l.blend),
-                fill_opacity: doc.layer(*layer).map(|l| l.fill_opacity),
-                effects: doc.layer(*layer).map(|l| photostore_doc::FrameEffectsState { enabled: l.effects.enabled, items: l.effects.items.clone(), reference: l.effects.reference }),
-            }).collect());
-        }
-        let n = states.len();
-        let mut timeline = doc.timeline.clone().unwrap_or_else(|| Timeline::new(n, 30.0));
-        timeline.mode = TimelineMode::FrameAnimation; timeline.duration = n; timeline.work_start = 0; timeline.work_end = n; timeline.clamp();
-        timeline.frame_states = states;
-        doc.timeline = Some(timeline); crate::video_cmds::sync(doc);
-        Ok(selected)
-    })?;
-    Ok(json!({"layer": id.0, "mode": "frameAnimation"}))
+    let selected = s.active().and_then(|state| state.active_layer).ok_or(EngineError::NoDocument)?;
+    let allowance = s.prefs().performance.history_budget_bytes();
+    let cmd = "timeline.makeFramesFromLayers";
+    crate::jobs::edit_job(
+        s,
+        "Make Frames From Layers",
+        move |doc, _, ctx| {
+            crate::video_cmds::store(doc);
+            let current = doc.timeline.as_ref().map_or(0, |timeline| timeline.current);
+            crate::video_cmds::sync_plain(doc);
+            freeze_and_clear_owned_position(&mut doc.layers, current);
+            let background = doc.layers.first().filter(|layer| layer.name == "Background" && layer.locks.position).map(|layer| layer.id);
+            let ids: Vec<_> = doc.layers.iter().map(|layer| layer.id).collect();
+            let source_ids: Vec<_> = doc.layers.iter().filter(|layer| Some(layer.id) != background).map(|layer| layer.id).collect();
+            if ids.len() > 10000 {
+                return Err(bad(cmd, "too many layers (maximum 10000)".into()));
+            }
+            if source_ids.is_empty() {
+                return Err(bad(cmd, "no non-background layers to convert".into()));
+            }
+            let bytes_per_frame = layer_snapshot_bytes(doc).ok_or_else(|| bad(cmd, "layer snapshot size calculation overflowed".into()))?;
+            let frame_bytes = source_ids.len().checked_mul(bytes_per_frame)
+                .and_then(|bytes| source_ids.len().checked_mul(std::mem::size_of::<Vec<FrameLayerState>>()).and_then(|headers| bytes.checked_add(headers)))
+                .and_then(|bytes| bytes.checked_add(bytes_per_frame))
+                .ok_or_else(|| bad(cmd, "layer snapshot size calculation overflowed".into()))?;
+            check_snapshot_budget(cmd, frame_bytes, allowance)?;
+            let mut templates = Vec::new();
+            reserve(&mut templates, doc.layers.len(), cmd, frame_bytes, allowance)?;
+            for layer in &doc.layers {
+                templates.push(FrameLayerState {
+                layer: layer.id,
+                visible: layer.visible,
+                opacity: layer.opacity,
+                position: photostore_doc::comps::layer_position(layer),
+                video_position: layer.video.as_ref().map(|video| video.applied_translation),
+                smart_transform: match &layer.content { photostore_doc::LayerContent::Smart(smart) => Some(smart.transform.m), _ => None },
+                blend: Some(layer.blend),
+                fill_opacity: Some(layer.fill_opacity),
+                effects: Some(photostore_doc::FrameEffectsState {
+                    enabled: layer.effects.enabled,
+                    items: layer.effects.items.clone(),
+                    reference: layer.effects.reference,
+                }),
+                });
+            }
+            let current_states: Vec<_> = templates.iter().map(|state| (state.visible, state.opacity)).collect();
+            let mut states = Vec::new();
+            reserve(&mut states, source_ids.len(), cmd, frame_bytes, allowance)?;
+            for (frame_index, source) in source_ids.iter().enumerate() {
+                ctx.check()?;
+                let mut frame = Vec::new();
+                reserve(&mut frame, ids.len(), cmd, frame_bytes, allowance)?;
+                for (slot, template) in templates.iter().enumerate() {
+                    let mut state = template.clone();
+                    state.visible = if Some(state.layer) == background { current_states.get(slot).map_or(true, |value| value.0) } else { state.layer == *source };
+                    frame.push(state);
+                }
+                states.push(frame);
+                if frame_index % 32 == 0 || frame_index + 1 == source_ids.len() {
+                    ctx.progress((frame_index + 1) as f32 / source_ids.len().max(1) as f32, "Making frames from layers");
+                }
+            }
+            let n = states.len();
+            let mut timeline = doc.timeline.take().unwrap_or_else(|| Timeline::new(n, 30.0));
+            timeline.mode = TimelineMode::FrameAnimation;
+            timeline.duration = n;
+            timeline.work_start = 0;
+            timeline.work_end = n;
+            timeline.clamp();
+            timeline.frame_states = states.into();
+            doc.timeline = Some(timeline);
+            crate::video_cmds::sync(doc);
+            Ok(selected)
+        },
+        |id| json!({"layer":id.0,"mode":"frameAnimation"}),
+    )
 }
 
 fn delete(s: &mut Session) -> Result<Value> {
@@ -509,24 +654,39 @@ fn set_frame(s: &mut Session, p: &Value) -> Result<Value> {
 /// Playback navigation presents only a fully decoded timestamp. A cache miss prepares that
 /// timestamp without changing document time or its visible surfaces. This is navigation, not
 /// an authored edit: preserve history and the clean/dirty relationship.
+pub(crate) struct PendingPresentation {
+    pub(crate) document:photostore_doc::DocId,
+    content_revision:u64,
+    base_frame:usize,
+    frame:usize,
+    candidate:photostore_doc::Document,
+}
 fn present_frame(s: &mut Session, p: &Value) -> Result<Value> {
-    check_document(s, p, "timeline.presentFrame")?;
-    if s.active_job().is_some() { return Err(bad("timeline.presentFrame", "a document edit is still running".into())); }
-    let frame = p.get("frame").and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok())
-        .ok_or_else(|| bad("timeline.presentFrame", "frame must be a whole nonnegative frame".into()))?;
-    let st = s.active_mut().ok_or(EngineError::NoDocument)?;
-    let mut doc = (*st.doc).clone();
-    let t = doc.timeline.as_mut().ok_or_else(|| bad("timeline.presentFrame", "no timeline".into()))?;
-    if frame >= t.duration { return Err(bad("timeline.presentFrame", "frame is outside the timeline".into())); }
-    t.current = frame;
+    check_document(s,p,"timeline.presentFrame")?;
+    if s.active_job().is_some(){return Err(bad("timeline.presentFrame","a document edit is still running".into()));}
+    let frame=p.get("frame").and_then(Value::as_u64).and_then(|value|usize::try_from(value).ok()).ok_or_else(||bad("timeline.presentFrame","frame must be a whole nonnegative frame".into()))?;
+    let st=s.active().ok_or(EngineError::NoDocument)?;
+    let base=st.doc.clone();
+    let timeline=base.timeline.as_ref().ok_or_else(||bad("timeline.presentFrame","no timeline".into()))?;
+    if frame>=timeline.duration{return Err(bad("timeline.presentFrame","frame is outside the timeline".into()));}
+    let content_revision=st.content_revision;
+    let base_frame=timeline.current;
+    if !crate::video_cmds::request_presentation_frame(&base,frame)?{return Ok(json!({"ready":false,"requestedFrame":frame}));}
+    let retained=s.pending_presentation.take().filter(|pending|pending.document==base.id && pending.content_revision==content_revision && pending.base_frame==base_frame && pending.frame==frame);
+    let mut doc=retained.map_or_else(||(*base).clone(),|pending|pending.candidate);
+    if let Some(timeline)=&mut doc.timeline{timeline.current=frame;}
     if !crate::video_cmds::sync_for_presentation(&mut doc)? {
+        s.pending_presentation=Some(PendingPresentation{document:base.id,content_revision,base_frame,frame,candidate:doc});
         return Ok(json!({"ready":false,"requestedFrame":frame}));
     }
-    let clean = st.saved_revision == st.revision;
-    st.doc = Arc::new(doc);
-    st.revision = st.revision.wrapping_add(1);
-    if clean { st.saved_revision = st.revision; }
-    st.last_damage = None;
+    let st=s.active_mut().ok_or(EngineError::NoDocument)?;
+    let clean=st.saved_revision==st.revision;
+    st.doc=Arc::new(doc);
+    st.revision=st.revision.wrapping_add(1);
+    if clean{st.saved_revision=st.revision;}
+    // The changed region is known. This keeps GPU cache-budget/history scans off the next paint
+    // while still refreshing every changing movie pixel through the normal compositor.
+    st.last_damage=Some(st.doc.bounds());
     Ok(json!({"ready":true,"frame":frame}))
 }
 
@@ -607,7 +767,8 @@ fn frame_edit(s: &mut Session, op: &str) -> Result<Value> {
             "insert" => {
                 let state = t.frame_states.get(cur).cloned().unwrap_or_default();
                 let delay = t.frame_delays_ms.get(cur).copied().unwrap_or(0);
-                t.frame_states.insert((cur + 1).min(t.frame_states.len()), state);
+                let at=(cur+1).min(t.frame_states.len());
+                t.frame_states.insert(at,state);
                 t.frame_delays_ms.insert((cur + 1).min(t.frame_delays_ms.len()), delay);
                 t.duration = t.duration.saturating_add(1);
                 for range in &mut t.layer_ranges { if range.start > cur { range.start += 1; } if range.end > cur { range.end += 1; } }
@@ -615,7 +776,8 @@ fn frame_edit(s: &mut Session, op: &str) -> Result<Value> {
             "duplicate" => {
                 let state = t.frame_states.get(cur).cloned().unwrap_or_default();
                 let delay = t.frame_delays_ms.get(cur).copied().unwrap_or(0);
-                t.frame_states.insert((cur + 1).min(t.frame_states.len()), state);
+                let at=(cur+1).min(t.frame_states.len());
+                t.frame_states.insert(at,state);
                 t.frame_delays_ms.insert((cur + 1).min(t.frame_delays_ms.len()), delay);
                 t.duration = t.duration.saturating_add(1);
                 for range in &mut t.layer_ranges { if range.start > cur { range.start += 1; } if range.end > cur { range.end += 1; } }
@@ -878,29 +1040,56 @@ fn tween_frames(s: &mut Session, p: &Value) -> Result<Value> {
     let selected_layers: Option<std::collections::HashSet<u64>> = p.get("layers").and_then(Value::as_str).filter(|v| *v == "selected").map(|_| {
         s.active().map(|st| st.selected_layers().iter().map(|id| id.0).collect()).unwrap_or_default()
     });
-    let result = s.edit("Tween Animation Frames", |doc, _| {
+    let params = p.clone();
+    let allowance = s.prefs().performance.history_budget_bytes();
+    let cmd = "timeline.tweenFrames";
+    crate::jobs::edit_job(s, "Tween Animation Frames", move |doc, _, ctx| {
         crate::video_cmds::store(doc);
         let t = doc.timeline.as_mut().ok_or_else(|| EngineError::BadParams { cmd: "timeline.tweenFrames".into(), msg: "no timeline (create one first)".into() })?;
         if t.mode != TimelineMode::FrameAnimation { return Err(bad("timeline.tweenFrames", "tweening requires frame animation mode".into())); }
         let new_duration = t.duration.checked_add(additions).ok_or_else(|| bad("timeline.tweenFrames", "timeline duration overflow".into()))?;
         if new_duration > MAX_DURATION { return Err(bad("timeline.tweenFrames", format!("tween would exceed maximum {MAX_DURATION} frames"))); }
-        let from = tween_endpoint(t, p, "from", t.current).min(t.duration.saturating_sub(1));
-        let to = tween_endpoint(t, p, "to", (from + 1).min(t.duration.saturating_sub(1))).min(t.duration.saturating_sub(1));
+        let from = tween_endpoint(t, &params, "from", t.current).min(t.duration.saturating_sub(1));
+        let to = tween_endpoint(t, &params, "to", (from + 1).min(t.duration.saturating_sub(1))).min(t.duration.saturating_sub(1));
         if from >= to { return Err(bad("timeline.tweenFrames", "`from` must precede `to`".into())); }
-        let a = t.frame_states.get(from).cloned().unwrap_or_default();
-        let b = t.frame_states.get(to).cloned().unwrap_or_else(|| a.clone());
+        let a = t.frame_states.get(from).map(Vec::as_slice).unwrap_or(&[]);
+        let b = t.frame_states.get(to).map(Vec::as_slice).unwrap_or(a);
+        let id_capacity = a.len().checked_add(b.len()).ok_or_else(|| bad(cmd, "tween layer count overflowed".into()))?;
+        let id_bytes = id_capacity.checked_mul(std::mem::size_of::<LayerId>() * 2)
+            .ok_or_else(|| bad(cmd, "tween layer count overflowed".into()))?;
+        check_snapshot_budget(cmd, id_bytes, allowance)?;
         let mut ids = Vec::new();
-        for state in a.iter().chain(b.iter()) { if !ids.contains(&state.layer) { ids.push(state.layer); } }
-        let per_frame_bytes = ids.iter().map(|id| {
+        reserve(&mut ids, id_capacity, cmd, id_bytes, allowance)?;
+        let mut seen = std::collections::HashSet::new();
+        seen.try_reserve(id_capacity).map_err(|_| bad(cmd, format!(
+            "could not reserve {} bytes for this operation; the configured Memory Usage allowance is {} bytes",
+            id_bytes, allowance
+        )))?;
+        for state in a.iter().chain(b.iter()) {
+            if seen.insert(state.layer) { ids.push(state.layer); }
+        }
+        let mut per_frame_bytes = 0usize;
+        for id in &ids {
             let state = a.iter().find(|s| s.layer == *id).or_else(|| b.iter().find(|s| s.layer == *id));
-            std::mem::size_of::<FrameLayerState>() + state.and_then(|s| s.effects.as_ref()).map_or(0, |fx| fx.items.len().saturating_mul(512))
-        }).sum::<usize>();
-        let bytes = additions.saturating_mul(per_frame_bytes).saturating_add(additions.saturating_mul(std::mem::size_of::<Vec<FrameLayerState>>()));
-        if bytes > 64 * 1024 * 1024 { return Err(bad("timeline.tweenFrames", "tween allocation exceeds 64 MiB".into())); }
-        let mut generated = Vec::with_capacity(additions);
+            let state_bytes = state.and_then(snapshot_bytes)
+                .ok_or_else(|| bad(cmd, "tween snapshot size calculation overflowed".into()))?;
+            per_frame_bytes = per_frame_bytes.checked_add(state_bytes)
+                .ok_or_else(|| bad(cmd, "tween snapshot size calculation overflowed".into()))?;
+        }
+        let bytes = additions.checked_mul(per_frame_bytes)
+            .and_then(|value| additions.checked_mul(std::mem::size_of::<Vec<FrameLayerState>>()).and_then(|headers| value.checked_add(headers)))
+            .and_then(|value| value.checked_add(id_bytes))
+            .ok_or_else(|| bad(cmd, "tween snapshot size calculation overflowed".into()))?;
+        check_snapshot_budget(cmd, bytes, allowance)?;
+        let mut generated = Vec::new();
+        reserve(&mut generated, additions, cmd, bytes, allowance)?;
+        let delay_a = t.frame_delays_ms.get(from).copied().unwrap_or(0);
+        let delay_b = t.frame_delays_ms.get(to).copied().unwrap_or(delay_a);
         for n in 1..=additions {
+            ctx.check()?;
             let u = n as f32 / (additions + 1) as f32;
-            let mut frame = Vec::with_capacity(ids.len());
+            let mut frame = Vec::new();
+            reserve(&mut frame, ids.len(), cmd, bytes, allowance)?;
             for id in &ids {
                 let left = a.iter().find(|state| state.layer == *id).or_else(|| b.iter().find(|state| state.layer == *id));
                 let right = b.iter().find(|state| state.layer == *id).or_else(|| a.iter().find(|state| state.layer == *id));
@@ -927,12 +1116,19 @@ fn tween_frames(s: &mut Session, p: &Value) -> Result<Value> {
                 frame.push(state);
             }
             generated.push(frame);
+            if n % 64 == 0 || n == additions {
+                ctx.progress(n as f32 / additions.max(1) as f32, "Tweening animation frames");
+            }
         }
         let insert_at = from + 1;
+        t.frame_states.try_reserve_exact(additions).map_err(|_| bad(cmd, format!(
+            "could not reserve {bytes} bytes for this operation; the configured Memory Usage allowance is {allowance} bytes"
+        )))?;
+        t.frame_delays_ms.try_reserve_exact(additions).map_err(|_| bad(cmd, format!(
+            "could not reserve {bytes} bytes for this operation; the configured Memory Usage allowance is {allowance} bytes"
+        )))?;
         for (offset, frame) in generated.into_iter().enumerate() {
             t.frame_states.insert(insert_at + offset, frame);
-            let delay_a = t.frame_delays_ms.get(from).copied().unwrap_or(0);
-            let delay_b = t.frame_delays_ms.get(to + offset).copied().unwrap_or(delay_a);
             let u = (offset + 1) as f32 / (additions + 1) as f32;
             t.frame_delays_ms.insert(insert_at + offset, (delay_a as f32 + (delay_b as f32 - delay_a as f32) * u).round() as u32);
         }
@@ -945,18 +1141,21 @@ fn tween_frames(s: &mut Session, p: &Value) -> Result<Value> {
         t.clamp();
         crate::video_cmds::sync(doc);
         Ok(additions)
-    })?;
-    Ok(json!({"framesAdded": result}))
+    }, |added| json!({"framesAdded": added}))
 }
 
 fn info(s: &mut Session) -> Result<Value> {
     let st = s.active().ok_or(EngineError::NoDocument)?;
-    Ok(match &st.doc.timeline {
+    Ok(timeline_info_value(st.doc.timeline.as_ref()))
+}
+
+fn timeline_info_value(timeline: Option<&Timeline>) -> Value {
+    match timeline {
         Some(t) => {
             json!({"timeline": {"fps": t.project_rate().as_f64(), "fpsNumerator":t.project_rate().numerator,"fpsDenominator":t.project_rate().denominator, "duration": t.duration, "current": t.current, "workStart": t.work_start, "workEnd": t.work_end, "time": t.time(), "mode": match t.mode { TimelineMode::Video => "video", TimelineMode::FrameAnimation => "frameAnimation" }, "loop": match t.loop_mode { TimelineLoop::Once => "once", TimelineLoop::Loop => "loop", TimelineLoop::PingPong => "pingPong" }, "loopCount": t.loop_count, "onionSkin": t.onion_skin, "onionSkinSettings": t.onion_settings,"visualTracks":t.visual_tracks,"layerRanges":t.layer_ranges,"markers":t.markers,"mainTrackMagnet":t.main_track_magnet,"snapping":t.snapping,"linkedSelection":t.linked_selection,"previewSkimming":t.preview_skimming}})
         }
         None => json!({"timeline": null}),
-    })
+    }
 }
 
 macro_rules! spec {
@@ -1126,5 +1325,47 @@ mod tests {
         let mut s = Session::new();
         s.execute("file.new", json!({"width": 8, "height": 8})).unwrap();
         assert!(s.execute("timeline.setFrame", json!({"frame": 1})).is_err());
+    }
+
+    fn session_with_raster_layers(count: usize) -> Session {
+        let mut s = Session::new();
+        s.execute("file.new", json!({"width": 1, "height": 1})).unwrap();
+        let state = s.active_mut().unwrap();
+        let doc = Arc::make_mut(&mut state.doc);
+        let format = doc.pixel_format();
+        for index in 0..count {
+            doc.layers.push(Layer::raster(format!("Layer {index}"), format));
+        }
+        state.active_layer = doc.layers.last().map(|layer| layer.id);
+        s
+    }
+
+    #[test]
+    fn scalable_playback_large_frame_materialization_budget_roundtrip_and_undo() {
+        let mut large = session_with_raster_layers(720);
+        let output_bytes = layer_snapshot_bytes(&large.active().unwrap().doc)
+            .unwrap()
+            .checked_mul(large.active().unwrap().doc.layers.len())
+            .unwrap();
+        assert!(output_bytes > 64 * 1024 * 1024, "fixture estimate must exceed the former fixed cap");
+        let result = make_frames_from_layers(&mut large).unwrap();
+        assert_eq!(result["mode"], "frameAnimation");
+        assert!(large.active().unwrap().doc.timeline.as_ref().is_some_and(|timeline| timeline.frame_states.len() > 64));
+        let doc=&large.active().unwrap().doc;
+        assert!(doc.timeline.as_ref().unwrap().frame_states.retained_bytes()>64*1024*1024,"actual authored metadata must exceed the former fixed limit");
+        let copy=(**doc).clone();
+        assert_eq!(doc.timeline.as_ref().unwrap().frame_states.allocation_key(),copy.timeline.as_ref().unwrap().frame_states.allocation_key());
+        let bytes=photostore_format::save_to_bytes(doc,&Default::default()).unwrap();
+        let loaded=photostore_format::load_from_bytes(&bytes).unwrap();
+        assert_eq!(loaded.timeline,doc.timeline);
+        assert!(large.undo());
+        assert!(large.active().unwrap().doc.timeline.is_none());
+
+        let mut over_budget = session_with_raster_layers(2200);
+        over_budget.edit_prefs(|prefs| prefs.performance.memory_usage_mb = 256);
+        let before = snapshot(&over_budget);
+        let error = make_frames_from_layers(&mut over_budget).unwrap_err().to_string();
+        assert!(error.contains("Memory Usage allowance"));
+        assert_eq!(snapshot(&over_budget), before);
     }
 }

@@ -17,10 +17,17 @@ use crate::{EngineError, Result, Session};
 
 const FPS: u32 = 30;
 const MAX_SECONDS_FRAMES: usize = 30 * FPS as usize;
-const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 const SAMPLE_BINS: usize = 16;
 
 fn bad(message: impl Into<String>) -> EngineError { EngineError::Other(message.into()) }
+
+fn recording_allocation_limit(width: u32, height: u32) -> Result<usize> {
+    let pixels = u64::from(width).checked_mul(u64::from(height))
+        .ok_or_else(|| bad("recording dimensions overflow addressable memory"))?;
+    usize::try_from(pixels.checked_mul(8).and_then(|bytes| bytes.checked_add(1 << 20))
+        .ok_or_else(|| bad("recording codec allocation estimate overflowed"))?)
+        .map_err(|_| bad("recording codec allocation exceeds addressable memory"))
+}
 
 fn selected_indices(frames: &[RecordingFrame], mode: &str) -> Result<Vec<usize>> {
     if frames.is_empty() { return Err(bad("the active document has no recorded frames")); }
@@ -56,11 +63,12 @@ fn selected_indices(frames: &[RecordingFrame], mode: &str) -> Result<Vec<usize>>
 }
 
 fn decode_frame(frame: &RecordingFrame, dimensions: (u32, u32)) -> Result<Rgba8Image> {
-    if frame.image.len() > MAX_IMAGE_BYTES { return Err(bad("recording frame exceeds the 64 MiB decode limit")); }
+    let max_alloc = recording_allocation_limit(dimensions.0, dimensions.1)?;
+    if frame.image.len() > max_alloc { return Err(bad("recording frame exceeds its geometry-based codec bound")); }
     let format = photostore_codecs::detect(frame.image.as_slice()).ok_or_else(|| bad("recorded frame is not a recognized image"))?;
     if !matches!(format, Format::Png | Format::Jpeg) { return Err(bad("recorded frame must be PNG or JPEG")); }
     let (width, height) = dimensions;
-    let options = DecodeOptions { limits: Limits { max_width: width, max_height: height, max_pixels: u64::from(width) * u64::from(height), max_alloc: 64 * 1024 * 1024 }, keep_orientation: false };
+    let options = DecodeOptions { limits: Limits { max_width: width, max_height: height, max_pixels: u64::from(width) * u64::from(height), max_alloc: max_alloc as u64 }, keep_orientation: false };
     let image = photostore_codecs::decode_with(frame.image.as_slice(), &options).map_err(|e| bad(format!("could not decode recorded frame: {e}")))?;
     if image.dimensions() != dimensions { return Err(bad(format!("recorded frame dimensions are {}x{}, expected {}x{}", image.width(), image.height(), width, height))); }
     let pixels = image.to_rgba8();
