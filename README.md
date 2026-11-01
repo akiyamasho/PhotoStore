@@ -10,11 +10,11 @@ PhotoStore is a Rust-native image editor maintained as a personal fork of PhotoC
 
 Download the macOS Apple Silicon package from [PhotoStore releases](https://github.com/akiyamasho/PhotoStore/releases). For a local install, use Rust stable 1.95+:
 
-The 0.20.3 Apple Silicon macOS app adds destination-aware layer copying, existing-document video
-drops, direct Space-drag navigation and press-driven brush picking. Stable-release checks are
+The 0.20.4 Apple Silicon macOS app aligns timeline rows with Layers, preserves authored video
+opacity during overlapping playback and adds layer-owned audio. Stable-release checks are
 available under **Help → Check for Updates…** using existing GitHub CLI (`gh`) authentication.
 The app and CLI use the persistent local PhotoStore certificate, not Developer ID and not
-notarized. See [in-app updates](docs/app-updates.md) and the [0.20.3 release record](docs/releases/0.20.3.md).
+notarized. See [in-app updates](docs/app-updates.md) and the [0.20.4 release record](docs/releases/0.20.4.md).
 
 ```sh
 CARGO_BUILD_JOBS=1 cargo install --path apps/photostore --bin photostore --locked
@@ -29,16 +29,17 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 ./target/release/photostore-cli --help
 ```
 
-## Current published release
+## Current release source
 
-PhotoStore 0.20.3 adds **Cmd+R** direct layer duplication and **Cmd+Ctrl+R** Copy Layer options on
-macOS. Drop movies onto an existing document to add editable video layers with static previews
-until Video Timeline creation. Space-drag updates the camera before rendering; painting-tool
-secondary presses open the brush picker without waiting for a release-classified click.
-[Download 0.20.3](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.3).
-See the [release record](docs/releases/0.20.3.md) and [workflow/acceptance details](docs/plans/layer-input-workflows-2026-11-01.md).
-Native key, drop, pan and Cintiq device acceptance remains manual; existing custom key assignments
-can override defaults.
+PhotoStore 0.20.4 makes timeline rows follow the Layers panel stack and preserves static video
+opacity across playback snapshots. Movie audio belongs to its source layer; standalone audio can
+be imported as a lightweight document layer. Bounded decoder-session reuse targets overlapping
+4K source workloads without decoding whole movies into memory.
+[Download 0.20.4](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.4).
+See the [release/delivery record](docs/releases/0.20.4.md) and
+[layered-media architecture and acceptance](docs/plans/layered-media-2026-11-01.md).
+Native multi-source GPU/display/audio acceptance and CapCut performance parity remain unverified.
+The prior [0.20.3 layer/input workflows](docs/releases/0.20.3.md) remain available.
 
 The [0.20.2 performance/cadence release](docs/releases/0.20.2.md) retains persistent decoding,
 shared COW frames/banks, complete fixture cadence and adaptive derived media. Fixed 64 MiB timeline

@@ -910,10 +910,104 @@ fn set_layer_range(s: &mut Session, p: &Value) -> Result<Value> {
         let range = LayerTimelineRange { layer, start, end, enabled: old.as_ref().is_none_or(|range| range.enabled), playback };
         if let Some(existing) = t.layer_ranges.iter_mut().find(|r| r.layer == layer) { *existing = range; } else { t.layer_ranges.push(range); }
         crate::timeline_editor_cmds::repack_main_track(doc, "timeline.setLayerRange")?;
+        let t = doc.timeline.as_mut().ok_or(EngineError::NoDocument)?;
+        if let Some(actual) = t.layer_ranges.iter().find(|range| range.layer == layer).cloned() {
+            sync_owned_audio_range(t, layer, old.as_ref(), actual.start, actual.end)?;
+        }
         crate::video_cmds::sync(doc);
         Ok(())
     })?;
     info(s)
+}
+
+/// Keep an imported audio layer's owned source clips aligned with its visual timeline range.
+/// Standalone audio clips have no linked video timing authority; movie-owned audio is updated by
+/// `set_video_clip` and stays untouched here. Validate every replacement before mutating the track.
+fn sync_owned_audio_range(
+    timeline: &mut Timeline,
+    layer: LayerId,
+    old_range: Option<&LayerTimelineRange>,
+    start: usize,
+    end: usize,
+) -> Result<()> {
+    let has_owned_audio = timeline.audio_tracks.iter().any(|track| {
+        track.owner_layer == Some(layer) && track.clips.iter().any(|clip| clip.linked_video.is_none())
+    });
+    if !has_owned_audio { return Ok(()); }
+
+    let fps = timeline.project_rate().as_f64();
+    if !fps.is_finite() || fps <= 0.0 {
+        return Err(bad("timeline.setLayerRange", "timeline frame rate is invalid for the owned audio track".into()));
+    }
+    let old = old_range.map(|range| (range.start, range.end)).unwrap_or_else(|| {
+        let mut first = usize::MAX;
+        let mut last = 0usize;
+        for clip in timeline.audio_tracks.iter().filter(|track| track.owner_layer == Some(layer)).flat_map(|track| &track.clips).filter(|clip| clip.linked_video.is_none()) {
+            let clip_start = (clip.start_seconds * fps).floor().max(0.0) as usize;
+            let clip_end = ((clip.start_seconds + clip.duration_seconds) * fps).ceil().max(0.0) as usize;
+            first = first.min(clip_start);
+            last = last.max(clip_end);
+        }
+        if first == usize::MAX { (start, end) } else { (first, last.max(first.saturating_add(1))) }
+    });
+    let start_delta = start as i128 - old.0 as i128;
+    let duration_delta = (end - start) as i128 - old.1.saturating_sub(old.0) as i128;
+    if start_delta == 0 && duration_delta == 0 { return Ok(()); }
+
+    let mut replacements = Vec::new();
+    for (track_index, track) in timeline.audio_tracks.iter().enumerate().filter(|(_, track)| track.owner_layer == Some(layer)) {
+        for (clip_index, source) in track.clips.iter().enumerate().filter(|(_, clip)| clip.linked_video.is_none()) {
+            let mut clip = (*source).clone();
+            let start_shift = start_delta as f64 / fps;
+            let duration_shift = duration_delta as f64 / fps;
+            if duration_delta == 0 {
+                // A pure range move moves the owned clip without changing its source trim or
+                // envelope position.
+                clip.start_seconds += start_shift;
+                if !clip.start_seconds.is_finite() || clip.start_seconds < 0.0 {
+                    return Err(bad("timeline.setLayerRange", "the requested layer range moves owned audio before timeline time zero".into()));
+                }
+                crate::audio_cmds::validate_clip(&clip)?;
+                replacements.push((track_index, clip_index, clip));
+                continue;
+            }
+            if start_delta < 0 && !clip.speed_curve.is_empty() {
+                return Err(bad("timeline.setLayerRange", "an audio layer with a speed curve cannot be extended earlier; adjust its audio clip first".into()));
+            }
+            let source_shift = if start_delta == 0 {
+                0.0
+            } else if start_delta > 0 {
+                photostore_doc::ClipPlayback {
+                    source_in_seconds: clip.trim_in_seconds,
+                    speed: clip.speed,
+                    speed_curve: clip.speed_curve.clone(),
+                    speed_curve_offset_frames: clip.speed_curve_offset_frames,
+                }.source_delta_seconds(start_delta as usize, fps)
+            } else {
+                start_shift * clip.speed
+            };
+            clip.start_seconds += start_shift;
+            clip.duration_seconds += duration_shift;
+            if start_delta != 0 {
+                clip.trim_in_seconds += source_shift;
+                clip.envelope_offset_seconds += start_shift;
+                if start_delta > 0 {
+                    clip.speed_curve_offset_frames = clip.speed_curve_offset_frames.saturating_add(start_delta as usize);
+                }
+            }
+            if !clip.start_seconds.is_finite() || clip.start_seconds < 0.0 || !clip.duration_seconds.is_finite() || clip.duration_seconds <= 0.0 {
+                return Err(bad("timeline.setLayerRange", "the requested layer range leaves no valid owned audio clip".into()));
+            }
+            // Speed-curve offsets follow a leading trim. The existing validator checks source
+            // bounds and envelope offsets before any clip in the track is replaced.
+            crate::audio_cmds::validate_clip(&clip)?;
+            replacements.push((track_index, clip_index, clip));
+        }
+    }
+    for (track_index, clip_index, clip) in replacements {
+        timeline.audio_tracks[track_index].clips[clip_index] = clip;
+    }
+    Ok(())
 }
 
 fn clip_layer_param(s: &Session, p: &Value, cmd: &str) -> Result<LayerId> {

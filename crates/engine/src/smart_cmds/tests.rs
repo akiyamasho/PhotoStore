@@ -1212,6 +1212,7 @@ fn smart_clip_split_trim_and_move_keep_the_nested_source_clock() {
         timeline.audio_tracks.push(photostore_doc::AudioTrack {
             id: 1,
             name: "Linked audio".into(),
+            owner_layer: None,
             muted: false,
             clips: vec![photostore_doc::AudioClip {
                 asset_id: None,

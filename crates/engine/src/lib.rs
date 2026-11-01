@@ -142,7 +142,7 @@ use photostore_doc::{Document, LayerId};
 use photostore_ops::{History, LayerTarget};
 use serde_json::Value;
 
-pub use audio_cmds::audio_mix_for_range;
+pub use audio_cmds::{audio_mix_for_document_range, audio_mix_for_range};
 pub use commands::{CommandSpec, command_specs};
 pub use photostore_doc as doc;
 pub use photostore_paint as paint;
@@ -616,7 +616,7 @@ impl Session {
         if let (Some(k), Some(id)) = (restrict, active) {
             channel_cmds::restrict_to_color(&before, &mut doc, id, k);
         }
-        video_cmds::canonicalize_authored_opacity(&before, &mut doc)?;
+        video_cmds::canonicalize_authored_opacity(&before, &mut doc, label)?;
         video_cmds::canonicalize_edited_timeline(&before, &mut doc);
         // Recording is session/document state rather than an undoable canvas property.  Keep
         // the latest stream attached while the cloned document enters history.

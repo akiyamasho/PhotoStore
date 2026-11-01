@@ -95,6 +95,7 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
     copies.icc_profile = sdoc.icc_profile.clone();
     // Type re-lays out at the source's resolution, so it keeps its size in pixels.
     copies.resolution_dpi = sdoc.resolution_dpi;
+    let mut layer_remap = HashMap::new();
     for id in &ids {
         let src_layer = sdoc.layer(*id).ok_or(EngineError::NoLayer(*id))?;
         let mut l = src_layer.duplicate();
@@ -103,6 +104,15 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
             l.name = ddoc.next_layer_name("Layer");
             l.locks = Default::default();
         }
+        fn map_tree(old: &photostore_doc::Layer, new: &photostore_doc::Layer, out: &mut HashMap<LayerId, LayerId>) {
+            out.insert(old.id, new.id);
+            if let (Some(a), Some(b)) = (old.children(), new.children()) {
+                for (a, b) in a.iter().zip(b) {
+                    map_tree(a, b, out);
+                }
+            }
+        }
+        map_tree(src_layer, &l, &mut layer_remap);
         copies.layers.push(l);
     }
     // Contents IDs belong to a document. Preserve sharing within the same document; when
@@ -152,7 +162,9 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
     let above = match p.get("above") {
         Some(v) => {
             let id = v.as_u64().map(LayerId).ok_or_else(|| bad("`above` must be a layer id"))?;
-            if ddoc.layer(id).is_none() { return Err(EngineError::NoLayer(id)); }
+            if ddoc.layer(id).is_none() {
+                return Err(EngineError::NoLayer(id));
+            }
             Some(id)
         }
         None => to.active_layer,
@@ -161,12 +173,14 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
     if rename.is_some() && copies.layers.len() != 1 {
         return Err(bad("`name` can only be used when copying one layer"));
     }
-    if let (Some(name), Some(layer)) = (rename, copies.layers.first_mut()) { layer.name = name.to_owned(); }
+    if let (Some(name), Some(layer)) = (rename, copies.layers.first_mut()) {
+        layer.name = name.to_owned();
+    }
     // Catalog identities are document-owned. Rebind copied video sources as a batch, retaining
     // source revision/fingerprint/metadata without probing files or joining unrelated identities.
     let mut media_assets = Vec::new();
+    let mut media_ids = HashMap::new();
     if src != dest {
-        let mut media_ids = HashMap::new();
         let video_ids: Vec<_> = copies.walk().into_iter().filter_map(|(_, _, layer)| layer.video.is_some().then_some(layer.id)).collect();
         for id in video_ids {
             if let Some(video) = copies.layer_mut(id).and_then(|layer| layer.video.as_mut()) {
@@ -180,7 +194,60 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
                             id
                         });
                         video.asset_id = Some(new_id);
-                    } else { video.asset_id = None; }
+                    } else {
+                        video.asset_id = None;
+                    }
+                }
+            }
+        }
+    }
+    // Copy associated sound with the subtree, including standalone audio owners and legacy
+    // linked-video clips. Seconds remain wall time; layer ranges are converted to project frames.
+    let mut audio = Vec::new();
+    let mut ranges = Vec::new();
+    if let Some(timeline) = &sdoc.timeline {
+        let source_fps = timeline.project_rate().as_f64();
+        let dest_fps = ddoc.timeline.as_ref().map_or(source_fps, |t| t.project_rate().as_f64());
+        for track in &timeline.audio_tracks {
+            let owned = track.owner_layer.is_some_and(|owner| layer_remap.contains_key(&owner));
+            let mut copy = track.clone();
+            copy.clips.retain(|clip| owned || clip.linked_video.is_some_and(|id| layer_remap.contains_key(&id)));
+            if copy.clips.is_empty() {
+                continue;
+            }
+            copy.owner_layer = copy.owner_layer.and_then(|id| layer_remap.get(&id).copied());
+            for clip in &mut copy.clips {
+                clip.linked_video = clip.linked_video.and_then(|id| layer_remap.get(&id).copied());
+                if (source_fps - dest_fps).abs() > 1e-9 && !clip.speed_curve.is_empty() {
+                    return Err(bad("copy audio with a speed curve into a document with the same project frame rate"));
+                }
+                if src != dest
+                    && let Some(old) = clip.asset_id
+                {
+                    clip.asset_id = sdoc.media_assets.iter().find(|asset| asset.id == old).map(|source| {
+                        *media_ids.entry(old).or_insert_with(|| {
+                            let mut asset = source.clone();
+                            asset.id = photostore_doc::MediaAssetId::fresh();
+                            let id = asset.id;
+                            media_assets.push(asset);
+                            id
+                        })
+                    });
+                }
+            }
+            audio.push(copy);
+        }
+        if !audio.is_empty() {
+            for range in &timeline.layer_ranges {
+                if let Some(id) = layer_remap.get(&range.layer) {
+                    let mut copy = range.clone();
+                    copy.layer = *id;
+                    copy.start = (range.start as f64 * dest_fps / source_fps).round().max(0.0) as usize;
+                    copy.end = (range.end as f64 * dest_fps / source_fps).round().max(copy.start.saturating_add(1) as f64) as usize;
+                    if (source_fps - dest_fps).abs() > 1e-9 && copy.playback.as_ref().is_some_and(|p| !p.speed_curve.is_empty()) {
+                        return Err(bad("copy a video with a speed curve into a document with the same project frame rate"));
+                    }
+                    ranges.push(copy);
                 }
             }
         }
@@ -202,6 +269,53 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
             new.push(id);
         }
         *active = above;
+        if !audio.is_empty() {
+            if doc.timeline.is_none() {
+                let source = sdoc.timeline.as_ref().ok_or_else(|| bad("source audio timeline is unavailable"))?;
+                let mut timeline = photostore_doc::Timeline::new(source.duration, source.fps);
+                timeline.rational_rate = source.rational_rate;
+                doc.timeline = Some(timeline);
+            }
+            let t = doc.timeline.as_mut().ok_or_else(|| bad("destination timeline is unavailable"))?;
+            if t.mode != photostore_doc::TimelineMode::Video {
+                return Err(bad("create a Video Timeline in the destination before copying audio layers"));
+            }
+            if t.audio_tracks.len().saturating_add(audio.len()) > 64
+                || t.audio_tracks.iter().map(|t| t.clips.len()).sum::<usize>().saturating_add(audio.iter().map(|t| t.clips.len()).sum::<usize>()) > 4096
+            {
+                return Err(bad("copy would exceed the destination audio track or clip limit"));
+            }
+            let mut track_id = t.audio_tracks.iter().map(|t| t.id).max().unwrap_or(0);
+            let mut clip_id = t.audio_tracks.iter().flat_map(|t| &t.clips).map(|c| c.id).max().unwrap_or(0);
+            let mut duration = t.duration;
+            for mut track in audio {
+                track_id = track_id.checked_add(1).ok_or_else(|| bad("audio track id space exhausted"))?;
+                track.id = track_id;
+                for clip in &mut track.clips {
+                    clip_id = clip_id.checked_add(1).ok_or_else(|| bad("audio clip id space exhausted"))?;
+                    clip.id = clip_id;
+                    crate::audio_cmds::validate_clip(clip)?;
+                    let end = ((clip.start_seconds + clip.duration_seconds) * t.project_rate().as_f64()).ceil();
+                    if !end.is_finite() || end > 1_000_000.0 {
+                        return Err(bad("copied audio exceeds supported timeline duration"));
+                    }
+                    duration = duration.max(end as usize);
+                }
+                t.audio_tracks.push(track);
+            }
+            for range in ranges {
+                duration = duration.max(range.end);
+                t.layer_ranges.push(range);
+            }
+            if duration > 1_000_000 {
+                return Err(bad("copied layer range exceeds supported timeline duration"));
+            }
+            let full_work_area = t.work_end == t.duration;
+            t.duration = duration;
+            if full_work_area {
+                t.work_end = duration;
+            }
+        }
         crate::timeline_cmds::activate_imported_movies(doc, true)?;
         Ok(new)
     });

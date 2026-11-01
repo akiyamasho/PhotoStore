@@ -250,14 +250,14 @@ impl Runtime {
         (target, reverse, completed)
     }
 
-    fn start_audio(&mut self, t: &Timeline, doc: photostore_doc::DocId, frame: usize) -> Result<(), String> {
+    fn start_audio(&mut self, t: &Timeline, document: &photostore_doc::Document, doc: photostore_doc::DocId, frame: usize) -> Result<(), String> {
         self.stop_audio();
         let start = self.frame_start(t, frame.clamp(t.work_start, t.work_end.saturating_sub(1)));
         let end = self.frame_start(t, t.work_end);
         let span = self.frame_start(t, t.work_end) - self.frame_start(t, t.work_start);
         let cycle_span = if matches!(t.loop_mode,TimelineLoop::PingPong) { span * 2.0 } else { span };
         self.audio_clock_base = (self.loop_cycle as f64 * cycle_span + start - self.frame_start(t,t.work_start) - self.start_offset).max(0.0);
-        let clips = photostore_engine::audio_mix_for_range(t, start, end).map_err(|e| e.to_string())?;
+        let clips = photostore_engine::audio_mix_for_document_range(document, start, end).map_err(|e| e.to_string())?;
         if clips.is_empty() {
             return Ok(());
         }
@@ -305,7 +305,7 @@ impl Runtime {
         self.rebuild_boundaries(t, fallback);
         self.started_at = now;
         self.start_offset = self.frame_start(t, self.start_frame) - self.frame_start(t, t.work_start);
-        if let Err(error) = self.start_audio(t, doc, self.start_frame) {
+        if let Err(error) = self.start_audio(t, &doc_arc, doc, self.start_frame) {
             app.ui.status = format!("Audio preview: {error}");
             app.ui.status_error = true;
         }
@@ -364,7 +364,7 @@ impl Runtime {
             self.loop_cycle = 0;
             self.pending_frame = None;
             if self.direction >= 0
-                && let Err(error) = self.start_audio(t, doc, self.start_frame)
+                && let Err(error) = self.start_audio(t, &doc_arc, doc, self.start_frame)
             {
                 app.ui.status = format!("Audio preview: {error}");
                 app.ui.status_error = true;
@@ -414,7 +414,7 @@ impl Runtime {
                 let completed_cycle = t.loop_count.is_some_and(|n| cycle >= n.clamp(1, 65_536) as usize);
                 if cycle > self.loop_cycle && !completed_cycle && !completed {
                     self.loop_cycle = cycle;
-                    if let Err(error) = self.start_audio(t, doc, frame) {
+                    if let Err(error) = self.start_audio(t, &doc_arc, doc, frame) {
                         app.ui.status = format!("Audio preview: {error}");
                         app.ui.status_error = true;
                     }
@@ -435,7 +435,7 @@ impl Runtime {
         } else if !reverse && self.reverse_leg && matches!(t.loop_mode, TimelineLoop::PingPong) {
             self.reverse_leg = false;
             if !cycle_audio_started && !completed {
-                if let Err(error) = self.start_audio(t, doc, frame) {
+                if let Err(error) = self.start_audio(t, &doc_arc, doc, frame) {
                     app.ui.status = format!("Audio preview: {error}");
                     app.ui.status_error = true;
                 }

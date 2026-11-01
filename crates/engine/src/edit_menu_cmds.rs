@@ -475,6 +475,7 @@ fn apply_content_aware_fill(
                 let mut dup = doc.layer(id).ok_or(EngineError::NoLayer(id))?.duplicate();
                 dup.name = doc.copy_name(&dup.name);
                 let nid = doc.insert_above(Some(id), dup);
+                crate::timeline_editor_cmds::duplicate_audio_owner(doc, id, nid)?;
                 *active = Some(nid);
                 nid
             }

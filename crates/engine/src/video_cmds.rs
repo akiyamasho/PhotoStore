@@ -775,11 +775,11 @@ pub(crate) fn validate_linked_movie_edits(label: &str, before: &Document, after:
     Ok(())
 }
 
-/// Capture a direct layer-opacity edit in an authored opacity stopwatch. This runs before the
-/// legacy raster/video canonicalizer so a slider edit at the playhead updates the owned track
-/// rather than being mistaken for a video-frame edit. Structural and timeline edits change one
-/// of the identity fields below and are deliberately ignored.
-pub fn canonicalize_authored_opacity(before: &Document, after: &mut Document) -> Result<()> {
+/// Capture direct layer-opacity edits in the authored opacity model. This runs before the legacy
+/// raster/video canonicalizer so a slider edit at the playhead updates an existing stopwatch or
+/// creates a static owner that playback applies after dense property snapshots. Structural and
+/// timeline edits do not use the Layer Properties edit label and cannot create a static owner.
+pub fn canonicalize_authored_opacity(before: &Document, after: &mut Document, edit_label: &str) -> Result<()> {
     let (Some(bt), Some(at)) = (&before.timeline, &after.timeline) else { return Ok(()) };
     if at.mode != photostore_doc::TimelineMode::Video
         || bt.current != at.current
@@ -794,8 +794,29 @@ pub fn canonicalize_authored_opacity(before: &Document, after: &mut Document) ->
     fn count_keys(layers: &[Layer]) -> usize {
         layers.iter().map(|l| l.opacity_animation.as_ref().map_or(0, |t| t.keys.len()) + l.children().map_or(0, count_keys)).sum()
     }
-    fn walk(before: &[Layer], after: &mut Document, frame: usize, key_total: &mut Option<usize>) -> Result<()> {
+    fn walk(before: &[Layer], after: &mut Document, frame: usize, key_total: &mut Option<usize>, edit_label: &str) -> Result<()> {
         for old in before {
+            // A direct layer-property opacity edit is static unless the layer already has an
+            // opacity stopwatch. Video timelines also keep per-frame property snapshots, so a
+            // changed Layer.opacity alone would be overwritten as soon as playback reached a
+            // frame whose snapshot still contains the previous value. Persist the authored
+            // static value in the same owned-opacity field used by presentation. The edit label
+            // distinguishes direct layer-property authoring from structural and keyframe edits.
+            if edit_label == "Layer Properties"
+                && old.opacity_animation.is_none()
+                && let Some(new) = after.layer_mut(old.id)
+                && new.opacity_animation.is_none()
+                && old.opacity.to_bits() != new.opacity.to_bits()
+            {
+                if !new.opacity.is_finite() || !(0.0..=1.0).contains(&new.opacity) {
+                    return Err(EngineError::BadParams { cmd: "layer.setProps".into(), msg: "opacity must be finite and between 0 and 1".into() });
+                }
+                new.opacity_animation = Some(photostore_doc::OpacityAnimation {
+                    enabled: false,
+                    static_value: new.opacity,
+                    keys: std::sync::Arc::new(Vec::new()),
+                });
+            }
             let needs_insert = old.opacity_animation.as_ref().is_some_and(|old_track| old_track.enabled)
                 && after
                     .layer(old.id)
@@ -844,13 +865,13 @@ pub fn canonicalize_authored_opacity(before: &Document, after: &mut Document) ->
                 }
             }
             if let Some(children) = old.children() {
-                walk(children, after, frame, key_total)?;
+                walk(children, after, frame, key_total, edit_label)?;
             }
         }
         Ok(())
     }
     let mut key_total = None;
-    walk(&before.layers, after, frame, &mut key_total)
+    walk(&before.layers, after, frame, &mut key_total, edit_label)
 }
 
 fn shallow_surface_eq(a: &Surface, b: &Surface) -> bool {
@@ -2107,7 +2128,7 @@ fn render_video(s: &mut Session, p: &Value) -> Result<Value> {
         let source_duration = timeline.as_ref().map_or((last - first + 1) as f64 / doc_fps, |t| timeline_export_duration(t, first, last));
         let audio_clips = timeline.as_ref().map_or_else(
             || Ok(Vec::new()),
-            |t| crate::audio_cmds::audio_mix_for_range(t, t.frame_start_seconds(first), t.frame_start_seconds(last.saturating_add(1))),
+            |t| crate::audio_cmds::audio_mix_for_document_range(&base, t.frame_start_seconds(first), t.frame_start_seconds(last.saturating_add(1))),
         )?;
         let writer_fps = fps;
         let source_rate = timeline.as_ref().map_or(true, |t| !matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation));

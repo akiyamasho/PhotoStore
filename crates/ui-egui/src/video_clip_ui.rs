@@ -19,16 +19,26 @@ impl TrackViewRow {
     }
 }
 #[derive(Clone)]
-struct TrackViewIndex {doc:DocId, revision:u64, duration:usize, rows:std::sync::Arc<Vec<TrackViewRow>>}
+struct TrackViewIndex {doc:DocId, revision:u64, duration:usize, rows:std::sync::Arc<Vec<TrackViewRow>>, audio_by_owner:std::sync::Arc<std::collections::HashMap<LayerId,Vec<photostore_doc::AudioTrack>>>}
 fn track_view(doc:&photostore_doc::Document,timeline:&Timeline,revision:u64)->TrackViewIndex {
+    // The layer tree is displayed top-to-bottom, while the serialized tree stays bottom-to-top.
+    // Use the Layers panel's canonical display order for both explicit and implicit tracks.
+    let display = crate::layer_tree_ui::display_rows(doc, true);
+    let rank: std::collections::HashMap<_, _> = display.iter().enumerate().map(|(i, (_, l))| (l.id, i)).collect();
     let mut tracks:Vec<_>=if timeline.visual_tracks.is_empty() {
-        doc.walk().into_iter().map(|(_,_,l)|(None,l.name.clone(),vec![l.id],false,false)).collect()
+        display.iter().map(|(_,l)|(None,l.name.clone(),vec![l.id],false,false)).collect()
     } else {
-        let mut tracks=timeline.visual_tracks.clone();tracks.sort_by_key(|t|(t.order,t.id));
+        let mut tracks=timeline.visual_tracks.clone();
         tracks.into_iter().map(|t|(Some(t.id),t.name,t.layers,t.locked,t.muted)).collect()
     };
     let represented:std::collections::HashSet<_>=tracks.iter().flat_map(|(_,_,layers,_,_)|layers.iter().copied()).collect();
-    for (_,_,layer) in doc.walk(){if !represented.contains(&layer.id){tracks.push((None,layer.name.clone(),vec![layer.id],false,false));}}
+    for (_,layer) in &display {if !represented.contains(&layer.id){tracks.push((None,layer.name.clone(),vec![layer.id],false,false));}}
+    tracks.sort_by_key(|(id,_,layers,_,_)| {
+        let topmost = layers.iter().filter_map(|layer|rank.get(layer)).copied().min().unwrap_or(usize::MAX);
+        // Empty authored tracks retain a stable authored order after all layer-backed rows.
+        let fallback = id.and_then(|id| timeline.visual_tracks.iter().find(|t|t.id==id).map(|t|t.order)).unwrap_or(usize::MAX);
+        (topmost, fallback, id.unwrap_or(0))
+    });
     let ranges:std::collections::HashMap<_,_>=timeline.layer_ranges.iter().map(|r|(r.layer,(r.start,r.end))).collect();
     let rows=tracks.into_iter().map(|(id,name,layers,locked,muted)| {
         let height=layers.iter().filter_map(|id|doc.layer(*id)).map(|l|if l.video.is_some(){VIDEO_TRACK_HEIGHT}else{STILL_TRACK_HEIGHT}).fold(STILL_TRACK_HEIGHT,f32::max);
@@ -37,7 +47,14 @@ fn track_view(doc:&photostore_doc::Document,timeline:&Timeline,revision:u64)->Tr
         let mut maximum=0;let prefix_end=intervals.iter().map(|(_,e,_)|{maximum=maximum.max(*e);maximum}).collect();
         TrackViewRow{id,name,layers,locked,muted,height,intervals,prefix_end}
     }).collect();
-    TrackViewIndex{doc:doc.id,revision,duration:timeline.duration,rows:std::sync::Arc::new(rows)}
+    let mut audio_by_owner:std::collections::HashMap<LayerId,Vec<photostore_doc::AudioTrack>>=std::collections::HashMap::new();
+    for track in &timeline.audio_tracks {
+        if let Some(owner)=track.owner_layer { audio_by_owner.entry(owner).or_default().push(track.clone()); continue; }
+        let mut legacy:std::collections::HashMap<LayerId,Vec<photostore_doc::AudioClip>>=std::collections::HashMap::new();
+        for clip in &track.clips { if let Some(owner)=clip.linked_video { legacy.entry(owner).or_default().push(clip.clone()); } }
+        for (owner,clips) in legacy { let mut row=track.clone();row.clips=clips;audio_by_owner.entry(owner).or_default().push(row); }
+    }
+    TrackViewIndex{doc:doc.id,revision,duration:timeline.duration,rows:std::sync::Arc::new(rows),audio_by_owner:std::sync::Arc::new(audio_by_owner)}
 }
 use egui::{Id, Rect, RichText, Sense, Ui, pos2, vec2};
 use photostore_doc::{DocId, LayerId, Timeline, TimelineMode, VideoData};
@@ -1697,11 +1714,10 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
         .into_iter()
         .filter_map(|(_, _, layer)| layer.video.as_ref().map(|video| (layer.id, layer.name.clone(), snapshot(&ctx, history, doc, timeline, layer.id, video))))
         .collect();
-    let display_rows: Vec<(LayerId, String, Option<ClipSnapshot>, usize, usize, bool, usize, String)> = active
-        .doc
-        .walk()
+    let audio_owners: std::collections::HashSet<_> = timeline.audio_tracks.iter().filter_map(|track| track.owner_layer).collect();
+    let display_rows: Vec<(LayerId, String, Option<ClipSnapshot>, usize, usize, bool, usize, String)> = crate::layer_tree_ui::display_rows(&active.doc, true)
         .into_iter()
-        .filter_map(|(path, _, layer)| {
+        .filter_map(|(depth, layer)| {
             if let Some(video) = layer.video.as_ref() {
                 return Some((
                     layer.id,
@@ -1710,12 +1726,12 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
                     0,
                     0,
                     false,
-                    path.len(),
+                    depth,
                     "Video".to_string(),
                 ));
             }
             let range = timeline.layer_ranges.iter().find(|range| range.layer == layer.id);
-            let kind = match &layer.content {
+            let kind = if audio_owners.contains(&layer.id) { "Audio" } else { match &layer.content {
                 photostore_doc::LayerContent::Smart(_) => "Smart Object",
                 photostore_doc::LayerContent::Group(_) => "Group",
                 photostore_doc::LayerContent::Fill(_) => "Fill",
@@ -1723,7 +1739,7 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
                 photostore_doc::LayerContent::Text(_) => "Text",
                 photostore_doc::LayerContent::Shape(_) => "Shape",
                 photostore_doc::LayerContent::Raster(_) => "Still",
-            };
+            }};
             Some((
                 layer.id,
                 layer.name.clone(),
@@ -1731,7 +1747,7 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
                 range.map_or(0, |r| r.start),
                 range.map_or(timeline.duration, |r| r.end),
                 matches!(layer.content, photostore_doc::LayerContent::Smart(_)),
-                path.len(),
+                depth,
                 kind.to_string(),
             ))
         })
@@ -2136,7 +2152,7 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                             action = Some(("timeline.addAudioTrack", json!({"document":doc.0})));
                             ui.close();
                         }
-                        if let Some(track) = timeline.audio_tracks.first()
+                        if let Some(track) = timeline.audio_tracks.iter().find(|track| track.owner_layer.is_none() && track.clips.iter().all(|clip| clip.linked_video.is_none()))
                             && ui.button("Import audio…").clicked()
                         {
                             let _ = crate::audio_ui::invoke(app, ui.ctx(), "timeline.addAudioClip", &json!({"document":doc.0,"track":track.id}));
@@ -2251,8 +2267,14 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                 for row in view.rows.iter() {
                     let track_id=row.id;let track_name=&row.name;let layers=&row.layers;let track_locked=row.locked;let track_muted=row.muted;
                     let row_height=row.height;
-                    let row_rect=Rect::from_min_size(ui.next_widget_position(),vec2(ui.available_width(),row_height));
-                    if !row_rect.intersects(ui.clip_rect()) {ui.allocate_space(row_rect.size());continue;}
+                    let owned_rows = layers.iter().map(|layer| view.audio_by_owner.get(layer).map_or(0, Vec::len)).sum::<usize>();
+                    let audio_height = crate::audio_ui::TIMELINE_AUDIO_ROW_HEIGHT + ui.spacing().item_spacing.y;
+                    let row_rect=Rect::from_min_size(ui.next_widget_position(),vec2(ui.available_width(),row_height + owned_rows as f32 * audio_height));
+                    if !row_rect.intersects(ui.clip_rect()) {
+                        ui.allocate_space(vec2(ui.available_width(),row_height));
+                        if owned_rows > 0 { ui.allocate_space(vec2(ui.available_width(),owned_rows as f32 * audio_height)); }
+                        continue;
+                    }
                     ui.horizontal(|ui| {
                         let (g, _) = ui.allocate_exact_size(vec2(gutter, row_height), Sense::hover());
                         let mut gutter_ui = ui.new_child(egui::UiBuilder::new().max_rect(g));
@@ -2413,7 +2435,9 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                                         };
                                         painter.rect_filled(rect.intersect(lane), 3.0, if selected { tokens.accent } else { color });
                                         paint_clip_thumbnails(app, ui, &document, layer, Some(range), rect);
-                                        let label = if matches!(layer.content, photostore_doc::LayerContent::Smart(_)) {
+                                        let label = if view.audio_by_owner.contains_key(&layer_id) {
+                                            format!("♪ {} · Audio", layer.name)
+                                        } else if matches!(layer.content, photostore_doc::LayerContent::Smart(_)) {
                                             format!("◇ {}", layer.name)
                                         } else {
                                             format!("▧ {}", layer.name)
@@ -2527,6 +2551,7 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                             });
                         let _ = lane_output.state.offset;
                     });
+                    crate::audio_ui::show_owned_workspace(app, ui, timeline, lane_width, gutter, snap, scroll_x, &view.audio_by_owner, layers);
                 }
                 if marquee_finished {
                     let drag = ui.ctx().data(|data| data.get_temp::<MarqueeDrag>(marquee_id));

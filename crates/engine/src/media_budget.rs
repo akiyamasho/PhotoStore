@@ -20,8 +20,8 @@ fn physical_memory()->usize {
         16usize.saturating_mul(1<<30)
     })
 }
-/// Optional retained media shares the existing Memory Usage policy. Categories borrow the
-/// common allowance; there is no fixed 64 MiB thumbnail or 256 MiB total editing ceiling.
+/// Optional retained media and paused decoder sessions share the existing Memory Usage policy.
+/// Categories borrow the common allowance; there is no fixed thumbnail or total editing ceiling.
 pub fn configure(allowance:usize) {
     CONFIGURED_ALLOWANCE.store(allowance,Ordering::Relaxed);
     let target=(allowance/4).min(physical_memory()/8).max(16<<20);
@@ -38,6 +38,7 @@ pub const MAX_HEAVY_DECODERS: usize = 2;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MediaKind {
     MovieFrame,
+    DecoderSession,
     Thumbnail,
     Waveform,
 }
@@ -46,8 +47,9 @@ impl MediaKind {
     fn index(self) -> usize {
         match self {
             Self::MovieFrame => 0,
-            Self::Thumbnail => 1,
-            Self::Waveform => 2,
+            Self::DecoderSession => 1,
+            Self::Thumbnail => 2,
+            Self::Waveform => 3,
         }
     }
 
@@ -67,6 +69,7 @@ pub struct BudgetStatus {
     pub total_limit_bytes: usize,
     pub total_used_bytes: usize,
     pub movie_frame_used_bytes: usize,
+    pub decoder_session_used_bytes: usize,
     pub thumbnail_used_bytes: usize,
     pub waveform_used_bytes: usize,
     pub active_heavy_decoders: usize,
@@ -74,7 +77,7 @@ pub struct BudgetStatus {
 
 #[derive(Default)]
 struct MemoryState {
-    used: [usize; 3],
+    used: [usize; 4],
 }
 static MEMORY: OnceLock<Mutex<MemoryState>> = OnceLock::new();
 
@@ -226,8 +229,9 @@ pub fn status() -> BudgetStatus {
         total_limit_bytes: retained_limit_bytes(),
         total_used_bytes: used.iter().copied().sum(),
         movie_frame_used_bytes: used[0],
-        thumbnail_used_bytes: used[1],
-        waveform_used_bytes: used[2],
+        decoder_session_used_bytes: used[1],
+        thumbnail_used_bytes: used[2],
+        waveform_used_bytes: used[3],
         active_heavy_decoders,
     }
 }

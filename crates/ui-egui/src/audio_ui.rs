@@ -11,7 +11,7 @@ use std::path::Path;
 const AUDIO_EXTENSIONS: &[&str] = &["wav", "mp3", "m4a", "aac", "flac", "aiff", "aif", "ogg", "opus", "mp4", "mov", "webm", "mkv", "avi", "m4v"];
 const NAME_WIDTH: f32 = 164.0;
 const LANE_HEIGHT: f32 = 32.0;
-const TIMELINE_AUDIO_ROW_HEIGHT: f32 = 48.0;
+pub(crate) const TIMELINE_AUDIO_ROW_HEIGHT: f32 = 48.0;
 const RULER_HEIGHT: f32 = 24.0;
 
 #[derive(Clone, Copy, Debug)]
@@ -54,13 +54,13 @@ fn picked_path(answer: FileDialogAnswer) -> Result<String, String> {
 
 /// Intercept commands needing native file selection, capturing the originating document.
 pub fn invoke(app: &mut PhotoStoreApp, _ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
-    if id != "timeline.addAudioClip" && id != "timeline.relinkAudioClip" {
+    if id != "timeline.addAudioClip" && id != "timeline.addAudioLayer" && id != "timeline.relinkAudioClip" {
         return None;
     }
     if params.get("path").and_then(Value::as_str).is_some() {
         return Some(app.run(id, params.clone()));
     }
-    let target = app.session.active().map(|s| (s.doc.id, s.doc.timeline.as_ref().and_then(|t| t.audio_tracks.first().map(|tr| tr.id))));
+    let target = app.session.active().map(|s| (s.doc.id, s.doc.timeline.as_ref().and_then(|t| t.audio_tracks.iter().find(|tr| tr.owner_layer.is_none() && tr.clips.iter().all(|clip| clip.linked_video.is_none())).map(|tr| tr.id))));
     let Some((doc, default_track)) = target else {
         return Some(Err("no document open".into()));
     };
@@ -72,7 +72,7 @@ pub fn invoke(app: &mut PhotoStoreApp, _ctx: &egui::Context, id: &str, params: &
     }
     let initial_dir = app.session.active().and_then(|s| s.path.as_deref()).and_then(|p| Path::new(p).parent()).map(|p| p.to_string_lossy().into_owned());
     let extensions = Some(AUDIO_EXTENSIONS.iter().map(|s| (*s).to_string()).collect());
-    let command = if id == "timeline.addAudioClip" { "timeline.addAudioClip" } else { "timeline.relinkAudioClip" };
+    let command = match id { "timeline.addAudioLayer" => "timeline.addAudioLayer", "timeline.relinkAudioClip" => "timeline.relinkAudioClip", _ => "timeline.addAudioClip" };
     Some(app.ask_file(FileDialogRequest::Open { multiple: false, initial_dir, extensions }, move |app, answer| {
         let path = picked_path(answer)?;
         app.with_document(doc, |app| {
@@ -482,10 +482,13 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
         if crate::widgets::secondary_button(ui, tl!("+ Track"), 72.0).clicked() {
             dispatch(app, "timeline.addAudioTrack", json!({}));
         }
-        if let Some(track) = timeline.audio_tracks.first() {
+        if let Some(track) = timeline.audio_tracks.iter().find(|track| track.owner_layer.is_none() && track.clips.iter().all(|clip| clip.linked_video.is_none())) {
             if crate::widgets::secondary_button(ui, tl!("Import Audio…"), 110.0).clicked() {
                 let _ = invoke(app, ui.ctx(), "timeline.addAudioClip", &json!({"track": track.id}));
             }
+        }
+        if crate::widgets::secondary_button(ui, "Import Audio as Layer…", 160.0).clicked() {
+            let _ = invoke(app, ui.ctx(), "timeline.addAudioLayer", &json!({}));
         }
     });
     let tracks = timeline.audio_tracks.clone();
@@ -524,7 +527,11 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
 pub fn show_workspace(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_width: f32, gutter_width: f32, snap: bool, scroll_x: f32) {
     let Some(doc) = target_doc(app) else { return };
     let tokens = Tokens::get(ui.ctx());
-    let tracks = timeline.audio_tracks.clone();
+    let layer_ids: std::collections::HashSet<_> = app.session.active().filter(|state| state.doc.id == doc).map(|state| state.doc.walk().into_iter().map(|(_,_,layer)| layer.id).collect()).unwrap_or_default();
+    let tracks = timeline.audio_tracks.iter().filter(|track| track.owner_layer.is_none()).cloned().map(|mut track| {
+        track.clips.retain(|clip| clip.linked_video.is_none_or(|owner| !layer_ids.contains(&owner)));
+        track
+    }).filter(|track| !(track.clips.is_empty() && timeline.audio_tracks.iter().find(|source| source.id == track.id).is_some_and(|source| !source.clips.is_empty()))).collect::<Vec<_>>();
     let duration = timeline.duration_seconds().max(0.001);
     let display_frame = app.timeline_playback.display_frame(timeline);
     let playhead = app.timeline_playback.display_time(timeline);
@@ -532,8 +539,14 @@ pub fn show_workspace(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline,
         ui.horizontal(|ui| {
             let (gutter, _) = ui.allocate_exact_size(vec2(gutter_width, TIMELINE_AUDIO_ROW_HEIGHT), Sense::hover());
             let mut left = ui.new_child(egui::UiBuilder::new().max_rect(gutter));
-            if crate::icons::button(&mut left, if track.muted { "volume-x" } else { "volume-2" }, 18.0, track.muted, "Mute audio track").clicked() {
-                dispatch(app, "timeline.setAudioTrack", json!({"document":doc.0,"track":track.id,"muted":!track.muted}));
+            let mixed_track = timeline.audio_tracks.iter().find(|source| source.id == track.id).is_some_and(|source| source.clips.iter().any(|clip| clip.linked_video.is_some_and(|owner| layer_ids.contains(&owner))));
+            let muted = track.muted || track.clips.iter().all(|clip| clip.muted);
+            if crate::icons::button(&mut left, if muted { "volume-x" } else { "volume-2" }, 18.0, muted, "Mute audio track").clicked() {
+                if mixed_track {
+                    dispatch(app, "timeline.setAudioClips", json!({"document":doc.0,"clips":track.clips.iter().map(|clip| clip.id).collect::<Vec<_>>(),"muted":!muted}));
+                } else {
+                    dispatch(app, "timeline.setAudioTrack", json!({"document":doc.0,"track":track.id,"muted":!muted}));
+                }
             }
             let label = Rect::from_min_max(pos2(gutter.left() + 24.0, gutter.top()), gutter.right_bottom());
             left.painter().with_clip_rect(label).text(
@@ -561,6 +574,41 @@ pub fn show_workspace(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline,
                     painter.line_segment([pos2(x, lane.top()), pos2(x, lane.bottom())], egui::Stroke::new(1.5, tokens.accent));
                 });
             let _ = (scroll_id, out.state.offset);
+        });
+    }
+}
+
+/// Render audio rows owned by layers immediately after their visual layer row.
+pub fn show_owned_workspace(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_width: f32, gutter_width: f32, snap: bool, scroll_x: f32, audio_by_owner: &std::collections::HashMap<photostore_doc::LayerId,Vec<photostore_doc::AudioTrack>>, layers: &[photostore_doc::LayerId]) {
+    let Some(doc) = target_doc(app) else { return };
+    let tokens = Tokens::get(ui.ctx());
+    let tracks = layers.iter().flat_map(|layer| audio_by_owner.get(layer).into_iter().flatten()).collect::<Vec<_>>();
+    let duration = timeline.duration_seconds().max(0.001);
+    let display_frame = app.timeline_playback.display_frame(timeline);
+    let playhead = app.timeline_playback.display_time(timeline);
+    for track in tracks {
+        ui.horizontal(|ui| {
+            let (gutter, _) = ui.allocate_exact_size(vec2(gutter_width, TIMELINE_AUDIO_ROW_HEIGHT), Sense::hover());
+            let mut left = ui.new_child(egui::UiBuilder::new().max_rect(gutter));
+            let owner = track.owner_layer.or_else(|| track.clips.first().and_then(|clip| clip.linked_video));
+            let muted = track.muted || track.clips.iter().all(|clip| clip.muted);
+            if crate::icons::button(&mut left, if muted { "volume-x" } else { "volume-2" }, 18.0, muted, "Mute layer audio").clicked()
+                && let Some(owner) = owner
+            {
+                dispatch(app, "timeline.setLayerAudio", json!({"document":doc.0,"layer":owner.0,"muted":!muted}));
+            }
+            let label = Rect::from_min_max(pos2(gutter.left() + 24.0, gutter.top()), gutter.right_bottom());
+            left.painter().with_clip_rect(label).text(label.left_center(), egui::Align2::LEFT_CENTER, format!("♪ {}", track.name), egui::FontId::proportional(11.5), tokens.text_dim);
+            egui::ScrollArea::horizontal().scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).scroll_source(egui::scroll_area::ScrollSource::NONE)
+                .id_salt(("timeline-audio-lane", doc.0, track.id, owner.map(|id| id.0).unwrap_or(0))).scroll_offset(egui::vec2(scroll_x, 0.0)).show(ui, |ui| {
+                    let (lane, _) = ui.allocate_exact_size(vec2(lane_width, TIMELINE_AUDIO_ROW_HEIGHT), Sense::hover());
+                    let painter = ui.painter_at(lane);
+                    painter.rect_filled(lane, 0.0, tokens.field);
+                    painter.line_segment([lane.left_bottom(), lane.right_bottom()], egui::Stroke::new(1.0, tokens.separator));
+                    for clip in &track.clips { draw_clip(ui, app, doc, clip, lane, duration, playhead, timeline.project_rate().as_f64(), snap, &tokens); }
+                    let x = lane.left() + lane.width() * display_frame as f32 / timeline.duration.max(1) as f32;
+                    painter.line_segment([pos2(x, lane.top()), pos2(x, lane.bottom())], egui::Stroke::new(1.5, tokens.accent));
+                });
         });
     }
 }

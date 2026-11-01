@@ -473,11 +473,17 @@ fn open_audio_document(name: &str, path: &str) -> Result<Document> {
         return Err(EngineError::Other(format!("audio duration exceeds the {MAX_OPEN_MEDIA_FRAMES}-frame timeline limit")));
     }
     let duration = timeline_frames as usize;
+    let mut doc = Document::new(name, Size::new(1920, 1080), ColorMode::Rgb, SampleType::U8);
+    let layer_name = std::path::Path::new(&path).file_stem().and_then(|stem| stem.to_str()).unwrap_or("Audio").chars().take(256).collect::<String>();
+    let audio_layer = Layer::new(format!("Audio · {layer_name}"), LayerContent::Raster(photostore_raster::Surface::new(doc.pixel_format())));
+    let owner = audio_layer.id;
+    doc.layers.push(audio_layer);
     let mut timeline = Timeline::new(duration, OPEN_AUDIO_FPS as f32);
     let clip_name = std::path::Path::new(&path).file_stem().and_then(|stem| stem.to_str()).unwrap_or("Audio").chars().take(256).collect::<String>();
     timeline.audio_tracks.push(AudioTrack {
         id: 1,
-        name: "Audio".into(),
+        name: layer_name.clone(),
+        owner_layer: Some(owner),
         muted: false,
         clips: vec![AudioClip {
             asset_id: None,
@@ -500,7 +506,7 @@ fn open_audio_document(name: &str, path: &str) -> Result<Document> {
             envelope_duration_seconds: Some(audio.duration_seconds),
         }],
     });
-    let mut doc = Document::new(name, Size::new(1920, 1080), ColorMode::Rgb, SampleType::U8);
+    timeline.layer_ranges.push(photostore_doc::LayerTimelineRange { layer: owner, start: 0, end: duration, enabled: true, playback: None });
     doc.timeline = Some(timeline);
     crate::media_asset_cmds::initialize_sources(&mut doc)?;
     Ok(doc)

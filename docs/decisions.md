@@ -708,3 +708,19 @@ source implementation, focused data boundaries and pending native device accepta
 Both focused data boundaries passed. Normal 0.20.3 was built, verified, published and atomically
 installed from `e7de47f6b1103ee32f8bbb6b06daee8054c04473`. The running session was preserved.
 Native shortcut/drop/pan/Cintiq acceptance remains manual; see the [release receipt](releases/0.20.3.md).
+
+## 2026-11-01: Unified layer order, authored opacity and source-owned audio
+
+Derive timeline row order from the Layers hierarchy instead of storage-order traversal; preserve
+multi-clip track membership and timing. A direct static linked-video opacity edit acquires an
+owned static opacity channel, preventing legacy per-frame property snapshots from reverting it
+on playback while preserving untouched legacy/explicit animation.
+
+Use optional serialized audio-track owner identities for per-source movie audio and lightweight
+standalone audio layers; preserve legacy unowned tracks. Ownership must follow copy, delete,
+undo and native serialization. Audio gain remains independent of picture opacity. Keep original
+media and editable Smart Objects in one document model. Paused sequential decoder sessions share
+estimated memory reservations and a bounded pool; two active workers remain the decode limit.
+Performance measurements report all overlapping sources and exact evidence scope, without calling
+headless preparation native playback FPS or claiming CapCut parity. See the
+[layered-media plan](plans/layered-media-2026-11-01.md) and [0.20.4 receipt](releases/0.20.4.md).

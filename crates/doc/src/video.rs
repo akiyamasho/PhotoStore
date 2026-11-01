@@ -619,6 +619,9 @@ fn default_clip_volume() -> f64 {
 pub struct AudioTrack {
     pub id: u64,
     pub name: String,
+    /// Layer row this audio belongs to. `None` preserves legacy free-standing tracks.
+    #[serde(default)]
+    pub owner_layer: Option<LayerId>,
     #[serde(default)]
     pub muted: bool,
     #[serde(default)]

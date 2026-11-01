@@ -250,6 +250,7 @@ fn layer_via(s: &mut Session, cut: bool) -> Result<Value> {
             dup.name = doc.copy_name(&src.name);
             dup.locks = Default::default();
             let nid = doc.insert_above(Some(id), dup);
+            crate::timeline_editor_cmds::duplicate_audio_owner(doc, id, nid)?;
             *active = Some(nid);
             Ok(nid)
         })?;

@@ -1235,6 +1235,7 @@ pub fn duplicate_selected(s: &mut Session, in_place: bool) -> Result<Value> {
             let mut dup = doc.layer(id).ok_or(EngineError::NoLayer(id))?.duplicate();
             dup.name = doc.copy_name(&dup.name);
             let nid = doc.insert_above(Some(id), dup);
+            crate::timeline_editor_cmds::duplicate_audio_owner(doc, id, nid)?;
             if !in_place {
                 crate::artboard_cmds::place_copy(doc, nid)?;
             }

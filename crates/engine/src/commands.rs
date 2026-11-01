@@ -575,6 +575,7 @@ fn build() -> Vec<CommandSpec> {
                 let nid = s.edit("Duplicate Layer", |doc, active| {
                     let dup = layer_copy(doc, id)?;
                     let nid = doc.insert_above(Some(id), dup);
+                    crate::timeline_editor_cmds::duplicate_audio_owner(doc, id, nid)?;
                     if !in_place {
                         crate::artboard_cmds::place_copy(doc, nid)?;
                     }

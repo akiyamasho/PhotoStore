@@ -1,6 +1,6 @@
 //! Timeline audio editing commands and the document-to-mixer projection.
 
-use photostore_doc::{AudioClip, AudioTrack, LayerId};
+use photostore_doc::{AudioClip, AudioTrack, Layer, LayerContent, LayerId};
 use serde_json::{Value, json};
 use std::{fs, path::Path};
 
@@ -182,7 +182,7 @@ fn extend_timeline(t: &mut photostore_doc::Timeline, end_seconds: f64) -> Result
     Ok(())
 }
 
-fn validate_clip(c: &AudioClip) -> Result<()> {
+pub(crate) fn validate_clip(c: &AudioClip) -> Result<()> {
     bounded_seconds(c.start_seconds, "startSeconds", false)?;
     bounded_seconds(c.trim_in_seconds, "trimInSeconds", false)?;
     bounded_seconds(c.duration_seconds, "durationSeconds", true)?;
@@ -244,7 +244,10 @@ pub fn specs() -> Vec<CommandSpec> {
         };
     }
     c!("timeline.addAudioTrack", "Add Audio Track", add_track, "{name?:string}");
+    c!("timeline.addAudioLayer", "Import Audio as Layer", add_audio_layer, "{path:string,startSeconds?,trimInSeconds?,durationSeconds?,speed?,volume?,fadeInSeconds?,fadeOutSeconds?,muted?,name?}");
     c!("timeline.setAudioTrack", "Set Audio Track", set_track, "{track:u64,name?:string,muted?:bool}");
+    c!("timeline.setLayerAudio", "Set Layer Audio", set_layer_audio, "{layer:u64,muted:bool}");
+    c!("timeline.setAudioClips", "Set Audio Clips", set_audio_clips, "{clips:[u64],muted:bool}");
     c!("timeline.removeAudioTrack", "Remove Audio Track", remove_track, "{track:u64}");
     c!(
         "timeline.addAudioClip",
@@ -258,6 +261,46 @@ pub fn specs() -> Vec<CommandSpec> {
     c!("timeline.relinkAudioClip", "Relink Audio Clip", relink_clip, "{clip:u64,path:string}");
     out
 }
+fn add_audio_layer(s: &mut Session, p: &Value) -> Result<Value> {
+    let params = p.clone();
+    crate::jobs::edit_job(s, "Import Audio as Layer", move |d, active, _| {
+        let (path, source_duration) = path_and_probe(&params)?;
+        let format = d.pixel_format();
+        let timeline = d.timeline.as_ref().ok_or_else(|| EngineError::Other("document has no timeline".into()))?;
+        validate_timeline(timeline)?;
+        if timeline.audio_tracks.len() >= MAX_TRACKS || timeline.audio_tracks.iter().map(|track| track.clips.len()).sum::<usize>() >= MAX_CLIPS {
+            return Err(bad("timeline.addAudioLayer", "audio track or clip limit reached"));
+        }
+        let mut name = params.get("name").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| {
+            Path::new(&path).file_stem().and_then(|stem| stem.to_str()).unwrap_or("Audio").to_string()
+        });
+        name = valid_name(&name, "name")?;
+        let layer = Layer::new(format!("Audio · {name}"), LayerContent::Raster(photostore_raster::Surface::new(format)));
+        let layer_id = layer.id;
+        let track_id = fresh_track_id(timeline)?;
+        let clip_id = fresh_clip_id(timeline)?;
+        let mut clip_params = params.clone();
+        if !clip_params.get("startSeconds").is_some() {
+            clip_params["startSeconds"] = json!(timeline.frame_start_seconds(timeline.current));
+        }
+        clip_params["name"] = json!(name);
+        let clip = clip_from(&clip_params, clip_id, path, source_duration)?;
+        d.layers.push(layer);
+        *active = Some(layer_id);
+        let timeline = timeline_mut(d)?;
+        extend_timeline(timeline, clip.start_seconds + clip.duration_seconds)?;
+        let fps = timeline.project_rate().as_f64();
+        let range_start = (clip.start_seconds * fps).floor().max(0.0) as usize;
+        let range_end = ((clip.start_seconds + clip.duration_seconds) * fps).ceil().max(0.0) as usize;
+        timeline.layer_ranges.push(photostore_doc::LayerTimelineRange {
+            layer: layer_id, start: range_start, end: range_end.max(range_start.saturating_add(1)).min(timeline.duration), enabled: true, playback: None,
+        });
+        timeline.audio_tracks.push(AudioTrack {
+            id: track_id, name, owner_layer: Some(layer_id), muted: false, clips: vec![clip],
+        });
+        Ok((layer_id.0, track_id, clip_id))
+    }, |(layer, track, clip)| json!({"layer":layer,"track":track,"clip":clip}))
+}
 fn add_track(s: &mut Session, p: &Value) -> Result<Value> {
     let name = match p.get("name") {
         None => "Audio Track".to_string(),
@@ -269,7 +312,7 @@ fn add_track(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad("timeline.addAudioTrack", "maximum 64 tracks"));
         }
         let id = fresh_track_id(t)?;
-        t.audio_tracks.push(AudioTrack { id, name: name.clone(), muted: false, clips: Vec::new() });
+        t.audio_tracks.push(AudioTrack { id, name: name.clone(), owner_layer: None, muted: false, clips: Vec::new() });
         Ok(json!({"track":id}))
     })
 }
@@ -286,6 +329,47 @@ fn set_track(s: &mut Session, p: &Value) -> Result<Value> {
             tr.muted = m.as_bool().ok_or_else(|| bad("timeline.setAudioTrack", "muted must be bool"))?;
         }
         Ok(json!({"track":tid}))
+    })
+}
+fn set_layer_audio(s: &mut Session, p: &Value) -> Result<Value> {
+    let layer = LayerId(id(p, "layer")?);
+    let muted = p.get("muted").and_then(Value::as_bool).ok_or_else(|| bad("timeline.setLayerAudio", "`muted` must be a boolean"))?;
+    s.edit("Set Layer Audio", |d, _| {
+        let timeline = timeline_mut(d)?;
+        if timeline.audio_tracks.iter().any(|track| track.owner_layer == Some(layer)) {
+            for track in timeline.audio_tracks.iter_mut().filter(|track| track.owner_layer == Some(layer)) { track.muted = muted; }
+        } else {
+            let mut found = false;
+            for track in &mut timeline.audio_tracks {
+                if !track.clips.iter().any(|clip| clip.linked_video == Some(layer)) { continue; }
+                found = true;
+                if track.muted {
+                    for clip in &mut track.clips { clip.muted = true; }
+                    track.muted = false;
+                }
+                for clip in track.clips.iter_mut().filter(|clip| clip.linked_video == Some(layer)) { clip.muted = muted; }
+            }
+            if !found { return Err(bad("timeline.setLayerAudio", "layer has no audio")); }
+        }
+        Ok(json!({"layer":layer.0,"muted":muted}))
+    })
+}
+fn set_audio_clips(s: &mut Session, p: &Value) -> Result<Value> {
+    let values = p.get("clips").and_then(Value::as_array).ok_or_else(|| bad("timeline.setAudioClips", "`clips` must be an array"))?;
+    if values.is_empty() || values.len() > MAX_CLIPS { return Err(bad("timeline.setAudioClips", "`clips` must contain 1 to 4096 ids")); }
+    let clips = values.iter().map(|value| value.as_u64().filter(|id| *id > 0).ok_or_else(|| bad("timeline.setAudioClips", "clip ids must be positive integers"))).collect::<Result<std::collections::HashSet<_>>>()?;
+    if clips.len() != values.len() { return Err(bad("timeline.setAudioClips", "`clips` must not contain duplicate ids")); }
+    let muted = p.get("muted").and_then(Value::as_bool).ok_or_else(|| bad("timeline.setAudioClips", "`muted` must be a boolean"))?;
+    s.edit("Set Audio Clips", |d, _| {
+        let timeline = timeline_mut(d)?;
+        let found = timeline.audio_tracks.iter().flat_map(|track| track.clips.iter()).filter(|clip| clips.contains(&clip.id)).count();
+        if found != clips.len() { return Err(bad("timeline.setAudioClips", "one or more audio clips no longer exist")); }
+        for track in &mut timeline.audio_tracks {
+            if !track.clips.iter().any(|clip| clips.contains(&clip.id)) { continue; }
+            if track.muted { for clip in &mut track.clips { clip.muted = true; } track.muted = false; }
+            for clip in track.clips.iter_mut().filter(|clip| clips.contains(&clip.id)) { clip.muted = muted; }
+        }
+        Ok(json!({"clips":clips.len(),"muted":muted}))
     })
 }
 fn remove_track(s: &mut Session, p: &Value) -> Result<Value> {
@@ -316,11 +400,13 @@ fn add_clip(s: &mut Session, p: &Value) -> Result<Value> {
             let ti = match track {
                 Some(x) => track_index(t, x)?,
                 None => {
-                    if t.audio_tracks.is_empty() {
+                    if let Some(index) = t.audio_tracks.iter().position(|track| track.owner_layer.is_none() && track.clips.iter().all(|clip| clip.linked_video.is_none())) {
+                        index
+                    } else {
                         let id = fresh_track_id(t)?;
-                        t.audio_tracks.push(AudioTrack { id, name: "Audio Track".into(), muted: false, clips: Vec::new() });
+                        t.audio_tracks.push(AudioTrack { id, name: "Audio Track".into(), owner_layer: None, muted: false, clips: Vec::new() });
+                        t.audio_tracks.len() - 1
                     }
-                    0
                 }
             };
             let cid = fresh_clip_id(t)?;
@@ -497,6 +583,155 @@ fn relink_clip(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 pub fn audio_mix_for_range(t: &photostore_doc::Timeline, start: f64, end: f64) -> Result<Vec<crate::media_backend::AudioMixClip>> {
+    audio_mix_for_range_with_owner_visibility(t, start, end, |_, a, b| Ok(vec![(a, b)]))
+}
+
+pub fn audio_mix_for_document_range(doc: &photostore_doc::Document, start: f64, end: f64) -> Result<Vec<crate::media_backend::AudioMixClip>> {
+    let timeline = doc.timeline.as_ref().ok_or(EngineError::NoDocument)?;
+    let boundaries = timeline_frame_boundaries(timeline, start, end);
+    let cached = std::cell::RefCell::new(std::collections::HashMap::<Option<LayerId>, Vec<(f64, f64)>>::new());
+    audio_mix_for_range_with_owner_visibility(timeline, start, end, |owner, a, b| {
+        if owner.is_none() { return Ok(vec![(a, b)]); }
+        if !cached.borrow().contains_key(&owner) {
+            let intervals = authored_visibility_intervals(doc, timeline, owner, start, end, boundaries.as_deref())?;
+            cached.borrow_mut().insert(owner, intervals);
+        }
+        Ok(cached.borrow().get(&owner).into_iter().flatten().filter_map(|(lo, hi)| {
+            let left = a.max(*lo);
+            let right = b.min(*hi);
+            (right > left).then_some((left, right))
+        }).collect())
+    })
+}
+
+fn layer_ancestor_ids(doc: &photostore_doc::Document, target: LayerId) -> Option<Vec<LayerId>> {
+    fn visit(layers: &[Layer], target: LayerId, ancestors: &mut Vec<LayerId>) -> bool {
+        for layer in layers {
+            ancestors.push(layer.id);
+            if layer.id == target { return true; }
+            if let LayerContent::Group(group) = &layer.content
+                && visit(&group.children, target, ancestors)
+            {
+                return true;
+            }
+            ancestors.pop();
+        }
+        false
+    }
+    let mut ids = Vec::new();
+    visit(&doc.layers, target, &mut ids).then_some(ids)
+}
+
+/// Read authored visibility for one timeline frame. `Layer.visible` can be the last synchronized
+/// presentation frame, so snapshots and the layer's active range are evaluated first.
+fn authored_layer_visible_at(doc: &photostore_doc::Document, timeline: &photostore_doc::Timeline, id: LayerId, frame: usize) -> bool {
+    let Some(layer) = doc.layer(id) else { return false };
+    if timeline.visual_tracks.iter().any(|track| track.muted && track.layers.contains(&id)) { return false; }
+    let states = if timeline.mode == photostore_doc::TimelineMode::FrameAnimation {
+        timeline.frame_states.get(frame)
+    } else {
+        timeline.property_frames.get(frame)
+    };
+    let state_visible = states.and_then(|row| row.iter().find(|state| state.layer == id)).map(|state| state.visible);
+    if let Some(range) = timeline.layer_ranges.iter().find(|range| range.layer == id) {
+        range.enabled
+            && frame >= range.start
+            && frame < range.end.max(range.start.saturating_add(1))
+            && state_visible.unwrap_or(true)
+    } else {
+        state_visible.unwrap_or(layer.visible)
+    }
+}
+
+fn timeline_frame_boundaries(t: &photostore_doc::Timeline, start: f64, end: f64) -> Option<(usize, Vec<f64>)> {
+    if t.mode != photostore_doc::TimelineMode::FrameAnimation || !t.frame_delays_ms.iter().take(t.duration).any(|delay| *delay > 0) { return None; }
+    let fallback = 1.0 / t.project_rate().as_f64();
+    let delay_at = |frame: usize| t.frame_delays_ms.get(frame).copied().filter(|delay| *delay > 0).map_or(fallback, |delay| f64::from(delay) / 1000.0);
+    let mut seconds = 0.0;
+    let mut first = 0usize;
+    while first < t.duration && seconds + delay_at(first) <= start + 1e-12 {
+        seconds += delay_at(first);
+        first += 1;
+    }
+    if first >= t.duration { return Some((t.duration.saturating_sub(1), vec![seconds])); }
+    let mut boundaries = vec![seconds];
+    let mut frame = first;
+    while frame < t.duration && seconds < end {
+        seconds += delay_at(frame);
+        frame += 1;
+        boundaries.push(seconds);
+    }
+    Some((first, boundaries))
+}
+
+fn timeline_frame_at(t: &photostore_doc::Timeline, time: f64, boundaries: Option<&(usize, Vec<f64>)>) -> usize {
+    if t.duration == 0 { return 0; }
+    if let Some((first, boundaries)) = boundaries {
+        let relative = boundaries.partition_point(|boundary| *boundary <= time + 1e-12).saturating_sub(1);
+        return first.saturating_add(relative).min(t.duration - 1);
+    }
+    ((time.max(0.0) * t.project_rate().as_f64()).floor().max(0.0) as usize).min(t.duration - 1)
+}
+
+fn authored_visibility_intervals(
+    doc: &photostore_doc::Document,
+    timeline: &photostore_doc::Timeline,
+    owner: Option<LayerId>,
+    start: f64,
+    end: f64,
+    boundaries: Option<&(usize, Vec<f64>)>,
+) -> Result<Vec<(f64, f64)>> {
+    let Some(owner) = owner else { return Ok(vec![(start, end)]); };
+    let Some(path) = layer_ancestor_ids(doc, owner) else { return Ok(Vec::new()); };
+    if timeline.duration == 0 { return Ok(Vec::new()); }
+    let first = timeline_frame_at(timeline, start, boundaries);
+    let last = timeline_frame_at(timeline, (end - 1e-12).max(start), boundaries);
+    let after_last = last.saturating_add(1).min(timeline.duration);
+    let mut cuts = std::collections::BTreeSet::from([first, after_last]);
+    for id in &path {
+        if let Some(range) = timeline.layer_ranges.iter().find(|range| range.layer == *id) {
+            for cut in [range.start, range.end.max(range.start.saturating_add(1))] {
+                if cut > first && cut < after_last { cuts.insert(cut); }
+            }
+        }
+        let states = if timeline.mode == photostore_doc::TimelineMode::FrameAnimation { &timeline.frame_states } else { &timeline.property_frames };
+        for (offset, row) in states.get(first..after_last).unwrap_or(&[]).iter().enumerate() {
+            let frame = first + offset;
+            if row.iter().any(|state| state.layer == *id) {
+                cuts.insert(frame);
+                let after = frame.saturating_add(1);
+                if after < after_last { cuts.insert(after); }
+            }
+        }
+    }
+    let cuts = cuts.into_iter().collect::<Vec<_>>();
+    let mut visible = Vec::<(f64, f64)>::new();
+    let fps = timeline.project_rate().as_f64();
+    for pair in cuts.windows(2) {
+        let frame = pair[0];
+        let frame_start = boundaries.and_then(|(first, values)| values.get(frame.saturating_sub(*first))).copied().unwrap_or(frame as f64 / fps);
+        let frame_end = boundaries.and_then(|(first, values)| values.get(pair[1].saturating_sub(*first))).copied().unwrap_or(pair[1] as f64 / fps);
+        let a = start.max(frame_start);
+        let b = end.min(frame_end);
+        if b <= a || !path.iter().all(|id| authored_layer_visible_at(doc, timeline, *id, frame)) { continue; }
+        if let Some(previous) = visible.last_mut().filter(|previous| (previous.1 - a).abs() <= 1e-9) {
+            previous.1 = b;
+        } else {
+            visible.push((a, b));
+            if visible.len() > MAX_MIX_CLIPS {
+                return Err(bad("timeline.audio", "owner-layer visibility creates more than 128 audio segments"));
+            }
+        }
+    }
+    Ok(visible)
+}
+
+fn audio_mix_for_range_with_owner_visibility(
+    t: &photostore_doc::Timeline,
+    start: f64,
+    end: f64,
+    owner_intervals: impl Fn(Option<LayerId>, f64, f64) -> Result<Vec<(f64, f64)>>,
+) -> Result<Vec<crate::media_backend::AudioMixClip>> {
     bounded_seconds(start, "mix start", false)?;
     bounded_seconds(end, "mix end", false)?;
     if end <= start {
@@ -516,11 +751,12 @@ pub fn audio_mix_for_range(t: &photostore_doc::Timeline, start: f64, end: f64) -
             if c.muted || b <= a {
                 continue;
             }
-            if out.len() >= MAX_MIX_CLIPS {
+            let owner = tr.owner_layer.or(c.linked_video);
+            let audible = owner_intervals(owner, a, b)?;
+            if out.len().saturating_add(audible.len()) > MAX_MIX_CLIPS {
                 return Err(bad("timeline.audio", "audio mix exceeds 128 clips"));
             }
             let env = c.envelope_duration_seconds.unwrap_or(c.duration_seconds);
-            let skip = a - c.start_seconds;
             let original_trim = if c.speed_curve.is_empty() {
                 c.trim_in_seconds - c.envelope_offset_seconds * c.speed
             } else {
@@ -531,22 +767,25 @@ pub fn audio_mix_for_range(t: &photostore_doc::Timeline, start: f64, end: f64) -
             if !original_trim.is_finite() || original_trim < 0.0 {
                 return Err(bad("timeline.audio", "speed curve implies an invalid original source trim"));
             }
-            out.push(crate::media_backend::AudioMixClip {
-                input_path: c.path.clone().into(),
-                start_seconds: a - start,
-                trim_in_seconds: original_trim,
-                duration_seconds: Some(env),
-                volume: c.volume,
-                fade_in_seconds: c.fade_in_seconds,
-                fade_out_seconds: c.fade_out_seconds,
-                mute: false,
-                speed: c.speed,
-                speed_curve: c.speed_curve.clone(),
-                speed_curve_offset_frames: c.speed_curve_offset_frames,
-                timeline_fps,
-                offset_seconds: c.envelope_offset_seconds + skip,
-                limit_seconds: Some(b - a),
-            });
+            for (segment_start, segment_end) in audible.into_iter().filter(|(a,b)|b>a) {
+                let skip = segment_start - c.start_seconds;
+                out.push(crate::media_backend::AudioMixClip {
+                    input_path: c.path.clone().into(),
+                    start_seconds: segment_start - start,
+                    trim_in_seconds: original_trim,
+                    duration_seconds: Some(env),
+                    volume: c.volume,
+                    fade_in_seconds: c.fade_in_seconds,
+                    fade_out_seconds: c.fade_out_seconds,
+                    mute: false,
+                    speed: c.speed,
+                    speed_curve: c.speed_curve.clone(),
+                    speed_curve_offset_frames: c.speed_curve_offset_frames,
+                    timeline_fps,
+                    offset_seconds: c.envelope_offset_seconds + skip,
+                    limit_seconds: Some(segment_end - segment_start),
+                });
+            }
         }
     }
     Ok(out)
@@ -566,7 +805,7 @@ pub(crate) fn add_linked_movie_audio(
     if path.is_empty() {
         return Err(bad("timeline.audio", "linked movie audio path is empty"));
     }
-    if t.audio_tracks.len() >= MAX_TRACKS && !t.audio_tracks.iter().any(|x| x.name == "Audio") {
+    if t.audio_tracks.len() >= MAX_TRACKS && !t.audio_tracks.iter().any(|x| x.owner_layer == Some(layer)) {
         return Err(bad("timeline.audio", "maximum 64 tracks"));
     }
     if t.audio_tracks.iter().map(|x| x.clips.len()).sum::<usize>() >= MAX_CLIPS {
@@ -590,11 +829,11 @@ pub(crate) fn add_linked_movie_audio(
         return Err(bad("timeline.audio", "invalid linked movie audio timing"));
     }
     extend_timeline(t, start_seconds + duration_seconds)?;
-    let ti = if let Some(i) = t.audio_tracks.iter().position(|x| x.name == "Audio") {
+    let ti = if let Some(i) = t.audio_tracks.iter().position(|x| x.owner_layer == Some(layer)) {
         i
     } else {
         let id = fresh_track_id(t)?;
-        t.audio_tracks.push(AudioTrack { id, name: "Audio".into(), muted: false, clips: Vec::new() });
+        t.audio_tracks.push(AudioTrack { id, name: format!("{} Audio", Path::new(&path).file_stem().and_then(|name| name.to_str()).unwrap_or("Movie")), owner_layer: Some(layer), muted: false, clips: Vec::new() });
         t.audio_tracks.len() - 1
     };
     let cid = fresh_clip_id(t)?;

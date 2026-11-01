@@ -18,6 +18,9 @@ pub fn frame_budget_bytes()->usize {crate::media_budget::retained_limit_bytes()}
 const ERROR_LIMIT: usize = 128;
 const REQUEST_LIMIT: usize = 16;
 const THUMBNAIL_REQUEST_LIMIT: usize = 4;
+// Two preview workers may each retain a small round-robin set of decoder sessions. The shared
+// media-budget reservation below makes this an upper bound, not a guarantee under cache pressure.
+const MAX_SEQUENTIAL_STREAMS_PER_WORKER: usize = 4;
 static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
 static WORKER: OnceLock<Option<WorkerChannels>> = OnceLock::new();
 static COMPLETION_GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -446,6 +449,7 @@ struct SequentialStream {
     step:f64,
     next_index:usize,
     decoder:crate::media_backend::PreviewDecoder,
+    _memory:Option<crate::media_budget::Reservation>,
 }
 impl SequentialStream {
     fn next_time(&self)->f64 {self.start+self.next_index as f64*self.step}
@@ -483,7 +487,7 @@ fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<Sequentia
         if stream.as_ref().is_none_or(|active|!active.compatible(job,window,size)) {
             stream=None;
             let decoder=crate::media_backend::PreviewDecoder::start(Path::new(&job.path),&info,window.times[0],window.step_seconds,job.key.format,size.0,size.1).map_err(|e|e.to_string())?;
-            stream=Some(SequentialStream{source:job.key.source.clone(),owner:job.consumer_key(),last_used:std::time::Instant::now(),generation:job.source_generation,format:job.key.format,output_size:size,start:window.times[0],step:window.step_seconds,next_index:0,decoder});
+            stream=Some(SequentialStream{source:job.key.source.clone(),owner:job.consumer_key(),last_used:std::time::Instant::now(),generation:job.source_generation,format:job.key.format,output_size:size,start:window.times[0],step:window.step_seconds,next_index:0,decoder,_memory:None});
         }
         let active=stream.as_mut().ok_or("preview decoder unavailable")?;
         let skip=((window.times[0]-active.next_time())/active.step).round().max(0.0) as usize;
@@ -532,10 +536,34 @@ fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<Sequentia
     }
     if !ended {if let Some(mut active)=stream {
         active.last_used=std::time::Instant::now();
-        if streams.len()>=2{streams.remove(0);}
-        streams.push(active);
+        if active._memory.is_none() {
+            active._memory=reserve_stream_memory(active.output_size).ok();
+            // Make the local stream set adaptive to the shared allowance. Retire the least
+            // recently used paused process and retry until this stream fits or none remain.
+            while active._memory.is_none() && !streams.is_empty() {
+                streams.remove(0);
+                active._memory=reserve_stream_memory(active.output_size).ok();
+            }
+        }
+        // If memory is tight, finish this frame request but retire its decoder process rather
+        // than retaining an unaccounted session. This keeps the cache useful without treating
+        // the configured allowance as a process-wide memory cap.
+        if active._memory.is_some() {
+            if streams.len()>=MAX_SEQUENTIAL_STREAMS_PER_WORKER{streams.remove(0);}
+            streams.push(active);
+        }
     }}
     COMPLETION_GENERATION.fetch_add(1,Ordering::AcqRel);
+}
+
+/// Reserve four RGBA8 pipe-buffer equivalents for each paused stream (two queued packets, one
+/// frame being read, and one conversion/work buffer). FFmpeg codec-internal memory and transient
+/// process overhead are outside this estimate; active decoder count remains separately capped.
+fn reserve_stream_memory(size:(u32,u32))->Result<crate::media_budget::Reservation,String> {
+    let bytes=(size.0 as usize).checked_mul(size.1 as usize).and_then(|pixels|pixels.checked_mul(4*4))
+        .ok_or_else(||"preview decoder memory estimate overflows addressable memory".to_owned())?;
+    crate::media_budget::reserve(crate::media_budget::MediaKind::DecoderSession,bytes)
+        .ok_or_else(||"preview decoder sessions exceed the shared derived-media allowance".to_owned())
 }
 
 fn clear_pending_current(state: &mut Cache, owner: &ConsumerKey, key: &Key) {
@@ -695,6 +723,7 @@ fn reserve_frame_bytes(bytes: usize, thumbnail: bool) -> Result<crate::media_bud
         let status = crate::media_budget::status();
         let (used, limit) = match kind {
             crate::media_budget::MediaKind::MovieFrame => (status.movie_frame_used_bytes, status.total_limit_bytes),
+            crate::media_budget::MediaKind::DecoderSession => (status.decoder_session_used_bytes, status.total_limit_bytes),
             crate::media_budget::MediaKind::Thumbnail => (status.thumbnail_used_bytes, status.total_limit_bytes),
             crate::media_budget::MediaKind::Waveform => (status.waveform_used_bytes, status.total_limit_bytes),
         };

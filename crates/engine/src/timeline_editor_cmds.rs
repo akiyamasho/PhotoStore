@@ -582,6 +582,20 @@ pub(crate) fn prune_deleted_timeline_layers(doc: &mut photostore_doc::Document, 
         for track in &mut timeline.visual_tracks { track.layers.retain(|id| !removed.contains(id)); }
         for states in &mut timeline.frame_states { states.retain(|state| !removed.contains(&state.layer)); }
         for states in &mut timeline.property_frames { states.retain(|state| !removed.contains(&state.layer)); }
+        timeline.audio_tracks.retain_mut(|track| {
+            let Some(owner) = track.owner_layer.filter(|owner| removed.contains(owner)) else { return true };
+            let movie_link = track.clips.iter().any(|clip| clip.linked_video == Some(owner));
+            if movie_link && !linked {
+                track.owner_layer = None;
+                for clip in &mut track.clips { if clip.linked_video == Some(owner) { clip.linked_video = None; } }
+                true
+            } else if movie_link {
+                track.clips.retain(|clip| clip.linked_video != Some(owner));
+                if track.clips.is_empty() { false } else { track.owner_layer = None; true }
+            } else {
+                false
+            }
+        });
         for track in &mut timeline.audio_tracks {
             if linked { track.clips.retain(|clip| !clip.linked_video.is_some_and(|id| removed.contains(&id))); }
             else { for clip in &mut track.clips { if clip.linked_video.is_some_and(|id| removed.contains(&id)) { clip.linked_video = None; } } }
@@ -598,6 +612,9 @@ pub(crate) fn remap_timeline_layer(doc: &mut photostore_doc::Document, old: Laye
             for id in &mut track.layers { if *id == old { *id = new; } }
             track.layers.dedup();
         }
+        for track in &mut timeline.audio_tracks {
+            if track.owner_layer == Some(old) { track.owner_layer = Some(new); }
+        }
         for states in timeline.frame_states.iter_mut().chain(timeline.property_frames.iter_mut()) {
             for state in states { if state.layer == old { state.layer = new; } }
         }
@@ -607,6 +624,50 @@ pub(crate) fn remap_timeline_layer(doc: &mut photostore_doc::Document, old: Laye
     }
     repack_main_track(doc, "layer.smartObjects.convertToLayers")?;
     crate::video_cmds::sync(doc);
+    Ok(())
+}
+
+/// Duplicate the audio rows owned by a duplicated layer, preserving source references while giving
+/// the new layer independent editable clip and track identities.
+pub(crate) fn duplicate_audio_owner(doc: &mut photostore_doc::Document, old: LayerId, new: LayerId) -> Result<()> {
+    fn map_tree(old: &Layer, new: &Layer, ids: &mut std::collections::HashMap<LayerId,LayerId>) {
+        ids.insert(old.id,new.id);
+        if let (Some(old_children),Some(new_children))=(old.children(),new.children()) {
+            for (a,b) in old_children.iter().zip(new_children) { map_tree(a,b,ids); }
+        }
+    }
+    let mut owner_map=std::collections::HashMap::new();
+    if let (Some(old_layer),Some(new_layer))=(doc.layer(old),doc.layer(new)) { map_tree(old_layer,new_layer,&mut owner_map); }
+    let Some(timeline) = doc.timeline.as_mut() else { return Ok(()) };
+    let sources: Vec<_> = timeline.audio_tracks.iter().filter(|track| track.owner_layer.is_some_and(|owner| owner_map.contains_key(&owner))).cloned().collect();
+    if sources.is_empty() { return Ok(()) }
+    for (old_owner,new_owner) in &owner_map {
+        if let Some(mut range) = timeline.layer_ranges.iter().find(|range| range.layer == *old_owner).cloned() {
+            range.layer = *new_owner;
+            if !timeline.layer_ranges.iter().any(|candidate| candidate.layer == *new_owner) { timeline.layer_ranges.push(range); }
+        }
+    }
+    if timeline.audio_tracks.len().saturating_add(sources.len()) > 64 {
+        return Err(bad("layer.duplicate", "audio track limit reached"));
+    }
+    let copied_clips = sources.iter().map(|track| track.clips.len()).sum::<usize>();
+    if timeline.audio_tracks.iter().map(|track| track.clips.len()).sum::<usize>().saturating_add(copied_clips) > 4096 {
+        return Err(bad("layer.duplicate", "audio clip limit reached"));
+    }
+    let mut next_track = timeline.audio_tracks.iter().map(|track| track.id).max().unwrap_or(0);
+    let mut next_clip = timeline.audio_tracks.iter().flat_map(|track| &track.clips).map(|clip| clip.id).max().unwrap_or(0);
+    for mut track in sources {
+        next_track = next_track.checked_add(1).ok_or_else(|| bad("layer.duplicate", "audio track id space exhausted"))?;
+        track.id = next_track;
+        let old_owner=track.owner_layer.ok_or_else(|| bad("layer.duplicate", "owned audio track lost its owner"))?;
+        track.owner_layer = owner_map.get(&old_owner).copied();
+        for clip in &mut track.clips {
+            next_clip = next_clip.checked_add(1).ok_or_else(|| bad("layer.duplicate", "audio clip id space exhausted"))?;
+            clip.id = next_clip;
+            if let Some(new_video)=clip.linked_video.and_then(|owner| owner_map.get(&owner).copied()) { clip.linked_video=Some(new_video); }
+        }
+        timeline.audio_tracks.push(track);
+    }
     Ok(())
 }
 fn shift_track_suffix(doc: &mut photostore_doc::Document, track_id: u64, from_frame: usize, delta: i64, cmd: &str) -> Result<()> {
@@ -1659,6 +1720,7 @@ fn extract_audio(s: &mut Session, p: &Value) -> Result<Value> {
         t.audio_tracks.push(photostore_doc::AudioTrack {
             id: track_id,
             name: "Extracted Audio".into(),
+            owner_layer: Some(layer),
             muted: false,
             clips: vec![photostore_doc::AudioClip {
                 asset_id: None,
@@ -2034,7 +2096,7 @@ fn copy(s: &mut Session, p: &Value, cut: bool) -> Result<Value> {
             .audio_tracks
             .iter()
             .flat_map(|track| {
-                track.clips.iter().filter(|clip| clip.linked_video.is_some_and(|link| tree.contains(&link))).map(move |clip| {
+                track.clips.iter().filter(|clip| clip.linked_video.is_some_and(|link| tree.contains(&link)) || track.owner_layer.is_some_and(|owner| tree.contains(&owner))).map(move |clip| {
                     let mut desc = track.clone();
                     desc.clips.clear();
                     crate::TimelineAudioClipSnapshot { clip: clip.clone(), track: desc }
@@ -2605,8 +2667,10 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
                     return Err(bad(cmd, "pasted linked audio would start before timeline time zero"));
                 }
                 clip.linked_video = clip.linked_video.and_then(|old| layer_remap.get(&old).copied());
+                let mut source_track = item.track.clone();
+                source_track.owner_layer = source_track.owner_layer.and_then(|old| layer_remap.get(&old).copied());
                 required_duration = required_duration.max((clip.start_seconds + clip.duration_seconds).mul_add(fps, 0.999).floor() as usize);
-                audio.push((clip, item.track.clone()));
+                audio.push((clip, source_track));
             }
             created.push(id);
             let root_has_track = c.tracks.iter().any(|track| track.layers.contains(&c.layer.id));
@@ -2716,6 +2780,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
                     timeline.audio_tracks.push(photostore_doc::AudioTrack {
                         id: max_audio_track,
                         name: source_track.name,
+                        owner_layer: source_track.owner_layer,
                         muted: source_track.muted,
                         clips: Vec::new(),
                     });
@@ -2738,6 +2803,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
                 timeline.audio_tracks.push(photostore_doc::AudioTrack {
                     id: max_audio_track,
                     name: item.track.name.clone(),
+                    owner_layer: None,
                     muted: item.track.muted,
                     clips: Vec::new(),
                 });
@@ -3446,6 +3512,7 @@ mod main_track_tests {
             timeline.audio_tracks.push(photostore_doc::AudioTrack {
                 id: 1,
                 name: "Linked".into(),
+            owner_layer: None,
                 muted: false,
                 clips: vec![photostore_doc::AudioClip {
                     asset_id: None,
@@ -3521,6 +3588,7 @@ mod ripple_delete_tests {
             doc.timeline.as_mut().unwrap().audio_tracks.push(photostore_doc::AudioTrack {
                 id: 1,
                 name: "Overlay audio".into(),
+            owner_layer: None,
                 muted: false,
                 clips: vec![photostore_doc::AudioClip {
                     asset_id: None,
@@ -3627,6 +3695,7 @@ mod clipboard_roundtrip_tests {
             timeline.audio_tracks.push(photostore_doc::AudioTrack {
                 id: 7,
                 name: "Linked source track".into(),
+            owner_layer: None,
                 muted: false,
                 clips: vec![photostore_doc::AudioClip {
                     asset_id: None,

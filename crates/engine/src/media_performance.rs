@@ -11,8 +11,14 @@ pub(crate) fn measure(path: &str, requested: usize, allowance: usize) -> Result<
     measure_inner(path, requested, allowance, None)
 }
 fn measure_inner(path: &str, requested: usize, allowance: usize, ctx: Option<&crate::jobs::JobCtx>) -> Result<Value> {
+    measure_sources_inner(&[path.to_owned()], requested, allowance, ctx)
+}
+fn measure_sources_inner(paths: &[String], requested: usize, allowance: usize, ctx: Option<&crate::jobs::JobCtx>) -> Result<Value> {
+    if paths.is_empty() || paths.len() > 16 {
+        return Err(EngineError::Other("measurement needs 1..16 source paths".into()));
+    }
     let started = Instant::now();
-    let path = std::fs::canonicalize(path).map_err(|e| EngineError::Other(format!("measurement source is unavailable: {e}")))?;
+    let path = std::fs::canonicalize(&paths[0]).map_err(|e| EngineError::Other(format!("measurement source is unavailable: {e}")))?;
     let info = crate::media_backend::probe(&path).map_err(|e| EngineError::Other(e.to_string()))?;
     crate::media_backend::ensure_sdr(&info).map_err(|e| EngineError::Other(e.to_string()))?;
     let total = info.frame_count.unwrap_or((info.duration_seconds * info.fps.as_f64()).ceil() as u64).min(1_000_000) as usize;
@@ -28,14 +34,33 @@ fn measure_inner(path: &str, requested: usize, allowance: usize, ctx: Option<&cr
         photostore_color::SampleType::U8,
     );
     let format = doc.pixel_format();
-    let mut layer = photostore_doc::Layer::raster("measurement movie", format);
-    let layer_id = layer.id;
-    let mut video = photostore_doc::VideoData::new(vec![photostore_raster::Surface::new(format)], info.fps.as_f64() as f32);
-    video.source = photostore_doc::VideoSource::File { path: path.to_string_lossy().into_owned() };
-    video.movie_backing =
-        Some(photostore_doc::MovieBacking { frame_count: total, source_fps: info.fps.as_f64() as f32, trim_in_frame: 0, trim_out_frame: total - 1 });
-    layer.video = Some(video);
-    doc.layers.push(layer);
+    let mut layer_ids = Vec::with_capacity(paths.len());
+    let mut sources = Vec::with_capacity(paths.len());
+    for (index, source) in paths.iter().enumerate() {
+        let path = std::fs::canonicalize(source).map_err(|e| EngineError::Other(format!("measurement source is unavailable: {e}")))?;
+        let source_info = crate::media_backend::probe(&path).map_err(|e| EngineError::Other(e.to_string()))?;
+        crate::media_backend::ensure_sdr(&source_info).map_err(|e| EngineError::Other(e.to_string()))?;
+        let source_total = source_info.frame_count.unwrap_or((source_info.duration_seconds * source_info.fps.as_f64()).ceil() as u64).min(1_000_000) as usize;
+        if source_total == 0 {
+            return Err(EngineError::Other("measurement source contains no frames".into()));
+        }
+        let mut layer = photostore_doc::Layer::raster("measurement movie", format);
+        layer.name = format!("measurement movie {}", index + 1);
+        // Deliberately overlap sources and keep upper videos translucent.
+        layer.opacity = if index == 0 { 1.0 } else { 0.5 };
+        layer_ids.push(layer.id);
+        let mut video = photostore_doc::VideoData::new(vec![photostore_raster::Surface::new(format)], source_info.fps.as_f64() as f32);
+        video.source = photostore_doc::VideoSource::File { path: path.to_string_lossy().into_owned() };
+        video.movie_backing = Some(photostore_doc::MovieBacking {
+            frame_count: source_total,
+            source_fps: source_info.fps.as_f64() as f32,
+            trim_in_frame: 0,
+            trim_out_frame: source_total - 1,
+        });
+        layer.video = Some(video);
+        doc.layers.push(layer);
+        sources.push(json!({"path":path,"width":source_info.width,"height":source_info.height,"codec":source_info.codec_name}));
+    }
     let mut timeline = photostore_doc::Timeline::new(total, info.fps.as_f64() as f32);
     timeline
         .set_project_rate(photostore_doc::RationalRate::new(info.fps.num, info.fps.den).ok_or_else(|| EngineError::Other("invalid source frame rate".into()))?)
@@ -49,9 +74,11 @@ fn measure_inner(path: &str, requested: usize, allowance: usize, ctx: Option<&cr
     let _preview = crate::movie_cache::PreviewScope::enter();
     let run = Instant::now();
     let mut waits = Vec::with_capacity(count);
-    let mut hashes = HashSet::new();
+    let mut hashes = vec![HashSet::new(); layer_ids.len()];
+    let mut properties_preserved = true;
     let mut polls = 0usize;
     let mut max_bytes = 0usize;
+    let mut max_decoder_bytes = 0usize;
     for frame in 0..count {
         if let Some(ctx) = ctx {
             ctx.check()?;
@@ -73,15 +100,22 @@ fn measure_inner(path: &str, requested: usize, allowance: usize, ctx: Option<&cr
             std::thread::sleep(Duration::from_millis(1));
         }
         waits.push(begin.elapsed().as_secs_f64() * 1000.0);
-        if let Some(surface) = session.active().and_then(|state| state.doc.layer(layer_id)).and_then(photostore_doc::Layer::surface) {
-            let mut hash = blake3::Hasher::new();
-            let stride = surface.tile_count() / 8 + 1;
-            for (_, (_, tile)) in surface.tiles().enumerate().filter(|(index, _)| index % stride == 0).take(8) {
-                hash.update(tile.bytes());
+        let state = session.active().ok_or(EngineError::NoDocument)?;
+        for (index, id) in layer_ids.iter().enumerate() {
+            let layer = state.doc.layer(*id).ok_or_else(|| EngineError::Other("measurement layer disappeared".into()))?;
+            properties_preserved &= layer.visible && (layer.opacity - if index == 0 { 1.0 } else { 0.5 }).abs() < 1e-6;
+            if let Some(surface) = layer.surface() {
+                let mut hash = blake3::Hasher::new();
+                let stride = surface.tile_count() / 8 + 1;
+                for (_, (_, tile)) in surface.tiles().enumerate().filter(|(index, _)| index % stride == 0).take(8) {
+                    hash.update(tile.bytes());
+                }
+                hashes[index].insert(hash.finalize());
             }
-            hashes.insert(hash.finalize());
         }
-        max_bytes = max_bytes.max(crate::media_budget::status().total_used_bytes);
+        let budget = crate::media_budget::status();
+        max_bytes = max_bytes.max(budget.total_used_bytes);
+        max_decoder_bytes = max_decoder_bytes.max(budget.decoder_session_used_bytes);
     }
     let elapsed = run.elapsed().as_secs_f64();
     let warm_seconds = (elapsed - waits[0] / 1000.0).max(1e-9);
@@ -91,8 +125,8 @@ fn measure_inner(path: &str, requested: usize, allowance: usize, ctx: Option<&cr
     let state = session.active().ok_or(EngineError::NoDocument)?;
     Ok(json!({"path":path,"width":info.width,"height":info.height,"codec":info.codec_name,"sourceFps":{"numerator":info.fps.num,"denominator":info.fps.den},
         "frames":count,"preparationMs":preparation_ms,"coldFirstFrameMs":waits[0],"warmP50Ms":percentile(0.5),"warmP95Ms":percentile(0.95),"warmFramesPerSecond":(count-1) as f64/warm_seconds,
-        "elapsedSeconds":elapsed,"polls":polls,"persistentDecoderLaunches":crate::media_backend::preview_stream_launches().saturating_sub(launches),"decodeProcessLaunches":crate::media_backend::decode_process_launches().saturating_sub(decode_launches),"distinctSampledPixelHashes":hashes.len(),
-        "maxRetainedDerivedBytes":max_bytes,"retainedBudgetBytes":crate::media_budget::status().total_limit_bytes,
+        "elapsedSeconds":elapsed,"polls":polls,"persistentDecoderLaunches":crate::media_backend::preview_stream_launches().saturating_sub(launches),"decodeProcessLaunches":crate::media_backend::decode_process_launches().saturating_sub(decode_launches),"distinctSampledPixelHashes":hashes[0].len(),"distinctHashesPerLayer":hashes.iter().map(HashSet::len).collect::<Vec<_>>(),"layerPropertiesPreserved":properties_preserved,"sources":sources,"layerCount":layer_ids.len(),
+        "maxRetainedDerivedBytes":max_bytes,"maxEstimatedDecoderSessionBytes":max_decoder_bytes,"retainedBudgetBytes":crate::media_budget::status().total_limit_bytes,
         "historyUnchanged":state.history.past_len()==0,"clean":state.saved_revision==state.revision,"requestWaitMs":waits,
         "scope":"Headless decode/cache/document presentation preparation, original geometry and exact timestamps. Excludes native GPU/paint/display/input/audio-device output; throughput is not native playback FPS."}))
 }
@@ -102,12 +136,28 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
         label: "Measure Media Presentation",
         menu: &[],
         shortcut: None,
-        params: "{path:string,frames?:2..600=180} → disposable headless presentation timing (not native UI FPS)",
+        params: "{path?:string,paths?:string[1..16],frames?:2..600=180} → disposable headless presentation timing (not native UI FPS)",
         enabled: crate::commands::always,
         journal: false,
         run: |session, params| {
-            let path =
-                params.get("path").and_then(Value::as_str).ok_or_else(|| EngineError::Other("measurement requires a local source path".into()))?.to_owned();
+            let paths: Vec<String> = if let Some(paths) = params.get("paths") {
+                paths
+                    .as_array()
+                    .filter(|paths| !paths.is_empty() && paths.len() <= 16)
+                    .ok_or_else(|| EngineError::Other("paths must contain 1..16 local source paths".into()))?
+                    .iter()
+                    .map(|path| {
+                        path.as_str()
+                            .filter(|path| !path.is_empty())
+                            .map(str::to_owned)
+                            .ok_or_else(|| EngineError::Other("every source path must be a nonempty string".into()))
+                    })
+                    .collect::<Result<_>>()?
+            } else {
+                vec![
+                    params.get("path").and_then(Value::as_str).ok_or_else(|| EngineError::Other("measurement requires a local source path".into()))?.to_owned(),
+                ]
+            };
             let frames = params
                 .get("frames")
                 .map_or(Some(180), |v| v.as_u64().and_then(|n| usize::try_from(n).ok()))
@@ -120,7 +170,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
                 false,
                 move |ctx| {
                     ctx.check()?;
-                    measure_inner(&path, frames, allowance, Some(ctx))
+                    measure_sources_inner(&paths, frames, allowance, Some(ctx))
                 },
                 |_, value| Ok(value),
             )

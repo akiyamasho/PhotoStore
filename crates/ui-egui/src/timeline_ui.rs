@@ -1195,7 +1195,7 @@ pub fn media_bin(app: &mut PhotoStoreApp, parent: &mut Ui) {
                         }
                     }
                     if ui.button("Audio…").on_hover_text("Import an audio clip").clicked() {
-                        let mut track = doc.timeline.as_ref().and_then(|timeline| timeline.audio_tracks.first().map(|track| track.id));
+                        let mut track = doc.timeline.as_ref().and_then(|timeline| timeline.audio_tracks.iter().find(|track| track.owner_layer.is_none() && track.clips.iter().all(|clip| clip.linked_video.is_none())).map(|track| track.id));
                         if track.is_none() {
                             match app.run("timeline.addAudioTrack", json!({"document":doc_id.0})) {
                                 Ok(result) => track = result.get("track").and_then(Value::as_u64),

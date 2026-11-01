@@ -1896,6 +1896,7 @@ fn layers(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
             }
             let filter = app.ui.layer_filter.clone();
             let fx_collapsed = app.session.active().map(|d| d.fx_collapsed.clone()).unwrap_or_default();
+            let audio_layers: std::collections::HashSet<_> = doc.timeline.as_ref().into_iter().flat_map(|timeline| timeline.audio_tracks.iter().filter_map(|track| track.owner_layer)).collect();
             crate::layer_row_ui::begin(ui.ctx());
             for &(depth, l) in &rows {
                 // Select › Isolate Layers.
@@ -1917,7 +1918,7 @@ fn layers(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                 }
                 let row = RowSel { selected: selection.contains(&l.id), primary: active == Some(l.id), multi: selection.len() > 1 };
                 let top = ui.cursor().top();
-                layer_row(app, &ctx, ui, &doc, l, depth, row, &mut actions);
+                layer_row(app, &ctx, ui, &doc, l, depth, row, audio_layers.contains(&l.id), &mut actions);
                 if reveal == Some(l.id) {
                     crate::layer_reveal::scroll_to_row(ui, top);
                 }
@@ -2218,6 +2219,7 @@ fn layer_row(
     l: &Layer,
     depth: usize,
     row: RowSel,
+    is_audio_layer: bool,
     actions: &mut Vec<(String, Value)>,
 ) {
     let selected = row.selected;
@@ -2231,7 +2233,7 @@ fn layer_row(
         crate::layer_transfer::begin_from_panel(app, ctx, l.id);
     }
     // Rows are painted: name them for screen readers and UI tests.
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &l.name));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, if is_audio_layer { format!("Audio layer {}", l.name) } else { l.name.clone() }));
     // A row scrolled out of view only keeps its place (#125): a layout's hundreds of rows would
     // otherwise lay out names, icons and thumbnails every frame. Group rows stay whole: their
     // disclosure triangle is a widget (accessibility, scroll-to).
@@ -2330,8 +2332,10 @@ fn layer_row(
     // Photoshop before 2026 set the Background layer's name in italics; 2026 sets it upright.
     let italic = !t.pro && l.name == "Background" && l.locks.transparency;
     // Photoshop rows show only the name; the kind sub-label is a Studio-theme addition.
-    let is_pixel = t.pro || matches!(l.content, LayerContent::Raster(_));
-    let display_name = if l.private_recording { format!("{}  · Private", l.name) } else { l.name.clone() };
+    let is_pixel = (t.pro || matches!(l.content, LayerContent::Raster(_))) && !is_audio_layer;
+    let display_name = if is_audio_layer {
+        format!("♪ {}{}", l.name, if l.private_recording { "  · Private" } else { "" })
+    } else if l.private_recording { format!("{}  · Private", l.name) } else { l.name.clone() };
     let name_rect = crate::layer_row_ui::truncated(&painter, &display_name, font, name_color, italic, name_right - x).map(|galley| {
         let text_pos = pos2(x, rect.center().y - galley.size().y / 2.0 - if is_pixel { 0.0 } else { 7.0 });
         let r = Rect::from_min_size(text_pos, galley.size());
@@ -2339,11 +2343,11 @@ fn layer_row(
         r
     });
     if !is_pixel {
-        let sub = match &l.content {
+        let sub = if is_audio_layer { "Audio".to_string() } else { match &l.content {
             LayerContent::Adjustment(a) => tl!(a.label()).to_string(),
             LayerContent::Group(g) => crate::i18n::trn(crate::i18n::current(), g.children.len() as u64, "Group · {n} layer", "Group · {n} layers"),
             other => tl!(other.kind_name()).to_string(),
-        };
+        }};
         crate::layer_row_ui::label(&painter, x, rect.center().y + 8.0, name_right, &sub, egui::FontId::proportional(11.0), t.text_faint);
     }
     crate::layer_row_ui::record(ctx, crate::layer_row_ui::RowRects { layer: l.id.0, row: rect, name: name_rect, indicators });
