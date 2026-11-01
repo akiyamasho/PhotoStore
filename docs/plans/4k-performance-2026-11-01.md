@@ -59,8 +59,7 @@ warns that hardware acceleration can incur GPU-to-CPU copy costs
 ([official documentation](https://ffmpeg.org/ffmpeg.html)). Apple's CoreVideo texture cache can
 share GPU-based pixel buffers with Metal
 ([Apple documentation](https://developer.apple.com/documentation/corevideo/cvmetaltexturecache-q3j)).
-These inform future native decode adapters; this pass does not label an FFmpeg rawvideo pipe
-zero-copy or hardware decode. A measured bounded workload defines delivery evidence, not a claim
+These informed the selected FFmpeg VideoToolbox adapter for eligible Apple Silicon H.264 previews. Hardware-decoded output still crosses a bounded RGB24 pipe into CPU tiles; direct CoreVideo-to-Metal sharing remains future work. Other formats/devices keep software decoding, with one bounded software retry when an accelerated stream fails. The rawvideo pipe is not zero-copy. A measured bounded workload defines delivery evidence, not a claim
 that any number of 4K clips/effects/codecs can play in real time on every host.
 
 ## Delivery

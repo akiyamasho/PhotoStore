@@ -1131,6 +1131,10 @@ static DECODE_PROCESS_LAUNCHES:std::sync::atomic::AtomicU64=std::sync::atomic::A
 pub fn decode_process_launches()->u64{DECODE_PROCESS_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed)}
 static PREVIEW_STREAM_LAUNCHES:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 pub fn preview_stream_launches()->u64 {PREVIEW_STREAM_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed)}
+static HARDWARE_PREVIEW_ATTEMPTS:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+static HARDWARE_PREVIEW_FALLBACKS:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+pub fn hardware_preview_attempts()->u64 {HARDWARE_PREVIEW_ATTEMPTS.load(std::sync::atomic::Ordering::Relaxed)}
+pub fn hardware_preview_fallbacks()->u64 {HARDWARE_PREVIEW_FALLBACKS.load(std::sync::atomic::Ordering::Relaxed)}
 enum PreviewPacket {Frame(Vec<u8>),Eof,Error(String)}
 
 /// A bounded sequential preview pipe. Only this owned child is stopped on seek/retirement.
@@ -1145,6 +1149,16 @@ pub(crate) struct PreviewDecoder {
     width:u32,
     height:u32,
     rgb24:bool,
+    path:PathBuf,
+    origin_seconds:f64,
+    step:f64,
+    raw_frames:u64,
+    hardware:bool,
+    hardware_fallback_used:bool,
+}
+fn videotoolbox_preview_eligible(info:&MediaInfo)->bool {
+    cfg!(all(target_os="macos",target_arch="aarch64")) && info.codec_name.as_deref()==Some("h264") &&
+        matches!(info.pixel_format.as_deref(),Some("yuv420p"|"yuvj420p"|"nv12"))
 }
 /// `settb` rounds rational source PTS to nanoseconds. With upward output rounding, a
 /// +fraction-of-a-nanosecond rescale error otherwise shifts every third 30 fps frame into
@@ -1156,6 +1170,17 @@ fn preview_sampling_filter(seconds: f64, step: f64) -> String {
 }
 impl PreviewDecoder {
     pub(crate) fn start(path:&Path,info:&MediaInfo,seconds:f64,step:f64,format:PixelFormat,width:u32,height:u32)->Result<Self> {
+        let hardware=videotoolbox_preview_eligible(info);
+        if !hardware {return Self::start_with_backend(path,info,seconds,step,format,width,height,false);}
+        match Self::start_with_backend(path,info,seconds,step,format,width,height,true) {
+            Ok(decoder)=>Ok(decoder),
+            Err(original)=>{
+                HARDWARE_PREVIEW_FALLBACKS.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+                Self::start_with_backend(path,info,seconds,step,format,width,height,false).map_err(|fallback|MediaBackendError::Process(format!("hardware preview failed to start ({original}); software fallback could not start: {fallback}")))
+            }
+        }
+    }
+    fn start_with_backend(path:&Path,info:&MediaInfo,seconds:f64,step:f64,format:PixelFormat,width:u32,height:u32,hardware:bool)->Result<Self> {
         ensure_sdr(info)?;
         if !seconds.is_finite() || seconds<0.0 || seconds>=info.duration_seconds || !step.is_finite() || !(0.001..=10.0).contains(&step)
             || width==0 || height==0 || width>MAX_DIMENSION || height>MAX_DIMENSION {return Err(MediaBackendError::InvalidInput("invalid sequential preview geometry/time".into()));}
@@ -1167,6 +1192,7 @@ impl PreviewDecoder {
         let exe=resolve_binary("PHOTOSTORE_FFMPEG","ffmpeg").ok_or(MediaBackendError::Unsupported)?;
         let mut command=Command::new(exe);
         command.args(["-v","error","-nostdin","-threads","2","-filter_threads","1","-protocol_whitelist","file,pipe","-copyts","-start_at_zero","-noaccurate_seek"]);
+        if hardware { command.args(["-hwaccel","videotoolbox"]); HARDWARE_PREVIEW_ATTEMPTS.fetch_add(1,std::sync::atomic::Ordering::Relaxed); }
         if let Some(codec)=decoder_codec(info) {command.args(["-c:v",codec]);}
         command.args(["-ss",&format!("{:.6}",(seconds*1_000_000.0).floor()/1_000_000.0),"-i"]).arg(path);
         let mut filter=preview_sampling_filter(seconds, step);
@@ -1196,9 +1222,9 @@ impl PreviewDecoder {
             }
         }) {Ok(reader)=>reader,Err(error)=>{let _=child.kill();let _=child.wait();return Err(error.into());}};
         PREVIEW_STREAM_LAUNCHES.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-        Ok(Self{child,receiver:Some(receiver),reader:Some(reader),stderr,info:info.clone(),format,width,height,rgb24})
+        Ok(Self{child,receiver:Some(receiver),reader:Some(reader),stderr,info:info.clone(),format,width,height,rgb24,path:path.to_path_buf(),origin_seconds:seconds,step,raw_frames:0,hardware,hardware_fallback_used:false})
     }
-    fn read_raw(&mut self)->Result<Option<Vec<u8>>> {
+    fn read_raw_packet(&mut self)->Result<Option<Vec<u8>>> {
         let packet=self.receiver.as_ref().ok_or_else(||MediaBackendError::Process("preview stream retired".into()))?
             .recv_timeout(std::time::Duration::from_secs(10)).map_err(|error|MediaBackendError::Process(format!("preview decoder stalled or closed: {error}")))?;
         match packet {
@@ -1210,15 +1236,54 @@ impl PreviewDecoder {
             }
         }
     }
+    fn retire_owned(&mut self) {
+        self.receiver.take();
+        let _=self.child.kill();let _=self.child.wait();
+        if let Some(reader)=self.reader.take(){let _=reader.join();}
+    }
+    fn read_raw(&mut self)->Result<Option<Vec<u8>>> {
+        match self.read_raw_packet() {
+            Ok(Some(frame))=>{self.raw_frames=self.raw_frames.saturating_add(1);Ok(Some(frame))},
+            Ok(None)=>{
+                let next=self.origin_seconds+self.raw_frames as f64*self.step;
+                if self.hardware && !self.hardware_fallback_used && next.is_finite() && next<self.info.duration_seconds {
+                    self.fallback_to_software(MediaBackendError::Process(format!("hardware preview ended before requested source time {next:.9}s")))
+                } else {Ok(None)}
+            }
+            Err(error)=>{
+                let next=self.origin_seconds+self.raw_frames as f64*self.step;
+                if self.hardware && !self.hardware_fallback_used && next.is_finite() && next<self.info.duration_seconds { self.fallback_to_software(error) } else {Err(error)}
+            }
+        }
+    }
+    fn fallback_to_software(&mut self,original:MediaBackendError)->Result<Option<Vec<u8>>> {
+        let seconds=self.origin_seconds+self.raw_frames as f64*self.step;
+        if !seconds.is_finite() || seconds<0.0 || seconds>=self.info.duration_seconds {return Err(original);}
+        self.retire_owned();
+        self.hardware=false;self.hardware_fallback_used=true;
+        HARDWARE_PREVIEW_FALLBACKS.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+        match Self::start_with_backend(&self.path,&self.info,seconds,self.step,self.format,self.width,self.height,false) {
+            Ok(mut replacement)=>{
+                // Transfer process ownership only after the old hardware pipe has been fully retired.
+                std::mem::swap(&mut self.child,&mut replacement.child);
+                self.receiver=replacement.receiver.take(); self.reader=replacement.reader.take();
+                std::mem::swap(&mut self.stderr,&mut replacement.stderr);
+                self.origin_seconds=seconds;self.raw_frames=0;
+                match self.read_raw_packet() {
+                    Ok(Some(frame))=>{self.raw_frames=1;Ok(Some(frame))},
+                    Ok(None)=>Err(MediaBackendError::Process(format!("hardware preview failed ({original}); software fallback ended before requested source time {seconds:.9}s"))),
+                    Err(fallback)=>Err(MediaBackendError::Process(format!("hardware preview failed ({original}); software fallback failed: {fallback}"))),
+                }
+            }
+            Err(fallback)=>Err(MediaBackendError::Process(format!("hardware preview failed ({original}); software fallback could not start: {fallback}"))),
+        }
+    }
     pub(crate) fn next_frame(&mut self)->Result<Option<Surface>> {self.read_raw()?.map(|bytes|if self.rgb24 {decoded_surface_rgb24(&self.info,&bytes,self.format,self.width,self.height)}else{decoded_surface(&self.info,&bytes,self.format,self.width,self.height)}).transpose()}
     pub(crate) fn skip_frame(&mut self)->Result<bool> {Ok(self.read_raw()?.is_some())}
 }
 impl Drop for PreviewDecoder {
     fn drop(&mut self) {
-        // Disconnect a potentially blocked send before joining the reader; kill closes a read.
-        self.receiver.take();
-        let _=self.child.kill();let _=self.child.wait();
-        if let Some(reader)=self.reader.take(){let _=reader.join();}
+        self.retire_owned();
     }
 }
 
