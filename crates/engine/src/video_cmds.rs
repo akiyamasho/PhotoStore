@@ -4,6 +4,7 @@
 //! preview for linked movies, and complete frame stacks for resident-frame video.
 
 use photostore_doc::{Document, FrameLayerState, Layer, LayerContent, LayerId, Timeline, VideoData};
+use photostore_algo::transform::{Homography, Interp, warp_surface};
 use photostore_color::PixelFormat;
 use photostore_raster::Surface;
 use serde_json::{Value, json};
@@ -611,6 +612,15 @@ fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_f
             })
             .and_then(|surface| {
                 let surface=if l.video.as_ref().is_some_and(|v|v.movie_backing.is_some()) {match movie_surface_for_document(geometry,surface) {Ok(surface)=>surface,Err(error)=>{crate::movie_cache::note_error(error.to_string());return None;}}} else {surface};
+                let surface = l.video.as_ref().map_or(surface.clone(), |video| {
+                    let placement = Homography(video.placement);
+                    if placement == Homography::IDENTITY {
+                        surface.clone()
+                    } else {
+                        let src = surface.content_bounds();
+                        if src.is_empty() { surface.clone() } else { warp_surface(&surface, src, &placement, Interp::Bicubic) }
+                    }
+                });
                 let (dx, dy, _) = desired.map_or((0, 0, 1), |p| (p.0, p.1, 1));
                 let dx = dx.clamp(-1_000_000, 1_000_000);
                 let dy = dy.clamp(-1_000_000, 1_000_000);
@@ -738,6 +748,26 @@ pub(crate) fn validate_linked_movie_edits(label: &str, before: &Document, after:
         return Ok(());
     }
     for (_, _, old) in before.walk() {
+        let Some(old_video) = old.video.as_ref().filter(|video| video.placement != Homography::IDENTITY.0) else { continue };
+        let Some(new) = after.layer(old.id) else { continue };
+        let Some(new_video) = new.video.as_ref() else { continue };
+        let frames_unchanged = old_video.frames.len() == new_video.frames.len()
+            && old_video.frames.iter().zip(&new_video.frames).all(|(a, b)| shallow_surface_eq(a, b));
+        if new_video.placement == old_video.placement
+            && new_video.applied_translation == old_video.applied_translation
+            && new_video.source == old_video.source
+            && new_video.movie_backing == old_video.movie_backing
+            && frames_unchanged
+            && let (LayerContent::Raster(a), LayerContent::Raster(b)) = (&old.content, &new.content)
+            && !shallow_surface_eq(a, b)
+        {
+            return Err(EngineError::Other(format!(
+                "transformed video layer `{}` is source-backed; raster edits are disabled until it is rasterized",
+                old.name
+            )));
+        }
+    }
+    for (_, _, old) in before.walk() {
         if old.video.as_ref().is_some_and(|v| v.movie_backing.is_some())
             && let Some(new) = after.layer(old.id)
             && new.video.as_ref().is_some_and(|v| v.movie_backing.is_some())
@@ -758,6 +788,7 @@ pub(crate) fn validate_linked_movie_edits(label: &str, before: &Document, after:
             && new.video.as_ref().zip(old.video.as_ref()).is_some_and(|(a, b)| {
                 a.source == b.source
                     && a.movie_backing == b.movie_backing
+                    && a.placement == b.placement
                     && a.applied_translation == b.applied_translation
                     && a.keyframes == b.keyframes
                     && a.fps == b.fps
@@ -895,6 +926,8 @@ fn canonicalize_layers(before: &[Layer], after: &mut Document, current: usize, f
                     && old_video.fps == new_video.fps
                     && old_video.playback == new_video.playback
                     && old_video.show_altered == new_video.show_altered
+                    && old_video.placement == Homography::IDENTITY.0
+                    && new_video.placement == Homography::IDENTITY.0
             });
             let translation_changed =
                 new.video.as_ref().is_some_and(|v| old_video.base_translation != v.base_translation || old_video.applied_translation != v.applied_translation);
@@ -1024,7 +1057,7 @@ fn collect_states(layers: &[Layer], states: &mut Vec<FrameLayerState>) {
 fn store_layers(layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[photostore_doc::LayerTimelineRange]) {
     for l in layers.iter_mut() {
         if let (Some(v), LayerContent::Raster(s)) = (&mut l.video, &l.content) {
-            if v.movie_backing.is_some() {
+            if v.movie_backing.is_some() || v.placement != Homography::IDENTITY.0 {
                 continue;
             }
             let at = source_index(cur, timeline_fps, v, ranges.iter().find(|range| range.layer == l.id)).min(v.frames.len().saturating_sub(1));

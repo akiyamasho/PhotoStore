@@ -101,8 +101,8 @@ pub fn default_shortcut(id: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Timeline-only keys stay out of the global Photoshop dispatcher. They are read here only while
-/// the timeline editor owns keyboard focus (after a direct click in its viewport).
+/// Timeline-only keys stay out of the global Photoshop dispatcher. They are read while the active
+/// video timeline owns shortcut context; transport remains available across ordinary UI controls.
 pub const TIMELINE_SHORTCUTS: &[(&str, &str, Option<&str>)] = &[
     ("timeline.editor.selectMode", "Select mode", Some("A")),
     ("timeline.editor.razorMode", "Razor mode", Some("B")),
@@ -143,7 +143,6 @@ pub const TIMELINE_SHORTCUTS: &[(&str, &str, Option<&str>)] = &[
     ("timeline.editor.zoomOut", "Zoom out", Some("Cmd+-")),
     ("timeline.editor.zoomFit", "Fit timeline", Some("Shift+Z")),
     ("timeline.editor.keyPane", "Show selected clip keyframes", Some("Alt+K")),
-    ("timeline.editor.materialBin", "Show / Hide Media bin", Some("Tab")),
     ("timeline.editor.stepLeftAlias", "Previous frame alias", Some("Cmd+Shift+W")),
     ("timeline.editor.stepRightAlias", "Next frame alias", Some("Cmd+Shift+E")),
     ("timeline.editor.selectLeftward", "Select leftward clip", Some("[")),
@@ -280,7 +279,6 @@ pub fn capcut_reference_mapping(action: &str, binding: &str) -> String {
         "Import media" => "Existing embedded media import · Cmd+I",
         "Export" => "Existing video render command · Cmd+E",
         "New project" => "PhotoStore File > New · Cmd+N",
-        "Switch material panel" => "Current-document Media bin · Tab",
         "Back to edit" => "Release timeline shortcut ownership · Cmd+Alt+Q",
         "Quit" => "Existing application File > Exit · Cmd+Q",
         "Exit full screen" => "Existing Escape handling; also dismisses active editing UI",
@@ -301,7 +299,36 @@ fn scoped_timeline_context(app: &PhotoStoreApp, ctx: &egui::Context) -> bool {
 
 fn dispatch_timeline_shortcuts(app: &mut PhotoStoreApp, ctx: &egui::Context) -> bool {
     use crate::shortcut_dispatch::Focus;
-    if !scoped_timeline_context(app, ctx) || Focus::of(ctx) != Focus::None || app.ui.timeline.open == false {
+    if app.ui.timeline.open == false {
+        return false;
+    }
+    let active_video_timeline = app.session.active().is_some_and(|session| {
+        session.doc.timeline.as_ref().is_some_and(|timeline| matches!(timeline.mode, photostore_doc::TimelineMode::Video))
+    });
+    if !active_video_timeline {
+        return false;
+    }
+    let scoped = scoped_timeline_context(app, ctx);
+    let viewport = ctx.viewport_id();
+    let space_context_id = egui::Id::new(("canvas-space-context", viewport));
+    let canvas_focus_id = egui::Id::new(("canvas-space-focus-id", viewport));
+    let focus = Focus::of(ctx);
+    let active_doc = app.session.active().map(|session| session.doc.id.0);
+    if ctx.input(|input| input.pointer.any_pressed()) {
+        let outside_canvas = app.drop_canvas_rect.is_none_or(|rect| {
+            ctx.input(|input| input.pointer.press_origin()).is_none_or(|point| !rect.contains(point))
+        });
+        if outside_canvas {
+            ctx.data_mut(|data| data.remove::<u64>(space_context_id));
+        }
+    }
+    let space_canvas_context = ctx.data(|data| data.get_temp::<u64>(space_context_id));
+    let focus_id = ctx.data(|data| data.get_temp::<egui::Id>(canvas_focus_id));
+    let canvas_has_focus = space_canvas_context.is_some()
+        && space_canvas_context == active_doc
+        && focus_id.is_some_and(|id| ctx.memory(|memory| memory.focused() == Some(id)));
+    let canvas_owns_space = canvas_has_focus;
+    if focus == Focus::Text {
         return false;
     }
     if let Some((doc, selected_layers)) = app.session.active().map(|session| (session.doc.id, session.selected_layers.clone())) {
@@ -333,12 +360,12 @@ fn dispatch_timeline_shortcuts(app: &mut PhotoStoreApp, ctx: &egui::Context) -> 
         let keys = app.session.prefs().shortcuts_for(id, default.as_deref());
         for raw in keys {
             let Some(shortcut) = parse(&raw) else { continue };
-            // A video canvas shares the timeline's persistent shortcut context. Space over the
-            // canvas belongs to hold_keys/canvas panning; it must not also toggle playback.
-            let pointer_on_canvas = shortcut.logical_key == Key::Space
-                && (app.drop_canvas_rect.is_some_and(|rect| ctx.input(|input| input.pointer.hover_pos()).is_some_and(|pointer| rect.contains(pointer)))
-                    || crate::canvas::hand_pan_active(app, ctx));
-            if pointer_on_canvas {
+            if (!scoped || focus != Focus::None || app.ui.transform.is_some()) && *id != "timeline.editor.playPause" {
+                continue;
+            }
+            // Space on an actively focused drawing canvas is reserved for hold-Space panning.
+            // Pointer hover alone does not transfer keyboard ownership to the canvas.
+            if shortcut.logical_key == Key::Space && canvas_owns_space {
                 continue;
             }
             let pressed = if *id == "timeline.editor.playPause" {
@@ -634,9 +661,6 @@ fn dispatch_timeline_shortcuts(app: &mut PhotoStoreApp, ctx: &egui::Context) -> 
                     let key = egui::Id::new(("timeline-key-pane", doc));
                     let value = ctx.data_mut(|d| d.get_persisted::<bool>(key)).unwrap_or(false);
                     ctx.data_mut(|d| d.insert_persisted(key, !value));
-                }
-                "timeline.editor.materialBin" => {
-                    app.ui.timeline.media_open = !app.ui.timeline.media_open;
                 }
                 "timeline.editor.deselect" => {
                     if let Some(timeline) = document.timeline.as_ref()
@@ -1250,7 +1274,7 @@ pub fn handle(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     let editing = crate::type_tool::handle_keys(app, ctx);
     // A timeline click activates its own keymap without changing the global Photoshop mapping.
     // Text fields, inline text, modal UI, menus, distortion modes and Free Transform have priority.
-    if !editing && app.ui.transform.is_none() && dispatch_timeline_shortcuts(app, ctx) {
+    if !editing && dispatch_timeline_shortcuts(app, ctx) {
         return;
     }
     if editing {

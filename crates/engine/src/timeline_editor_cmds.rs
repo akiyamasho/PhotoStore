@@ -2211,6 +2211,7 @@ fn paste_attributes(s: &mut Session, p: &Value) -> Result<Value> {
                 if let (Some(target_video), Some(source_video)) = (&mut target.video, &attributes.video) {
                     target_video.keyframes = source_video.keyframes.clone();
                     target_video.base_translation = source_video.base_translation;
+                    target_video.placement = source_video.placement;
                     target_video.playback.speed = source_video.playback.speed;
                 }
                 target.transform_animation.is_some()

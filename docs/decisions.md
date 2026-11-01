@@ -1,5 +1,16 @@
 # Implementation decisions
 
+## 2026-11-02: Non-destructive video layer placement
+
+Persist a backward-compatible static source-to-layer homography on video layers. Resolve each
+resident or linked source frame through that placement before applying the existing timeline
+translation, leaving source frames and movie backing untouched. Free Transform updates placement
+for the whole video layer; selected-pixel transforms on video layers are rejected until the frame
+mapping can represent them without modifying just the displayed cache. Raster painting on a
+transformed video layer is also rejected until explicit rasterization, so source pixels are never
+upsampled from the presentation cache. Linked masks follow the same transform, and placement
+survives native save/load and layer property copies.
+
 ## 2026-11-01: Timeline source, clock, and derived-media completion
 
 External media uses stable document-local source records with revision metadata, while timeline
@@ -775,3 +786,7 @@ The fixed byte-store expansion remained below the eight-source gate. Its opaque 
 Software-only eight-source throughput reached 30.15 fps at normal app priority but failed paced cadence. A scoped VideoToolbox prototype on the same signed binary passed at 31.81 fps with 1.47 ms p95 paced lateness and 8/179 completions over 5 ms, retaining every original frame-zero encoded tile. FFmpeg debug selected `videotoolbox_vld`/`h264_videotoolbox`, establishing actual hardware initialization on the fixture. Apple Silicon opaque 8-bit H.264 4:2:0 sequential previews now request this backend, with one owned-stream software fallback at origin plus delivered/skipped raw frames times step. Both paths retain exact time filtering, CPU-accessible RGB24 output, RGBA tiles, shared budget and original export/indexed path. The hardware counters report attempts and explicit fallback, not a zero-copy claim. Final release measurements use normal process priority matching the installed app; Rust builds remain nice 10. Earlier nice-10 runtime measurements are not the release cadence result.
 
 Normal 0.20.5 from `621e2401b1035b922b66576e9a6425fc6ca9b067` passed the eight-distinct-original-4K hardware compositor and paced 30 fps targets, then was verified, published and atomically installed from the same artifacts. [Exact evidence/scope](releases/0.20.5.md). Native display/input/sound-device acceptance remains manual; scheduler stays disabled.
+
+## 2026-11-02: Focus-owned transport and asynchronous native video presentation
+
+Remove the redundant source-import sidebar; Layers/clip context and existing place/drop commands own media. Space uses actual viewport/doc canvas focus, not pointer hover or the timeline's scoped shortcut owner; ordinary controls accept transport and text/modal input retains its keys. Active transforms precede Zoom/Rotate drag routing. Native presentation preparation uses one session worker with latest-request cancellation and content/navigation generation checks. GPU video refresh uses an isolated Resources/compositor, a separate published front texture, bounded latest work and a completed-result swap; never hold egui renderer resources across upload/render/GPU wait or CPU band fallback. Rebind tile groups on resource-layout transfer. GPU budgets are recomputed per content revision rather than per buffering paint. A persistent audio manager owns expensive mix scanning, devices, child processes and joins; handles cancel by generation and initial preroll waits for asynchronous readiness. Background work stays transient and never becomes authored document data. [0.20.6 scope and limits](releases/0.20.6.md).

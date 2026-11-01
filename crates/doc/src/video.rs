@@ -497,6 +497,9 @@ pub struct VideoData {
     pub show_altered: bool,
     /// Authored translation applied to every source frame before timeline motion.
     pub base_translation: (i32, i32),
+    /// Static source-to-layer placement shared by every video frame. Timeline translation is
+    /// applied after this map. Stored frames and linked movie sources remain unwarped.
+    pub placement: [f64; 9],
     /// Last translation materialized in the displayed cache. This is cache state and is
     /// deliberately persisted so a seek can undo exactly one prior application.
     pub applied_translation: (i32, i32),
@@ -516,6 +519,7 @@ impl VideoData {
             playback: VideoPlayback::default(),
             show_altered: true,
             base_translation: (0, 0),
+            placement: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
             applied_translation: (0, 0),
         }
     }
@@ -541,6 +545,7 @@ impl PartialEq for VideoData {
             && self.playback == o.playback
             && self.show_altered == o.show_altered
             && self.base_translation == o.base_translation
+            && self.placement == o.placement
             && self.applied_translation == o.applied_translation
     }
 }

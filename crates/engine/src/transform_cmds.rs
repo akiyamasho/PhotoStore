@@ -264,6 +264,30 @@ pub(crate) fn transform_layer(doc_sel: Option<&Surface>, group: Locks, l: &mut L
     Ok(())
 }
 
+/// Apply Free Transform to a video layer's linked masks while keeping its frame cache source-owned.
+/// The source-to-layer placement is updated by the caller, then timeline sync renders the current
+/// frame once from the original resident frame or decoded movie frame.
+fn transform_video_layer(group: Locks, l: &mut Layer, h: &Homography, affine: Option<Affine>, interp: Interp) -> Result<()> {
+    if l.locks.position && l.name == "Background" {
+        l.locks.position = false;
+        l.locks.transparency = false;
+        l.name = "Layer 0".into();
+    }
+    let locks = l.locks.union(group);
+    if locks.position || locks.all {
+        return Err(EngineError::Other(format!("layer \"{}\" is locked", l.name)));
+    }
+    if let Some(mask) = l.mask.as_mut().filter(|mask| mask.linked) {
+        mask.surface = warp_gray(&mask.surface, h, interp);
+    }
+    if let Some(vector_mask) = l.vector_mask.as_mut().filter(|mask| mask.linked)
+        && let Some(affine) = affine
+    {
+        vector_mask.path = vector_mask.path.transform(&affine);
+    }
+    Ok(())
+}
+
 /// Split a layer surface by a selection: (selected pixels, everything else), both with alpha.
 pub fn split_selected(surf: &Surface, sel: &Surface) -> (Surface, Surface) {
     let fmt = surf.format();
@@ -479,6 +503,10 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("Transform keyframes are supported only on Smart Objects"));
     }
     let lone = lone_target(&st.doc, id, p)?;
+    let video_layer = id.and_then(|layer| st.doc.layer(layer)).is_some_and(|layer| layer.video.is_some());
+    if video_layer && lone.is_none() && st.doc.selection.is_some() {
+        return Err(bad("Selected-pixel transforms are not supported on video layers; transform the whole video layer instead"));
+    }
     let id = match (id, lone.is_some() && crate::channel_cmds::is_channel_target(p)) {
         (_, true) => None,
         (Some(id), false) => Some(id),
@@ -558,7 +586,53 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
         let is_group = doc.layer(id).is_some_and(Layer::is_group);
         let group = group_locks(doc, id);
         let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
-        transform_layer(if is_group { None } else { sel.as_ref() }, group, l, &h, affine, interp)?;
+        if video_layer {
+            transform_video_layer(group, l, &h, affine, interp)?;
+        } else {
+            transform_layer(if is_group { None } else { sel.as_ref() }, group, l, &h, affine, interp)?;
+        }
+        if video_layer {
+            let video = doc.layer_mut(id).and_then(|layer| layer.video.as_mut()).ok_or_else(|| EngineError::Other("video layer disappeared during transform".into()))?;
+            let (dx, dy) = video.applied_translation;
+            // The gesture homography acts on the currently displayed frame, after the
+            // timeline translation. Conjugate it around that translation before composing it
+            // with the source-to-layer placement, so animated position stays independent.
+            let before_translation = Homography([1.0, 0.0, -f64::from(dx), 0.0, 1.0, -f64::from(dy), 0.0, 0.0, 1.0]);
+            let after_translation = Homography([1.0, 0.0, f64::from(dx), 0.0, 1.0, f64::from(dy), 0.0, 0.0, 1.0]);
+            let placement = before_translation.mul(&h).mul(&after_translation).mul(&Homography(video.placement));
+            if placement.inverse().is_none() || placement.0.iter().any(|v| !v.is_finite()) {
+                return Err(bad("video placement must remain finite and invertible"));
+            }
+            if let Some(source) = video.frames.first() {
+                let bounds = source.content_bounds();
+                if !bounds.is_empty() {
+                    let corners = [(bounds.x0, bounds.y0), (bounds.x1, bounds.y0), (bounds.x1, bounds.y1), (bounds.x0, bounds.y1)];
+                    let displayed_placement = after_translation.mul(&placement);
+                    let denominators: Vec<_> = corners
+                        .iter()
+                        .map(|(x, y)| displayed_placement.0[6] * f64::from(*x) + displayed_placement.0[7] * f64::from(*y) + displayed_placement.0[8])
+                        .collect();
+                    if denominators.iter().any(|w| !w.is_finite() || w.abs() < 1e-9)
+                        || denominators.iter().any(|w| w.is_sign_positive() != denominators[0].is_sign_positive())
+                        || corners.iter().any(|(x, y)| {
+                            let (x, y) = displayed_placement.apply(f64::from(*x), f64::from(*y));
+                            !x.is_finite() || !y.is_finite() || x.abs() > 1_000_000.0 || y.abs() > 1_000_000.0
+                        })
+                    {
+                        return Err(bad("video placement exceeds the supported one-million-pixel transform bounds"));
+                    }
+                    let mapped = corners.map(|(x, y)| displayed_placement.apply(f64::from(x), f64::from(y)));
+                    let min_x = mapped.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+                    let max_x = mapped.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+                    let min_y = mapped.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+                    let max_y = mapped.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+                    if (max_x - min_x).ceil() * (max_y - min_y).ceil() > (64u64 << 20) as f64 {
+                        return Err(bad("video placement exceeds the 64-megapixel transform footprint limit"));
+                    }
+                }
+            }
+            video.placement = placement.0;
+        }
         if let (true, Some(before), Some(a)) = (keyed_transform, prior_smart_transform, affine) {
             let desired = a.mul(&before);
             record_smart_transform(doc, id, frame, before, desired)?;
@@ -577,6 +651,8 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
             if !crate::smart_cmds::refresh(doc, id)? {
                 return Err(EngineError::Other("Smart Object source could not be refreshed after recording its transform keyframe".into()));
             }
+        } else if video_layer {
+            crate::video_cmds::sync_plain(doc);
         }
         Ok(())
     })?;

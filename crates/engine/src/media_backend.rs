@@ -9,7 +9,7 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
-    sync::mpsc,
+    sync::{mpsc, Arc, Condvar, Mutex},
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -805,6 +805,321 @@ impl Drop for AudioPreview {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// Nonblocking manager for interactive timeline audio previews. A single native thread owns the
+/// preview and its device; requests replace the one pending slot, so rapid toggles cannot build an
+/// unbounded queue of mixers or audio devices.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
+pub struct AudioPreviewWorker {
+    shared: Option<Arc<AudioPreviewWorkerShared>>,
+    manager: Option<thread::JoinHandle<()>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct AudioPreviewWorkerShared {
+    state: Mutex<AudioPreviewWorkerState>,
+    wake: Condvar,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct AudioPreviewWorkerState {
+    generation: u64,
+    pending: Option<(u64, AudioPreviewRequest)>,
+    status: AudioPreviewWorkerStatus,
+    shutdown: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+enum AudioPreviewRequest {
+    Clips(Vec<AudioMixClip>, f64),
+    DocumentRange(Arc<photostore_doc::Document>, f64, f64),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+enum AudioPreviewWorkerStatus {
+    Idle,
+    Starting(u64),
+    Running(u64, Option<f64>),
+    Failed(u64, String),
+    Done(u64),
+}
+
+/// Generation-scoped view of a request submitted to [`AudioPreviewWorker`].
+#[cfg(not(target_arch = "wasm32"))]
+pub struct AudioPreviewHandle {
+    shared: Arc<AudioPreviewWorkerShared>,
+    generation: u64,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl AudioPreviewWorker {
+    /// Queue a replacement preview without validating clips, creating/stopping devices, or joining
+    /// processes on the caller thread. Setup errors are returned through its handle asynchronously.
+    pub fn start(&mut self, clips: &[AudioMixClip], duration_seconds: f64) -> Result<AudioPreviewHandle> {
+        self.enqueue(AudioPreviewRequest::Clips(clips.to_vec(), duration_seconds))
+    }
+
+    /// Queue a preview built from a document range. Visibility and timeline-boundary scanning
+    /// runs on the manager thread, keeping this call limited to an `Arc` clone and mailbox update.
+    pub fn start_document_range(
+        &mut self,
+        document: Arc<photostore_doc::Document>,
+        start_seconds: f64,
+        end_seconds: f64,
+    ) -> Result<AudioPreviewHandle> {
+        self.enqueue(AudioPreviewRequest::DocumentRange(document, start_seconds, end_seconds))
+    }
+
+    fn enqueue(&mut self, request: AudioPreviewRequest) -> Result<AudioPreviewHandle> {
+        if self.shared.is_none() {
+            let shared = Arc::new(AudioPreviewWorkerShared {
+                state: Mutex::new(AudioPreviewWorkerState {
+                    generation: 0,
+                    pending: None,
+                    status: AudioPreviewWorkerStatus::Idle,
+                    shutdown: false,
+                }),
+                wake: Condvar::new(),
+            });
+            let manager_shared = shared.clone();
+            self.manager = Some(thread::Builder::new().name("photostore-audio-preview".into()).spawn(move || audio_preview_manager(manager_shared))?);
+            self.shared = Some(shared);
+        }
+        let Some(shared) = self.shared.as_ref().cloned() else {
+            return Err(MediaBackendError::Process("audio preview manager failed to initialize".into()));
+        };
+        let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.generation = state.generation.wrapping_add(1).max(1);
+        let generation = state.generation;
+        state.pending = Some((generation, request));
+        state.status = AudioPreviewWorkerStatus::Starting(generation);
+        shared.wake.notify_one();
+        Ok(AudioPreviewHandle { shared, generation })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for AudioPreviewWorker {
+    fn drop(&mut self) {
+        if let Some(shared) = &self.shared {
+            let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.shutdown = true;
+            state.pending = None;
+            state.status = AudioPreviewWorkerStatus::Done(state.generation);
+            shared.wake.notify_one();
+        }
+        // The manager owns its thread and retires the device/process asynchronously. Never join
+        // here: dropping a UI runtime must not wait for the device callback or child processes.
+        self.manager.take();
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl AudioPreviewHandle {
+    /// Cancel this preview only if it is still the current generation. Does not wait for cleanup.
+    pub fn stop(&self) {
+        let mut state = self.shared.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.generation == self.generation {
+            state.generation = state.generation.wrapping_add(1).max(1);
+            state.pending = None;
+            state.status = AudioPreviewWorkerStatus::Done(state.generation);
+            self.shared.wake.notify_one();
+        }
+    }
+
+    /// `Some(true)` while active, `Some(false)` when complete or superseded, and an error if
+    /// setup or playback failed for this generation.
+    pub fn poll(&self) -> Result<bool> {
+        let state = self.shared.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.generation != self.generation {
+            return Ok(false);
+        }
+        if state.shutdown {
+            return Ok(false);
+        }
+        match &state.status {
+            AudioPreviewWorkerStatus::Starting(g) | AudioPreviewWorkerStatus::Running(g, _) if *g == self.generation => Ok(true),
+            AudioPreviewWorkerStatus::Failed(g, message) if *g == self.generation => Err(MediaBackendError::Process(message.clone())),
+            _ => Ok(false),
+        }
+    }
+
+    /// True once setup has completed or failed, or this request has been superseded.
+    pub fn ready(&self) -> bool {
+        let state = self.shared.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.generation != self.generation {
+            return true;
+        }
+        if state.shutdown {
+            return true;
+        }
+        !matches!(&state.status, AudioPreviewWorkerStatus::Starting(g) if *g == self.generation)
+    }
+
+    /// Native device callback sample clock; None before startup or for external ffplay output.
+    pub fn position_seconds(&self) -> Option<f64> {
+        let state = self.shared.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.generation != self.generation || state.shutdown {
+            return None;
+        }
+        match &state.status {
+            AudioPreviewWorkerStatus::Running(g, position) if *g == self.generation => *position,
+            _ => None,
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for AudioPreviewHandle {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn audio_preview_manager(shared: Arc<AudioPreviewWorkerShared>) {
+    let mut active: Option<(u64, AudioPreview)> = None;
+    loop {
+        let request = {
+            let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+            while !state.shutdown && state.pending.is_none() && active.is_none() {
+                state = shared.wake.wait(state).unwrap_or_else(|e| e.into_inner());
+            }
+            if state.shutdown {
+                None
+            } else {
+                state.pending.take()
+            }
+        };
+        let is_shutdown = shared.state.lock().unwrap_or_else(|e| e.into_inner()).shutdown;
+        if is_shutdown {
+            if let Some((_, mut preview)) = active.take() { preview.stop(); }
+            return;
+        }
+        if let Some((generation, request)) = request {
+            if let Some((_, mut preview)) = active.take() { preview.stop(); }
+            let still_current = {
+                let state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                state.generation == generation && !state.shutdown
+            };
+            if !still_current { continue; }
+            let config = match request {
+                AudioPreviewRequest::Clips(clips, duration) => Ok((clips, duration)),
+                AudioPreviewRequest::DocumentRange(document, start, end) => {
+                    crate::audio_cmds::audio_mix_for_document_range(&document, start, end)
+                        .map(|clips| (clips, end - start))
+                }
+            };
+            let (clips, duration) = match config {
+                Ok((clips, _)) if clips.is_empty() => {
+                    let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                    if state.generation == generation { state.status = AudioPreviewWorkerStatus::Done(generation); }
+                    continue;
+                }
+                Ok(config) => config,
+                Err(error) => {
+                    let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                    if state.generation == generation { state.status = AudioPreviewWorkerStatus::Failed(generation, error.to_string()); }
+                    continue;
+                }
+            };
+            // The range scan can be substantial. A newer request arriving during it supersedes
+            // this result before any mixer or output device is started.
+            let still_current = {
+                let state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                state.generation == generation && !state.shutdown
+            };
+            if !still_current { continue; }
+            match AudioPreview::start(&clips, duration) {
+                Ok(preview) => {
+                    let current = {
+                        let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                        if state.generation == generation && !state.shutdown {
+                            state.status = AudioPreviewWorkerStatus::Running(generation, preview.position_seconds());
+                            true
+                        } else { false }
+                    };
+                    if current { active = Some((generation, preview)); }
+                    else { let mut preview = preview; preview.stop(); }
+                }
+                Err(error) => {
+                    let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                    if state.generation == generation {
+                        state.status = AudioPreviewWorkerStatus::Failed(generation, error.to_string());
+                    }
+                }
+            }
+        }
+        let Some((generation, mut preview)) = active.take() else { continue };
+        let current = {
+            let state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.generation == generation && !state.shutdown
+        };
+        if !current {
+            preview.stop();
+            continue;
+        }
+        match preview.poll() {
+            Ok(true) => {
+                let position = preview.position_seconds();
+                let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                if state.generation == generation {
+                    state.status = AudioPreviewWorkerStatus::Running(generation, position);
+                    active = Some((generation, preview));
+                } else {
+                    drop(state);
+                    preview.stop();
+                }
+            }
+            Ok(false) => {
+                let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                if state.generation == generation { state.status = AudioPreviewWorkerStatus::Done(generation); }
+            }
+            Err(error) => {
+                let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                if state.generation == generation { state.status = AudioPreviewWorkerStatus::Failed(generation, error.to_string()); }
+            }
+        }
+        // Poll/cancel active output at short intervals; all blocking teardown remains on this thread.
+        let state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+        if !state.shutdown && state.pending.is_none() && active.is_some() {
+            let _ = shared.wake.wait_timeout(state, std::time::Duration::from_millis(5)).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+}
+
+/// Browser audio playback is handled by the web shell's explicit media path.
+#[cfg(target_arch = "wasm32")]
+#[derive(Default)]
+pub struct AudioPreviewWorker;
+
+#[cfg(target_arch = "wasm32")]
+pub struct AudioPreviewHandle;
+
+#[cfg(target_arch = "wasm32")]
+impl AudioPreviewWorker {
+    pub fn start(&mut self, _clips: &[AudioMixClip], _duration_seconds: f64) -> Result<AudioPreviewHandle> {
+        Err(MediaBackendError::Unsupported)
+    }
+
+    pub fn start_document_range(
+        &mut self,
+        _document: Arc<photostore_doc::Document>,
+        _start_seconds: f64,
+        _end_seconds: f64,
+    ) -> Result<AudioPreviewHandle> {
+        Err(MediaBackendError::Unsupported)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl AudioPreviewHandle {
+    pub fn stop(&self) {}
+    pub fn poll(&self) -> Result<bool> { Ok(false) }
+    pub fn ready(&self) -> bool { true }
+    pub fn position_seconds(&self) -> Option<f64> { None }
 }
 
 fn diagnostic_try_recv(rx: &mpsc::Receiver<Vec<u8>>) -> String {

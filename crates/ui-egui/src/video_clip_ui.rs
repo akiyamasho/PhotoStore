@@ -2087,11 +2087,6 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                             ui.close();
                         }
                         ui.separator();
-                        if ui.selectable_label(app.ui.timeline.media_open, "Media bin").clicked() {
-                            app.ui.timeline.media_open = !app.ui.timeline.media_open;
-                            ui.close();
-                        }
-                        ui.separator();
                         if ui.add_enabled(selected_layers.len() > 1, egui::Button::new("Group selected layers")).clicked() {
                             if let Err(error) = app.run("layer.groupLayers", json!({"document":doc.0})) {
                                 app.ui.status = error;

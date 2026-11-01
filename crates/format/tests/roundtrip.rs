@@ -506,6 +506,7 @@ fn video_layer_frames_survive_roundtrip() {
     let mut vd = VideoData::new(frames, 24.0);
     vd.source = VideoSource::File { path: "/tmp/seq".into() };
     vd.show_altered = false;
+    vd.placement = [1.5, 0.0, 2.0, 0.0, 1.25, -1.0, 0.0, 0.0, 1.0];
     l.video = Some(vd);
     doc.layers.push(l);
 
@@ -515,6 +516,7 @@ fn video_layer_frames_survive_roundtrip() {
     assert_eq!(v.frames.len(), 3);
     assert_eq!(v.fps, 24.0);
     assert!(!v.show_altered);
+    assert_eq!(v.placement, [1.5, 0.0, 2.0, 0.0, 1.25, -1.0, 0.0, 0.0, 1.0]);
     assert_eq!(v.source, VideoSource::File { path: "/tmp/seq".into() });
     assert_eq!(back.timeline.as_ref().unwrap().duration, 3);
     // A middle frame's pixel survived.

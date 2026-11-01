@@ -309,6 +309,7 @@ fn validate_position_layers(layers: &[LayerM]) -> Result<()> {
                 validate_video_translation(video.base_translation)?;
                 validate_video_translation(video.applied_translation)?;
                 validate_video_keyframes(&video.keyframes)?;
+                validate_video_placement(video.placement, video.frames.first())?;
             }
             if let Some(animation) = &layer.position_animation {
                 *tracks = tracks.saturating_add(1);
@@ -337,6 +338,51 @@ fn validate_position_layers(layers: &[LayerM]) -> Result<()> {
         Ok(())
     }
     visit(layers, &mut 0, &mut 0)
+}
+
+fn validate_video_placement(m: [f64; 9], source: Option<&SurfaceM>) -> Result<()> {
+    if m.iter().any(|v| !v.is_finite()) {
+        return Err(FormatError::corrupt("video placement contains a non-finite value"));
+    }
+    let det = m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
+    if !det.is_finite() || det.abs() < 1e-12 {
+        return Err(FormatError::corrupt("video placement is not invertible"));
+    }
+    if m == [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0] {
+        return Ok(());
+    }
+    if let Some(source) = source.filter(|surface| !surface.tiles.is_empty()) {
+        let min_tx = source.tiles.iter().map(|tile| tile.tx).min().unwrap_or(0);
+        let max_tx = source.tiles.iter().map(|tile| tile.tx).max().unwrap_or(0);
+        let min_ty = source.tiles.iter().map(|tile| tile.ty).min().unwrap_or(0);
+        let max_ty = source.tiles.iter().map(|tile| tile.ty).max().unwrap_or(0);
+        let tile = f64::from(TILE_SIZE);
+        let (x0, y0, x1, y1) = (f64::from(min_tx) * tile, f64::from(min_ty) * tile, (f64::from(max_tx) + 1.0) * tile, (f64::from(max_ty) + 1.0) * tile);
+        let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
+        let denominators: Vec<_> = corners.iter().map(|(x, y)| m[6] * x + m[7] * y + m[8]).collect();
+        if denominators.iter().any(|w| !w.is_finite() || w.abs() < 1e-9)
+            || denominators.iter().any(|w| w.is_sign_positive() != denominators[0].is_sign_positive())
+        {
+            return Err(FormatError::corrupt("video placement crosses a projective horizon"));
+        }
+        let mapped: Vec<_> = corners
+            .iter()
+            .map(|(x, y)| {
+                let w = m[6] * x + m[7] * y + m[8];
+                ((m[0] * x + m[1] * y + m[2]) / w, (m[3] * x + m[4] * y + m[5]) / w)
+            })
+            .collect();
+        let min_x = mapped.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+        let max_x = mapped.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+        let min_y = mapped.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+        let max_y = mapped.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+        if mapped.iter().any(|p| !p.0.is_finite() || !p.1.is_finite() || p.0.abs() > 1_000_000.0 || p.1.abs() > 1_000_000.0)
+            || (max_x - min_x).ceil() * (max_y - min_y).ceil() > (64u64 << 20) as f64
+        {
+            return Err(FormatError::corrupt("video placement exceeds the supported transform footprint"));
+        }
+    }
+    Ok(())
 }
 
 fn validate_transform_totals_manifest(layers: &[LayerM]) -> Result<()> {
@@ -693,6 +739,7 @@ fn video_m(v: &photostore_doc::VideoData, sink: &mut dyn Sink) -> crate::manifes
         playback: v.playback,
         show_altered: v.show_altered,
         base_translation: v.base_translation,
+        placement: v.placement,
         applied_translation: v.applied_translation,
     }
 }
@@ -966,6 +1013,10 @@ impl Loader<'_> {
             base_translation: {
                 validate_video_translation(m.base_translation)?;
                 m.base_translation
+            },
+            placement: {
+                validate_video_placement(m.placement, m.frames.first())?;
+                m.placement
             },
             applied_translation: {
                 validate_video_translation(m.applied_translation)?;

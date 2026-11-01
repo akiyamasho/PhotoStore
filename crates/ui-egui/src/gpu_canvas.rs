@@ -105,6 +105,132 @@ pub struct GpuCanvas {
     tile: u32,
     high: HighPolicy,
     health: photostore_gpu::DeviceHealth,
+    #[cfg(not(target_arch = "wasm32"))]
+    playback: std::sync::Arc<PlaybackController>,
+}
+
+/// A completed video canvas is published independently of document preparation. Pending work
+/// keeps the last complete texture visible; neither GPU waits nor CPU fallbacks run on egui.
+pub(crate) struct PlaybackRefresh {
+    pub published: Option<(u64, u64)>,
+    pub available: bool,
+    pub pending: bool,
+    pub fallback: Option<String>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct PlaybackToken { document: u64, content: u64, revision: u64, preview: u64, epoch: u64 }
+#[cfg(not(target_arch = "wasm32"))]
+struct PlaybackJob {
+    token: PlaybackToken,
+    doc: std::sync::Arc<photostore_doc::Document>,
+    display: Option<std::sync::Arc<photostore_engine::display_color::CanvasDisplay>>,
+    format: wgpu::TextureFormat,
+    budget: Option<u64>,
+    focus: Option<photostore_geom::Rect>,
+    ctx: egui::Context,
+}
+#[cfg(not(target_arch = "wasm32"))]
+struct PlaybackResult { token: PlaybackToken, textures: Option<DocTextures>, fallback: Option<String> }
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
+struct PlaybackMailbox {
+    closed: bool,
+    release: bool,
+    epoch: u64,
+    active: Option<PlaybackToken>,
+    queued: Option<PlaybackJob>,
+    completed: Option<PlaybackResult>,
+    recycled: Option<DocTextures>,
+    published: Option<PlaybackToken>,
+}
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
+struct PlaybackController {
+    shared: std::sync::Arc<(std::sync::Mutex<PlaybackMailbox>, std::sync::Condvar)>,
+    started: std::sync::OnceLock<Result<(), String>>,
+}
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for PlaybackController {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.shared.0.lock() { state.closed = true; }
+        self.shared.1.notify_one();
+        // The worker retires its own GPU resources. Never join it from the UI thread.
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn playback_worker(
+    shared: std::sync::Arc<(std::sync::Mutex<PlaybackMailbox>, std::sync::Condvar)>,
+    device: wgpu::Device, queue: wgpu::Queue, adapter: wgpu::Adapter,
+    health: DeviceHealth, tile: u32, target: wgpu::TextureFormat, high: bool,
+) {
+    let mut resources = Resources::new(&device, &queue, target, high);
+    resources.health = health.clone();
+    resources.separate_mip_targets = adapter.get_info().backend == wgpu::Backend::Dx12;
+    loop {
+        let (job, recycled) = {
+            let Ok(mut state) = shared.0.lock() else { return };
+            while !state.closed && !state.release && (state.queued.is_none() || state.completed.is_some()) {
+                state = match shared.1.wait(state) { Ok(state) => state, Err(_) => return };
+            }
+            if state.closed { return; }
+            if state.release {
+                state.release = false;
+                let retired = state.completed.take();
+                let recycled = state.recycled.take();
+                drop(state);
+                drop(retired);
+                drop(recycled);
+                resources.docs.clear();
+                resources.compositor = None;
+                continue;
+            }
+            let Some(job) = state.queued.take() else { continue };
+            state.active = Some(job.token);
+            (job, state.recycled.take())
+        };
+        resources.docs.clear();
+        if let Some(mut back) = recycled {
+            if back.size == [job.doc.size.width, job.doc.size.height] && back.format == job.format {
+                back.rebind(&device, &resources);
+                resources.docs.insert(job.token.document, back);
+            }
+        }
+        resources.compositor_budget = job.budget;
+        resources.compositor_focus = job.focus;
+        let render = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if !health.is_ok() { return Some("GPU device is unavailable".to_string()); }
+            let result = if std::env::var_os("PHOTOSTORE_CPU_COMPOSE").is_some() {
+                Err(photostore_gpu::Unsupported("disabled by PHOTOSTORE_CPU_COMPOSE".into()))
+            } else {
+                composite_resources(&device, &queue, &adapter, &health, tile, job.format, &job.doc,
+                    job.doc.bounds(), job.display.as_ref().is_some_and(|d| d.encode_srgb), &mut resources)
+            };
+            if let Err(error) = result {
+                if health.is_ok() {
+                    upload_composite_resources(&device, &queue, &health, tile, job.token.document,
+                        job.format, &job.doc, job.display.as_deref(), &mut resources);
+                }
+                return Some(error.0);
+            }
+            None
+        }));
+        let fallback = render.unwrap_or_else(|_| {
+            health.mark(Fault::Lost("video canvas worker stopped after a GPU error".into()));
+            Some("video canvas worker stopped after a GPU error".into())
+        });
+        let textures = if health.is_ok() { resources.docs.remove(&job.token.document) } else { None };
+        if let Ok(mut state) = shared.0.lock() {
+            state.active = None;
+            if state.closed { return; }
+            if state.epoch == job.token.epoch {
+                state.completed = Some(PlaybackResult { token: job.token, textures, fallback });
+            }
+        } else { return; }
+        job.ctx.request_repaint();
+    }
 }
 
 /// Can `adapter` use `Rgba16Float` as a sampled, filtered, render-target and copy texture?
@@ -116,6 +242,103 @@ pub fn supports_f16_canvas(adapter: &wgpu::Adapter) -> bool {
 }
 
 impl GpuCanvas {
+    /// Enqueue/poll a complete video canvas without rendering or waiting on the UI thread.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn refresh_playback(
+        &self, doc: std::sync::Arc<photostore_doc::Document>, revision: u64,
+        content_revision: u64, preview_key: u64,
+        display: Option<std::sync::Arc<photostore_engine::display_color::CanvasDisplay>>,
+        ctx: &egui::Context,
+    ) -> PlaybackRefresh {
+        let size = [doc.size.width, doc.size.height];
+        let available = self.has(doc.id.0, size);
+        let controller = &self.playback;
+        let started = controller.started.get_or_init(|| {
+            let shared = controller.shared.clone();
+            let (device, queue, adapter) = (self.rs.device.clone(), self.rs.queue.clone(), self.rs.adapter.clone());
+            let (health, tile, target, high) = (self.health.clone(), self.tile, self.rs.target_format, self.high != HighPolicy::Off);
+            let failure = health.clone();
+            let ctx = ctx.clone();
+            std::thread::Builder::new().name("photostore-video-canvas".into()).spawn(move || {
+                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| playback_worker(shared, device, queue, adapter, health, tile, target, high))).is_err() {
+                    failure.mark(Fault::Lost("video canvas worker initialization failed".into()));
+                    ctx.request_repaint();
+                }
+            }).map(|_| ()).map_err(|error| format!("cannot start video canvas worker: {error}"))
+        });
+        if let Err(error) = started {
+            return PlaybackRefresh { published: None, available, pending: false, fallback: Some(error.clone()) };
+        }
+        let Ok(mut state) = controller.shared.0.try_lock() else {
+            ctx.request_repaint_after(std::time::Duration::from_millis(6));
+            return PlaybackRefresh { published: None, available, pending: true, fallback: None };
+        };
+        let token = PlaybackToken { document: doc.id.0, content: content_revision, revision, preview: preview_key, epoch: state.epoch };
+        let mut fallback = None;
+        if let Some(result) = state.completed.take() {
+            let compatible = result.token.document == token.document && result.token.content == token.content
+                && result.token.preview == token.preview && result.token.epoch == token.epoch;
+            if compatible {
+                fallback = result.fallback;
+                if let Some(mut textures) = result.textures {
+                    let mut renderer = self.rs.renderer.write();
+                    if let Some(resources) = renderer.callback_resources.get_mut::<Resources>() {
+                        textures.rebind(&self.rs.device, resources);
+                        state.recycled = resources.docs.insert(token.document, textures);
+                        state.published = Some(result.token);
+                    }
+                }
+            } else {
+                state.recycled = result.textures;
+            }
+            controller.shared.1.notify_one();
+        }
+        let published = state.published.filter(|p| p.document == token.document && p.content == token.content
+            && p.preview == token.preview && p.epoch == token.epoch);
+        let pending = published != Some(token);
+        if pending && state.active != Some(token) && state.queued.as_ref().is_none_or(|job| job.token != token) {
+            let (budget, focus) = {
+                let mut renderer = self.rs.renderer.write();
+                match renderer.callback_resources.get_mut::<Resources>() {
+                    Some(resources) => {
+                        // The worker owns the video compositor; release any static-view cache
+                        // instead of retaining two independently budgeted layer-page caches.
+                        resources.compositor = None;
+                        (resources.compositor_budget, resources.compositor_focus)
+                    }
+                    None => (None, None),
+                }
+            };
+            state.queued = Some(PlaybackJob { token, format: self.format_for(doc.depth, size), doc, display, budget, focus, ctx: ctx.clone() });
+            controller.shared.1.notify_one();
+        }
+        if pending { ctx.request_repaint_after(std::time::Duration::from_millis(6)); }
+        PlaybackRefresh { published: published.map(|p| (p.revision, p.preview)), available: available || published.is_some(), pending, fallback }
+    }
+
+    pub(crate) fn cancel_playback_refresh(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Ok(mut state) = self.playback.shared.0.try_lock() {
+            if state.active.is_some() || state.queued.is_some() || state.published.is_some() {
+                state.epoch = state.epoch.wrapping_add(1);
+                state.release = true;
+                state.queued = None;
+                state.published = None;
+                self.playback.shared.1.notify_one();
+            }
+        }
+    }
+
+    pub(crate) fn playback_matches(&self, document: u64, revision: u64) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        { self.playback.shared.0.try_lock().ok().is_some_and(|state| {
+            state.published.is_some_and(|p| p.document == document && p.revision == revision && p.epoch == state.epoch)
+                || (state.published.is_none() && state.queued.is_none() && state.active.is_none_or(|p| p.epoch != state.epoch))
+        }) }
+        #[cfg(target_arch = "wasm32")]
+        { let _ = (document, revision); true }
+    }
+
     /// Create pipelines and register resources with the egui renderer.
     pub fn new(rs: &RenderState) -> Self {
         Self::with_tile(rs, None)
@@ -139,7 +362,10 @@ impl GpuCanvas {
         res.separate_mip_targets = rs.adapter.get_info().backend == wgpu::Backend::Dx12;
         rs.renderer.write().callback_resources.insert(res);
         log::info!("gpu canvas: target {:?}, max texture {max}, tile {tile}, 16F canvas {high:?}", rs.target_format);
-        Self { rs: rs.clone(), tile, high, health }
+        Self { rs: rs.clone(), tile, high, health,
+            #[cfg(not(target_arch = "wasm32"))]
+            playback: std::sync::Arc::new(PlaybackController::default()),
+        }
     }
 
     /// The device's health flag (shared with the wgpu compositor and the paint callback).
@@ -375,115 +601,8 @@ impl GpuCanvas {
         }
         let mut renderer = self.rs.renderer.write();
         let Some(res) = renderer.callback_resources.get_mut::<Resources>() else { return Err(photostore_gpu::Unsupported("no GPU canvas".into())) };
-        // A driver that couldn't build the pipelines once won't later: stay on the CPU compositor.
-        if let Some(e) = &res.compositor_failed {
-            return Err(e.clone());
-        }
-        let mut comp = match res.compositor.take() {
-            Some(c) => c,
-            None => match photostore_gpu::Compositor::try_new_with_format(device, photostore_gpu::Compositor::preferred_acc_format(&self.rs.adapter)) {
-                Ok(c) => c,
-                Err(e) => {
-                    log::warn!("{e}; using the CPU compositor");
-                    res.compositor_failed = Some(e.clone());
-                    return Err(e);
-                }
-            },
-        };
-        comp.set_health(self.health.clone());
-        if let Some(b) = res.compositor_budget {
-            comp.set_memory_budget(b);
-        }
-        comp.set_focus(res.compositor_focus);
-        let key = doc.id.0;
         let format = self.format_for(doc.depth, size);
-        let fresh = res.docs.get(&key).is_none_or(|d| d.size != size || d.format != format);
-        let region = if fresh { doc.bounds() } else { region.intersect(&doc.bounds()) };
-        // Checked before allocating a new canvas texture only: `render` plans (and refuses) itself.
-        if fresh && let Err(e) = comp.supports(doc) {
-            res.compositor = Some(comp);
-            return Err(e);
-        }
-        // A full refresh whose layer pages don't fit the memory budget would re-upload the
-        // evicted ones every time (no faster than the CPU, and more memory): the banded CPU
-        // compositor does it, and edits in the view (damage rects) stay on the GPU.
-        if region == doc.bounds() && !comp.fits_budget(doc, region) {
-            res.compositor = Some(comp);
-            return Err(photostore_gpu::Unsupported(OVER_BUDGET.into()));
-        }
-        if fresh {
-            let tex = DocTextures::new(device, res, size, self.tile, format);
-            res.docs.insert(key, tex);
-        }
-        let (Some(pipe), Some(d)) = (res.encode_pipeline(format), res.docs.get(&key)) else {
-            res.compositor = Some(comp);
-            return Err(photostore_gpu::Unsupported(format!("no {format:?} canvas texture or pipeline")));
-        };
-        let bgl = &res.encode_bgl;
-        // A float canvas keeps values above 1.0 (32-bit documents, for the 32-bit preview).
-        let keep_hdr = i32::from(format == FORMAT_HIGH);
-        // Last-resort guard: a wgpu panic (e.g. polling a device lost mid-refresh) marks the
-        // device lost instead of taking the app and its documents down.
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            comp.render(device, queue, doc, region, |enc, out| {
-                for t in &d.tiles {
-                    let [tx, ty, tw, th] = t.rect.map(|v| v as i32);
-                    let r = out.rect.intersect(&photostore_geom::Rect::from_xywh(tx, ty, tw as u32, th as u32));
-                    if r.is_empty() {
-                        continue;
-                    }
-                    let offset = [out.rect.x0 - tx, out.rect.y0 - ty, i32::from(encode_srgb), keep_hdr];
-                    let ubuf = init_buffer(device, "pc_encode", &offset.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>(), wgpu::BufferUsages::UNIFORM);
-                    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("pc_encode"),
-                        layout: bgl,
-                        entries: &[
-                            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(out.view) },
-                            wgpu::BindGroupEntry { binding: 1, resource: ubuf.as_entire_binding() },
-                        ],
-                    });
-                    let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("pc_encode"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &t.levels[0],
-                            resolve_target: None,
-                            depth_slice: None,
-                            ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
-                    pass.set_pipeline(pipe);
-                    pass.set_bind_group(0, &bg, &[]);
-                    pass.set_scissor_rect((r.x0 - tx) as u32, (r.y0 - ty) as u32, r.width(), r.height());
-                    pass.draw(0..3, 0..1);
-                }
-            })
-        }));
-        let Ok(result) = result else {
-            self.health.mark(photostore_gpu::Fault::Lost("the GPU compositor stopped (internal error)".into()));
-            res.docs.remove(&key);
-            return Err(photostore_gpu::Unsupported("GPU device lost".into()));
-        };
-        // Lost during the refresh: its output can't be trusted.
-        let result = match self.fault() {
-            Some(f) => Err(photostore_gpu::Unsupported(f.to_string())),
-            None => result,
-        };
-        if result.is_ok() {
-            d.regenerate_mips(device, queue, res, [region.x0 as u32, region.y0 as u32, region.x1 as u32, region.y1 as u32]);
-            if std::env::var_os("PHOTOSTORE_GPU_SYNC").is_some() {
-                // Benchmarking: wait for the GPU so callers can time the whole refresh.
-                #[cfg(not(target_arch = "wasm32"))]
-                self.health.wait(device, None);
-            }
-        } else if fresh {
-            res.docs.remove(&key);
-        }
-        res.compositor = Some(comp);
-        result
+        composite_resources(device, queue, &self.rs.adapter, &self.health, self.tile, format, doc, region, encode_srgb, res)
     }
 
     /// Bring document `key`'s display texture up to date with `doc`: only `damage` when given (a
@@ -558,38 +677,9 @@ impl GpuCanvas {
         }
         let format = self.format_for(doc.depth, size);
         let (device, queue) = (&self.rs.device, &self.rs.queue);
-        {
-            let mut renderer = self.rs.renderer.write();
-            let Some(res) = renderer.callback_resources.get_mut::<Resources>() else { return };
-            if res.docs.get(&key).is_none_or(|d| d.size != size || d.format != format) {
-                let tex = DocTextures::new(device, res, size, self.tile, format);
-                res.docs.insert(key, tex);
-            }
-        }
-        let mut rgba = Vec::new();
-        let _ = photostore_compose::render_bands(doc, doc.bounds(), 0, |band| -> Result<(), ()> {
-            if !self.health.is_ok() {
-                return Err(());
-            }
-            texels_into(format, &texture_buffer(display, &band).px, &mut rgba);
-            let renderer = self.rs.renderer.read();
-            let d = renderer.callback_resources.get::<Resources>().and_then(|r| r.docs.get(&key)).ok_or(())?;
-            d.write(queue, [0, band.rect.y0 as u32], [size[0], band.rect.height()], size[0], &rgba);
-            drop(renderer);
-            // Flush the staged band so its staging memory is reclaimed while the next renders.
-            queue.submit(std::iter::empty::<wgpu::CommandBuffer>());
-            self.health.poll(device);
-            Ok(())
-        });
-        if !self.health.is_ok() {
-            return;
-        }
         let mut renderer = self.rs.renderer.write();
-        if let Some(res) = renderer.callback_resources.get_mut::<Resources>()
-            && let Some(d) = res.docs.get(&key)
-        {
-            d.regenerate_mips(device, queue, res, [0, 0, size[0], size[1]]);
-        }
+        let Some(res) = renderer.callback_resources.get_mut::<Resources>() else { return };
+        upload_composite_resources(device, queue, &self.health, self.tile, key, format, doc, display, res);
     }
 
     /// Free textures, display LUTs and their signatures for documents not in `live`.
@@ -814,6 +904,8 @@ pub struct Perf {
     /// The Memory Usage allowance (bytes) `gpu_budget_mb` was computed from.
     #[serde(skip)]
     pub gpu_budget_allowance: u64,
+    #[serde(skip)]
+    pub(crate) gpu_budget_content: Option<(u64, u64)>,
     /// Last command run through the app and its duration (ms).
     pub last_command: String,
     pub command_ms: f64,
@@ -1088,6 +1180,167 @@ pub fn physical_memory() -> Option<u64> {
         }
         detect_physical_memory()
     })
+}
+
+/// Render into `res`'s private canvas resources, independent of egui's renderer lock.
+fn composite_resources(
+    device: &wgpu::Device, queue: &wgpu::Queue, adapter: &wgpu::Adapter,
+    health: &photostore_gpu::DeviceHealth, tile: u32, format: wgpu::TextureFormat,
+    doc: &photostore_doc::Document, region: photostore_geom::Rect, encode_srgb: bool,
+    res: &mut Resources,
+) -> Result<photostore_gpu::Stats, photostore_gpu::Unsupported> {
+    let size = [doc.size.width, doc.size.height];
+        // A driver that couldn't build the pipelines once won't later: stay on the CPU compositor.
+        if let Some(e) = &res.compositor_failed {
+            return Err(e.clone());
+        }
+        let mut comp = match res.compositor.take() {
+            Some(c) => c,
+            None => match photostore_gpu::Compositor::try_new_with_format(device, photostore_gpu::Compositor::preferred_acc_format(adapter)) {
+                Ok(c) => c,
+                Err(e) => {
+                    log::warn!("{e}; using the CPU compositor");
+                    res.compositor_failed = Some(e.clone());
+                    return Err(e);
+                }
+            },
+        };
+        comp.set_health(health.clone());
+        if let Some(b) = res.compositor_budget {
+            comp.set_memory_budget(b);
+        }
+        comp.set_focus(res.compositor_focus);
+        let key = doc.id.0;
+        let fresh = res.docs.get(&key).is_none_or(|d| d.size != size || d.format != format);
+        let region = if fresh { doc.bounds() } else { region.intersect(&doc.bounds()) };
+        // Checked before allocating a new canvas texture only: `render` plans (and refuses) itself.
+        if fresh && let Err(e) = comp.supports(doc) {
+            res.compositor = Some(comp);
+            return Err(e);
+        }
+        // A full refresh whose layer pages don't fit the memory budget would re-upload the
+        // evicted ones every time (no faster than the CPU, and more memory): the banded CPU
+        // compositor does it, and edits in the view (damage rects) stay on the GPU.
+        if region == doc.bounds() && !comp.fits_budget(doc, region) {
+            res.compositor = Some(comp);
+            return Err(photostore_gpu::Unsupported(OVER_BUDGET.into()));
+        }
+        if fresh {
+            let tex = DocTextures::new(device, res, size, tile, format);
+            res.docs.insert(key, tex);
+        }
+        let (Some(pipe), Some(d)) = (res.encode_pipeline(format), res.docs.get(&key)) else {
+            res.compositor = Some(comp);
+            return Err(photostore_gpu::Unsupported(format!("no {format:?} canvas texture or pipeline")));
+        };
+        let bgl = &res.encode_bgl;
+        // A float canvas keeps values above 1.0 (32-bit documents, for the 32-bit preview).
+        let keep_hdr = i32::from(format == FORMAT_HIGH);
+        // Last-resort guard: a wgpu panic (e.g. polling a device lost mid-refresh) marks the
+        // device lost instead of taking the app and its documents down.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            comp.render(device, queue, doc, region, |enc, out| {
+                for t in &d.tiles {
+                    let [tx, ty, tw, th] = t.rect.map(|v| v as i32);
+                    let r = out.rect.intersect(&photostore_geom::Rect::from_xywh(tx, ty, tw as u32, th as u32));
+                    if r.is_empty() {
+                        continue;
+                    }
+                    let offset = [out.rect.x0 - tx, out.rect.y0 - ty, i32::from(encode_srgb), keep_hdr];
+                    let ubuf = init_buffer(device, "pc_encode", &offset.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>(), wgpu::BufferUsages::UNIFORM);
+                    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("pc_encode"),
+                        layout: bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(out.view) },
+                            wgpu::BindGroupEntry { binding: 1, resource: ubuf.as_entire_binding() },
+                        ],
+                    });
+                    let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("pc_encode"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &t.levels[0],
+                            resolve_target: None,
+                            depth_slice: None,
+                            ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    pass.set_pipeline(pipe);
+                    pass.set_bind_group(0, &bg, &[]);
+                    pass.set_scissor_rect((r.x0 - tx) as u32, (r.y0 - ty) as u32, r.width(), r.height());
+                    pass.draw(0..3, 0..1);
+                }
+            })
+        }));
+        let Ok(result) = result else {
+            health.mark(photostore_gpu::Fault::Lost("the GPU compositor stopped (internal error)".into()));
+            res.docs.remove(&key);
+            return Err(photostore_gpu::Unsupported("GPU device lost".into()));
+        };
+        // Lost during the refresh: its output can't be trusted.
+        let result = match health.fault() {
+            Some(f) => Err(photostore_gpu::Unsupported(f.to_string())),
+            None => result,
+        };
+        if result.is_ok() {
+            d.regenerate_mips(device, queue, res, [region.x0 as u32, region.y0 as u32, region.x1 as u32, region.y1 as u32]);
+            if std::env::var_os("PHOTOSTORE_GPU_SYNC").is_some() {
+                // Benchmarking: wait for the GPU so callers can time the whole refresh.
+                #[cfg(not(target_arch = "wasm32"))]
+                health.wait(device, None);
+            }
+        } else if fresh {
+            res.docs.remove(&key);
+        }
+        res.compositor = Some(comp);
+        result
+
+}
+
+/// CPU banded fallback into a private `Resources` set. This keeps the same bounded-memory
+/// conversion and upload behavior as the normal canvas path while allowing playback to run off UI.
+fn upload_composite_resources(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    health: &photostore_gpu::DeviceHealth,
+    tile: u32,
+    key: u64,
+    format: wgpu::TextureFormat,
+    doc: &photostore_doc::Document,
+    display: Option<&photostore_engine::display_color::CanvasDisplay>,
+    res: &mut Resources,
+) {
+    let size = [doc.size.width, doc.size.height];
+    if size[0] == 0 || size[1] == 0 || !health.is_ok() {
+        return;
+    }
+    if res.docs.get(&key).is_none_or(|d| d.size != size || d.format != format) {
+        let tex = DocTextures::new(device, res, size, tile, format);
+        res.docs.insert(key, tex);
+    }
+    let mut rgba = Vec::new();
+    let _ = photostore_compose::render_bands(doc, doc.bounds(), 0, |band| -> Result<(), ()> {
+        if !health.is_ok() {
+            return Err(());
+        }
+        texels_into(format, &texture_buffer(display, &band).px, &mut rgba);
+        let d = res.docs.get(&key).ok_or(())?;
+        d.write(queue, [0, band.rect.y0 as u32], [size[0], band.rect.height()], size[0], &rgba);
+        // Flush staged bands so staging memory is reclaimed before rendering the next band.
+        queue.submit(std::iter::empty::<wgpu::CommandBuffer>());
+        health.poll(device);
+        Ok(())
+    });
+    if !health.is_ok() {
+        return;
+    }
+    if let Some(d) = res.docs.get(&key) {
+        d.regenerate_mips(device, queue, res, [0, 0, size[0], size[1]]);
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1477,6 +1730,23 @@ impl DocTextures {
             }
         }
         Self { size, format, tiles }
+    }
+
+    /// Rebuild tile groups when textures move between independently created `Resources` sets.
+    /// Bind groups are tied to their originating layout even when the layouts are structurally
+    /// identical, so publication/recycling must rebind against the receiving canvas resources.
+    fn rebind(&mut self, device: &wgpu::Device, res: &Resources) {
+        for tile in &mut self.tiles {
+            let full = tile.texture.create_view(&wgpu::TextureViewDescriptor::default());
+            tile.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("pc_canvas_tile"),
+                layout: &res.tile_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&full) },
+                    wgpu::BindGroupEntry { binding: 1, resource: tile._uniform.as_entire_binding() },
+                ],
+            });
+        }
     }
 
     /// Write `size` pixels at document `origin` from `texels` (in the texture format, row stride

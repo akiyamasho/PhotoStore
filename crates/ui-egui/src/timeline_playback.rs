@@ -36,7 +36,8 @@ pub(crate) struct Runtime {
     variable_prefix: Vec<f64>,
     variable_signature: u64,
     fallback_delays: Vec<u32>,
-    audio: Option<photostore_engine::media_backend::AudioPreview>,
+    audio: Option<photostore_engine::media_backend::AudioPreviewHandle>,
+    audio_worker: photostore_engine::media_backend::AudioPreviewWorker,
     audio_signature: u64,
     audio_doc: Option<photostore_doc::DocId>,
     audio_start: f64,
@@ -48,6 +49,7 @@ pub(crate) struct Runtime {
     preroll: bool,
     preroll_decoded: bool,
     preroll_submitted: bool,
+    preroll_audio_started: bool,
     visual_ready: Arc<AtomicBool>,
 }
 
@@ -75,6 +77,7 @@ impl Default for Runtime {
             variable_signature: 0,
             fallback_delays: Vec::new(),
             audio: None,
+            audio_worker: Default::default(),
             audio_signature: 0,
             audio_doc: None,
             audio_start: 0.0,
@@ -86,6 +89,7 @@ impl Default for Runtime {
             preroll: false,
             preroll_decoded: false,
             preroll_submitted: false,
+            preroll_audio_started: false,
             visual_ready: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -114,6 +118,7 @@ impl Runtime {
         self.preroll = false;
         self.preroll_decoded = false;
         self.preroll_submitted = false;
+        self.preroll_audio_started = false;
         self.visual_ready = Arc::new(AtomicBool::new(false));
     }
 
@@ -263,18 +268,14 @@ impl Runtime {
         (target, reverse, completed)
     }
 
-    fn start_audio(&mut self, t: &Timeline, document: &photostore_doc::Document, doc: photostore_doc::DocId, frame: usize) -> Result<(), String> {
+    fn start_audio(&mut self, t: &Timeline, document: &Arc<photostore_doc::Document>, doc: photostore_doc::DocId, frame: usize) -> Result<(), String> {
         self.stop_audio();
         let start = self.frame_start(t, frame.clamp(t.work_start, t.work_end.saturating_sub(1)));
         let end = self.frame_start(t, t.work_end);
         let span = self.frame_start(t, t.work_end) - self.frame_start(t, t.work_start);
         let cycle_span = if matches!(t.loop_mode,TimelineLoop::PingPong) { span * 2.0 } else { span };
         self.audio_clock_base = (self.loop_cycle as f64 * cycle_span + start - self.frame_start(t,t.work_start) - self.start_offset).max(0.0);
-        let clips = photostore_engine::audio_mix_for_document_range(document, start, end).map_err(|e| e.to_string())?;
-        if clips.is_empty() {
-            return Ok(());
-        }
-        self.audio = Some(photostore_engine::media_backend::AudioPreview::start(&clips, end - start).map_err(|e| e.to_string())?);
+        self.audio = Some(self.audio_worker.start_document_range(document.clone(), start, end).map_err(|e| e.to_string())?);
         self.audio_signature = Self::audio_signature(t);
         self.audio_doc = Some(doc);
         self.audio_start = start;
@@ -325,6 +326,7 @@ impl Runtime {
             self.preroll = true;
             self.preroll_decoded = false;
             self.preroll_submitted = false;
+            self.preroll_audio_started = false;
             self.visual_ready = Arc::new(AtomicBool::new(false));
             self.pending_frame = Some(self.start_frame);
         } else if let Err(error) = self.start_audio(t, &doc_arc, doc, self.start_frame) {
@@ -392,6 +394,7 @@ impl Runtime {
                 self.preroll = true;
                 self.preroll_decoded = false;
                 self.preroll_submitted = false;
+                self.preroll_audio_started = false;
                 self.visual_ready = Arc::new(AtomicBool::new(false));
                 self.pending_frame = Some(self.start_frame);
             } else if self.direction >= 0
@@ -428,18 +431,29 @@ impl Runtime {
                 && let Some(gpu) = app.gpu.as_ref()
             { gpu.poll_completion_callbacks(); }
             if self.preroll_decoded && self.visual_ready.load(Ordering::Acquire) {
-                let start = std::time::Instant::now();
-                let fresh = app.session.active().map(|state| state.doc.clone());
-                if self.direction >= 0
-                    && let Some(fresh) = fresh
-                    && let Some(timeline) = fresh.timeline.as_ref()
-                    && let Err(error) = self.start_audio(timeline, &fresh, doc, self.start_frame)
-                {
-                    app.ui.status = format!("Audio preview: {error}");
-                    app.ui.status_error = true;
+                if !self.preroll_audio_started {
+                    self.preroll_audio_started = true;
+                    let fresh = app.session.active().map(|state| state.doc.clone());
+                    if self.direction >= 0
+                        && let Some(fresh) = fresh
+                        && let Some(timeline) = fresh.timeline.as_ref()
+                        && let Err(error) = self.start_audio(timeline, &fresh, doc, self.start_frame)
+                    {
+                        app.ui.status = format!("Audio preview: {error}");
+                        app.ui.status_error = true;
+                    }
                 }
-                self.started_at = now + start.elapsed().as_secs_f64();
-                self.preroll = false;
+                if let Some(audio) = &self.audio {
+                    if let Err(error) = audio.poll() {
+                        app.ui.status = format!("Audio preview: {error}");
+                        app.ui.status_error = true;
+                        self.audio = None;
+                    }
+                }
+                if self.audio.as_ref().is_none_or(|audio| audio.ready()) {
+                    self.started_at = now;
+                    self.preroll = false;
+                }
             }
             ctx.request_repaint_after(Duration::from_millis(6));
             return;

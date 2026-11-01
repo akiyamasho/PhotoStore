@@ -207,8 +207,14 @@ pub struct VideoDataM {
     pub show_altered: bool,
     #[serde(default)]
     pub base_translation: (i32, i32),
+    #[serde(default = "identity_video_placement")]
+    pub placement: [f64; 9],
     #[serde(default)]
     pub applied_translation: (i32, i32),
+}
+
+fn identity_video_placement() -> [f64; 9] {
+    [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

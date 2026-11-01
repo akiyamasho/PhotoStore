@@ -137,6 +137,12 @@ impl Focus {
         // A layer rename keeps its keys even in the frame egui drops its focus (Esc, Tab).
         if ctx.text_edit_focused() || crate::layer_row_ui::rename_active(ctx) {
             Focus::Text
+        } else if ctx.data(|data| data.get_temp::<egui::Id>(egui::Id::new(("canvas-space-focus-id", ctx.viewport_id()))))
+            .is_some_and(|id| ctx.memory(|memory| memory.focused() == Some(id)))
+        {
+            // Canvas focus records Space/pan ownership; it must not turn the drawing surface
+            // into an ordinary focused button that captures arrows or tool navigation.
+            Focus::None
         } else if ctx.egui_wants_keyboard_input() {
             let owner = ctx.data(|d| d.get_temp::<egui::Id>(delete_owner_id()));
             if owner.is_some() && ctx.memory(|m| m.focused()) == owner { Focus::DeletingWidget } else { Focus::Widget }

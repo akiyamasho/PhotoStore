@@ -3,6 +3,12 @@
 //! read `current` to show their frame. Headless and scriptable so agents can render frame ranges.
 
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{Condvar, Mutex, TryLockError};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
+use std::thread::JoinHandle;
 
 use photostore_doc::{DocId, Document, FrameLayerState, Layer, LayerId, LayerTimelineRange, OnionSkinBlend, Timeline, TimelineLoop, TimelineMode};
 use serde_json::{Value, json};
@@ -727,26 +733,180 @@ pub(crate) struct PendingPresentation {
     content_revision:u64,
     base_frame:usize,
     frame:usize,
-    candidate:photostore_doc::Document,
+    generation:u64,
+    submitted:bool,
+    presented:bool,
+    candidate:Option<photostore_doc::Document>,
+    #[cfg(not(target_arch = "wasm32"))]
+    worker:Option<PresentationWorker>,
 }
-fn present_frame(s: &mut Session, p: &Value) -> Result<Value> {
-    check_document(s,p,"timeline.presentFrame")?;
-    if s.active_job().is_some(){return Err(bad("timeline.presentFrame","a document edit is still running".into()));}
-    let frame=p.get("frame").and_then(Value::as_u64).and_then(|value|usize::try_from(value).ok()).ok_or_else(||bad("timeline.presentFrame","frame must be a whole nonnegative frame".into()))?;
-    let st=s.active().ok_or(EngineError::NoDocument)?;
-    let base=st.doc.clone();
-    let timeline=base.timeline.as_ref().ok_or_else(||bad("timeline.presentFrame","no timeline".into()))?;
-    if frame>=timeline.duration{return Err(bad("timeline.presentFrame","frame is outside the timeline".into()));}
-    let content_revision=st.content_revision;
-    let base_frame=timeline.current;
-    if !crate::video_cmds::request_presentation_frame(&base,frame)?{return Ok(json!({"ready":false,"requestedFrame":frame}));}
-    let retained=s.pending_presentation.take().filter(|pending|pending.document==base.id && pending.content_revision==content_revision && pending.base_frame==base_frame && pending.frame==frame);
-    let mut doc=retained.map_or_else(||(*base).clone(),|pending|pending.candidate);
-    if let Some(timeline)=&mut doc.timeline{timeline.current=frame;}
-    if !crate::video_cmds::sync_for_presentation(&mut doc)? {
-        s.pending_presentation=Some(PendingPresentation{document:base.id,content_revision,base_frame,frame,candidate:doc});
-        return Ok(json!({"ready":false,"requestedFrame":frame}));
+
+#[cfg(not(target_arch = "wasm32"))]
+struct PresentationRequest {
+    document:DocId,
+    content_revision:u64,
+    base_frame:usize,
+    frame:usize,
+    generation:u64,
+    source:Arc<Document>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct PresentationResult {
+    document:DocId,
+    content_revision:u64,
+    base_frame:usize,
+    frame:usize,
+    generation:u64,
+    result:std::result::Result<Document,String>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
+struct PresentationMailbox {
+    pending:Option<PresentationRequest>,
+    completed:Option<PresentationResult>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct PresentationWorkerState {
+    mailbox:Mutex<PresentationMailbox>,
+    wake:Condvar,
+    latest:AtomicU64,
+    stopped:AtomicBool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct PresentationWorker {
+    state:Arc<PresentationWorkerState>,
+    thread:Option<JoinHandle<()>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl PresentationWorker {
+    fn new()->Result<Self> {
+        let state=Arc::new(PresentationWorkerState{mailbox:Mutex::new(PresentationMailbox::default()),wake:Condvar::new(),latest:AtomicU64::new(0),stopped:AtomicBool::new(false)});
+        let worker_state=Arc::clone(&state);
+        let thread=std::thread::Builder::new().name("photostore-preview-presenter".into()).spawn(move||presentation_worker_loop(worker_state))
+            .map_err(|error|EngineError::Other(format!("could not start the background video presentation worker: {error}")))?;
+        Ok(Self{state,thread:Some(thread)})
     }
+
+    fn next_generation(&self)->u64 {self.state.latest.fetch_add(1,Ordering::AcqRel).wrapping_add(1)}
+
+    fn invalidate(&self)->u64 {
+        let generation=self.next_generation();
+        self.state.wake.notify_one();
+        generation
+    }
+
+    fn try_submit(&self,request:PresentationRequest)->bool {
+        self.state.latest.store(request.generation,Ordering::Release);
+        let mut mailbox=match self.state.mailbox.try_lock() {
+            Ok(mailbox)=>mailbox,
+            Err(TryLockError::Poisoned(error))=>error.into_inner(),
+            Err(TryLockError::WouldBlock)=>return false,
+        };
+        mailbox.pending=Some(request);
+        drop(mailbox);
+        self.state.wake.notify_one();
+        true
+    }
+
+    fn try_take(&self,generation:u64,document:DocId,content_revision:u64,base_frame:usize,frame:usize)->Option<PresentationResult> {
+        let mut mailbox=match self.state.mailbox.try_lock() {
+            Ok(mailbox)=>mailbox,
+            Err(TryLockError::Poisoned(error))=>error.into_inner(),
+            Err(TryLockError::WouldBlock)=>return None,
+        };
+        if mailbox.completed.as_ref().is_some_and(|result|result.generation==generation && result.document==document && result.content_revision==content_revision && result.base_frame==base_frame && result.frame==frame) {
+            mailbox.completed.take()
+        } else {None}
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for PresentationWorker {
+    fn drop(&mut self) {
+        self.state.stopped.store(true,Ordering::Release);
+        self.state.latest.fetch_add(1,Ordering::AcqRel);
+        self.state.wake.notify_all();
+        // Detach instead of joining: an active decoder/Smart Object refresh owns its snapshot and
+        // will observe cancellation between calls. Document destruction remains on this worker.
+        self.thread.take();
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn presentation_cancelled(state:&PresentationWorkerState,generation:u64)->bool {
+    state.stopped.load(Ordering::Acquire)||state.latest.load(Ordering::Acquire)!=generation
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn wait_for_presentation_retry(state:&PresentationWorkerState,generation:u64) {
+    if presentation_cancelled(state,generation){return;}
+    let mailbox=match state.mailbox.lock(){Ok(mailbox)=>mailbox,Err(error)=>error.into_inner()};
+    let _=state.wake.wait_timeout(mailbox,std::time::Duration::from_millis(4));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn prepare_presentation(state:&PresentationWorkerState,request:&PresentationRequest)->Option<std::result::Result<Document,String>> {
+    let _preview=crate::movie_cache::PreviewScope::enter();
+    let mut doc=(*request.source).clone();
+    if let Some(timeline)=&mut doc.timeline{timeline.current=request.frame;}
+    loop {
+        if presentation_cancelled(state,request.generation){return None;}
+        let ready=crate::video_cmds::request_presentation_frame(&request.source,request.frame);
+        match ready {
+            Ok(false)=>{wait_for_presentation_retry(state,request.generation);continue;}
+            Err(error)=>return Some(Err(error.to_string())),
+            Ok(true)=>{}
+        }
+        if presentation_cancelled(state,request.generation){return None;}
+        match crate::video_cmds::sync_for_presentation(&mut doc) {
+            Ok(true) if presentation_cancelled(state,request.generation)=>return None,
+            Ok(true)=>return Some(Ok(doc)),
+            Ok(false)=>wait_for_presentation_retry(state,request.generation),
+            Err(error)=>return Some(Err(error.to_string())),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn presentation_worker_loop(state:Arc<PresentationWorkerState>) {
+    'worker: loop {
+        let request=loop {
+            let mut mailbox=match state.mailbox.lock(){Ok(mailbox)=>mailbox,Err(error)=>error.into_inner()};
+            loop {
+                if state.stopped.load(Ordering::Acquire) {
+                    let pending=mailbox.pending.take();
+                    let completed=mailbox.completed.take();
+                    drop(mailbox);
+                    drop(pending);
+                    drop(completed);
+                    return;
+                }
+                if mailbox.completed.as_ref().is_some_and(|result|result.generation!=state.latest.load(Ordering::Acquire)) {
+                    let stale=mailbox.completed.take();
+                    drop(mailbox);
+                    drop(stale);
+                    continue 'worker;
+                }
+                if let Some(request)=mailbox.pending.take(){break request;}
+                mailbox=match state.wake.wait(mailbox){Ok(mailbox)=>mailbox,Err(error)=>error.into_inner()};
+            }
+        };
+        if let Some(result)=prepare_presentation(&state,&request) {
+            let completed=PresentationResult{document:request.document,content_revision:request.content_revision,base_frame:request.base_frame,frame:request.frame,generation:request.generation,result};
+            if !presentation_cancelled(&state,request.generation) {
+                let mut mailbox=match state.mailbox.lock(){Ok(mailbox)=>mailbox,Err(error)=>error.into_inner()};
+                if !presentation_cancelled(&state,request.generation) {mailbox.completed=Some(completed);}
+            }
+        }
+    }
+}
+
+fn commit_presentation(s:&mut Session,doc:Document,frame:usize)->Result<Value> {
     let st=s.active_mut().ok_or(EngineError::NoDocument)?;
     let clean=st.saved_revision==st.revision;
     st.doc=Arc::new(doc);
@@ -756,6 +916,103 @@ fn present_frame(s: &mut Session, p: &Value) -> Result<Value> {
     // while still refreshing every changing movie pixel through the normal compositor.
     st.last_damage=Some(st.doc.bounds());
     Ok(json!({"ready":true,"frame":frame}))
+}
+
+fn native_preview_scope()->bool {
+    #[cfg(target_arch = "wasm32")]
+    {false}
+    #[cfg(not(target_arch = "wasm32"))]
+    {crate::movie_cache::is_preview()}
+}
+
+fn present_frame(s: &mut Session, p: &Value) -> Result<Value> {
+    check_document(s,p,"timeline.presentFrame")?;
+    let frame=p.get("frame").and_then(Value::as_u64).and_then(|value|usize::try_from(value).ok()).ok_or_else(||bad("timeline.presentFrame","frame must be a whole nonnegative frame".into()))?;
+    let st=s.active().ok_or(EngineError::NoDocument)?;
+    let base=st.doc.clone();
+    let timeline=base.timeline.as_ref().ok_or_else(||bad("timeline.presentFrame","no timeline".into()))?;
+    if frame>=timeline.duration{return Err(bad("timeline.presentFrame","frame is outside the timeline".into()));}
+    let content_revision=st.content_revision;
+    let base_frame=timeline.current;
+    let asynchronous=native_preview_scope();
+    if s.active_job().is_some() {
+        if asynchronous {
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(pending)=s.pending_presentation.as_mut().filter(|pending|pending.document==base.id)
+                && (pending.content_revision!=content_revision || pending.base_frame!=base_frame || pending.frame!=frame)
+            {
+                pending.generation=pending.worker.as_ref().map_or(0,PresentationWorker::invalidate);
+                pending.submitted=false;
+                pending.presented=false;
+                pending.document=base.id;pending.content_revision=content_revision;pending.base_frame=base_frame;pending.frame=frame;
+            }
+            return Ok(json!({"ready":false,"busy":true,"requestedFrame":frame}));
+        }
+        return Err(bad("timeline.presentFrame","a document edit is still running".into()));
+    }
+
+    let mut pending=s.pending_presentation.take().filter(|pending|pending.document==base.id).unwrap_or(PendingPresentation{document:base.id,content_revision,base_frame,frame,generation:0,submitted:false,presented:false,candidate:None,#[cfg(not(target_arch = "wasm32"))] worker:None});
+    let same=pending.content_revision==content_revision && pending.base_frame==base_frame && pending.frame==frame;
+    if same && pending.presented {
+        s.pending_presentation=Some(pending);
+        return Ok(json!({"ready":true,"frame":frame}));
+    }
+    if !same {
+        pending.document=base.id;pending.content_revision=content_revision;pending.base_frame=base_frame;pending.frame=frame;pending.candidate=None;
+        pending.submitted=false;pending.presented=false;
+        #[cfg(not(target_arch = "wasm32"))]
+        {pending.generation=if let Some(worker)=&pending.worker{worker.invalidate()}else{0};}
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    if asynchronous {
+        if pending.worker.is_none(){pending.worker=Some(PresentationWorker::new()?);pending.generation=pending.worker.as_ref().map_or(1,PresentationWorker::next_generation);}
+        let worker=pending.worker.as_ref().ok_or_else(||EngineError::Other("background presentation worker is unavailable".into()))?;
+        if let Some(completed)=worker.try_take(pending.generation,pending.document,pending.content_revision,pending.base_frame,pending.frame) {
+            pending.submitted=false;
+            match completed.result {
+                Ok(doc) => {
+                    let current=s.active().is_some_and(|state|state.doc.id==pending.document && state.content_revision==pending.content_revision && state.doc.timeline.as_ref().is_some_and(|timeline|timeline.current==pending.base_frame));
+                    if current {
+                        pending.candidate=None;pending.base_frame=frame;pending.frame=frame;pending.presented=true;
+                        s.pending_presentation=Some(pending);
+                        return commit_presentation(s,doc,frame);
+                    }
+                    pending.generation=worker.invalidate();
+                }
+                Err(error)=>{
+                    pending.generation=worker.invalidate();
+                    s.pending_presentation=Some(pending);
+                    return Err(EngineError::Other(format!("video frame presentation failed: {error}")));
+                }
+            }
+        }
+        if pending.generation==0{pending.generation=worker.next_generation();}
+        if !pending.submitted {
+            pending.submitted=worker.try_submit(PresentationRequest{document:base.id,content_revision,base_frame,frame,generation:pending.generation,source:Arc::clone(&base)});
+        }
+        let result=json!({"ready":false,"requestedFrame":frame});
+        s.pending_presentation=Some(pending);
+        return Ok(result);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(worker)=&pending.worker{pending.generation=worker.invalidate();pending.submitted=false;}
+    let mut doc=if same {pending.candidate.take().unwrap_or_else(||(*base).clone())}else{(*base).clone()};
+    if !crate::video_cmds::request_presentation_frame(&base,frame)? {
+        pending.candidate=Some(doc);
+        s.pending_presentation=Some(pending);
+        return Ok(json!({"ready":false,"requestedFrame":frame}));
+    }
+    if let Some(timeline)=&mut doc.timeline{timeline.current=frame;}
+    if !crate::video_cmds::sync_for_presentation(&mut doc)? {
+        pending.candidate=Some(doc);
+        s.pending_presentation=Some(pending);
+        return Ok(json!({"ready":false,"requestedFrame":frame}));
+    }
+    pending.base_frame=frame;pending.frame=frame;pending.presented=true;pending.content_revision=content_revision;pending.candidate=None;
+    s.pending_presentation=Some(pending);
+    commit_presentation(s,doc,frame)
 }
 
 fn step(s: &mut Session, delta: i64) -> Result<Value> {

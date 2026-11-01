@@ -1220,13 +1220,13 @@ pub(crate) fn effect_reach(layers: &[photostore_doc::Layer]) -> i32 {
 /// GPU path: make sure document `idx` is current in the GPU canvas. Brush strokes re-composite
 /// and upload only their damage rect; everything else re-composites the whole document.
 /// Returns false if there is no GPU canvas.
-fn ensure_gpu(app: &mut PhotoStoreApp, idx: usize, visible: DRect) -> bool {
+fn ensure_gpu(app: &mut PhotoStoreApp, ctx: &egui::Context, idx: usize, visible: DRect) -> bool {
     let Some(gpu) = app.gpu.clone() else { return false };
-    let Some((revision, last_damage, id)) = app
+    let Some((revision, content_revision, last_damage, id)) = app
         .session
         .documents()
         .get(idx)
-        .map(|st| (st.revision, st.last_damage.map(|r| if r.is_empty() { r } else { r.inflate(effect_reach(&st.doc.layers)) }), st.doc.id))
+        .map(|st| (st.revision, st.content_revision, st.last_damage.map(|r| if r.is_empty() { r } else { r.inflate(effect_reach(&st.doc.layers)) }), st.doc.id))
     else {
         return false;
     };
@@ -1255,6 +1255,33 @@ fn ensure_gpu(app: &mut PhotoStoreApp, idx: usize, visible: DRect) -> bool {
         grid: None,
     });
     let present = cache.on_gpu && gpu.has(id.0, size);
+    #[cfg(not(target_arch = "wasm32"))]
+    if raw_key == 0 && app.session.active_index() == Some(idx)
+        && doc.timeline.as_ref().is_some_and(|t| t.mode == photostore_doc::TimelineMode::Video)
+    {
+        let same_budget = app.perf.gpu_budget_content == Some((id.0, content_revision));
+        gpu_budget(app, &gpu, idx, same_budget, visible);
+        let ready = gpu.refresh_playback(doc, revision, content_revision, preview_key, display, ctx);
+        if let Some(cache) = app.canvases.get_mut(&(id, GPU_OUTPUT)) {
+            if let Some((revision, preview)) = ready.published {
+                cache.revision = revision;
+                cache.preview_key = preview;
+            }
+            cache.on_gpu = ready.available;
+        }
+        if let Some(error) = ready.fallback {
+            app.perf.gpu_fallback = Some(error.clone());
+            if !ready.pending && !ready.available {
+                app.ui.status = error;
+                app.ui.status_error = true;
+            }
+        }
+        if ready.pending { app.perf.record("gpu-buffering", 0, 0.0, 0.0); }
+        // With no completed texture yet, paint the empty GPU canvas/pasteboard rather than
+        // falling through to a synchronous full CPU composite while the worker is loading.
+        return ready.available || ready.pending;
+    }
+    if app.session.active_index() == Some(idx) { gpu.cancel_playback_refresh(); }
     if present && cache.revision == revision && cache.preview_key == preview_key {
         // An adjustment preview composited where the view was: catch up where it moved to.
         if let Some(r) = crate::adjust_preview::uncovered(app, id, raw_key, visible) {
@@ -1305,6 +1332,7 @@ fn gpu_budget(app: &mut PhotoStoreApp, gpu: &crate::gpu_canvas::GpuCanvas, idx: 
     let pixels = st.history.pixel_bytes(&st.doc) as u64;
     let budget = crate::gpu_canvas::memory_budget(allowance, pixels, crate::gpu_canvas::physical_memory());
     gpu.set_memory_budget(budget);
+    app.perf.gpu_budget_content = Some((st.doc.id.0, st.content_revision));
     app.perf.gpu_budget_mb = budget >> 20;
     app.perf.gpu_budget_allowance = allowance;
 }
@@ -2407,6 +2435,19 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
     let pixel_grid = app.ui.view.shows(app.ui.view.show.pixel_grid);
     // Only the foreground bar rect owns pointer input; the rest of the canvas remains usable.
     let response = ui.allocate_rect(rect, Sense::click_and_drag());
+    if primary {
+        let context = egui::Id::new(("canvas-space-context", ctx.viewport_id()));
+        let focus = egui::Id::new(("canvas-space-focus-id", ctx.viewport_id()));
+        if response.hovered() && ctx.input(|input| input.pointer.any_pressed()) {
+            response.request_focus();
+            ctx.data_mut(|data| {
+                data.insert_temp(context, doc.id.0);
+                data.insert_temp(focus, response.id);
+            });
+        } else if ctx.input(|input| input.pointer.any_pressed()) {
+            ctx.data_mut(|data| data.remove::<u64>(context));
+        }
+    }
     let video_preview = doc.timeline.as_ref().is_some_and(|timeline| matches!(timeline.mode, photostore_doc::TimelineMode::Video));
     if response.hovered() && (response.clicked() || response.drag_started()) {
         app.ui.timeline.preview_context = video_preview.then_some(doc.id);
@@ -2567,7 +2608,7 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
             hdr: hdr_preview(app, &doc),
         };
         crate::gpu_canvas::GpuCanvas::paint(&painter, rect, params);
-    } else if onion_texture.is_none() && gpu_ok && ensure_gpu(app, idx, visible_doc_rect(&xf)) {
+    } else if onion_texture.is_none() && gpu_ok && ensure_gpu(app, &ctx, idx, visible_doc_rect(&xf)) {
         on_gpu = true;
         on_gpu_document = true;
         app.perf.gpu = true;
@@ -2863,11 +2904,11 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
         // Rotate View: drag around the view centre. Compass clicks are not a rotate drag.
         let over_compass = crate::rotate_view::compass_visible(view.rotation)
             && response.interact_pointer_pos().is_some_and(|p| crate::rotate_view::compass_rect(xf.rect).contains(p));
-        if tool == Tool::RotateView && !over_compass && crate::rotate_view::drag(&ctx, &mut view, &xf, &buttons, response.interact_pointer_pos()) {
+        if tool == Tool::RotateView && !transforming && !over_compass && crate::rotate_view::drag(&ctx, &mut view, &xf, &buttons, response.interact_pointer_pos()) {
             (buttons.started, buttons.dragged, buttons.stopped, buttons.clicked) = (false, false, false, false);
         }
         // Zoom tool drags: scrubby zoom or a zoom rectangle (zoom_tool.rs); clicks step below.
-        if tool == Tool::Zoom && crate::zoom_tool::drag(app, &ctx, &mut view, &xf, &buttons, response.interact_pointer_pos()) {
+        if tool == Tool::Zoom && !transforming && crate::zoom_tool::drag(app, &ctx, &mut view, &xf, &buttons, response.interact_pointer_pos()) {
             (buttons.started, buttons.dragged, buttons.stopped) = (false, false, false);
         }
         // A drag is only recognised once the pointer has moved past egui's click distance: the
@@ -3257,6 +3298,7 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
     if primary {
         app.ui.views[idx] = view.clone();
         if video_preview && (on_gpu_document || cpu_document_drawn)
+            && (!on_gpu_document || app.gpu.as_ref().is_some_and(|gpu| gpu.playback_matches(doc.id.0, app.session.documents()[idx].revision)))
             && app.session.active().is_some_and(|st| st.doc.id == doc.id && st.doc.timeline.as_ref().is_some_and(|t| Some(t.current) == doc.timeline.as_ref().map(|x| x.current)))
             && let Some(signal) = app.timeline_playback.take_preroll_signal(doc.id, doc.timeline.as_ref().map_or(usize::MAX, |t| t.current))
         {
