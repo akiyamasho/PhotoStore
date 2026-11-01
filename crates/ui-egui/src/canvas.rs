@@ -3040,6 +3040,10 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
             let click_mods = ui.input(|i| pointer_button_modifiers(&i.events, click_button)).unwrap_or(mods);
             let d = xf.to_doc(p);
             match tool {
+                _ if transforming && tool != Tool::Hand => {
+                    tool_event(app, ToolEvent::Down { x: d[0], y: d[1], pressure: app.stylus.pressure() }, click_mods);
+                    tool_event(app, ToolEvent::Up { x: d[0], y: d[1] }, click_mods);
+                }
                 Tool::Zoom => {
                     let nz = crate::zoom_levels::step(view.zoom, if zoom_out(click_mods.alt) { -1 } else { 1 }, view.doc_size);
                     let center = app.session.prefs().tools.zoom_clicked_point_to_center;
