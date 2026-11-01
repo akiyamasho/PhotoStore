@@ -1981,11 +1981,11 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                 }
                 // Reserve the status slot even when ready. Conditional spinner/text used to
                 // change this row's minimum width and shift the ruler/gutter on every cache miss.
-                ui.allocate_ui_with_layout(vec2(20.0, 20.0), egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
-                    if app.timeline_playback.loading() {
-                        ui.add(egui::Spinner::new().size(14.0)).on_hover_text("Preparing preview · the last complete frame remains visible");
-                    }
-                });
+                let (status_rect, status_response) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
+                if app.timeline_playback.loading() {
+                    egui::Spinner::new().paint_at(ui, status_rect.shrink(3.0));
+                    status_response.on_hover_text("Preparing preview · the last complete frame remains visible");
+                }
                 if !very_narrow_toolbar && crate::icons::button(ui, "chevrons-left", 20.0, false, "Previous frame (←)").clicked() {
                     action = Some(("timeline.previousFrame", json!({"document":doc.0})));
                 }
