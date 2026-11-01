@@ -17,6 +17,8 @@ pub(crate) struct Runtime {
     direction: i32,
     origin_doc: Option<photostore_doc::DocId>,
     expected_revision: u64,
+    expected_frame: usize,
+    pending_frame: Option<usize>,
     origin_history: (usize, usize),
     timing_signature: u64,
     fps: f64,
@@ -34,6 +36,7 @@ pub(crate) struct Runtime {
     audio_signature: u64,
     audio_doc: Option<photostore_doc::DocId>,
     audio_start: f64,
+    audio_clock_base: f64,
     audio_end: f64,
     loop_cycle: usize,
     reverse_audio_reported: bool,
@@ -47,6 +50,8 @@ impl Default for Runtime {
             direction: 0,
             origin_doc: None,
             expected_revision: 0,
+            expected_frame: 0,
+            pending_frame: None,
             origin_history: (0, 0),
             timing_signature: 0,
             fps: 30.0,
@@ -64,6 +69,7 @@ impl Default for Runtime {
             audio_signature: 0,
             audio_doc: None,
             audio_start: 0.0,
+            audio_clock_base: 0.0,
             audio_end: 0.0,
             loop_cycle: 0,
             reverse_audio_reported: false,
@@ -88,6 +94,7 @@ impl Runtime {
             audio.stop();
         }
         self.origin_doc = None;
+        self.pending_frame = None;
         self.reverse_audio_reported = false;
         self.reverse_leg = false;
     }
@@ -101,7 +108,7 @@ impl Runtime {
     fn signature(t: &Timeline, fallback: &[u32]) -> u64 {
         // Timing metadata is bounded by the timeline itself. This avoids cloning or hashing a
         // document on every paint while still invalidating exposure boundaries after edits.
-        let mut x = t.fps.to_bits() as u64
+        let mut x = t.fps.to_bits() as u64 ^ (t.project_rate().numerator as u64).rotate_left(23) ^ (t.project_rate().denominator as u64).rotate_left(29)
             ^ (t.duration as u64).rotate_left(7)
             ^ (t.work_start as u64).rotate_left(13)
             ^ (t.work_end as u64).rotate_left(19)
@@ -169,7 +176,7 @@ impl Runtime {
             for frame in 0..t.duration {
                 let delay = t.frame_delays_ms.get(frame).copied().unwrap_or(0);
                 let delay = if delay > 0 { delay } else { fallback.get(frame).copied().unwrap_or(0) };
-                let seconds = if delay == 0 { 1.0 / f64::from(t.fps.max(0.001)) } else { f64::from(delay) / 1000.0 };
+                let seconds = if delay == 0 { 1.0 / t.project_rate().as_f64() } else { f64::from(delay) / 1000.0 };
                 self.variable_prefix.push(self.variable_prefix.last().copied().unwrap_or(0.0) + seconds);
             }
         }
@@ -181,7 +188,7 @@ impl Runtime {
         let span = if matches!(t.mode, TimelineMode::FrameAnimation) {
             self.variable_prefix.get(end).copied().unwrap_or(0.0) - self.variable_prefix.get(start).copied().unwrap_or(0.0)
         } else {
-            (end.saturating_sub(start)) as f64 / f64::from(t.fps.max(0.001))
+            (end.saturating_sub(start)) as f64 / t.project_rate().as_f64()
         };
         if span <= 0.0 {
             return (start, false, true);
@@ -233,7 +240,7 @@ impl Runtime {
             let wanted = self.variable_prefix.get(start).copied().unwrap_or(0.0) + local;
             self.variable_prefix.partition_point(|v| *v <= wanted).saturating_sub(1).clamp(start, end.saturating_sub(1))
         } else {
-            (start + (local * f64::from(t.fps.max(0.001))).floor() as usize).min(end.saturating_sub(1))
+            (start + (local * t.project_rate().as_f64()).floor() as usize).min(end.saturating_sub(1))
         };
         (target, reverse, completed)
     }
@@ -242,6 +249,9 @@ impl Runtime {
         self.stop_audio();
         let start = self.frame_start(t, frame.clamp(t.work_start, t.work_end.saturating_sub(1)));
         let end = self.frame_start(t, t.work_end);
+        let span = self.frame_start(t, t.work_end) - self.frame_start(t, t.work_start);
+        let cycle_span = if matches!(t.loop_mode,TimelineLoop::PingPong) { span * 2.0 } else { span };
+        self.audio_clock_base = (self.loop_cycle as f64 * cycle_span + start - self.frame_start(t,t.work_start) - self.start_offset).max(0.0);
         let clips = photostore_engine::audio_mix_for_range(t, start, end).map_err(|e| e.to_string())?;
         if clips.is_empty() {
             return Ok(());
@@ -274,9 +284,11 @@ impl Runtime {
         self.direction = 1;
         self.origin_doc = Some(doc);
         self.expected_revision = revision;
+        self.expected_frame = t.current;
+        self.pending_frame = None;
         self.origin_history = history;
         self.timing_signature = Self::signature(t, fallback);
-        self.fps = f64::from(t.fps.max(0.001));
+        self.fps = t.project_rate().as_f64();
         self.duration = t.duration;
         self.mode = t.mode;
         self.work_start = t.work_start;
@@ -335,33 +347,45 @@ impl Runtime {
                 self.timing_signature = signature;
                 self.rebuild_boundaries(t, fallback);
             }
-            // A seek, edit, undo, or redo invalidates the old wall-clock origin. Rebase to the
-            // current playhead before advancing so the next paint cannot overwrite the seek.
+            // A decoded preview changes the render revision, but is not a seek or edit.
+            // Rebasing for every completion repeatedly restarts both the clock and audio.
+            let rebase = timing_changed || history != self.origin_history || t.current != self.expected_frame;
+            if rebase {
+            self.fps=t.project_rate().as_f64();self.duration=t.duration;self.work_start=t.work_start;self.work_end=t.work_end;self.mode=t.mode;
             self.started_at = now;
             self.start_frame = t.current.clamp(t.work_start, t.work_end.saturating_sub(1));
             self.start_offset = self.frame_start(t, self.start_frame) - self.frame_start(t, t.work_start);
             self.loop_cycle = 0;
+            self.pending_frame = None;
             if self.direction >= 0
                 && let Err(error) = self.start_audio(t, doc, self.start_frame)
             {
                 app.ui.status = format!("Audio preview: {error}");
                 app.ui.status_error = true;
             }
+            }
             self.expected_revision = revision;
+            self.expected_frame = t.current;
             self.origin_history = history;
         }
         if let Some(audio) = self.audio.as_mut() {
+            let device_elapsed = audio.position_seconds().map(|seconds| self.audio_clock_base + seconds);
             match audio.poll() {
                 Ok(true) => {}
-                Ok(false) => self.audio = None,
+                Ok(false) => {
+                    if let Some(elapsed)=device_elapsed { self.started_at=now-elapsed; }
+                    self.audio = None;
+                }
                 Err(error) => {
+                    if let Some(elapsed)=device_elapsed { self.started_at=now-elapsed; }
                     self.audio = None;
                     app.ui.status = format!("Audio preview: {error}");
                     app.ui.status_error = true;
                 }
             }
         }
-        let elapsed = (now - self.started_at).max(0.0);
+        let elapsed = self.audio.as_ref().and_then(|audio|audio.position_seconds()).map(|seconds|self.audio_clock_base+seconds)
+            .unwrap_or_else(||(now-self.started_at).max(0.0));
         let (mut frame, mut reverse, mut completed) = self.frame_for_elapsed(t, elapsed);
         if self.direction < 0 && matches!(t.mode, TimelineMode::Video) {
             let delta = (elapsed * self.fps).floor().max(0.0) as usize;
@@ -375,7 +399,7 @@ impl Runtime {
             let span = if matches!(t.mode, TimelineMode::FrameAnimation) {
                 self.variable_prefix.get(t.work_end).copied().unwrap_or(0.0) - self.variable_prefix.get(t.work_start).copied().unwrap_or(0.0)
             } else {
-                (t.work_end.saturating_sub(t.work_start)) as f64 / f64::from(t.fps.max(0.001))
+                (t.work_end.saturating_sub(t.work_start)) as f64 / t.project_rate().as_f64()
             };
             if span > 0.0 {
                 let cycle_span = if matches!(t.loop_mode, TimelineLoop::PingPong) { span * 2.0 } else { span };
@@ -410,15 +434,34 @@ impl Runtime {
                 }
             }
         }
-        if frame != t.current {
-            let _ = app.run("timeline.setFrame", json!({"frame": frame}));
-            self.expected_revision = app.session.active().map_or(revision, |st| st.revision);
+        // Keep one exact requested presentation frame until its decode completes. Replacing it
+        // every paint starves the canvas: completed timestamps are always behind the playhead.
+        // Once presented, jump to the current clock target, dropping decode-late frames rather
+        // than accumulating an ever-growing queue or showing another timestamp as current.
+        if frame != t.current || self.pending_frame.is_some() {
+            let requested = *self.pending_frame.get_or_insert(frame);
+            match app.run("timeline.presentFrame", json!({"frame": requested})) {
+                Ok(result) if result.get("ready").and_then(serde_json::Value::as_bool) == Some(true) => {
+                    self.pending_frame = None;
+                    self.expected_frame = requested;
+                    self.expected_revision = app.session.active().map_or(revision, |st| st.revision);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    self.stop();
+                    app.ui.status = format!("Video preview: {error}");
+                    app.ui.status_error = true;
+                    return;
+                }
+            }
         }
-        if completed {
+        if completed && self.pending_frame.is_none() && app.session.active().and_then(|st| st.doc.timeline.as_ref()).is_some_and(|t| t.current == frame) {
             self.stop();
         }
-        ctx.request_repaint_after(Duration::from_millis(8));
+        ctx.request_repaint_after(Duration::from_millis(16));
     }
+
+    pub(crate) fn loading(&self) -> bool { self.pending_frame.is_some() }
 }
 
 pub(crate) fn tick(app: &mut PhotoStoreApp, ctx: &Context) {

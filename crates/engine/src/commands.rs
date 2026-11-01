@@ -758,8 +758,12 @@ fn build() -> Vec<CommandSpec> {
                 }
                 let mut below = parent.to_vec();
                 below.push(idx - 1);
-                let lower = doc.layer_at(&below).ok_or(EngineError::NoLayer(id))?.clone();
-                let upper = doc.layer(id).ok_or(EngineError::NoLayer(id))?.clone();
+                let mut isolated=doc.clone();
+                isolated.layers=vec![doc.layer_at(&below).ok_or(EngineError::NoLayer(id))?.clone(),doc.layer(id).ok_or(EngineError::NoLayer(id))?.clone()];
+                let original=crate::video_cmds::original_output_snapshot(&isolated)?;
+                let source=original.as_ref().unwrap_or(&isolated);
+                let lower = source.layers[0].clone();
+                let upper = source.layers[1].clone();
                 let merged = pixels::merge_down(doc.bounds(), &lower, &upper, doc.pixel_format());
                 doc.remove(id);
                 *doc.layer_at_mut(&below).ok_or(EngineError::NoLayer(lower.id))? = merged;
@@ -774,7 +778,8 @@ fn build() -> Vec<CommandSpec> {
                 let mut bg = Layer::raster("Background", fmt);
                 bg.locks.transparency = true;
                 bg.locks.position = true;
-                *crate::pixels_mut(&mut bg)? = photostore_compose::flatten_to_surface(doc, fmt, Some([1.0, 1.0, 1.0]));
+                let original=crate::video_cmds::original_output_snapshot(doc)?;
+                *crate::pixels_mut(&mut bg)? = photostore_compose::flatten_to_surface(original.as_ref().unwrap_or(doc), fmt, Some([1.0, 1.0, 1.0]));
                 *active = Some(bg.id);
                 doc.layers = vec![bg];
                 Ok(())
@@ -1219,6 +1224,9 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::migrate_cmds::specs());
     v.extend(crate::trap_cmds::specs());
     v.extend(crate::timeline_cmds::specs());
+    v.extend(crate::media_asset_cmds::specs());
+    v.extend(crate::media_insert_cmds::specs());
+    v.extend(crate::media_proxy::specs());
     v.extend(crate::timeline_editor_cmds::specs());
     v.extend(crate::video_cmds::specs());
     v.extend(crate::position_cmds::specs());

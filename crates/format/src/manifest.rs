@@ -15,7 +15,7 @@ use photostore_geom::{Affine, Size};
 use serde::{Deserialize, Serialize};
 
 /// Current manifest version written by this build.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 
 /// Hex-encoded BLAKE3 hash (64 chars).
 pub type Hash = String;
@@ -81,6 +81,9 @@ pub struct DocM {
     /// Window › Timeline.
     #[serde(default)]
     pub timeline: Option<photostore_doc::Timeline>,
+    /// Shared external source identities. Missing in pre-v3 bundles.
+    #[serde(default)]
+    pub media_assets: Vec<photostore_doc::MediaAsset>,
     /// Image › Analysis: measurement scale, count groups, ruler.
     #[serde(default)]
     pub measurement: photostore_doc::Measurement,
@@ -195,6 +198,8 @@ pub struct VideoDataM {
     #[serde(default)]
     pub keyframes: Vec<photostore_doc::VideoKeyframe>,
     pub source: photostore_doc::VideoSource,
+    #[serde(default)]
+    pub asset_id: Option<photostore_doc::MediaAssetId>,
     pub fps: f32,
     #[serde(default)]
     pub playback: photostore_doc::VideoPlayback,
@@ -331,6 +336,8 @@ pub enum ContentM {
         #[serde(default)]
         contents_id: Option<u64>,
         source: SmartSourceM,
+        #[serde(default)]
+        asset_id: Option<photostore_doc::MediaAssetId>,
         transform: Affine,
         smart_filters: Vec<SmartFilter>,
         cache: Option<SurfaceM>,

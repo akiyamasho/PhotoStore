@@ -1214,6 +1214,7 @@ fn smart_clip_split_trim_and_move_keep_the_nested_source_clock() {
             name: "Linked audio".into(),
             muted: false,
             clips: vec![photostore_doc::AudioClip {
+                asset_id: None,
                 id: 1,
                 name: "Linked source".into(),
                 path: "missing-audio-source.wav".into(),

@@ -523,6 +523,57 @@ fn video_layer_frames_survive_roundtrip() {
     assert!(px[0][0] > 0.9 && px[0][2] < 0.1, "frame 2 is reddish: {:?}", px[0]);
 }
 
+#[test]
+fn timeline_completion_data_boundary_v3_roundtrip_keeps_sources_clock_and_affine_snapshot() {
+    use photostore_doc::{FrameLayerState, MediaAssetFingerprint, MediaAssetMetadata, MediaAudioMetadata, MediaVideoMetadata, RationalRate, SmartObject, SmartSource, Timeline, VideoData, VideoSource};
+    let mut doc = Document::new("Media bindings", photostore_geom::Size { width: 8, height: 6 }, ColorMode::Rgb, SampleType::U8);
+    let mut timeline = Timeline::new(12, 24.0);
+    timeline.set_project_rate(RationalRate::new(24_000, 1_001).unwrap()).unwrap();
+    doc.timeline = Some(timeline);
+    let fmt = doc.pixel_format();
+    let path = "/tmp/shared-source.mp4";
+    let mut movie = Layer::raster("Movie", fmt);
+    let mut video = VideoData::new(vec![photostore_raster::Surface::new(fmt)], 24.0);
+    video.source = VideoSource::File { path: path.into() };
+    movie.video = Some(video);
+    let movie_id = movie.id;
+    doc.layers.push(movie);
+    let linked = Layer::new("Linked Smart", LayerContent::Smart(SmartObject::new(
+        SmartSource::Linked { path: path.into() }, photostore_geom::Affine::IDENTITY, None,
+    )));
+    let linked_id = linked.id;
+    doc.layers.push(linked);
+    doc.reconcile_media_assets().unwrap();
+    let id = doc.media_assets[0].id;
+    let asset = doc.media_assets.iter_mut().find(|asset| asset.id == id).unwrap();
+    asset.fingerprint = Some(MediaAssetFingerprint { byte_len: 1234, modified_unix_nanos: Some(5_000) });
+    asset.metadata = Some(MediaAssetMetadata {
+        video: Some(MediaVideoMetadata {
+            width: 1920, height: 1080, frame_count: Some(240), frame_rate: RationalRate::new(24_000, 1_001).unwrap(),
+            duration_seconds: 10.01, codec: Some("h264".into()), time_base: RationalRate::new(1, 90_000),
+            color_transfer: Some("bt709".into()), color_primaries: Some("bt709".into()), color_space: Some("bt709".into()),
+        }),
+        audio: Some(MediaAudioMetadata { channels: 2, sample_rate: 48_000, duration_seconds: 10.01, codec: Some("aac".into()) }),
+    });
+    let states = vec![
+        FrameLayerState { smart_transform: Some([1.0, 0.0, 0.0, 1.0, 3.0, 4.0]), ..FrameLayerState::legacy(movie_id, true, 1.0) },
+        FrameLayerState::legacy(linked_id, true, 1.0),
+    ];
+    doc.timeline.as_mut().unwrap().frame_states = vec![states];
+    let bytes = save_to_bytes(&doc, &SaveOptions::default()).unwrap();
+    let back = load_from_bytes(&bytes).unwrap();
+    let rate = back.timeline.as_ref().unwrap().project_rate();
+    assert_eq!((rate.numerator, rate.denominator), (24_000, 1_001));
+    assert_eq!(back.media_assets.len(), 1);
+    assert_eq!(back.media_assets[0].id, id);
+    assert_eq!(back.layers.iter().find(|layer| layer.id == movie_id).unwrap().video.as_ref().unwrap().asset_id, Some(id));
+    let smart_layer = back.layers.iter().find(|layer| layer.id == linked_id).unwrap();
+    assert!(matches!(&smart_layer.content, photostore_doc::LayerContent::Smart(_)));
+    if let photostore_doc::LayerContent::Smart(smart) = &smart_layer.content { assert_eq!(smart.asset_id, Some(id)); }
+    assert_eq!(back.timeline.as_ref().unwrap().frame_states[0][0].smart_transform, Some([1.0, 0.0, 0.0, 1.0, 3.0, 4.0]));
+    assert_eq!(back.media_assets[0].metadata.as_ref().unwrap().video.as_ref().unwrap().time_base, RationalRate::new(1, 90_000));
+}
+
 /// Issue #1101: serde_json writes NaN and the infinities as `null`, which the manifest's float
 /// fields refuse on load, so such a document saved "successfully" and never opened again. The
 /// save is refused instead, naming the value; finite documents are unaffected.

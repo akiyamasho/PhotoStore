@@ -85,6 +85,9 @@ fn render_form_on_document(app: &mut PhotoStoreApp, target: DocId, path: String)
     fields.insert("start".into(), json!(start));
     fields.insert("end".into(), json!(end));
     fields.insert("fps".into(), json!(fps));
+    let rate=app.session.active().and_then(|s|s.doc.timeline.as_ref()).map(|t|t.project_rate());
+    if let Some(rate)=rate {fields.insert("fps".into(),json!(rate.as_f64()));fields.insert("__projectRate".into(),json!(rate));}
+    fields.insert("background".into(),json!("black"));
     fields.insert("fullTimeline".into(), json!(false));
     fields.insert("overwrite".into(), json!(false));
     fields.insert("__choices".into(), json!({"format": ["mp4", "mov", "webm", "gif", "png"]}));
@@ -118,6 +121,14 @@ pub fn body(ui: &mut egui::Ui, fields: &mut Map<String, Value>) {
         crate::widgets::dropdown(ui, "movie-format", &mut format, &choices, 220.0);
     });
     fields.insert("format".into(), Value::String(format));
+    if fields.get("format").and_then(Value::as_str)==Some("mp4") {
+        ui.horizontal(|ui| {
+            ui.label("MP4 background (no alpha)");
+            let mut background=fields.get("background").and_then(Value::as_str).unwrap_or("black").to_string();
+            crate::widgets::dropdown(ui,"movie-background",&mut background,&[("black".into(),"Black"),("white".into(),"White")],100.0);
+            fields.insert("background".into(),json!(background));
+        });
+    }
     let mut full = fields.get("fullTimeline").and_then(Value::as_bool).unwrap_or(false);
     if ui.checkbox(&mut full, "Full timeline").changed() {
         let (start, end) = if full { (number(fields, "__fullStart"), number(fields, "__fullEnd")) } else { (number(fields, "__workStart"), number(fields, "__workEnd")) };
@@ -165,7 +176,11 @@ pub fn confirm(app: &mut PhotoStoreApp, fields: &Map<String, Value>) -> Result<V
                 return Err("movie range is outside the current timeline".into());
             }
         }
-        app.run(RENDER_VIDEO, json!({"path": path, "format": format, "start": start, "end": end, "fps": fps, "overwrite": fields.get("overwrite").and_then(Value::as_bool).unwrap_or(false)}))
+        let mut params=json!({"path": path, "format": format, "start": start, "end": end, "fps": fps, "background":fields.get("background").cloned().unwrap_or(json!("black")),"overwrite": fields.get("overwrite").and_then(Value::as_bool).unwrap_or(false)});
+        if let Some(rate)=fields.get("__projectRate").and_then(|v|serde_json::from_value::<photostore_doc::RationalRate>(v.clone()).ok()).filter(|rate|(rate.as_f64()-fps).abs()<1e-9) {
+            if let Some(map)=params.as_object_mut(){map.remove("fps");map.insert("fpsNumerator".into(),json!(rate.numerator));map.insert("fpsDenominator".into(),json!(rate.denominator));}
+        }
+        app.run(RENDER_VIDEO,params)
     })
 }
 

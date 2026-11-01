@@ -2,6 +2,8 @@
 
 > **Current delivery — 2026-11-01:** Stable [v0.19.0](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.19.0), exact source `8aaacce50eccee3eb6d6261b21910cce7fe32545`, is published and installed as the normal PhotoStore app and CLI. It carries the existing major timeline overhaul plus layout, editing, and media enhancements. Issue #23 remains open for user visual/interaction/export acceptance. See the [release receipt](releases/0.19.0.md), [specification](plans/video-timeline-2026-11-01.md), and [GPT Image design provenance](design/2026-11-01/README.md). No computer-use, screenshot, native interaction, or visual-acceptance claim is made.
 
+> **Completion source pass — 2026-11-01:** The follow-up implementation adds the source catalog/relink workflow, rational project rate, exact-frame presentation, shared derived-cache accounting, opt-in disk proxies, sample-clocked native audio with fallback, and additional Smart Object/export behavior. The source changes are integrated; five engine/two format boundary checks passed and the production build is pending; the installed 0.19.0 binary does not yet contain them. See the [completion plan](plans/video-timeline-completion-2026-11-01.md), [0.20.0 candidate receipt](releases/0.20.0.md), and [workflow design reference](design/2026-11-01/timeline-completion/workflow.png). The design image is synthetic, not a product screenshot. No hardware, native UI, export, or performance acceptance is claimed.
+
 Issue #23 was reopened on 2026-10-27 after the prior timeline UI was rejected. This page records
 the major-overhaul implementation in source commit
 `5aa7c4a3566a3825bb1acb191e9279bd556dec21`, published to `main` on 2026-10-31 in the
@@ -81,9 +83,11 @@ implemented in the existing paragraph-text tool. Visual clip thumbnail sampling 
 visible clip rectangles. The selected-clip inspector exposes ordinary source trim/speed and selected
 audio properties.
 
-Perspective/warp animation is unsupported. Transform keys use the source-center pivot; conversion
-to Frame Animation remains guarded while Transform animation is enabled because key baking is not
-implemented. During the earlier development pass, the required PhotoStore-dev build passed in 6m03s from the source SHA above. Its
+Perspective/warp animation remains unsupported. Transform keys use the source-center pivot. The
+0.19.0 limitation that guarded conversion while Transform animation was enabled is addressed in the
+current source pass by sampling affine Smart Transform into editable frame snapshots while retaining
+the Smart Object source. Its focused test is authored but has not yet run against the integrated
+source. During the earlier development pass, the required PhotoStore-dev build passed in 6m03s from the source SHA above. Its
 runtime binary was `5aa7c4a3566a3825bb1acb191e9279bd556dec21-216e5754fdbb8689`; its guarded reload
 was deferred because the existing PhotoStore-dev process had open documents. The later consolidated
 runtime `a387feb51d63b3749f892af046de592403105b2d-8184edd6c3af42a5` includes this overhaul plus the
@@ -95,3 +99,12 @@ Seven focused implementation filters
 passed 1/1 each during the implementation pass; they did not all run against the exact final source
 SHA. Manual visual, interaction and export acceptance remain outstanding. Do not claim full
 CapCut/Photoshop parity or close issue #23 until acceptance is complete.
+
+## Source completion pass for 0.20.0
+
+The [completion plan](plans/video-timeline-completion-2026-11-01.md) records the implemented
+source-level additions and their resource/format boundaries. They have not yet been built into the
+installed app. The [0.20.0 candidate receipt](releases/0.20.0.md) leaves tests and the single
+production build with the primary delivery owner. Issue #23 remains open until the user accepts the
+native workflow. No benchmark, screenshot, hardware audio, HDR conversion, or full Photoshop/CapCut
+parity claim is made.

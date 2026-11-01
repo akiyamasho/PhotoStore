@@ -8,6 +8,99 @@ use serde::{Deserialize, Serialize};
 use photostore_geom::Point;
 use photostore_raster::Surface;
 
+/// Stable document-local identity for an external file, independent of its path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct MediaAssetId(pub u64);
+impl MediaAssetId {
+    pub fn fresh() -> Self { Self(crate::LayerId::fresh().0) }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RationalRate {
+    pub numerator: u32,
+    pub denominator: u32,
+}
+impl RationalRate {
+    pub fn new(numerator: u32, denominator: u32) -> Option<Self> {
+        if numerator == 0 || denominator == 0 { return None; }
+        let gcd = gcd_u32(numerator, denominator);
+        Some(Self { numerator: numerator / gcd, denominator: denominator / gcd })
+    }
+    pub fn as_f64(self) -> f64 { f64::from(self.numerator) / f64::from(self.denominator) }
+    pub fn positive(self) -> bool { self.numerator > 0 && self.denominator > 0 && self.as_f64().is_finite() && self.as_f64() > 0.0 }
+    pub fn valid(self) -> bool {
+        self.positive() && (0.001..=1000.0).contains(&self.as_f64())
+    }
+    fn from_legacy_fps(fps: f32) -> Self {
+        const SCALE: u32 = 1_000_000;
+        if !fps.is_finite() || fps <= 0.0 { return Self { numerator: 30, denominator: 1 }; }
+        let numerator = (f64::from(fps).min(1000.0) * f64::from(SCALE)).round().clamp(1.0, u32::MAX as f64) as u32;
+        Self::new(numerator, SCALE).unwrap_or(Self { numerator: 30, denominator: 1 })
+    }
+}
+fn gcd_u32(mut a: u32, mut b: u32) -> u32 {
+    while b != 0 { let r = a % b; a = b; b = r; }
+    a.max(1)
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MediaAssetFingerprint {
+    pub byte_len: u64,
+    #[serde(default)]
+    pub modified_unix_nanos: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MediaVideoMetadata {
+    pub width: u32,
+    pub height: u32,
+    pub frame_count: Option<u64>,
+    pub frame_rate: RationalRate,
+    pub duration_seconds: f64,
+    pub codec: Option<String>,
+    /// Stream time base in seconds per presentation timestamp tick, when reported by the source.
+    #[serde(default)]
+    pub time_base: Option<RationalRate>,
+    #[serde(default)]
+    pub color_transfer: Option<String>,
+    #[serde(default)]
+    pub color_primaries: Option<String>,
+    #[serde(default)]
+    pub color_space: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MediaAudioMetadata {
+    pub channels: u32,
+    pub sample_rate: u32,
+    pub duration_seconds: f64,
+    /// Codec name as declared by the source probe, when available.
+    #[serde(default)]
+    pub codec: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct MediaAssetMetadata {
+    #[serde(default)]
+    pub video: Option<MediaVideoMetadata>,
+    #[serde(default)]
+    pub audio: Option<MediaAudioMetadata>,
+}
+
+/// One external source shared by video, audio, or linked Smart Object instances.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MediaAsset {
+    pub id: MediaAssetId,
+    #[serde(default = "default_asset_revision")]
+    pub revision: u64,
+    pub path: String,
+    #[serde(default)]
+    pub fingerprint: Option<MediaAssetFingerprint>,
+    #[serde(default)]
+    pub metadata: Option<MediaAssetMetadata>,
+}
+fn default_asset_revision() -> u64 { 1 }
+
 pub const MAX_OPACITY_ANIMATION_KEYS: usize = 100_000;
 pub const MAX_OPACITY_ANIMATION_TRACKS: usize = 256;
 pub const MAX_OPACITY_ANIMATION_FRAME: usize = 999_999;
@@ -395,6 +488,8 @@ pub struct VideoData {
     pub frame_delays_ms: Vec<u32>,
     pub keyframes: Vec<VideoKeyframe>,
     pub source: VideoSource,
+    /// Optional stable source identity; path remains as a legacy mirror for older APIs.
+    pub asset_id: Option<MediaAssetId>,
     pub fps: f32,
     /// Source playback origin and rate for the editable video layer.
     pub playback: VideoPlayback,
@@ -416,6 +511,7 @@ impl VideoData {
             frame_delays_ms: vec![0; count],
             keyframes: Vec::new(),
             source: VideoSource::Blank,
+            asset_id: None,
             fps,
             playback: VideoPlayback::default(),
             show_altered: true,
@@ -440,6 +536,7 @@ impl PartialEq for VideoData {
             && self.frame_delays_ms == o.frame_delays_ms
             && self.keyframes == o.keyframes
             && self.source == o.source
+            && self.asset_id == o.asset_id
             && self.fps == o.fps
             && self.playback == o.playback
             && self.show_altered == o.show_altered
@@ -475,6 +572,9 @@ pub struct AudioClip {
     pub name: String,
     /// Linked local asset path.
     pub path: String,
+    /// Stable identity shared with other clips that reference the same external source.
+    #[serde(default)]
+    pub asset_id: Option<MediaAssetId>,
     pub start_seconds: f64,
     /// Source trim-in, in source seconds.
     pub trim_in_seconds: f64,
@@ -621,6 +721,10 @@ pub struct FrameLayerState {
     /// of the displayed source frame's content bounds.
     #[serde(default)]
     pub video_position: Option<(i32, i32)>,
+    /// Affine Smart Object placement baked for this animation frame. Perspective/warp remain
+    /// editable source properties and are intentionally not represented by this snapshot.
+    #[serde(default)]
+    pub smart_transform: Option<[f64; 6]>,
     /// Appearance captured for this frame. These fields are optional so native files written
     /// before frame-animation appearance snapshots were introduced remain readable.
     #[serde(default)]
@@ -641,7 +745,7 @@ pub struct FrameEffectsState {
 
 impl FrameLayerState {
     pub fn legacy(layer: LayerId, visible: bool, opacity: f32) -> Self {
-        Self { layer, visible, opacity, position: None, video_position: None, blend: None, fill_opacity: None, effects: None }
+        Self { layer, visible, opacity, position: None, video_position: None, smart_transform: None, blend: None, fill_opacity: None, effects: None }
     }
 }
 
@@ -842,6 +946,10 @@ impl Default for TimelineLoop {
 pub struct Timeline {
     /// Frames per second.
     pub fps: f32,
+    /// Exact project frame rate when authored as a rational. A mismatch with `fps` means a
+    /// legacy caller changed the compatibility field and this value is ignored.
+    #[serde(default)]
+    pub rational_rate: Option<RationalRate>,
     /// Total number of frames (>= 1).
     pub duration: usize,
     /// The playhead (0-based frame index).
@@ -898,6 +1006,7 @@ impl Timeline {
         let d = duration.max(1);
         Timeline {
             fps: valid_fps(fps),
+            rational_rate: None,
             duration: d,
             current: 0,
             work_start: 0,
@@ -919,6 +1028,24 @@ impl Timeline {
             linked_selection: true,
             preview_skimming: false,
         }
+    }
+
+    pub fn project_rate(&self) -> RationalRate {
+        if let Some(rate) = self.rational_rate.filter(|rate| rate.valid() && (rate.as_f64() as f32).to_bits() == self.fps.to_bits()) {
+            return rate;
+        }
+        RationalRate::from_legacy_fps(self.fps)
+    }
+
+    pub fn set_project_rate(&mut self, rate: RationalRate) -> Result<(), String> {
+        if !rate.valid() { return Err("project frame rate must be a positive rational in 0.001..=1000 fps".into()); }
+        self.fps = rate.as_f64() as f32;
+        self.rational_rate = Some(rate);
+        Ok(())
+    }
+
+    pub fn project_frame_seconds(&self, frame: usize) -> f64 {
+        frame as f64 * f64::from(self.project_rate().denominator) / f64::from(self.project_rate().numerator)
     }
 
     /// Keep every index inside `0..duration` and the work area non-empty.
@@ -945,7 +1072,7 @@ impl Timeline {
 
     /// Playhead time in seconds.
     pub fn time(&self) -> f32 {
-        self.current as f32 / self.fps.max(1e-3)
+        self.project_frame_seconds(self.current) as f32
     }
 
     /// Start time of a frame in output/document seconds. `frame == duration` is the exclusive
@@ -953,9 +1080,9 @@ impl Timeline {
     pub fn frame_start_seconds(&self, frame: usize) -> f64 {
         let frame = frame.min(self.duration);
         match self.mode {
-            TimelineMode::Video => frame as f64 / f64::from(valid_fps(self.fps)),
+            TimelineMode::Video => self.project_frame_seconds(frame),
             TimelineMode::FrameAnimation => {
-                let fallback = 1.0 / f64::from(valid_fps(self.fps));
+                let fallback = self.project_frame_seconds(1);
                 self.frame_delays_ms.iter().take(frame).fold(0.0, |total, delay| total + if *delay > 0 { f64::from(*delay) / 1000.0 } else { fallback })
                     + frame.saturating_sub(self.frame_delays_ms.len()) as f64 * fallback
             }

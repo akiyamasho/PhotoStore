@@ -4,6 +4,7 @@
 //! preview for linked movies, and complete frame stacks for resident-frame video.
 
 use photostore_doc::{Document, FrameLayerState, Layer, LayerContent, LayerId, Timeline, VideoData};
+use photostore_color::PixelFormat;
 use photostore_raster::Surface;
 use serde_json::{Value, json};
 use std::path::Path;
@@ -75,6 +76,7 @@ pub(crate) fn decode_movie_frames(
     ctx: &crate::jobs::JobCtx,
 ) -> Result<(Vec<Surface>, f32)> {
     let info = crate::media_backend::probe(path).map_err(media_error)?;
+    crate::media_backend::ensure_sdr(&info).map_err(media_error)?;
     let fps = movie_fps(&info, fps_override)?;
     let count = info
         .frame_count
@@ -117,7 +119,9 @@ pub(crate) fn open_linked_movie(
     fps_override: Option<f64>,
     ctx: &crate::jobs::JobCtx,
 ) -> Result<(Surface, photostore_doc::MovieBacking, f32)> {
+    let fmt=PixelFormat{mode:photostore_color::ColorMode::Rgb,..fmt};
     let info = crate::media_backend::probe(path).map_err(media_error)?;
+    crate::media_backend::ensure_sdr(&info).map_err(media_error)?;
     let source_fps = movie_fps(&info, fps_override)?;
     let count = info
         .frame_count
@@ -168,18 +172,18 @@ pub fn sync(doc: &mut Document) {
 /// Synchronize video layers and frame-animation state without traversing smart-object sources.
 /// Smart-object rendering calls this on decoded child documents to avoid recursive sync loops.
 pub fn sync_plain(doc: &mut Document) {
-    sync_plain_impl(doc, true);
+    sync_plain_impl(doc, true, false);
 }
 
 /// Nested Smart Object instances may sample the same child layer at different times in one
 /// composite. Preserve all of those requests instead of coalescing them as one canvas consumer.
 pub(crate) fn sync_plain_for_nested(doc: &mut Document) {
-    sync_plain_impl(doc, false);
+    sync_plain_impl(doc, false, false);
 }
 
-fn sync_plain_impl(doc: &mut Document, coalesce: bool) {
+fn sync_plain_impl(doc: &mut Document, coalesce: bool, prefetch: bool) {
     let cur = doc.timeline.as_ref().map_or(0, |t| t.current);
-    let timeline_fps = doc.timeline.as_ref().map_or(30.0_f64, |t| f64::from(t.fps.max(0.001)));
+    let timeline_fps = doc.timeline.as_ref().map_or(30.0_f64, |t| t.project_rate().as_f64());
     let ranges = doc
         .timeline
         .as_ref()
@@ -198,7 +202,7 @@ fn sync_plain_impl(doc: &mut Document, coalesce: bool) {
         })
         .unwrap_or_default();
     let geometry = doc.clone();
-    sync_layers(&geometry, &mut doc.layers, cur, timeline_fps, &ranges, coalesce);
+    sync_layers(&geometry, &mut doc.layers, cur, timeline_fps, &ranges, coalesce, prefetch);
     if let Some(t) = &doc.timeline
         && let Some(states) = if matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation) { t.frame_states.get(cur) } else { t.property_frames.get(cur) }
     {
@@ -320,6 +324,13 @@ fn apply_states(geometry: &Document, layers: &mut [Layer], states: &[FrameLayerS
         if let Some(state) = states.iter().find(|s| s.layer == layer.id) {
             layer.visible = state.visible;
             layer.opacity = state.opacity;
+            if let Some(matrix) = state.smart_transform
+                && matrix.iter().all(|v| v.is_finite())
+                && layer.transform_animation.is_none()
+                && let LayerContent::Smart(smart) = &mut layer.content
+            {
+                smart.transform = photostore_geom::Affine { m: matrix };
+            }
             if let Some(fill) = state.fill_opacity {
                 layer.fill_opacity = fill.clamp(0.0, 1.0);
             }
@@ -331,6 +342,7 @@ fn apply_states(geometry: &Document, layers: &mut [Layer], states: &[FrameLayerS
             // delta once per layer avoids accumulating transforms while seeking. Legacy states
             // have no position and retain the document's current geometry.
             if let Some((x, y)) = state.position
+                && state.smart_transform.is_none()
                 && state.video_position.is_none()
                 && !(matches!(geometry.timeline.as_ref().map(|t| t.mode), Some(photostore_doc::TimelineMode::Video)) && layer.position_animation.is_some())
             {
@@ -390,7 +402,7 @@ fn source_index(cur: usize, timeline_fps: f64, video: &VideoData, range: Option<
 /// layer. Used by playback/export and by timeline filmstrip thumbnail requests.
 pub fn source_frame_for_layer(doc: &Document, layer: &Layer, timeline_frame: usize) -> Result<usize> {
     let video = layer.video.as_ref().ok_or_else(|| EngineError::Other(format!("layer {:?} has no video source", layer.id)))?;
-    let fps = doc.timeline.as_ref().map_or(30.0_f64, |t| f64::from(t.fps.max(0.001)));
+    let fps = doc.timeline.as_ref().map_or(30.0_f64, |t| t.project_rate().as_f64());
     let range = doc.timeline.as_ref().and_then(|t| t.layer_ranges.iter().find(|r| r.layer == layer.id));
     let relative = source_index(timeline_frame, fps, video, range);
     Ok(video
@@ -422,7 +434,7 @@ fn linked_source_seconds(cur: usize, timeline_fps: f64, video: &VideoData, range
 /// Resolve a project frame to linked movie presentation time for preview, thumbnails and export.
 pub fn source_time_for_layer(doc: &Document, layer: &Layer, timeline_frame: usize) -> Result<f64> {
     let video = layer.video.as_ref().ok_or_else(|| EngineError::Other(format!("layer {:?} has no video source", layer.id)))?;
-    let fps = doc.timeline.as_ref().map_or(30.0, |t| f64::from(t.fps.max(0.001)));
+    let fps = doc.timeline.as_ref().map_or(30.0, |t| t.project_rate().as_f64());
     let range = doc.timeline.as_ref().and_then(|t| t.layer_ranges.iter().find(|range| range.layer == layer.id));
     linked_source_seconds(timeline_frame, fps, video, range)
 }
@@ -430,22 +442,82 @@ pub fn source_time_for_layer(doc: &Document, layer: &Layer, timeline_frame: usiz
 /// Whether all linked movie layers currently sampled in this document have a decoded frame ready.
 /// This is used by Smart Object rendering to avoid caching a last-valid placeholder for a new time.
 pub(crate) fn linked_frames_ready(doc: &Document) -> bool {
-    let cur = doc.timeline.as_ref().map_or(0, |t| t.current);
-    let fps = doc.timeline.as_ref().map_or(30.0, |t| f64::from(t.fps.max(0.001)));
-    let ranges = doc.timeline.as_ref().map(|t| t.layer_ranges.as_slice()).unwrap_or(&[]);
-    for (_, _, layer) in doc.walk() {
-        let Some(video) = layer.video.as_ref() else { continue };
-        if video.movie_backing.is_none() { continue; }
-        let Ok(seconds) = linked_source_seconds(cur, fps, video, ranges.iter().find(|r| r.layer == layer.id)) else { return false };
-        let photostore_doc::VideoSource::File { path } = &video.source else { return false };
-        if !matches!(crate::movie_cache::frame_at_seconds(path, seconds, doc.pixel_format()), Ok(Some(_))) {
-            return false;
-        }
-    }
-    true
+    linked_frame_status(doc).unwrap_or(false)
 }
 
-fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[photostore_doc::LayerTimelineRange], coalesce: bool) {
+fn linked_frame_status(doc: &Document) -> Result<bool> {
+    let cur = doc.timeline.as_ref().map_or(0, |t| t.current);
+    let fps = doc.timeline.as_ref().map_or(30.0, |t| t.project_rate().as_f64());
+    let ranges = doc.timeline.as_ref().map(|t| t.layer_ranges.as_slice()).unwrap_or(&[]);
+    for (_, _, layer) in doc.walk() {
+        if !layer.visible { continue; }
+        let Some(video) = layer.video.as_ref() else { continue };
+        check_live_movie_source(doc,video).map_err(EngineError::Other)?;
+        if video.movie_backing.is_none() { continue; }
+        let seconds = linked_source_seconds(cur, fps, video, ranges.iter().find(|r| r.layer == layer.id))?;
+        let photostore_doc::VideoSource::File { path } = &video.source else { return Err(EngineError::Other("linked movie has no original source path".into())) };
+        match movie_source_frame(path, seconds, PixelFormat{mode:photostore_color::ColorMode::Rgb,..doc.pixel_format()}, None, &[]) {
+            Ok(Some(_)) => {},
+            Ok(None) => return Ok(false),
+            Err(error) => return Err(EngineError::Other(error)),
+        }
+    }
+    Ok(true)
+}
+
+/// Exact-time playback sampling, including editable nested documents. A loading child must not
+/// be published as a current frame merely because its last-valid Smart Object preview exists.
+pub(crate) fn sync_for_presentation(doc: &mut Document) -> Result<bool> {
+    sync_plain_impl(doc,true,true);
+    if !linked_frame_status(doc)? { return Ok(false); }
+    let ids: Vec<_> = doc.walk().into_iter().filter_map(|(_, _, l)| (l.visible && matches!(l.content, LayerContent::Smart(_))).then_some(l.id)).collect();
+    for id in ids {
+        if let Err(error) = crate::smart_cmds::refresh_animated(doc, id) {
+            if error.to_string().contains("still loading") { return Ok(false); }
+            return Err(error);
+        }
+    }
+    Ok(true)
+}
+
+fn movie_source_frame(path:&str,seconds:f64,format:PixelFormat,consumer:Option<u64>,times:&[f64])->std::result::Result<Option<Surface>,String> {
+    let proxy=if crate::movie_cache::is_preview() {crate::media_proxy::preview_source(path).map_err(|e|e.to_string())?} else {None};
+    let source=proxy.as_ref().map_or(path,|proxy|proxy.proxy_path.as_str());
+    let size=proxy.as_ref().map(|proxy|(proxy.source_width,proxy.source_height));
+    match consumer {
+        Some(id) if times.len()>1=>crate::movie_cache::frame_at_times_for_consumer_scaled(source,times,format,id,size).map(|frames|frames.into_iter().next().flatten()),
+        Some(id)=>match size {
+            Some(size)=>crate::movie_cache::frame_at_seconds_for_consumer_scaled(source,seconds,format,id,size),
+            None=>crate::movie_cache::frame_at_seconds_for_consumer(source,seconds,format,id),
+        },
+        None=>match size {
+            Some(size)=>crate::movie_cache::frame_at_seconds_scaled(source,seconds,format,size),
+            None=>crate::movie_cache::frame_at_seconds(source,seconds,format),
+        }
+    }
+}
+
+pub(crate) fn movie_surface_for_document(doc:&Document,surface:Surface)->Result<Surface> {
+    use photostore_cms::{builtin::Builtin,TransformOptions};
+    let destination=crate::color_cmds::document_profile(doc);
+    if doc.mode==photostore_color::ColorMode::Rgb && (doc.icc_profile.is_none() || destination.content_hash()==Builtin::Srgb.profile().content_hash()) {return Ok(surface.convert(doc.pixel_format()));}
+    let source=surface.convert(PixelFormat{mode:photostore_color::ColorMode::Rgb,..surface.format()});
+    let transform=photostore_cms::cached(Builtin::Srgb.profile(),&destination,TransformOptions{intent:photostore_cms::Intent::RelativeColorimetric,bpc:true,..Default::default()})
+        .map_err(|e|EngineError::Other(format!("movie working-space conversion failed: {e}")))?;
+    Ok(crate::color_cmds::convert_surface(&source,photostore_color::ColorMode::Rgb,doc.pixel_format(),&transform).convert(doc.pixel_format()))
+}
+
+fn check_live_movie_source(doc:&Document,video:&VideoData)->std::result::Result<(),String> {
+    if video.movie_backing.is_none(){return Ok(());}
+    let Some(asset)=video.asset_id.and_then(|id|doc.media_assets.iter().find(|a|a.id==id)) else{return Ok(())};
+    let Some(saved)=&asset.fingerprint else{return Ok(())};
+    let metadata=std::fs::metadata(&asset.path).map_err(|e|format!("source `{}` is offline; relink it: {e}",asset.path))?;
+    let modified=metadata.modified().ok().and_then(|t|t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d|u64::try_from(d.as_nanos()).ok());
+    if metadata.len()!=saved.byte_len || modified!=saved.modified_unix_nanos {return Err(format!("source `{}` changed; relink it before playback",asset.path));}
+    Ok(())
+}
+
+fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[photostore_doc::LayerTimelineRange], coalesce: bool, prefetch:bool) {
     for l in layers.iter_mut() {
         let transform = l.video.as_ref().map(|v| keyframe_transform(v, cur));
         if let Some((_, _, opacity)) = transform {
@@ -466,9 +538,11 @@ fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_f
         let frame = l
             .video
             .as_ref()
+            .filter(|_|ranges.iter().find(|r|r.layer==l.id).is_none_or(|r|r.enabled && cur>=r.start && cur<r.end))
             .and_then(|v| {
                 let index = source_index(cur, timeline_fps, v, ranges.iter().find(|range| range.layer == l.id));
                 if v.movie_backing.is_some() {
+                    if let Err(error)=check_live_movie_source(geometry,v){crate::movie_cache::note_error(error);return None;}
                     let photostore_doc::VideoSource::File { path } = &v.source else {
                         crate::movie_cache::note_error("linked movie backing has no original file source".into());
                         return None;
@@ -484,19 +558,28 @@ fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_f
                         use std::hash::{Hash, Hasher};
                         let mut identity = std::collections::hash_map::DefaultHasher::new();
                         (geometry.id.0, l.id.0).hash(&mut identity);
-                        crate::movie_cache::frame_at_seconds_for_consumer(path, seconds, geometry.pixel_format(), identity.finish()).ok().flatten()
+                        let range=ranges.iter().find(|r|r.layer==l.id);
+                        let mut times=Vec::new();
+                        if prefetch && range.and_then(|r|r.playback.as_ref()).is_none_or(|p|p.speed_curve.is_empty()) {
+                            let end=geometry.timeline.as_ref().map_or(cur+1,|t|t.duration).min(range.map_or(usize::MAX,|r|r.end));
+                            for frame in cur..cur.saturating_add(16).min(end) {
+                                if let Ok(time)=linked_source_seconds(frame,timeline_fps,v,range) {times.push(time);}
+                            }
+                        }
+                        movie_source_frame(path, seconds, PixelFormat{mode:photostore_color::ColorMode::Rgb,..geometry.pixel_format()}, Some(identity.finish()), &times).ok().flatten()
                     } else {
-                        crate::movie_cache::frame_at_seconds(path, seconds, geometry.pixel_format()).ok().flatten()
+                        movie_source_frame(path, seconds, PixelFormat{mode:photostore_color::ColorMode::Rgb,..geometry.pixel_format()}, None, &[]).ok().flatten()
                     }
                 } else {
                     v.frames.get(index.min(v.frames.len().saturating_sub(1))).cloned()
                 }
             })
-            .map(|surface| {
+            .and_then(|surface| {
+                let surface=if l.video.as_ref().is_some_and(|v|v.movie_backing.is_some()) {match movie_surface_for_document(geometry,surface) {Ok(surface)=>surface,Err(error)=>{crate::movie_cache::note_error(error.to_string());return None;}}} else {surface};
                 let (dx, dy, _) = desired.map_or((0, 0, 1), |p| (p.0, p.1, 1));
                 let dx = dx.clamp(-1_000_000, 1_000_000);
                 let dy = dy.clamp(-1_000_000, 1_000_000);
-                if dx == 0 && dy == 0 { surface.clone() } else { surface.translated(dx, dy, surface.content_bounds()) }
+                Some(if dx == 0 && dy == 0 { surface.clone() } else { surface.translated(dx, dy, surface.content_bounds()) })
             });
         if let Some(f) = frame
             && let LayerContent::Raster(s) = &mut l.content
@@ -514,7 +597,7 @@ fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_f
             }
         }
         if let Some(ch) = l.children_mut() {
-            sync_layers(geometry, ch, cur, timeline_fps, ranges, coalesce);
+            sync_layers(geometry, ch, cur, timeline_fps, ranges, coalesce, prefetch);
         }
     }
 }
@@ -581,7 +664,7 @@ fn keyframe_transform(video: &VideoData, frame: usize) -> (f32, f32, f32) {
 /// back into its frame at the playhead. Call before moving the playhead or re-syncing.
 pub fn store(doc: &mut Document) {
     let cur = doc.timeline.as_ref().map_or(0, |t| t.current);
-    let timeline_fps = doc.timeline.as_ref().map_or(30.0_f64, |t| f64::from(t.fps.max(0.001)));
+    let timeline_fps = doc.timeline.as_ref().map_or(30.0_f64, |t| t.project_rate().as_f64());
     let ranges = doc.timeline.as_ref().map(|t| t.layer_ranges.clone()).unwrap_or_default();
     store_layers(&mut doc.layers, cur, timeline_fps, &ranges);
     if let Some(t) = &mut doc.timeline
@@ -605,7 +688,7 @@ pub fn canonicalize_edited_timeline(before: &Document, after: &mut Document) {
         return;
     }
     let current = at.current;
-    let fps = f64::from(at.fps.max(0.001));
+    let fps = at.project_rate().as_f64();
     canonicalize_layers(&before.layers, after, current, fps, &bt.layer_ranges);
     canonicalize_states(before, after, current);
 }
@@ -613,7 +696,7 @@ pub fn canonicalize_edited_timeline(before: &Document, after: &mut Document) {
 /// Linked movie pixels are source-authoritative and read-only in this pass. Reject edits made at
 /// the same playhead instead of letting the cached preview silently become authored data.
 pub(crate) fn validate_linked_movie_edits(label: &str, before: &Document, after: &Document) -> Result<()> {
-    if matches!(label, "Reload Movie Footage" | "Replace Movie Footage") {
+    if matches!(label, "Reload Movie Footage" | "Replace Movie Footage" | "Relink Media Source") {
         return Ok(());
     }
     if before.timeline.as_ref().map(|t| t.current) != after.timeline.as_ref().map(|t| t.current) {
@@ -867,6 +950,7 @@ fn collect_states(layers: &[Layer], states: &mut Vec<FrameLayerState>) {
             opacity: layer.opacity,
             position: photostore_doc::comps::layer_position(layer),
             video_position: layer.video.as_ref().map(|v| v.applied_translation),
+            smart_transform: match &layer.content { LayerContent::Smart(s) => Some(s.transform.m), _ => None },
             blend: Some(layer.blend),
             fill_opacity: Some(layer.fill_opacity),
             effects: Some(photostore_doc::FrameEffectsState {
@@ -1222,8 +1306,20 @@ fn show_altered(s: &mut Session, _p: &Value) -> Result<Value> {
 fn rasterize(s: &mut Session, _p: &Value) -> Result<Value> {
     s.edit("Rasterize Video", |doc, active| {
         let id = active.ok_or(EngineError::NoDocument)?;
+        let snapshot=doc.layer(id).cloned().ok_or(EngineError::NoLayer(id))?;
+        let original=if let Some(video)=snapshot.video.as_ref().filter(|v|v.movie_backing.is_some()) {
+            check_live_movie_source(doc,video).map_err(EngineError::Other)?;
+            let photostore_doc::VideoSource::File{path}=&video.source else{return Err(EngineError::Other("linked movie has no original source".into()));};
+            let time=source_time_for_layer(doc,&snapshot,doc.timeline.as_ref().map_or(0,|t|t.current))?;
+            let _blocking=crate::movie_cache::BlockingScope::enter();
+            let source=crate::movie_cache::frame_at_seconds(path,time,PixelFormat{mode:photostore_color::ColorMode::Rgb,..doc.pixel_format()}).map_err(EngineError::Other)?.ok_or_else(||EngineError::Other("original frame is unavailable".into()))?;
+            let surface=movie_surface_for_document(doc,source)?;
+            let (dx,dy)=crate::position_cmds::sample_layer_position(doc,&snapshot,doc.timeline.as_ref().map_or(0,|t|t.current));
+            let (dx,dy)=(dx.clamp(-1_000_000,1_000_000),dy.clamp(-1_000_000,1_000_000));
+            Some(if dx==0 && dy==0 {surface}else{surface.translated(dx,dy,surface.content_bounds())})
+        }else{None};
         let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
-        // The content already shows the current frame (kept in sync); just drop the stack.
+        if let Some(surface)=original {l.content=LayerContent::Raster(surface);}
         l.video = None;
         Ok(())
     })?;
@@ -1289,6 +1385,7 @@ fn new_from_file(s: &mut Session, p: &Value) -> Result<Value> {
             "New Video Layer from Movie",
             move |doc, active, ctx| {
                 let (preview, backing, source_fps) = open_linked_movie(&path, fmt, start, end, override_fps, ctx)?;
+                let preview=movie_surface_for_document(doc,preview)?;
                 let n = backing.trim_out_frame.saturating_sub(backing.trim_in_frame).saturating_add(1);
                 let info = crate::media_backend::probe(&path).map_err(media_error)?;
                 let original_fps = info.fps.as_f64().max(0.001);
@@ -1338,6 +1435,7 @@ fn new_from_file(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                 }
                 sync(doc);
+                crate::media_asset_cmds::initialize_sources(doc)?;
                 Ok((id, n))
             },
             |(id, n)| json!({"layer": id.0, "frames": n}),
@@ -1389,6 +1487,7 @@ fn replace_footage(s: &mut Session, p: &Value) -> Result<Value> {
             move |doc, active, ctx| {
                 let id = active.ok_or(EngineError::NoDocument)?;
                 let (preview, backing, source_fps) = open_linked_movie(&path, fmt, start, end, override_fps, ctx)?;
+                let preview=movie_surface_for_document(doc,preview)?;
                 let logical_len = backing.trim_out_frame.saturating_sub(backing.trim_in_frame).saturating_add(1);
                 let info = crate::media_backend::probe(&path).map_err(media_error)?;
                 let canonical_path =
@@ -1426,6 +1525,7 @@ fn replace_footage(s: &mut Session, p: &Value) -> Result<Value> {
                     t.clamp();
                 }
                 if let Some(t) = &mut doc.timeline {
+                    let project_fps=t.project_rate().as_f64();
                     for track in &mut t.audio_tracks {
                         track.clips.retain_mut(|clip| {
                             if clip.linked_video != Some(id) {
@@ -1442,7 +1542,7 @@ fn replace_footage(s: &mut Session, p: &Value) -> Result<Value> {
                             clip.trim_in_seconds = source_trim;
                             clip.speed = audio_speed;
                             clip.duration_seconds = audio_duration;
-                            clip.start_seconds = old_range.as_ref().map_or(0.0, |r| r.start as f64 / f64::from(t.fps.max(0.001)));
+                            clip.start_seconds = old_range.as_ref().map_or(0.0, |r| r.start as f64 / project_fps);
                             clip.envelope_offset_seconds = 0.0;
                             clip.envelope_duration_seconds = Some(audio_duration);
                             clip.fade_in_seconds = clip.fade_in_seconds.min(audio_duration);
@@ -1590,6 +1690,7 @@ fn reload_frame(s: &mut Session, _p: &Value) -> Result<Value> {
                 }
                 let audio_info = if info.has_audio { Some(crate::media_backend::probe_audio(&canonical_path).map_err(media_error)?) } else { None };
                 let (preview, backing, _) = open_linked_movie(&canonical_path, fmt, None, None, Some(interpreted_fps), ctx)?;
+                let preview=movie_surface_for_document(doc,preview)?;
                 let source_duration = backing.frame_count as f64 / interpreted_fps;
                 if !source_duration.is_finite() || source_duration <= source_in {
                     return Err(EngineError::BadParams {
@@ -1811,7 +1912,7 @@ fn frames_to_layers(s: &mut Session, p: &Value) -> Result<Value> {
 const MAX_EXPORT_BYTES: u64 = 512 * 1024 * 1024;
 
 fn timeline_frame_delay_ms(t: &Timeline, frame: usize) -> f64 {
-    t.frame_delays_ms.get(frame).copied().filter(|d| *d > 0).map(f64::from).unwrap_or(1000.0 / f64::from(t.fps.max(0.001)))
+    t.frame_delays_ms.get(frame).copied().filter(|d| *d > 0).map(f64::from).unwrap_or(1000.0 / t.project_rate().as_f64())
 }
 
 fn frame_animation_duration(t: &Timeline, first: usize, last: usize) -> f64 {
@@ -1820,7 +1921,7 @@ fn frame_animation_duration(t: &Timeline, first: usize, last: usize) -> f64 {
 
 fn sampled_timeline_frame(t: &Timeline, first: usize, last: usize, output: usize, fps: f64) -> usize {
     if !matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation) {
-        return first.saturating_add(((output as f64 * f64::from(t.fps.max(0.001)) / fps.max(0.001)) + 1e-9).floor() as usize).min(last);
+        return first.saturating_add(((output as f64 * t.project_rate().as_f64() / fps.max(0.001)) + 1e-9).floor() as usize).min(last);
     }
     let target_ms = output as f64 * 1000.0 / fps.max(0.001);
     let mut elapsed = 0.0;
@@ -1837,12 +1938,78 @@ fn timeline_export_duration(t: &Timeline, first: usize, last: usize) -> f64 {
     if matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation) {
         frame_animation_duration(t, first, last)
     } else {
-        (last - first + 1) as f64 / f64::from(t.fps.max(0.001))
+        (last - first + 1) as f64 / t.project_rate().as_f64()
     }
 }
 
 fn media_duration_in_timeline_frames(frame_count: usize, source_fps: f32, timeline_fps: f32) -> usize {
     ((frame_count as f64 / f64::from(source_fps.max(0.001)) * f64::from(timeline_fps.max(0.001))) - 1e-9).ceil().max(1.0) as usize
+}
+
+fn movie_output_rate(p:&Value,timeline:Option<&Timeline>)->Result<photostore_doc::RationalRate> {
+    if let Some(rate)=crate::timeline_cmds::rate_param("file.export.renderVideo",p)? {return Ok(rate);}
+    if let Some(value)=p.get("fps") {
+        let fps=value.as_f64().filter(|v|v.is_finite() && *v>0.0 && *v<=1000.0).ok_or_else(||EngineError::Other("output FPS must be finite and in 0..=1000".into()))?;
+        return photostore_doc::RationalRate::new((fps*1_000_000.0).round().max(1.0) as u32,1_000_000).ok_or_else(||EngineError::Other("invalid output frame rate".into()));
+    }
+    Ok(timeline.map_or(photostore_doc::RationalRate{numerator:30,denominator:1},|t|t.project_rate()))
+}
+
+/// Materialize original media only for explicit output/baking, never mutate preview state.
+pub(crate) fn original_output_snapshot(doc:&Document)->Result<Option<Document>> {
+    if !doc.walk().into_iter().any(|(_,_,l)|l.video.as_ref().is_some_and(|v|v.movie_backing.is_some()) || matches!(l.content,LayerContent::Smart(_))) {return Ok(None);}
+    let _blocking=crate::movie_cache::BlockingScope::enter();
+    let mut original=doc.clone();
+    validate_export_sources(&original)?;
+    sync_export_frame(&mut original)?;
+    Ok(Some(original))
+}
+
+fn sync_export_frame(doc:&mut Document)->Result<()> {
+    if !sync_for_presentation(doc)? {return Err(EngineError::Other("an original source frame is unavailable for export; relink the source before retrying".into()));}
+    Ok(())
+}
+
+fn validate_export_sources(doc:&Document)->Result<()> {
+    let used:std::collections::HashSet<_>=doc.walk().into_iter().flat_map(|(_,_,l)|l.video.as_ref().and_then(|v|v.asset_id).into_iter().chain(match &l.content{LayerContent::Smart(s)=>s.asset_id,_=>None})).chain(doc.timeline.iter().flat_map(|t|t.audio_tracks.iter()).flat_map(|t|t.clips.iter()).filter_map(|c|c.asset_id)).collect();
+    for asset in &doc.media_assets {
+        if !used.contains(&asset.id){continue;}
+        let metadata=std::fs::metadata(&asset.path).map_err(|e|EngineError::Other(format!("source `{}` is offline; relink before export: {e}",asset.path)))?;
+        if let Some(saved)=&asset.fingerprint {
+            let modified=metadata.modified().ok().and_then(|t|t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d|u64::try_from(d.as_nanos()).ok());
+            if metadata.len()!=saved.byte_len || modified!=saved.modified_unix_nanos {return Err(EngineError::Other(format!("source `{}` changed; relink or refresh its metadata before exporting originals",asset.path)));}
+        }
+    }
+    Ok(())
+}
+
+fn output_background(p:&Value)->Result<Option<[f32;3]>> {
+    match p.get("background") {
+        None=>Ok(None),
+        Some(Value::String(s)) if s=="black"=>Ok(Some([0.0;3])),
+        Some(Value::String(s)) if s=="white"=>Ok(Some([1.0;3])),
+        Some(Value::Array(v)) if v.len()==3=>{
+            let mut rgb=[0.0;3];for (target,source) in rgb.iter_mut().zip(v){*target=source.as_f64().filter(|v|v.is_finite() && (0.0..=1.0).contains(v)).ok_or_else(||EngineError::Other("background must contain three finite 0..1 RGB values".into()))? as f32;}Ok(Some(rgb))
+        },
+        _=>Err(EngineError::Other("background must be black, white or three 0..1 sRGB values".into())),
+    }
+}
+
+fn encode_rec709_pixels(rgba:Vec<[f32;4]>,transform:&photostore_cms::Transform,background:Option<[f32;3]>,opaque:bool)->Result<Vec<u8>> {
+    let transfer=|v:f32|{let linear=photostore_color::convert::srgb_to_linear(v.clamp(0.0,1.0));if linear<0.018 {4.5*linear}else{1.099*linear.powf(0.45)-0.099}};
+    let mut output=Vec::with_capacity(rgba.len().saturating_mul(4));
+    for pixel in rgba {
+        if pixel.iter().any(|v|!v.is_finite() || *v<0.0 || *v>1.0) {return Err(EngineError::Other("HDR/out-of-range pixel values need an explicit supported tone map before SDR movie export".into()));}
+        let mut rgb=[0.0;3];transform.eval_fast(&pixel[..3],&mut rgb);
+        let alpha=pixel[3];
+        if opaque && alpha<1.0 {
+            let bg=background.ok_or_else(||EngineError::Other("MP4 has no alpha; select an explicit black/white background or use MOV/WebM with alpha".into()))?;
+            for c in 0..3 {rgb[c]=rgb[c]*alpha+bg[c]*(1.0-alpha);}
+        }
+        output.extend(rgb.map(|v|(transfer(v).clamp(0.0,1.0)*255.0).round() as u8));
+        output.push(if opaque {255}else{(alpha*255.0).round() as u8});
+    }
+    Ok(output)
 }
 
 /// Export › Render Video: composite the whole document at each timeline frame and write an image
@@ -1855,7 +2022,8 @@ fn render_video(s: &mut Session, p: &Value) -> Result<Value> {
             .ok_or_else(|| EngineError::BadParams { cmd: "file.export.renderVideo".into(), msg: "need `path` for movie output".into() })?
             .to_string();
         let format = p.get("format").and_then(Value::as_str).unwrap_or("mp4").to_string();
-        let fps_override = p.get("fps").and_then(Value::as_f64);
+        let rate_override=p.get("fps").is_some() || p.get("fpsNumerator").is_some();
+        let background=output_background(p)?;
         let overwrite = p.get("overwrite").and_then(Value::as_bool).unwrap_or(false);
         let st = s.active().ok_or(EngineError::NoDocument)?;
         let mut base = (*st.doc).clone();
@@ -1864,8 +2032,9 @@ fn render_video(s: &mut Session, p: &Value) -> Result<Value> {
         let total = timeline.as_ref().map_or(1, |t| t.duration).max(1);
         let (first, last) =
             export_range(p, total, timeline.as_ref().map_or(0, |t| t.work_start), timeline.as_ref().map_or(total, |t| t.work_end), "file.export.renderVideo")?;
-        let doc_fps = timeline.as_ref().map_or(30.0, |t| f64::from(t.fps.max(0.001)));
-        let fps = fps_override.unwrap_or(doc_fps);
+        let doc_fps = timeline.as_ref().map_or(30.0, |t| t.project_rate().as_f64());
+        let rate=movie_output_rate(p,timeline.as_ref())?;
+        let fps = rate.as_f64();
         if !fps.is_finite() || fps <= 0.0 || fps > 1000.0 {
             return Err(EngineError::BadParams { cmd: "file.export.renderVideo".into(), msg: "fps must be finite and in 0..=1000".into() });
         }
@@ -1881,10 +2050,9 @@ fn render_video(s: &mut Session, p: &Value) -> Result<Value> {
             || Ok(Vec::new()),
             |t| crate::audio_cmds::audio_mix_for_range(t, t.frame_start_seconds(first), t.frame_start_seconds(last.saturating_add(1))),
         )?;
-        let fps_num = (fps * 1000.0).round().clamp(1.0, u32::MAX as f64) as u32;
-        let writer_fps = f64::from(fps_num) / 1000.0;
+        let writer_fps = fps;
         let source_rate = timeline.as_ref().map_or(true, |t| !matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation));
-        let same_source_rate = source_rate && (fps_override.is_none() || (fps - doc_fps).abs() <= 0.0005);
+        let same_source_rate = source_rate && (!rate_override || (fps - doc_fps).abs() <= 1e-9);
         let selected_frames = (last - first + 1) as u64;
         let frames = if same_source_rate { selected_frames } else { (source_duration * writer_fps - 1e-9).ceil().max(1.0) as u64 };
         if frames > 1_000_000 {
@@ -1903,7 +2071,7 @@ fn render_video(s: &mut Session, p: &Value) -> Result<Value> {
         let cfg = crate::media_backend::VideoWriterConfig {
             width,
             height,
-            fps: crate::media_backend::Rational::new(fps_num, 1000),
+            fps: crate::media_backend::Rational::new(rate.numerator, rate.denominator),
             format: fmt,
             duration_frames: Some(frames),
             overwrite,
@@ -1915,13 +2083,16 @@ fn render_video(s: &mut Session, p: &Value) -> Result<Value> {
             false,
             move |ctx| {
                 let _blocking = crate::movie_cache::BlockingScope::enter();
+                validate_export_sources(&base)?;
+                let profile=crate::color_cmds::composite_profile(&base);
+                let color=photostore_cms::Transform::new(&profile,photostore_cms::builtin::Builtin::Srgb.profile(),photostore_cms::Intent::RelativeColorimetric,true).map_err(|e|EngineError::Other(format!("movie color transform failed: {e}")))?;
+                let mut doc=base.clone();
                 crate::media_backend::write_video_from_frames(
                     &path,
                     &cfg,
                     &audio_clips,
                     |i| {
                         ctx.check().map_err(|e| crate::media_backend::MediaBackendError::Process(e.to_string()))?;
-                        let mut doc = base.clone();
                         let source_frame = if same_source_rate {
                             first + (i as usize).min(last - first)
                         } else {
@@ -1933,7 +2104,7 @@ fn render_video(s: &mut Session, p: &Value) -> Result<Value> {
                             t.current = source_frame;
                         }
                         let _ = crate::movie_cache::take_error();
-                        sync(&mut doc);
+                        sync_export_frame(&mut doc).map_err(|e|crate::media_backend::MediaBackendError::Process(e.to_string()))?;
                         if let Some(error) = crate::movie_cache::take_error() {
                             return Err(crate::media_backend::MediaBackendError::Process(error));
                         }
@@ -1943,7 +2114,7 @@ fn render_video(s: &mut Session, p: &Value) -> Result<Value> {
                         Ok(photostore_raster::Rgba8Image {
                             width,
                             height,
-                            pixels: rgba.into_iter().flat_map(|p| p.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)).collect(),
+                            pixels: encode_rec709_pixels(rgba,&color,background,fmt==crate::media_backend::VideoFormat::Mp4H264).map_err(|e|crate::media_backend::MediaBackendError::Process(e.to_string()))?,
                         })
                     },
                     Some(&mut |done, total| {
@@ -2027,6 +2198,7 @@ fn render_document_with(
     mut progress: impl FnMut(usize, usize) -> bool,
 ) -> Result<Value> {
     let _blocking = crate::movie_cache::BlockingScope::enter();
+    validate_export_sources(base)?;
     let dir = p.get("dir").and_then(Value::as_str).unwrap_or("");
     let format = p.get("format").and_then(Value::as_str).unwrap_or("png");
     let total_frames = base.timeline.as_ref().map_or(1, |t| t.duration).max(1);
@@ -2041,10 +2213,8 @@ fn render_document_with(
         .checked_sub(first)
         .and_then(|n| n.checked_add(1))
         .ok_or_else(|| EngineError::BadParams { cmd: "file.export.renderVideo".into(), msg: "render range is too large".into() })?;
-    let doc_fps = base.timeline.as_ref().map_or(30.0, |t| f64::from(t.fps.max(0.001)));
-    let fps = p.get("fps").map_or(Ok(doc_fps), |v| {
-        v.as_f64().ok_or_else(|| EngineError::BadParams { cmd: "file.export.renderVideo".into(), msg: "`fps` must be a finite number".into() })
-    })?;
+    let doc_fps = base.timeline.as_ref().map_or(30.0, |t| t.project_rate().as_f64());
+    let fps=movie_output_rate(p,base.timeline.as_ref())?.as_f64();
     if !fps.is_finite() || fps <= 0.0 || fps > 1000.0 {
         return Err(EngineError::BadParams { cmd: "file.export.renderVideo".into(), msg: "fps must be finite and in 0..=1000".into() });
     }
@@ -2077,7 +2247,7 @@ fn render_document_with(
     if format.eq_ignore_ascii_case("gif") {
         use photostore_algo::quantize::{self, Dither, Forced, PaletteKind};
         let loop_mode = base.timeline.as_ref().map(|t| t.loop_mode).unwrap_or(photostore_doc::TimelineLoop::Loop);
-        let sequence_count = if p.get("fps").is_some() {
+        let sequence_count = if p.get("fps").is_some() || p.get("fpsNumerator").is_some() {
             let duration = base.timeline.as_ref().map_or((last - first + 1) as f64 / fps, |t| timeline_export_duration(t, first, last));
             (duration * fps - 1e-9).ceil().max(1.0) as usize
         } else {
@@ -2086,7 +2256,7 @@ fn render_document_with(
         if sequence_count > MAX_EXPORT_FRAMES {
             return Err(EngineError::BadParams { cmd: "file.export.renderVideo".into(), msg: "GIF export produces too many frames".into() });
         }
-        let sequence: Vec<(usize, u16)> = if p.get("fps").is_some() {
+        let sequence: Vec<(usize, u16)> = if p.get("fps").is_some() || p.get("fpsNumerator").is_some() {
             let count = sequence_count;
             (0..count)
                 .map(|i| {
@@ -2122,13 +2292,13 @@ fn render_document_with(
             });
         }
         let mut gframes = Vec::with_capacity(frames);
+        let mut doc=base.clone();
         for (f, (timeline_frame, delay)) in gif_sequence.iter().copied().enumerate() {
-            let mut doc = base.clone();
             if let Some(t) = &mut doc.timeline {
                 t.current = timeline_frame;
             }
             let _ = crate::movie_cache::take_error();
-            sync(&mut doc);
+            sync_export_frame(&mut doc)?;
             if let Some(error) = crate::movie_cache::take_error() {
                 return Err(EngineError::Other(error));
             }
@@ -2180,13 +2350,13 @@ fn render_document_with(
         return Err(EngineError::BadParams { cmd: "file.export.renderVideo".into(), msg: "image sequence produces too many frames".into() });
     }
     let mut files = Vec::new();
+    let mut doc=base.clone();
     for f in 0..output_frames {
-        let mut doc = base.clone();
         if let Some(t) = &mut doc.timeline {
             t.current = sampled_timeline_frame(t, first, last, f, fps);
         }
         let _ = crate::movie_cache::take_error();
-        sync(&mut doc);
+        sync_export_frame(&mut doc)?;
         if let Some(error) = crate::movie_cache::take_error() {
             return Err(EngineError::Other(error));
         }

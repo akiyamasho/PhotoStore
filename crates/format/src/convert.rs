@@ -61,6 +61,14 @@ pub(crate) fn validate_timeline_positions(timeline: Option<&photostore_doc::Time
     if timeline.duration == 0 || timeline.duration > 1_000_000 || timeline.layer_ranges.len() > MAX_TIMELINE_ENTRIES {
         return Err(FormatError::LimitExceeded("timeline duration or clip range count exceeds the supported limit".into()));
     }
+    if timeline.rational_rate.is_some_and(|rate| !rate.valid()) {
+        return Err(FormatError::corrupt("timeline rational frame rate is invalid"));
+    }
+    if timeline.frame_states.iter().chain(timeline.property_frames.iter()).flatten()
+        .any(|state| state.smart_transform.is_some_and(|matrix| matrix.iter().any(|value| !value.is_finite())))
+    {
+        return Err(FormatError::corrupt("timeline Smart Object transform snapshots must contain only finite matrix values"));
+    }
     let mut range_layers = std::collections::HashSet::new();
     let mut total_speed_points = 0usize;
     for range in &timeline.layer_ranges {
@@ -200,6 +208,59 @@ pub(crate) fn validate_timeline_positions(timeline: Option<&photostore_doc::Time
                     validate_video_translation(value)?;
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_document_media_assets(document: &Document) -> Result<()> {
+    if document.media_assets.len() > 4096 {
+        return Err(FormatError::LimitExceeded("document contains more than 4096 external media sources".into()));
+    }
+    let mut assets = std::collections::HashMap::new();
+    for asset in &document.media_assets {
+        if asset.id.0 == 0 || asset.revision == 0 || asset.path.is_empty() || assets.insert(asset.id, asset).is_some() {
+            return Err(FormatError::corrupt("external media source identity or path is invalid"));
+        }
+        if let Some(metadata) = &asset.metadata {
+            if metadata.video.as_ref().is_some_and(|video| {
+                video.width == 0 || video.height == 0 || video.width > 16_384 || video.height > 16_384
+                    || !video.frame_rate.valid() || !video.duration_seconds.is_finite() || video.duration_seconds < 0.0
+                    || video.frame_count.is_some_and(|count| count == 0 || count > 1_000_000)
+                    || video.time_base.is_some_and(|base| !base.positive())
+            }) || metadata.audio.as_ref().is_some_and(|audio| {
+                audio.channels == 0 || audio.channels > 64 || audio.sample_rate == 0 || audio.sample_rate > 768_000
+                    || !audio.duration_seconds.is_finite() || audio.duration_seconds < 0.0
+            }) {
+                return Err(FormatError::corrupt("external media source stream metadata is invalid"));
+            }
+        }
+    }
+    fn ref_matches(assets: &std::collections::HashMap<photostore_doc::MediaAssetId, &photostore_doc::MediaAsset>, id: Option<photostore_doc::MediaAssetId>, path: &str) -> bool {
+        id.is_none_or(|id| assets.get(&id).is_some_and(|asset| asset.path == path))
+    }
+    fn check_layers(layers: &[Layer], assets: &std::collections::HashMap<photostore_doc::MediaAssetId, &photostore_doc::MediaAsset>) -> Result<()> {
+        for layer in layers {
+            if let Some(video) = &layer.video
+                && let photostore_doc::VideoSource::File { path } = &video.source
+                && !ref_matches(assets, video.asset_id, path)
+            {
+                return Err(FormatError::corrupt("video layer references a missing or mismatched media source"));
+            }
+            if let photostore_doc::LayerContent::Smart(smart) = &layer.content
+                && let photostore_doc::SmartSource::Linked { path } = &smart.source
+                && !ref_matches(assets, smart.asset_id, path)
+            {
+                return Err(FormatError::corrupt("linked Smart Object references a missing or mismatched media source"));
+            }
+            if let Some(children) = layer.children() { check_layers(children, assets)?; }
+        }
+        Ok(())
+    }
+    check_layers(&document.layers, &assets)?;
+    if let Some(timeline) = &document.timeline {
+        if timeline.audio_tracks.iter().flat_map(|track| &track.clips).any(|clip| !ref_matches(&assets, clip.asset_id, &clip.path)) {
+            return Err(FormatError::corrupt("audio clip references a missing or mismatched media source"));
         }
     }
     Ok(())
@@ -613,6 +674,7 @@ fn video_m(v: &photostore_doc::VideoData, sink: &mut dyn Sink) -> crate::manifes
         frame_delays_ms: v.frame_delays_ms.clone(),
         keyframes: v.keyframes.clone(),
         source: v.source.clone(),
+        asset_id: v.asset_id,
         fps: v.fps,
         playback: v.playback,
         show_altered: v.show_altered,
@@ -687,6 +749,7 @@ fn layer_m(l: &Layer, sink: &mut dyn Sink) -> LayerM {
                 SmartSource::Embedded { file_name, bytes } => SmartSourceM::Embedded { file_name: file_name.clone(), blob: sink.blob(bytes) },
                 SmartSource::Linked { path } => SmartSourceM::Linked { path: path.clone() },
             },
+            asset_id: s.asset_id,
             transform: s.transform,
             smart_filters: s.smart_filters.clone(),
             cache: s.cache.as_ref().map(|c| surface_m(c, sink)),
@@ -792,7 +855,13 @@ pub(crate) fn doc_m(d: &Document, sink: &mut dyn Sink) -> DocM {
         color_table: d.color_table.clone(),
         duotone: d.duotone.clone(),
         variables: d.variables.clone(),
-        timeline: d.timeline.clone(),
+        timeline: d.timeline.clone().map(|mut timeline| {
+            if timeline.rational_rate.is_some_and(|rate| (rate.as_f64() as f32).to_bits() != timeline.fps.to_bits()) {
+                timeline.rational_rate = None;
+            }
+            timeline
+        }),
+        media_assets: d.media_assets.clone(),
         layer_comps: d.layer_comps.iter().map(|c| comp_m(c, sink)).collect(),
         last_applied_comp: d.last_applied_comp,
         last_document_state: d.last_document_state.as_ref().map(|c| comp_m(c, sink)),
@@ -876,6 +945,7 @@ impl Loader<'_> {
             frame_delays_ms,
             keyframes: m.keyframes.clone(),
             source: m.source.clone(),
+            asset_id: m.asset_id,
             fps: m.fps,
             playback: m.playback,
             show_altered: m.show_altered,
@@ -1027,13 +1097,14 @@ impl Loader<'_> {
                 cache: self.opt_surface(cache)?,
                 psd_raw: self.opt_blob(psd_raw)?,
             }),
-            ContentM::Smart { contents_id, source, transform, smart_filters, cache, psd_raw, filters_enabled, filter_mask, warp, stack_mode, perspective } => {
+            ContentM::Smart { contents_id, source, asset_id, transform, smart_filters, cache, psd_raw, filters_enabled, filter_mask, warp, stack_mode, perspective } => {
                 LayerContent::Smart(SmartObject {
                     contents_id: self.contents_id(*contents_id, source),
                     source: match source {
                         SmartSourceM::Embedded { file_name, blob } => SmartSource::Embedded { file_name: file_name.clone(), bytes: self.fetch.blob(blob)? },
                         SmartSourceM::Linked { path } => SmartSource::Linked { path: path.clone() },
                     },
+                    asset_id: *asset_id,
                     transform: *transform,
                     smart_filters: smart_filters.clone(),
                     cache: self.opt_surface(cache)?,
@@ -1149,7 +1220,7 @@ impl Loader<'_> {
                 }
                 Ok(())
             }
-            let mut max = m.id;
+            let mut max = m.media_assets.iter().map(|asset| asset.id.0).fold(m.id, u64::max);
             max_ids(&m.layers, 0, &mut max)?;
             self.preserve_ids = reserve_ids_through(max);
         }
@@ -1194,7 +1265,7 @@ impl Loader<'_> {
             }
         }
         let id = if self.preserve_ids { DocId(m.id) } else { DocId::fresh() };
-        Ok(Document {
+        let mut document = Document {
             id,
             name: m.name.clone(),
             size: m.size,
@@ -1217,6 +1288,7 @@ impl Loader<'_> {
             duotone: m.duotone.clone(),
             variables: m.variables.clone(),
             timeline: m.timeline.clone(),
+            media_assets: m.media_assets.clone(),
             layer_comps,
             last_applied_comp: m.last_applied_comp,
             last_document_state,
@@ -1225,7 +1297,9 @@ impl Loader<'_> {
             text_styles: m.text_styles.clone(),
             slices,
             recording: m.recording.as_ref().map(|r| self.recording(r)).transpose()?.flatten(),
-        })
+        };
+        validate_document_media_assets(&document)?;
+        Ok(document)
     }
 
     fn channel(&mut self, c: &ChannelM) -> Result<AlphaChannel> {

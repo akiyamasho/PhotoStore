@@ -130,22 +130,24 @@ struct CacheEntry {
     key: CacheKey,
     image: SourceImage,
     decodes: u32,
+    _budget: crate::media_budget::Reservation,
 }
 
 /// Decoded source composites by content hash, most recent last. Re-filtering or re-transforming
 /// a smart object never decodes its contents again.
 static SOURCE_CACHE: Mutex<Vec<CacheEntry>> = Mutex::new(Vec::new());
 const CACHE_ENTRIES: usize = 32;
-const CACHE_BYTES: usize = 1 << 30;
+const CACHE_BYTES: usize = crate::media_budget::MOVIE_FRAME_BUDGET_BYTES;
 
 struct DecodedEntry {
     key: [u8; 32],
     doc: Arc<Document>,
     bytes: usize,
+    _budget: crate::media_budget::Reservation,
 }
 static DECODE_CACHE: Mutex<Vec<DecodedEntry>> = Mutex::new(Vec::new());
 const DECODE_ENTRIES: usize = 8;
-const DECODE_BYTES: usize = 512 << 20;
+const DECODE_BYTES: usize = crate::media_budget::MOVIE_FRAME_BUDGET_BYTES;
 
 fn cache_key(bytes: &[u8], fmt: PixelFormat) -> CacheKey {
     (*blake3::hash(bytes).as_bytes(), fmt)
@@ -192,7 +194,12 @@ fn decode_cached(file_name: &str, bytes: &[u8]) -> Result<Arc<Document>> {
             return Ok(Arc::new(doc));
         }
         let doc = Arc::new(doc);
-        c.push(DecodedEntry { key, doc: doc.clone(), bytes: size });
+        let budget=loop {
+            if let Some(reservation)=crate::media_budget::reserve(crate::media_budget::MediaKind::MovieFrame,size){break Some(reservation);}
+            if c.is_empty(){break None;}c.remove(0);
+        };
+        let Some(budget)=budget else {return Ok(doc)};
+        c.push(DecodedEntry { key, doc: doc.clone(), bytes: size, _budget:budget });
         while c.len() > DECODE_ENTRIES || c.iter().map(|e| e.bytes).sum::<usize>() > DECODE_BYTES {
             c.remove(0);
         }
@@ -240,11 +247,22 @@ fn cache_put(key: CacheKey, image: SourceImage) {
         Some(i) => c.remove(i).decodes + 1,
         None => 1,
     };
-    c.push(CacheEntry { key, image, decodes });
+    let bytes=image.surface.tile_count().saturating_mul((photostore_geom::TILE_SIZE as usize).saturating_pow(2)).saturating_mul(image.surface.format().bytes_per_pixel());
+    let budget=loop {
+        if let Some(reservation)=crate::media_budget::reserve(crate::media_budget::MediaKind::MovieFrame,bytes){break Some(reservation);}
+        if c.is_empty(){break None;}c.remove(0);
+    };
+    let Some(budget)=budget else {return;};
+    c.push(CacheEntry { key, image, decodes, _budget:budget });
     let size = |e: &CacheEntry| e.image.bounds.width() as usize * e.image.bounds.height() as usize * e.key.1.channels() * 4;
     while c.len() > CACHE_ENTRIES || (c.len() > 1 && c.iter().map(size).sum::<usize>() > CACHE_BYTES) {
         c.remove(0);
     }
+}
+
+pub(crate) fn clear_derived_caches() {
+    if let Ok(mut cache)=SOURCE_CACHE.lock(){cache.clear();}
+    if let Ok(mut cache)=DECODE_CACHE.lock(){cache.clear();}
 }
 
 /// How many times these contents were decoded at this pixel format (0 = never / evicted).
@@ -315,10 +333,10 @@ fn timeline_frame_at_time(doc: &Document, time: f64) -> usize {
     let seconds = time.max(0.0) as f64;
     let explicit = t.frame_delays_ms.iter().take(duration).any(|d| *d > 0);
     if !explicit {
-        let frame = (seconds * t.fps.max(1e-3) as f64 + 1e-9).floor() as usize;
+        let frame = (seconds * t.project_rate().as_f64() + 1e-9).floor() as usize;
         return match t.loop_mode {
             photostore_doc::TimelineLoop::Loop => {
-                let cycle = duration as f64 / t.fps.max(1e-3) as f64;
+                let cycle = duration as f64 / t.project_rate().as_f64();
                 if let Some(n) = loop_count {
                     if seconds >= cycle * f64::from(n) {
                         return duration - 1;
@@ -328,7 +346,7 @@ fn timeline_frame_at_time(doc: &Document, time: f64) -> usize {
             }
             photostore_doc::TimelineLoop::PingPong if duration > 1 => {
                 let span = duration.saturating_mul(2).saturating_sub(2).max(1);
-                let cycle = span as f64 / t.fps.max(1e-3) as f64;
+                let cycle = span as f64 / t.project_rate().as_f64();
                 if let Some(n) = loop_count {
                     if seconds >= cycle * f64::from(n) {
                         return 0;
@@ -340,7 +358,7 @@ fn timeline_frame_at_time(doc: &Document, time: f64) -> usize {
             _ => frame.min(duration - 1),
         };
     }
-    let fallback = 1000.0 / t.fps.max(1e-3) as f64;
+    let fallback = 1000.0 / t.project_rate().as_f64();
     let delay = |i: usize| t.frame_delays_ms.get(i).copied().filter(|d| *d > 0).map(f64::from).unwrap_or(fallback);
     let total_ms = (0..duration).fold(0.0f64, |sum, i| (sum + delay(i)).min(f64::MAX / 2.0));
     let mut at = seconds * 1000.0;
@@ -393,9 +411,9 @@ fn document_time(doc: &Document) -> Option<f64> {
     let t = doc.timeline.as_ref()?;
     let cur = t.current.min(t.duration.saturating_sub(1)).min(1_000_000);
     if !t.frame_delays_ms.iter().take(cur.max(1)).any(|d| *d > 0) {
-        return Some(cur as f64 / f64::from(t.fps.max(1e-3)));
+        return Some(cur as f64 / t.project_rate().as_f64());
     }
-    let fallback = 1000.0 / t.fps.max(1e-3) as f64;
+    let fallback = 1000.0 / t.project_rate().as_f64();
     let seconds = (0..cur).fold(0.0f64, |sum, i| {
         let delay = t.frame_delays_ms.get(i).copied().filter(|d| *d > 0).map(f64::from).unwrap_or(fallback);
         (sum + delay / 1000.0).min(f64::MAX / 2.0)
@@ -410,7 +428,7 @@ fn layer_source_time(doc: &Document, layer: LayerId, fallback: Option<f64>) -> O
     let Some(range) = timeline.layer_ranges.iter().find(|range| range.layer == layer && range.playback.is_some()) else { return fallback };
     let (legacy_in, legacy_speed) = doc.layer(layer).and_then(|layer| layer.video.as_ref())
         .map(|video| (video.playback.source_in_seconds, video.playback.speed)).unwrap_or((0.0, 1.0));
-    let time = range.source_time_seconds(timeline.current, f64::from(timeline.fps.max(0.001)), legacy_in, legacy_speed);
+    let time = range.source_time_seconds(timeline.current, timeline.project_rate().as_f64(), legacy_in, legacy_speed);
     time.is_finite().then_some(time).or(fallback)
 }
 

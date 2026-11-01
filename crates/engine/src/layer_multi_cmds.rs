@@ -581,6 +581,7 @@ fn doc_pixels_equal(a: &Document, b: &Document) -> bool {
         slices: _,
         variables: _,
         timeline: _,
+        media_assets: _,
         recording: _,
     } = a;
     *size == b.size
@@ -1134,7 +1135,8 @@ fn merge_layers(s: &mut Session) -> Result<Value> {
         if solo.layers.is_empty() {
             return Err(EngineError::Other("the selected layers are all hidden".into()));
         }
-        let buf = photostore_compose::flatten(&solo);
+        let original=crate::video_cmds::original_output_snapshot(&solo)?;
+        let buf = photostore_compose::flatten(original.as_ref().unwrap_or(&solo));
         let fmt = doc.pixel_format();
         let fmt = PixelFormat::new(fmt.mode, fmt.sample, true);
         let data: Vec<f32> = buf.px.iter().flat_map(|p| photostore_raster::from_rgba(&fmt, *p)).collect();

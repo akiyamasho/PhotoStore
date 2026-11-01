@@ -5,6 +5,40 @@
 
 use crate::PhotoStoreApp;
 use crate::theme::Tokens;
+
+#[derive(Clone)]
+struct TrackViewRow {
+    id:Option<u64>, name:String, layers:Vec<LayerId>, locked:bool, muted:bool, height:f32,
+    intervals:Vec<(usize,usize,LayerId)>, prefix_end:Vec<usize>,
+}
+impl TrackViewRow {
+    fn visible_layers(&self,start:usize,end:usize)->Vec<LayerId> {
+        let upper=self.intervals.partition_point(|(s,_,_)|*s<end);
+        let lower=self.prefix_end[..upper].partition_point(|e|*e<=start);
+        self.intervals[lower..upper].iter().filter(|(_,e,_)|*e>start).map(|(_,_,id)|*id).collect()
+    }
+}
+#[derive(Clone)]
+struct TrackViewIndex {doc:DocId, revision:u64, duration:usize, rows:std::sync::Arc<Vec<TrackViewRow>>}
+fn track_view(doc:&photostore_doc::Document,timeline:&Timeline,revision:u64)->TrackViewIndex {
+    let mut tracks:Vec<_>=if timeline.visual_tracks.is_empty() {
+        doc.walk().into_iter().map(|(_,_,l)|(None,l.name.clone(),vec![l.id],false,false)).collect()
+    } else {
+        let mut tracks=timeline.visual_tracks.clone();tracks.sort_by_key(|t|(t.order,t.id));
+        tracks.into_iter().map(|t|(Some(t.id),t.name,t.layers,t.locked,t.muted)).collect()
+    };
+    let represented:std::collections::HashSet<_>=tracks.iter().flat_map(|(_,_,layers,_,_)|layers.iter().copied()).collect();
+    for (_,_,layer) in doc.walk(){if !represented.contains(&layer.id){tracks.push((None,layer.name.clone(),vec![layer.id],false,false));}}
+    let ranges:std::collections::HashMap<_,_>=timeline.layer_ranges.iter().map(|r|(r.layer,(r.start,r.end))).collect();
+    let rows=tracks.into_iter().map(|(id,name,layers,locked,muted)| {
+        let height=layers.iter().filter_map(|id|doc.layer(*id)).map(|l|if l.video.is_some(){VIDEO_TRACK_HEIGHT}else{STILL_TRACK_HEIGHT}).fold(STILL_TRACK_HEIGHT,f32::max);
+        let mut intervals:Vec<_>=layers.iter().map(|id| {let (s,e)=ranges.get(id).copied().unwrap_or((0,timeline.duration));(s,e,*id)}).collect();
+        intervals.sort_by_key(|(s,e,id)|(*s,*e,id.0));
+        let mut maximum=0;let prefix_end=intervals.iter().map(|(_,e,_)|{maximum=maximum.max(*e);maximum}).collect();
+        TrackViewRow{id,name,layers,locked,muted,height,intervals,prefix_end}
+    }).collect();
+    TrackViewIndex{doc:doc.id,revision,duration:timeline.duration,rows:std::sync::Arc::new(rows)}
+}
 use egui::{Id, Rect, RichText, Sense, Ui, pos2, vec2};
 use photostore_doc::{DocId, LayerId, Timeline, TimelineMode, VideoData};
 use serde_json::{Value, json};
@@ -638,7 +672,7 @@ fn snapshot(ctx: &egui::Context, history: (usize, usize), doc: DocId, timeline: 
     let playback = canonical_playback(timeline, layer, video);
     let source_duration = source_duration_cached(ctx, doc, layer, history, video);
     let end = range.map_or_else(
-        || ((source_duration - playback.source_in_seconds).max(0.0) / playback.speed.max(0.01) * f64::from(timeline.fps.max(0.001))).ceil().max(1.0) as usize,
+        || ((source_duration - playback.source_in_seconds).max(0.0) / playback.speed.max(0.01) * timeline.project_rate().as_f64()).ceil().max(1.0) as usize,
         |range| range.end,
     );
     ClipSnapshot {
@@ -975,8 +1009,8 @@ fn draw_clip(
     }
     let (start, end, _source_in) = visible;
     let duration = timeline.duration_seconds().max(0.001);
-    let left = lane.left() + lane.width() * (start as f64 / f64::from(timeline.fps.max(0.001)) / duration) as f32;
-    let right = lane.left() + lane.width() * (end as f64 / f64::from(timeline.fps.max(0.001)) / duration) as f32;
+    let left = lane.left() + lane.width() * (start as f64 / timeline.project_rate().as_f64() / duration) as f32;
+    let right = lane.left() + lane.width() * (end as f64 / timeline.project_rate().as_f64() / duration) as f32;
     let rect = Rect::from_min_max(pos2(left, lane.top() + 3.0), pos2(right.max(left + 14.0), lane.bottom() - 3.0));
     let response = ui.interact(rect, Id::new(("video-clip", doc.0, layer.0)), if editable { Sense::click_and_drag() } else { Sense::click() });
     let selected = app.session.active().is_some_and(|s| s.selected_layers.contains(&layer));
@@ -1020,7 +1054,7 @@ fn draw_clip(
         pointer_start_x: x,
         lane_width: lane.width(),
         timeline_seconds: duration,
-        fps: f64::from(timeline.fps.max(0.001)),
+        fps: timeline.project_rate().as_f64(),
         start: clip.start,
         end: clip.end,
         source_in: clip.source_in,
@@ -1177,7 +1211,8 @@ fn paint_clip_thumbnails(
         return;
     }
     let count = ((visible.width() / 58.0).ceil() as usize).clamp(1, 8);
-    let prefix = format!("timeline-clip-thumb:{}:{}:", document.id.0, layer.id.0);
+    let revision=layer.video.as_ref().and_then(|v|v.asset_id).and_then(|id|document.media_assets.iter().find(|a|a.id==id)).map_or(0,|a|a.revision);
+    let prefix = format!("timeline-clip-thumb:{}:{}:{}:", document.id.0, layer.id.0,revision);
     let mut textures: Vec<(usize, egui::TextureId)> = Vec::new();
     if let Some(video) = layer.video.as_ref() {
         if let (Some(_movie), photostore_doc::VideoSource::File { path }) = (&video.movie_backing, &video.source) {
@@ -1204,7 +1239,7 @@ fn paint_clip_thumbnails(
                 let texture = cached.or_else(|| match photostore_engine::movie_cache::frame_thumbnail_at_seconds(path, source_seconds, document.pixel_format()) {
                     Ok(Some(surface)) => {
                         let image = crate::timeline_ui::linked_movie_thumbnail(&surface, document.bounds());
-                        let tex = ui.ctx().load_texture(format!("{key}"), image, egui::TextureOptions::LINEAR);
+                        let tex = crate::timeline_ui::load_thumbnail(ui.ctx(),key.clone(),image)?;
                         let id = tex.id();
                         app.ui.timeline.frame_thumbs.push((key, tex));
                         Some(id)
@@ -1239,7 +1274,7 @@ fn paint_clip_thumbnails(
                 let key = format!("{prefix}frame:{}:{}", app.ui.timeline.thumb_generation, index);
                 let texture = app.ui.timeline.frame_thumbs.iter().find(|(k, _)| k == &key).map(|(_, tex)| tex.id()).or_else(|| {
                     let image = crate::transform_tex::read_surface(&video.frames[index], None, document.bounds(), 64).0;
-                    let tex = ui.ctx().load_texture(format!("{key}"), image, egui::TextureOptions::LINEAR);
+                    let tex = crate::timeline_ui::load_thumbnail(ui.ctx(),key.clone(),image)?;
                     let id = tex.id();
                     app.ui.timeline.frame_thumbs.push((key, tex));
                     Some(id)
@@ -1253,7 +1288,7 @@ fn paint_clip_thumbnails(
         let key = format!("{prefix}still:{}:{}", history_snapshot(app, document.id).0, history_snapshot(app, document.id).1);
         let texture = app.ui.timeline.frame_thumbs.iter().find(|(k, _)| k == &key).map(|(_, tex)| tex.id()).or_else(|| {
             let image = crate::transform_tex::read_surface(surface, None, document.bounds(), 64).0;
-            let tex = ui.ctx().load_texture(format!("{key}"), image, egui::TextureOptions::LINEAR);
+            let tex = crate::timeline_ui::load_thumbnail(ui.ctx(),key.clone(),image)?;
             let id = tex.id();
             app.ui.timeline.frame_thumbs.push((key, tex));
             Some(id)
@@ -1919,18 +1954,22 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                 {
                     toggle_play = true;
                 }
+                if app.timeline_playback.loading() {
+                    ui.spinner();
+                    ui.weak("Loading frame").on_hover_text("Waiting for the video preview. Late frames are skipped to keep pace with playback.");
+                }
                 if !very_narrow_toolbar && crate::icons::button(ui, "chevrons-left", 20.0, false, "Previous frame (←)").clicked() {
                     action = Some(("timeline.previousFrame", json!({"document":doc.0})));
                 }
                 let timecode = format!(
                     "{:02}:{:02}:{:02}:{:02}",
-                    (timeline.time() / 3600.0) as u32,
-                    (timeline.time() / 60.0) as u32 % 60,
-                    timeline.time() as u32 % 60,
+                    frame / timeline.project_rate().as_f64().round().max(1.0) as usize / 3600,
+                    frame / timeline.project_rate().as_f64().round().max(1.0) as usize / 60 % 60,
+                    frame / timeline.project_rate().as_f64().round().max(1.0) as usize % 60,
                     frame % timeline.fps.round().max(1.0) as usize
                 );
                 if !very_narrow_toolbar {
-                    ui.label(RichText::new(timecode.clone()).monospace().color(tokens.text));
+                    ui.label(RichText::new(timecode.clone()).monospace().color(tokens.text)).on_hover_text(format!("Non-drop timecode · {:.9} s · {}/{} fps",timeline.project_frame_seconds(frame),timeline.project_rate().numerator,timeline.project_rate().denominator));
                 }
                 if !very_narrow_toolbar && crate::icons::button(ui, "chevron-right", 20.0, false, "Next frame (→)").clicked() {
                     action = Some(("timeline.nextFrame", json!({"document":doc.0})));
@@ -2095,6 +2134,12 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                             ui.close();
                         }
                         ui.separator();
+                        crate::timeline_ui::media_preview_menu(app,ui);
+                        ui.menu_button("Project frame rate",|ui| {
+                            for (num,den,label) in [(24,1,"24"),(24000,1001,"23.976 (24000/1001)"),(25,1,"25"),(30,1,"30"),(30000,1001,"29.97 (30000/1001)"),(50,1,"50"),(60,1,"60"),(60000,1001,"59.94 (60000/1001)")] {
+                                if ui.button(label).clicked() {action=Some(("timeline.setProps",json!({"document":doc.0,"fpsNumerator":num,"fpsDenominator":den})));ui.close();}
+                            }
+                        });
                         let mut fps = timeline.fps;
                         if ui.add(egui::DragValue::new(&mut fps).speed(0.1).range(1.0..=1000.0).suffix(" fps")).changed() {
                             action = Some(("timeline.setProps", json!({"document":doc.0,"fps":fps})));
@@ -2111,12 +2156,15 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
             });
 
             // Fixed time ruler; lane widths use the same duration and zoom geometry below.
-            let gutter = TIMELINE_GUTTER_WIDTH;
+            let gutter = if app.ui.timeline.gutter_width.is_finite(){app.ui.timeline.gutter_width.clamp(100.0,320.0)}else{180.0};
             let lane_width = ((ui.available_width() - gutter).max(200.0) * zoom).max(240.0);
             ruler_geometry = Some((lane_width, gutter));
             ui.horizontal(|ui| {
                 let (g, _) = ui.allocate_exact_size(vec2(gutter, TIMELINE_RULER_HEIGHT), Sense::hover());
                 ui.painter_at(g).rect_filled(g, 0.0, tokens.card);
+                let resize=ui.interact(Rect::from_min_max(pos2(g.right()-6.0,g.top()),g.right_bottom()),Id::new(("timeline-gutter-resize",doc.0)),Sense::drag());
+                if resize.dragged() {app.ui.timeline.gutter_width=(gutter+ui.input(|i|i.pointer.delta().x)).clamp(100.0,320.0);}
+                resize.on_hover_cursor(egui::CursorIcon::ResizeHorizontal).on_hover_text("Drag to resize track controls");
                 let ruler_output = egui::ScrollArea::horizontal()
                     .scroll_source(egui::scroll_area::ScrollSource::NONE)
                     .id_salt(("timeline-ruler", doc.0))
@@ -2135,7 +2183,7 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                         let total_seconds = timeline.duration_seconds().max(0.001);
                         let visible = ruler.intersect(ui.clip_rect());
                         let seconds_per_pixel = total_seconds / lane_width.max(1.0) as f64;
-                        let tick_step = nice_tick_interval((seconds_per_pixel * 88.0).max(1.0 / f64::from(timeline.fps.max(0.001))));
+                        let tick_step = nice_tick_interval((seconds_per_pixel * 88.0).max(1.0 / timeline.project_rate().as_f64()));
                         let visible_start = ((visible.left() - ruler.left()).max(0.0) as f64 * seconds_per_pixel).max(0.0);
                         let visible_end = ((visible.right() - ruler.left()).max(0.0) as f64 * seconds_per_pixel).min(total_seconds);
                         let first_tick = (visible_start / tick_step).floor().max(0.0) as u64;
@@ -2184,27 +2232,18 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                 let marquee_id = Id::new(("timeline-clip-marquee", doc.0));
                 let mut marquee_candidates = Vec::new();
                 let mut marquee_finished = false;
-                // Keep one visible row per persisted track; a legacy document gets deterministic
-                // derived rows in document layer order. Each row can contain several clips.
-                let mut tracks: Vec<(Option<u64>, String, Vec<LayerId>, bool, bool)> = if timeline.visual_tracks.is_empty() {
-                    document.walk().into_iter().map(|(_, _, layer)| (None, layer.name.clone(), vec![layer.id], false, false)).collect()
-                } else {
-                    let mut tracks = timeline.visual_tracks.clone();
-                    tracks.sort_by_key(|track| (track.order, track.id));
-                    tracks.into_iter().map(|track| (Some(track.id), track.name, track.layers, track.locked, track.muted)).collect()
+                let index_id=Id::new("timeline-interval-view");
+                let authored_revision=app.session.active().map_or(0,|st|st.content_revision);
+                let cached=ui.ctx().data(|data|data.get_temp::<TrackViewIndex>(index_id));
+                let view=match cached.filter(|v|v.doc==doc && v.revision==authored_revision && v.duration==duration) {
+                    Some(view)=>view,
+                    None=>{let view=track_view(&document,timeline,authored_revision);ui.ctx().data_mut(|data|data.insert_temp(index_id,view.clone()));view}
                 };
-                let represented: std::collections::HashSet<LayerId> = tracks.iter().flat_map(|(_, _, layers, _, _)| layers.iter().copied()).collect();
-                for (_, _, layer) in document.walk() {
-                    if !represented.contains(&layer.id) {
-                        tracks.push((None, layer.name.clone(), vec![layer.id], false, false));
-                    }
-                }
-                for (track_id, track_name, layers, track_locked, track_muted) in tracks {
-                    let row_height = layers
-                        .iter()
-                        .filter_map(|id| document.layer(*id))
-                        .map(|layer| if layer.video.is_some() { VIDEO_TRACK_HEIGHT } else { STILL_TRACK_HEIGHT })
-                        .fold(STILL_TRACK_HEIGHT, f32::max);
+                for row in view.rows.iter() {
+                    let track_id=row.id;let track_name=&row.name;let layers=&row.layers;let track_locked=row.locked;let track_muted=row.muted;
+                    let row_height=row.height;
+                    let row_rect=Rect::from_min_size(ui.next_widget_position(),vec2(ui.available_width(),row_height));
+                    if !row_rect.intersects(ui.clip_rect()) {ui.allocate_space(row_rect.size());continue;}
                     ui.horizontal(|ui| {
                         let (g, _) = ui.allocate_exact_size(vec2(gutter, row_height), Sense::hover());
                         let mut gutter_ui = ui.new_child(egui::UiBuilder::new().max_rect(g));
@@ -2220,7 +2259,7 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                         let visible = layers.iter().filter_map(|id| document.layer(*id)).all(|layer| layer.visible);
                         let eye = crate::icons::button(&mut gutter_ui, if visible { "eye" } else { "eye-off" }, 17.0, visible, "Track visibility");
                         if eye.clicked() {
-                            for layer in &layers {
+                            for layer in layers {
                                 if let Err(error) =
                                     app.with_document(doc, |app| app.run("layer.setProps", json!({"document":doc.0,"layer":layer.0,"visible":!visible})))
                                 {
@@ -2292,7 +2331,13 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                                     select_layers(app, doc, &[]);
                                     crate::audio_ui::clear_selection(ui.ctx(), doc);
                                 }
-                                for layer_id in layers.iter().copied() {
+                                let visible=lane.intersect(ui.clip_rect());
+                                let first=((visible.left()-lane.left())/lane.width().max(1.0)*duration as f32).floor().max(0.0) as usize;
+                                let last=((visible.right()-lane.left())/lane.width().max(1.0)*duration as f32).ceil().max(0.0) as usize;
+                                let mut visible_layers=row.visible_layers(first,last.saturating_add(1));
+                                // Keep active drags alive when their selected clips move beyond the viewport.
+                                for id in &selected_layers {if layers.contains(id) && !visible_layers.contains(id){visible_layers.push(*id);}}
+                                for layer_id in visible_layers {
                                     let Some(layer) = document.layer(layer_id) else { continue };
                                     let range = timeline.layer_ranges.iter().find(|r| r.layer == layer_id);
                                     let clip = if let Some(video) = layer.video.as_ref() {

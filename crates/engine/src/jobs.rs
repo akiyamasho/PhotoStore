@@ -438,8 +438,10 @@ fn open_video_document(name: &str, path: &str, ctx: &JobCtx) -> Result<Document>
     let mut doc = Document::new(name, Size::new(info.width, info.height), ColorMode::Rgb, SampleType::U8);
     let (preview, backing, decoded_fps) =
         crate::video_cmds::open_linked_movie(&path, doc.pixel_format(), Some(0), Some((frame_count - 1) as u64), Some(f64::from(fps)), ctx)?;
+    let preview=crate::video_cmds::movie_surface_for_document(&doc,preview)?;
     let source_fps = if decoded_fps.is_finite() && decoded_fps > 0.0 { decoded_fps } else { fps };
     let mut timeline = Timeline::new(frame_count, source_fps);
+    if let Some(rate)=photostore_doc::RationalRate::new(info.fps.num,info.fps.den) { timeline.set_project_rate(rate).map_err(EngineError::Other)?; }
     let layer_name = std::path::Path::new(&path).file_stem().and_then(|stem| stem.to_str()).unwrap_or("Movie").chars().take(256).collect::<String>();
     let mut layer = Layer::raster(layer_name, doc.pixel_format());
     let layer_id = layer.id;
@@ -459,6 +461,7 @@ fn open_video_document(name: &str, path: &str, ctx: &JobCtx) -> Result<Document>
         }
     }
     doc.timeline = Some(timeline);
+    crate::media_asset_cmds::initialize_sources(&mut doc)?;
     Ok(doc)
 }
 
@@ -477,6 +480,7 @@ fn open_audio_document(name: &str, path: &str) -> Result<Document> {
         name: "Audio".into(),
         muted: false,
         clips: vec![AudioClip {
+            asset_id: None,
             id: 1,
             name: clip_name,
             path,
@@ -498,6 +502,7 @@ fn open_audio_document(name: &str, path: &str) -> Result<Document> {
     });
     let mut doc = Document::new(name, Size::new(1920, 1080), ColorMode::Rgb, SampleType::U8);
     doc.timeline = Some(timeline);
+    crate::media_asset_cmds::initialize_sources(&mut doc)?;
     Ok(doc)
 }
 

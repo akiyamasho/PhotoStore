@@ -54,7 +54,7 @@ copy_docs() {
 # Copy project and third-party attribution records into a package directory.
 copy_licenses() {
   local dest="$1" f
-  for f in LICENSE LICENSE-MIT LICENSE-APACHE NOTICE ATTRIBUTION.md COPYRIGHT; do
+  for f in LICENSE LICENSE-MIT LICENSE-APACHE NOTICE ATTRIBUTION.md COPYRIGHT THIRD-PARTY-AUDIO-NOTICES.txt; do
     if [ -f "$ROOT/$f" ]; then cp "$ROOT/$f" "$dest/"; fi
   done
   copy_font_licences "$dest"

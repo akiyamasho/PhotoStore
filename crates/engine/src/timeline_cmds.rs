@@ -77,6 +77,7 @@ fn duration_param(cmd: &str, p: &Value) -> Result<Option<usize>> {
 
 /// The optional `fps` param, rejected unless it's a finite number in `(0, MAX_FPS]` (#1009).
 fn fps_param(cmd: &str, p: &Value) -> Result<Option<f32>> {
+    if let Some(rate)=rate_param(cmd,p)? { return Ok(Some(rate.as_f64() as f32)); }
     let Some(v) = p.get("fps").filter(|v| !v.is_null()) else { return Ok(None) };
     v.as_f64()
         .filter(|f| f.is_finite() && *f > 0.0 && *f <= f64::from(MAX_FPS))
@@ -84,9 +85,20 @@ fn fps_param(cmd: &str, p: &Value) -> Result<Option<f32>> {
         .ok_or_else(|| bad(cmd, format!("`fps` must be a number above 0 and at most {MAX_FPS}, got {v}")))
 }
 
+pub(crate) fn rate_param(cmd:&str,p:&Value)->Result<Option<photostore_doc::RationalRate>> {
+    if p.get("fpsNumerator").is_none() && p.get("fpsDenominator").is_none() { return Ok(None); }
+    if p.get("fps").is_some() { return Err(bad(cmd,"supply fps or a rational numerator/denominator pair, not both".into())); }
+    let number=|key:&str|p.get(key).and_then(Value::as_u64).and_then(|n|u32::try_from(n).ok()).filter(|n|*n>0)
+        .ok_or_else(||bad(cmd,format!("{key} must be a positive 32-bit integer")));
+    let rate=photostore_doc::RationalRate::new(number("fpsNumerator")?,number("fpsDenominator")?)
+        .filter(|r|r.valid()).ok_or_else(||bad(cmd,"rational FPS must be in 0.001..=1000".into()))?;
+    Ok(Some(rate))
+}
+
 fn create(s: &mut Session, p: &Value) -> Result<Value> {
     let duration = duration_param("timeline.create", p)?.unwrap_or(30);
     let fps = fps_param("timeline.create", p)?.unwrap_or(30.0);
+    let rate = rate_param("timeline.create",p)?;
     let mode = match p.get("mode").and_then(Value::as_str) {
         Some("frameAnimation") | Some("frame-animation") => TimelineMode::FrameAnimation,
         _ => TimelineMode::Video,
@@ -99,6 +111,7 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
             freeze_and_clear_owned_position(&mut doc.layers, current);
             crate::smart_transform_cmds::clear_tracks(&mut doc.layers);
             let mut next = Timeline::new(duration, fps);
+            next.rational_rate=rate;
             next.mode = mode;
             doc.timeline = Some(next);
             crate::video_cmds::sync(doc);
@@ -106,7 +119,7 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
         })?;
         return info(s);
     }
-    with_timeline(s, |t| { let mut next = Timeline::new(duration, fps); next.mode = mode; *t = Some(next); })
+    with_timeline(s, |t| { let mut next = Timeline::new(duration, fps); next.rational_rate=rate; next.mode = mode; *t = Some(next); })
 }
 
 fn create_frame_animation(s: &mut Session, p: &Value) -> Result<Value> {
@@ -144,6 +157,7 @@ fn collect_layer_states(layers: &[photostore_doc::Layer], out: &mut Vec<FrameLay
             opacity: layer.opacity,
             position: photostore_doc::comps::layer_position(layer),
                 video_position: layer.video.as_ref().map(|v| v.applied_translation),
+            smart_transform: match &layer.content { photostore_doc::LayerContent::Smart(s) => Some(s.transform.m), _ => None },
             blend: Some(layer.blend),
             fill_opacity: Some(layer.fill_opacity),
             effects: Some(photostore_doc::FrameEffectsState { enabled: layer.effects.enabled, items: layer.effects.items.clone(), reference: layer.effects.reference }),
@@ -163,6 +177,7 @@ fn bake_owned_opacity(states: &mut [Vec<FrameLayerState>], layers: &[photostore_
                     layer: l.id, visible: l.visible, opacity: l.opacity,
                     position: photostore_doc::comps::layer_position(l), blend: Some(l.blend), fill_opacity: Some(l.fill_opacity),
                     video_position: l.video.as_ref().map(|v| v.applied_translation),
+                    smart_transform: match &l.content { photostore_doc::LayerContent::Smart(s) => Some(s.transform.m), _ => None },
                     effects: Some(photostore_doc::FrameEffectsState { enabled: l.effects.enabled, items: l.effects.items.clone(), reference: l.effects.reference }),
                 }));
             }
@@ -213,6 +228,13 @@ fn clear_owned_position(layers: &mut [Layer]) {
     }
 }
 
+fn clear_owned_transform(layers: &mut [Layer]) {
+    for layer in layers {
+        layer.transform_animation = None;
+        if let Some(children) = layer.children_mut() { clear_owned_transform(children); }
+    }
+}
+
 fn freeze_and_clear_owned_position(layers: &mut [Layer], frame: usize) {
     for layer in layers {
         if let Some(track) = layer.position_animation.as_ref() {
@@ -256,9 +278,6 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
         return info(s);
     }
     if mode == TimelineMode::FrameAnimation {
-        if s.active().is_some_and(|st|st.doc.walk().iter().any(|(_,_,l)|l.transform_animation.as_ref().is_some_and(|a|a.enabled))) {
-            return Err(bad("timeline.setMode", "disable or delete Smart Object Transform animation before converting to Frame Animation; baking Transform keys is not supported".into()));
-        }
         // Materialize a property snapshot for every frame when entering animation mode. The
         // source video surfaces stay owned by their video layers, so this does not flatten or
         // duplicate the movie and preserves its timing and natural motion.
@@ -267,11 +286,12 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
             let duration = doc.timeline.as_ref().map_or(1, |t| t.duration).min(MAX_DURATION);
             let owned_tracks = doc.walk().iter().filter(|(_, _, l)| l.opacity_animation.is_some()).count();
             let owned_position_tracks = doc.walk().iter().filter(|(_, _, l)| l.position_animation.is_some()).count();
-            if owned_tracks > 0 || owned_position_tracks > 0 {
+            let owned_transform_tracks = doc.walk().iter().filter(|(_, _, l)| l.transform_animation.is_some()).count();
+            if owned_tracks > 0 || owned_position_tracks > 0 || owned_transform_tracks > 0 {
                 let dense_complete = doc.timeline.as_ref().is_some_and(|t| t.property_frames.len() >= duration);
                 let per_snapshot = doc.walk().iter().map(|(_, _, l)| std::mem::size_of::<FrameLayerState>() + l.effects.items.len().saturating_mul(512)).sum::<usize>();
                 let mut estimated = duration.saturating_mul(per_snapshot);
-                if dense_complete && owned_position_tracks == 0 {
+                if dense_complete && owned_position_tracks == 0 && owned_transform_tracks == 0 {
                     estimated = doc.timeline.as_ref().map(|t| t.property_frames.iter().take(duration).map(|row| row.iter().map(|state| std::mem::size_of::<FrameLayerState>() + state.effects.as_ref().map_or(0, |fx| fx.items.len().saturating_mul(512))).sum::<usize>()).sum()).unwrap_or(estimated);
                 }
                 let owned_ids: std::collections::HashSet<_> = doc.walk().iter().filter_map(|(_, _, l)| l.opacity_animation.as_ref().map(|_| l.id)).collect();
@@ -283,7 +303,7 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
                 if estimated > 64 * 1024 * 1024 { return Err(bad("timeline.setMode", "property frame conversion exceeds 64 MiB snapshot limit".into())); }
             }
             let original = doc.timeline.as_ref().map_or(0, |t| t.current);
-            let states = if owned_position_tracks == 0 && doc.timeline.as_ref().is_some_and(|t| t.property_frames.len() >= duration) {
+            let states = if owned_position_tracks == 0 && owned_transform_tracks == 0 && doc.timeline.as_ref().is_some_and(|t| t.property_frames.len() >= duration) {
                 doc.timeline.as_ref().map(|t| t.property_frames[..duration].to_vec()).unwrap_or_default()
             } else {
                 let mut states = Vec::with_capacity(duration);
@@ -308,6 +328,7 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
             }
             clear_owned_opacity(&mut doc.layers);
             clear_owned_position(&mut doc.layers);
+            clear_owned_transform(&mut doc.layers);
             crate::video_cmds::sync(doc);
             Ok(())
         })?;
@@ -320,7 +341,7 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(t) = &mut doc.timeline {
             if !t.frame_states.is_empty() {
                 let source = std::mem::take(&mut t.frame_states);
-                let period_ms = 1000.0_f64 / f64::from(t.fps.max(0.001));
+                let period_ms = 1000.0_f64 / t.project_rate().as_f64();
                 let delays: Vec<f64> = source.iter().enumerate().map(|(index, _)| {
                     let delay = t.frame_delays_ms.get(index).copied().unwrap_or(0);
                     if delay == 0 { period_ms } else { f64::from(delay) }
@@ -333,7 +354,8 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
                 }).sum::<usize>()).max().unwrap_or(0);
                 let estimate = total.saturating_mul(per_frame_estimate);
                 if estimate > 64 * 1024 * 1024 { return Err(bad("timeline.setMode", "video conversion exceeds 64 MiB property-track limit".into())); }
-                let boundary = |frame: usize| ((delays.iter().take(frame.min(delays.len())).sum::<f64>() / 1000.0) * f64::from(t.fps)).floor() as usize;
+                let project_fps=t.project_rate().as_f64();
+                let boundary = |frame: usize| ((delays.iter().take(frame.min(delays.len())).sum::<f64>() / 1000.0) * project_fps).floor() as usize;
                 let mut states = Vec::with_capacity(total);
                 let mut source_index = 0usize;
                 let mut end_ms = delays.first().copied().unwrap_or(period_ms);
@@ -444,6 +466,7 @@ fn make_frames_from_layers(s: &mut Session) -> Result<Value> {
                 opacity: current.get(slot).map_or(1.0, |v| v.1),
                 position: doc.layer(*layer).and_then(photostore_doc::comps::layer_position),
                 video_position: doc.layer(*layer).and_then(|l| l.video.as_ref().map(|v| v.applied_translation)),
+                smart_transform: doc.layer(*layer).and_then(|l| match &l.content {photostore_doc::LayerContent::Smart(s)=>Some(s.transform.m),_=>None}),
                 blend: doc.layer(*layer).map(|l| l.blend),
                 fill_opacity: doc.layer(*layer).map(|l| l.fill_opacity),
                 effects: doc.layer(*layer).map(|l| photostore_doc::FrameEffectsState { enabled: l.effects.enabled, items: l.effects.items.clone(), reference: l.effects.reference }),
@@ -483,6 +506,30 @@ fn set_frame(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// Playback navigation presents only a fully decoded timestamp. A cache miss prepares that
+/// timestamp without changing document time or its visible surfaces. This is navigation, not
+/// an authored edit: preserve history and the clean/dirty relationship.
+fn present_frame(s: &mut Session, p: &Value) -> Result<Value> {
+    check_document(s, p, "timeline.presentFrame")?;
+    if s.active_job().is_some() { return Err(bad("timeline.presentFrame", "a document edit is still running".into())); }
+    let frame = p.get("frame").and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok())
+        .ok_or_else(|| bad("timeline.presentFrame", "frame must be a whole nonnegative frame".into()))?;
+    let st = s.active_mut().ok_or(EngineError::NoDocument)?;
+    let mut doc = (*st.doc).clone();
+    let t = doc.timeline.as_mut().ok_or_else(|| bad("timeline.presentFrame", "no timeline".into()))?;
+    if frame >= t.duration { return Err(bad("timeline.presentFrame", "frame is outside the timeline".into())); }
+    t.current = frame;
+    if !crate::video_cmds::sync_for_presentation(&mut doc)? {
+        return Ok(json!({"ready":false,"requestedFrame":frame}));
+    }
+    let clean = st.saved_revision == st.revision;
+    st.doc = Arc::new(doc);
+    st.revision = st.revision.wrapping_add(1);
+    if clean { st.saved_revision = st.revision; }
+    st.last_damage = None;
+    Ok(json!({"ready":true,"frame":frame}))
+}
+
 fn step(s: &mut Session, delta: i64) -> Result<Value> {
     with_timeline(s, |t| {
         if let Some(t) = t {
@@ -491,15 +538,52 @@ fn step(s: &mut Session, delta: i64) -> Result<Value> {
     })
 }
 
+/// FPS changes keep authored frame addresses and source samples at those addresses stable.
+/// Source rates and linked audio envelopes change together, rather than letting audio remain
+/// at its former wall time while the video/keys follow a different frame clock.
+fn retime_frame_cadence(doc:&mut Document,new_fps:f64,new_duration:Option<usize>)->Result<()> {
+    let Some(t)=doc.timeline.as_ref().filter(|t|t.mode==TimelineMode::Video) else{return Ok(())};
+    let old_fps=t.project_rate().as_f64();let ratio=new_fps/old_fps;
+    if (ratio-1.0).abs()<1e-12{return Ok(())};
+    let duration=new_duration.unwrap_or(t.duration);
+    let speed=|value:f64|->Result<f64>{let value=value*ratio;if value.is_finite() && (0.01..=100.0).contains(&value){Ok(value)}else{Err(bad("timeline.setProps","this FPS change would exceed a clip's supported speed range; adjust its speed first".into()))}};
+    let mut smart_ids=Vec::new();
+    // Recursive helper is expressed as a nested function to avoid another timing authority.
+    fn layers_cadence_local(layers:&mut[Layer],speed:&impl Fn(f64)->Result<f64>,smart:&mut Vec<LayerId>)->Result<()> {
+        for layer in layers {
+            if let Some(video)=&mut layer.video {video.playback.speed=speed(video.playback.speed)?;}
+            if matches!(layer.content,photostore_doc::LayerContent::Smart(_)){smart.push(layer.id);}
+            if let Some(children)=layer.children_mut(){layers_cadence_local(children,speed,smart)?;}
+        }Ok(())
+    }
+    layers_cadence_local(&mut doc.layers,&speed,&mut smart_ids)?;
+    let t=doc.timeline.as_mut().ok_or(EngineError::NoDocument)?;
+    for id in smart_ids {
+        if !t.layer_ranges.iter().any(|r|r.layer==id) {t.layer_ranges.push(LayerTimelineRange{layer:id,start:0,end:duration,enabled:true,playback:Some(Default::default())});}
+        if let Some(range)=t.layer_ranges.iter_mut().find(|r|r.layer==id) {
+            if range.playback.is_none(){range.playback=Some(photostore_doc::ClipPlayback{source_in_seconds:range.start as f64/old_fps,..Default::default()});}
+        }
+    }
+    for range in &mut t.layer_ranges {if let Some(playback)=&mut range.playback {playback.speed=speed(playback.speed)?;for point in &mut playback.speed_curve{point.speed=speed(point.speed)?;}}}
+    for clip in t.audio_tracks.iter_mut().flat_map(|track|track.clips.iter_mut()) {
+        clip.start_seconds/=ratio;clip.duration_seconds/=ratio;clip.fade_in_seconds/=ratio;clip.fade_out_seconds/=ratio;
+        clip.envelope_offset_seconds/=ratio;clip.envelope_duration_seconds=clip.envelope_duration_seconds.map(|v|v/ratio);
+        clip.speed=speed(clip.speed)?;for point in &mut clip.speed_curve{point.speed=speed(point.speed)?;}
+    }
+    Ok(())
+}
+
 fn set_props(s: &mut Session, p: &Value) -> Result<Value> {
     let fps = fps_param("timeline.setProps", p)?;
+    let rate=rate_param("timeline.setProps",p)?;
     let duration = duration_param("timeline.setProps", p)?;
     let ws = p.get("workStart").map(|v| v.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad("timeline.setProps", "workStart must be a whole frame".into()))).transpose()?;
     let we = p.get("workEnd").map(|v| v.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad("timeline.setProps", "workEnd must be a whole frame".into()))).transpose()?;
     s.edit("Timeline Settings", |doc, _| {
         crate::video_cmds::store(doc);
+        if let Some(fps)=fps {retime_frame_cadence(doc,rate.map_or(f64::from(fps),|r|r.as_f64()),duration)?;}
         let t = doc.timeline.as_mut().ok_or_else(|| bad("timeline.setProps", "no timeline (create one first)".into()))?;
-        if let Some(fps) = fps { t.fps = fps; }
+        if let Some(fps) = fps { t.fps = fps; t.rational_rate=rate; }
         if let Some(d) = duration { t.duration = d; }
         if let Some(ws) = ws { t.work_start = ws; }
         if let Some(we) = we { t.work_end = we; }
@@ -586,7 +670,7 @@ fn set_layer_range(s: &mut Session, p: &Value) -> Result<Value> {
         if start >= end || end > t.duration { return Err(bad("timeline.setLayerRange", "range must satisfy 0 <= start < end <= duration".into())); }
         let old = t.layer_ranges.iter().find(|range| range.layer == layer).cloned();
         let playback = if is_smart {
-            let fps = f64::from(t.fps.max(0.001));
+            let fps = t.project_rate().as_f64();
             Some(old.as_ref().and_then(|range| range.playback.clone()).unwrap_or(photostore_doc::ClipPlayback {
                 source_in_seconds: old.as_ref().map_or(start, |range| range.start) as f64 / fps,
                 speed: 1.0,
@@ -628,7 +712,7 @@ fn set_video_clip(s: &mut Session, p: &Value) -> Result<Value> {
         let v = doc.layer(id).ok_or(EngineError::NoLayer(id))?.video.as_ref().ok_or_else(|| bad("timeline.setVideoClip", "layer is not a video layer".into()))?.clone();
         let (old, timeline_fps, timeline_duration, authored_range) = {
             let t = doc.timeline.as_ref().ok_or_else(|| bad("timeline.setVideoClip", "no timeline (create one first)".into()))?;
-            (t.layer_ranges.iter().find(|r| r.layer == id).cloned(), f64::from(t.fps.max(0.001)), t.duration, t.layer_ranges.iter().any(|r| r.layer == id))
+            (t.layer_ranges.iter().find(|r| r.layer == id).cloned(), t.project_rate().as_f64(), t.duration, t.layer_ranges.iter().any(|r| r.layer == id))
         };
         let old = old.unwrap_or_else(|| LayerTimelineRange { layer: id, start: 0, end: timeline_duration, enabled: true, playback: None });
         let old_playback=old.playback.clone().unwrap_or(photostore_doc::ClipPlayback{source_in_seconds:v.playback.source_in_seconds,speed:v.playback.speed,..Default::default()});
@@ -703,13 +787,14 @@ fn set_video_clip(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 pub(crate) fn split_video_clip_in_doc(doc: &mut Document, active: &mut Option<LayerId>, id: LayerId, cut: usize) -> Result<LayerId> {
+    let sample_rates=crate::audio_cmds::source_sample_rates(doc);
     crate::video_cmds::store(doc);
     crate::timeline_editor_cmds::ensure_tracks(doc)?;
     let original=doc.layer(id).ok_or(EngineError::NoLayer(id))?.clone();
     let video=original.video.as_ref().ok_or_else(||bad("timeline.splitVideoClip","layer is not a video layer".into()))?.clone();
     let (range,fps)={
         let t=doc.timeline.as_ref().ok_or_else(||bad("timeline.splitVideoClip","no timeline".into()))?;
-        let fps=f64::from(t.fps.max(0.001));
+        let fps=t.project_rate().as_f64();
         let range=t.layer_ranges.iter().find(|r|r.layer==id).cloned().unwrap_or_else(||{
             let available=video_source_duration(&video);let source=video.playback.source_in_seconds;let speed=video.playback.speed;
             let end=((available-source).max(0.0)/speed.max(0.01)*fps).ceil().max(1.0) as usize;
@@ -740,7 +825,7 @@ pub(crate) fn split_video_clip_in_doc(doc: &mut Document, active: &mut Option<La
     }
     for states in &mut t.frame_states{if let Some(state)=states.iter().find(|state|state.layer==id).cloned(){let mut copy=state;copy.layer=right_id;states.push(copy);}}
     for states in &mut t.property_frames{if let Some(state)=states.iter().find(|state|state.layer==id).cloned(){let mut copy=state;copy.layer=right_id;states.push(copy);}}
-    crate::timeline_editor_cmds::split_linked_audio(t,id,right_id,cut,fps,"timeline.splitVideoClip")?;
+    crate::timeline_editor_cmds::split_linked_audio(t,id,right_id,cut,fps,&sample_rates,"timeline.splitVideoClip")?;
     *active=Some(right_id);crate::video_cmds::sync(doc);Ok(right_id)
 }
 
@@ -868,7 +953,7 @@ fn info(s: &mut Session) -> Result<Value> {
     let st = s.active().ok_or(EngineError::NoDocument)?;
     Ok(match &st.doc.timeline {
         Some(t) => {
-            json!({"timeline": {"fps": t.fps, "duration": t.duration, "current": t.current, "workStart": t.work_start, "workEnd": t.work_end, "time": t.time(), "mode": match t.mode { TimelineMode::Video => "video", TimelineMode::FrameAnimation => "frameAnimation" }, "loop": match t.loop_mode { TimelineLoop::Once => "once", TimelineLoop::Loop => "loop", TimelineLoop::PingPong => "pingPong" }, "loopCount": t.loop_count, "onionSkin": t.onion_skin, "onionSkinSettings": t.onion_settings,"visualTracks":t.visual_tracks,"layerRanges":t.layer_ranges,"markers":t.markers,"mainTrackMagnet":t.main_track_magnet,"snapping":t.snapping,"linkedSelection":t.linked_selection,"previewSkimming":t.preview_skimming}})
+            json!({"timeline": {"fps": t.project_rate().as_f64(), "fpsNumerator":t.project_rate().numerator,"fpsDenominator":t.project_rate().denominator, "duration": t.duration, "current": t.current, "workStart": t.work_start, "workEnd": t.work_end, "time": t.time(), "mode": match t.mode { TimelineMode::Video => "video", TimelineMode::FrameAnimation => "frameAnimation" }, "loop": match t.loop_mode { TimelineLoop::Once => "once", TimelineLoop::Loop => "loop", TimelineLoop::PingPong => "pingPong" }, "loopCount": t.loop_count, "onionSkin": t.onion_skin, "onionSkinSettings": t.onion_settings,"visualTracks":t.visual_tracks,"layerRanges":t.layer_ranges,"markers":t.markers,"mainTrackMagnet":t.main_track_magnet,"snapping":t.snapping,"linkedSelection":t.linked_selection,"previewSkimming":t.preview_skimming}})
         }
         None => json!({"timeline": null}),
     })
@@ -886,6 +971,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("timeline.createFrameAnimation", "Create Frame Animation", r#"{duration?:30, fps?:30} → {timeline}"#, has_doc, |s, p| create_frame_animation(s, p)),
         spec!("timeline.delete", "Delete Timeline", "{} → {timeline:null}", has_timeline, |s, _| delete(s)),
         spec!("timeline.setFrame", "Go to Frame", r#"{frame} → {timeline}"#, has_timeline, |s, p| set_frame(s, p)),
+        spec!("timeline.presentFrame", "Present Decoded Frame", r#"{frame,document?} → {ready,frame?,requestedFrame?}"#, has_timeline, |s, p| present_frame(s, p)),
         spec!("timeline.nextFrame", "Next Frame", "{} → {timeline}", has_timeline, |s, _| step(s, 1)),
         spec!("timeline.previousFrame", "Previous Frame", "{} → {timeline}", has_timeline, |s, _| step(s, -1)),
         spec!("timeline.setProps", "Timeline Settings", r#"{fps?, duration?, workStart?, workEnd?} → {timeline}"#, has_timeline, |s, p| set_props(s, p)),

@@ -169,7 +169,7 @@ pub(crate) fn ensure_tracks(doc: &mut photostore_doc::Document) -> Result<()> {
         return Ok(());
     }
     let duration = timeline.duration;
-    let fps = f64::from(timeline.fps.max(0.001));
+    let fps = timeline.project_rate().as_f64();
     let mut ids: Vec<LayerId> = doc.layers.iter().map(|layer| layer.id).collect();
     let entries: Vec<_> = ids
         .into_iter()
@@ -238,7 +238,7 @@ fn snapped_move_delta(doc: &photostore_doc::Document, selected: &[LayerId], sele
         targets.push(timeline.current);
         targets.extend(timeline.markers.iter().map(|marker| marker.frame));
         targets.extend(timeline.layer_ranges.iter().filter(|range| !selected_set.contains(&range.layer)).flat_map(|range| [range.start, range.end]));
-        let fps = f64::from(timeline.fps.max(0.001));
+        let fps = timeline.project_rate().as_f64();
         targets.extend(timeline.audio_tracks.iter().flat_map(|track| track.clips.iter())
             .filter(|clip| !selected_audio.contains(&clip.id))
             .flat_map(|clip| [clip.start_seconds, clip.start_seconds + clip.duration_seconds])
@@ -261,7 +261,7 @@ fn snapped_move_delta(doc: &photostore_doc::Document, selected: &[LayerId], sele
         }
     }
     if timeline.snapping {
-        let fps = f64::from(timeline.fps.max(0.001));
+        let fps = timeline.project_rate().as_f64();
         for clip in timeline.audio_tracks.iter().flat_map(|track| track.clips.iter()).filter(|clip| selected_audio.contains(&clip.id)) {
             for edge in [clip.start_seconds, clip.start_seconds + clip.duration_seconds] {
                 if !edge.is_finite() || edge < 0.0 || edge * fps > 1_000_000.0 { continue; }
@@ -433,7 +433,7 @@ pub fn preview_move_audio_plan(
             }
         }
     }
-    let fps = f64::from(timeline.fps.max(0.001));
+    let fps = timeline.project_rate().as_f64();
     let mut result: Vec<_> = timeline.audio_tracks.iter().flat_map(|track| track.clips.iter()).filter_map(|clip| {
         shifts.get(&clip.id).map(|shift| {
             let start = clip.start_seconds + *shift as f64 / fps;
@@ -478,7 +478,7 @@ pub(crate) fn repack_main_track(doc: &mut photostore_doc::Document, cmd: &str) -
             move_state_rows(&mut timeline.property_frames, &one_id, &state_ranges, delta, &mut required_duration, cmd)?;
             move_state_rows(&mut timeline.frame_states, &one_id, &state_ranges, delta, &mut required_duration, cmd)?;
             if timeline.linked_selection {
-                let shift = delta as f64 / f64::from(timeline.fps.max(0.001));
+                let shift = delta as f64 / timeline.project_rate().as_f64();
                 for clip in timeline.audio_tracks.iter_mut().flat_map(|track| track.clips.iter_mut()).filter(|clip| clip.linked_video.is_some_and(|id| one_id.contains(&id))) {
                     let new_start = clip.start_seconds + shift;
                     if !new_start.is_finite() || new_start < 0.0 { return Err(bad(cmd, "linked audio would move outside timeline time")); }
@@ -640,7 +640,7 @@ fn shift_track_suffix_impl(
                 updates.push((range.clone(), start as usize, end as usize));
             }
         }
-        (updates, timeline.linked_selection && move_linked_audio, f64::from(timeline.fps.max(0.001)))
+        (updates, timeline.linked_selection && move_linked_audio, timeline.project_rate().as_f64())
     };
     let mut ids = std::collections::HashSet::new();
     let mut state_ranges = std::collections::HashMap::new();
@@ -691,7 +691,7 @@ fn ripple_delete_suffixes(
 ) -> Result<()> {
     let (snapshot, linked, fps, magnet) = {
         let timeline = doc.timeline.as_ref().ok_or(EngineError::NoDocument)?;
-        (timeline.clone(), timeline.linked_selection, f64::from(timeline.fps.max(0.001)), timeline.main_track_magnet)
+        (timeline.clone(), timeline.linked_selection, timeline.project_rate().as_f64(), timeline.main_track_magnet)
     };
 
     let mut removed_audio: std::collections::HashSet<u64> = selected_audio.iter().copied().collect();
@@ -1137,7 +1137,7 @@ fn move_clips(s: &mut Session, p: &Value) -> Result<Value> {
             t.visual_tracks.iter().find(|track| track.id == track_id).map_or_else(std::collections::HashSet::new, |track| selected.iter().filter(|id| track.layers.contains(id)).copied().collect())
         });
         let mut ranges = Vec::new();
-        let fps = f64::from(t.fps.max(0.001));
+        let fps = t.project_rate().as_f64();
         let duration = t.duration;
         let linked = t.linked_selection;
         let mut audio_to_move: std::collections::HashSet<u64> = selected_audio.iter().copied().collect();
@@ -1282,7 +1282,7 @@ fn trim(s: &mut Session, p: &Value, left: bool) -> Result<Value> {
         }
         let (fps, linked, ranges) = {
             let t = doc.timeline.as_ref().ok_or(EngineError::NoDocument)?;
-            let fps = f64::from(t.fps.max(0.001));
+            let fps = t.project_rate().as_f64();
             let mut ranges = Vec::new();
             for id in &selected {
                 let old = t.layer_ranges.iter().find(|r| r.layer == *id).cloned().ok_or_else(|| bad(cmd, format!("layer {id:?} is not a timeline clip")))?;
@@ -1495,7 +1495,7 @@ fn set_speed_curve(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad(cmd, "speed curve points must include frame 0 and the clip end frame"));
         }
         let old_playback = t.layer_ranges[index].playback.clone().unwrap_or(fallback.clone());
-        let preserved_source_seconds = old_playback.source_delta_seconds(old_duration, f64::from(t.fps.max(0.001)));
+        let preserved_source_seconds = old_playback.source_delta_seconds(old_duration, t.project_rate().as_f64());
         if !preserved_source_seconds.is_finite() || preserved_source_seconds <= 0.0 {
             return Err(bad(cmd, "existing clip source range is invalid"));
         }
@@ -1505,7 +1505,7 @@ fn set_speed_curve(s: &mut Session, p: &Value) -> Result<Value> {
         if !normalized_integral.is_finite() || normalized_integral <= 0.0 {
             return Err(bad(cmd, "speed curve has no usable positive duration"));
         }
-        let fps = f64::from(t.fps.max(0.001));
+        let fps = t.project_rate().as_f64();
         let new_duration_f = preserved_source_seconds * fps / normalized_integral;
         if !new_duration_f.is_finite() || !(1.0..=1_000_000.0).contains(&new_duration_f) {
             return Err(bad(cmd, "speed curve output duration falls outside supported timeline bounds"));
@@ -1628,7 +1628,7 @@ fn extract_audio(s: &mut Session, p: &Value) -> Result<Value> {
         check_unlocked(doc, id, cmd)?;
         let t = doc.timeline.as_mut().ok_or(EngineError::NoDocument)?;
         let range = source.1.clone().unwrap_or(LayerTimelineRange { layer: id, start: 0, end: t.duration, enabled: true, playback: None });
-        let fps = f64::from(t.fps.max(0.001));
+        let fps = t.project_rate().as_f64();
         if range.start >= range.end || range.end > 1_000_000 {
             return Err(bad(cmd, "selected clip range is invalid"));
         }
@@ -1661,6 +1661,7 @@ fn extract_audio(s: &mut Session, p: &Value) -> Result<Value> {
             name: "Extracted Audio".into(),
             muted: false,
             clips: vec![photostore_doc::AudioClip {
+                asset_id: None,
                 id: clip_id,
                 name: layer_name.clone(),
                 path: path.to_string_lossy().into_owned(),
@@ -1989,7 +1990,7 @@ fn copy(s: &mut Session, p: &Value, cut: bool) -> Result<Value> {
         }
         seen.extend(tree.iter().copied());
         let mut ranges: Vec<_> = t.layer_ranges.iter().filter(|r| tree.contains(&r.layer)).cloned().collect();
-        let fps = f64::from(t.fps.max(0.001));
+        let fps = t.project_rate().as_f64();
         if !ranges.iter().any(|range| range.layer == *id) {
             ranges.push(LayerTimelineRange { layer: *id, start: 0, end: t.duration, enabled: true, playback: None });
         }
@@ -2274,6 +2275,7 @@ pub(crate) fn split_linked_audio(
     right_id: LayerId,
     cut: usize,
     fps: f64,
+    sample_rates:&std::collections::HashMap<photostore_doc::MediaAssetId,u32>,
     cmd: &str,
 ) -> Result<()> {
     let cut_seconds = cut as f64 / fps;
@@ -2315,7 +2317,7 @@ pub(crate) fn split_linked_audio(
                 .ok_or_else(|| bad(cmd, "audio clip id space exhausted"))?;
             right_clip.linked_video = Some(right_id);
             right_clip.start_seconds = cut_seconds;
-            right_clip.trim_in_seconds += delta_source;
+            right_clip.trim_in_seconds = crate::audio_cmds::nearest_source_sample(clip.trim_in_seconds+delta_source,clip.asset_id.and_then(|id|sample_rates.get(&id).copied()));
             right_clip.speed_curve_offset_frames = right_clip.speed_curve_offset_frames.saturating_add(elapsed_frames);
             right_clip.duration_seconds = right_duration;
             right_clip.envelope_offset_seconds += left_duration;
@@ -2331,6 +2333,7 @@ pub(crate) fn split_linked_audio(
 }
 
 fn split_visual_in_doc(doc: &mut photostore_doc::Document, id: LayerId, frame: usize, cmd: &str) -> Result<LayerId> {
+    let sample_rates=crate::audio_cmds::source_sample_rates(doc);
     check_unlocked(doc, id, cmd)?;
     let (range, duration, mode, fps) = {
         let t = doc.timeline.as_ref().ok_or(EngineError::NoDocument)?;
@@ -2344,7 +2347,7 @@ fn split_visual_in_doc(doc: &mut photostore_doc::Document, id: LayerId, frame: u
             }),
             t.duration,
             t.mode,
-            f64::from(t.fps.max(0.001)),
+            t.project_rate().as_f64(),
         )
     };
     if mode != photostore_doc::TimelineMode::Video {
@@ -2412,7 +2415,7 @@ fn split_visual_in_doc(doc: &mut photostore_doc::Document, id: LayerId, frame: u
             states.push(copy);
         }
     }
-    split_linked_audio(t, id, new_id, frame, fps, cmd)?;
+    split_linked_audio(t, id, new_id, frame, fps, &sample_rates, cmd)?;
     Ok(new_id)
 }
 fn split(s: &mut Session, p: &Value, all: bool) -> Result<Value> {
@@ -2438,7 +2441,7 @@ fn split(s: &mut Session, p: &Value, all: bool) -> Result<Value> {
                 } else {
                     video.len() as f64 / f64::from(video.fps.max(0.001))
                 };
-                let end = ((source_duration - playback.source_in_seconds).max(0.0) / playback.speed.max(0.01) * f64::from(t.fps.max(0.001))).ceil() as usize;
+                let end = ((source_duration - playback.source_in_seconds).max(0.0) / playback.speed.max(0.01) * t.project_rate().as_f64()).ceil() as usize;
                 if frame < end.min(t.duration) {
                     candidates.push(layer.id);
                 }
@@ -2496,7 +2499,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         .or_else(|| s.active().and_then(|d| d.doc.timeline.as_ref()).map(|t| t.current))
         .ok_or_else(|| bad(cmd, "`frame` must be an integer"))?;
     let explicit_track = p.get("trackId").map(|value| value.as_u64().ok_or_else(|| bad(cmd, "`trackId` must be an unsigned integer"))).transpose()?;
-    let fps = s.active().and_then(|d| d.doc.timeline.as_ref()).map(|t| f64::from(t.fps.max(0.001))).ok_or(EngineError::NoDocument)?;
+    let fps = s.active().and_then(|d| d.doc.timeline.as_ref()).map(|t| t.project_rate().as_f64()).ok_or(EngineError::NoDocument)?;
     let earliest_visual = clips.iter().flat_map(|c| c.ranges.iter().map(|range| range.start)).min();
     let earliest_audio = standalone_audio.iter().map(|item| (item.clip.start_seconds * fps).floor().max(0.0) as usize).min();
     let earliest = earliest_visual.into_iter().chain(earliest_audio).min().unwrap_or(0);
@@ -2515,7 +2518,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         if timeline.mode != photostore_doc::TimelineMode::Video {
             return Err(bad(cmd, "clip paste is available in Video Timeline mode"));
         }
-        let fps = f64::from(timeline.fps.max(0.001));
+        let fps = timeline.project_rate().as_f64();
         let magnet = timeline.main_track_magnet;
         let main_track = timeline.visual_tracks.iter().find(|track| track.kind == VisualTrackKind::Main).map(|track| track.id);
         // A pasted Main-track snapshot must join the destination document's
@@ -3445,6 +3448,7 @@ mod main_track_tests {
                 name: "Linked".into(),
                 muted: false,
                 clips: vec![photostore_doc::AudioClip {
+                    asset_id: None,
                     id: 1,
                     name: "Source audio".into(),
                     path: "source.wav".into(),
@@ -3519,6 +3523,7 @@ mod ripple_delete_tests {
                 name: "Overlay audio".into(),
                 muted: false,
                 clips: vec![photostore_doc::AudioClip {
+                    asset_id: None,
                     id: 1,
                     name: "Following audio".into(),
                     path: "source.wav".into(),
@@ -3624,6 +3629,7 @@ mod clipboard_roundtrip_tests {
                 name: "Linked source track".into(),
                 muted: false,
                 clips: vec![photostore_doc::AudioClip {
+                    asset_id: None,
                     id: 11,
                     name: "Linked narration".into(),
                     path: "linked-source.wav".into(),

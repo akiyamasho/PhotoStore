@@ -9,6 +9,26 @@ use std::hash::{Hash, Hasher};
 use crate::PhotoStoreApp;
 use crate::theme::Tokens;
 
+#[derive(Clone)]
+pub struct BudgetTexture {
+    texture: egui::TextureHandle,
+    _bytes: photostore_engine::media_budget::Reservation,
+}
+impl std::ops::Deref for BudgetTexture {
+    type Target=egui::TextureHandle;
+    fn deref(&self)->&Self::Target { &self.texture }
+}
+impl PartialEq for BudgetTexture {
+    fn eq(&self,other:&Self)->bool { self.texture.id()==other.texture.id() }
+}
+/// Reserve retained CPU pixels plus the GPU texture estimate before queuing an upload.
+/// Dropping every handle clone releases its one shared budget reservation.
+pub(crate) fn load_thumbnail(ctx:&egui::Context,key:String,image:egui::ColorImage)->Option<BudgetTexture> {
+    let bytes=image.pixels.capacity().saturating_mul(std::mem::size_of::<egui::Color32>()).saturating_mul(2).saturating_add(256);
+    let reservation=photostore_engine::media_budget::reserve(photostore_engine::media_budget::MediaKind::Thumbnail,bytes)?;
+    Some(BudgetTexture {texture:ctx.load_texture(key,image,egui::TextureOptions::LINEAR),_bytes:reservation})
+}
+
 /// Timeline panel view state.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct TimelineUi {
@@ -28,6 +48,8 @@ pub struct TimelineUi {
     pub playing: bool,
     #[serde(default = "default_timeline_zoom")]
     pub zoom: f32,
+    #[serde(default = "default_gutter_width")]
+    pub gutter_width: f32,
     #[serde(default = "default_true")]
     pub snap_frames: bool,
     /// egui time (seconds) of the last auto-advance.
@@ -36,7 +58,7 @@ pub struct TimelineUi {
     #[serde(default, skip)]
     pub play_direction: i32,
     #[serde(skip)]
-    pub frame_thumbs: Vec<(String, egui::TextureHandle)>,
+    pub frame_thumbs: Vec<(String, BudgetTexture)>,
     #[serde(skip)]
     pub thumb_generation: u64,
     #[serde(skip)]
@@ -108,6 +130,112 @@ fn default_true() -> bool {
 fn default_timeline_zoom() -> f32 {
     1.0
 }
+fn default_gutter_width() -> f32 { 180.0 }
+
+fn relink_source(app:&mut PhotoStoreApp, document:photostore_doc::DocId, asset:u64) {
+    app.ask_file(crate::file_dialog::FileDialogRequest::Open {multiple:false,initial_dir:None,extensions:None},move |app,answer| {
+        let crate::file_dialog::FileDialogAnswer::Paths(paths)=answer else {return Err("Relink needs a local media file".into())};
+        let path=paths.first().ok_or("no replacement selected")?;
+        app.with_document(document,|app|app.run("media.sources.relink",json!({"assetId":asset,"path":path})))
+    });
+}
+
+/// Explicit source operations remain separate from layer/clip instances and their editable data.
+fn source_library(app:&mut PhotoStoreApp,ui:&mut Ui,doc:&photostore_doc::Document,current:usize) {
+    if doc.media_assets.is_empty() { return; }
+    ui.horizontal(|ui| {
+        ui.strong("Sources");
+        if ui.small_button("Refresh").on_hover_text("Reprobe source metadata; changed timing requires explicit relink.").clicked() {
+            if let Err(error)=app.run("media.sources.sync",json!({})) {app.ui.status=error;app.ui.status_error=true;}
+        }
+    });
+    let mut representatives=std::collections::HashMap::new();
+    for (_,_,layer) in doc.walk() {
+        if let Some(id)=layer.video.as_ref().and_then(|v|v.asset_id) {representatives.entry(id).or_insert(layer.id);}
+        if let photostore_doc::LayerContent::Smart(s)=&layer.content {if let Some(id)=s.asset_id {representatives.entry(id).or_insert(layer.id);}}
+    }
+    egui::ScrollArea::vertical().id_salt(("source-library",doc.id.0)).max_height(260.0).show_rows(ui,88.0,doc.media_assets.len(),|ui,rows| {
+    for asset in &doc.media_assets[rows] {
+        let metadata=std::fs::metadata(&asset.path).ok().filter(|m|m.is_file());
+        let present=metadata.is_some();
+        let changed=metadata.as_ref().zip(asset.fingerprint.as_ref()).is_some_and(|(m,saved)| {
+            let modified=m.modified().ok().and_then(|t|t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d|u64::try_from(d.as_nanos()).ok());
+            m.len()!=saved.byte_len || modified!=saved.modified_unix_nanos
+        });
+        let status=if !present {"Offline"} else if changed {"Changed — relink"} else {"Online"};
+        let name=std::path::Path::new(&asset.path).file_name().and_then(|n|n.to_str()).unwrap_or(&asset.path);
+        let representative=representatives.get(&asset.id).copied();
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                let key=format!("source-card:{}:{}:{}",doc.id.0,asset.id.0,asset.revision);
+                let texture=app.ui.timeline.frame_thumbs.iter().find(|(k,_)|k==&key).map(|(_,t)|t.id()).or_else(|| {
+                    let layer=representative.and_then(|id|doc.layer(id))?;
+                    let surface=layer.video.as_ref().and_then(|v|v.frames.first()).or_else(||layer.surface())?;
+                    let image=crate::transform_tex::read_surface(surface,None,doc.bounds(),64).0;
+                    let handle=load_thumbnail(ui.ctx(),key.clone(),image)?;let id=handle.id();
+                    app.ui.timeline.frame_thumbs.push((key,handle));Some(id)
+                });
+                if let Some(texture)=texture {ui.image((texture,egui::vec2(48.0,32.0)));}
+                ui.add(egui::Label::new(RichText::new(name).strong()).truncate()).on_hover_text(&asset.path);
+            });
+            ui.horizontal(|ui| {
+                ui.weak(format!("{status} · rev {}",asset.revision));
+                if ui.small_button("Relink…").clicked() {relink_source(app,doc.id,asset.id.0);}
+            });
+            ui.horizontal(|ui| {
+                if let Some(layer)=representative {if ui.small_button("Select").clicked() {let _=app.run("timeline.editor.select",json!({"document":doc.id.0,"layers":[layer.0]}));}}
+                if ui.add_enabled(present && !changed,egui::Button::new("Add at playhead").small()).clicked() {
+                    if let Err(error)=app.run("media.sources.insert",json!({"assetId":asset.id.0,"frame":current})) {app.ui.status=error;app.ui.status_error=true;}
+                }
+            });
+        });
+    }
+    });
+    ui.separator();
+}
+
+pub(crate) fn media_preview_menu(app:&mut PhotoStoreApp,ui:&mut Ui) {
+    ui.menu_button("Preview quality & proxies",|ui| {
+        let quality=photostore_engine::media_proxy::preview_quality().unwrap_or(photostore_engine::media_proxy::PreviewQuality::Original);
+        for (value,label) in [("original","Original"),("half","Half proxy"),("quarter","Quarter proxy")] {
+            let selected=matches!((quality,value),(photostore_engine::media_proxy::PreviewQuality::Original,"original")|(photostore_engine::media_proxy::PreviewQuality::Half,"half")|(photostore_engine::media_proxy::PreviewQuality::Quarter,"quarter"));
+            if ui.selectable_label(selected,label).clicked() {
+                if let Err(error)=app.run("media.proxy.configure",json!({"quality":value})) {app.ui.status=error;app.ui.status_error=true;}
+            }
+        }
+        ui.separator();
+        match photostore_engine::media_proxy::status() {
+            Ok(status)=>{
+                let mut enabled=status.enabled;
+                if ui.checkbox(&mut enabled,"Use disk proxies").changed() {let _=app.run("media.proxy.configure",json!({"enabled":enabled}));}
+                ui.weak(format!("{} proxies · {:.1} MiB",status.proxy_count,status.used_bytes as f64/1048576.0));
+                let mut limit=(status.configured_limit_bytes/1048576).clamp(1,10240);
+                if ui.add(egui::DragValue::new(&mut limit).range(1..=10240).suffix(" MiB cache limit")).changed() {let _=app.run("media.proxy.configure",json!({"limitBytes":limit*1048576}));}
+            },
+            Err(error)=>{ui.weak(error.to_string());}
+        }
+        let source=app.session.active().and_then(|st|st.active_layer.and_then(|id|st.doc.layer(id))).and_then(|l|l.video.as_ref()).and_then(|v|match &v.source{photostore_doc::VideoSource::File{path}=>Some(path.clone()),_=>None});
+        for (quality,label) in [("half","Build selected video proxy (Half)"),("quarter","Build selected video proxy (Quarter)")] {
+            if ui.add_enabled(source.is_some(),egui::Button::new(label)).clicked() {
+                if let Some(path)=&source {
+                    if let Err(error)=app.run("media.proxy.create",json!({"path":path,"quality":quality})) {app.ui.status=error;app.ui.status_error=true;}
+                }
+                ui.close();
+            }
+        }
+        if ui.button("Clear derived disk proxies").clicked() {
+            if let Err(error)=app.run("media.proxy.clear",json!({})) {app.ui.status=error;app.ui.status_error=true;}
+        }
+        if ui.button("Clear resident media cache").clicked() {
+            if let Err(error)=app.run("media.cache.clear",json!({})) {app.ui.status=error;app.ui.status_error=true;}
+            app.ui.timeline.frame_thumbs.clear();
+        }
+        let budget=photostore_engine::media_budget::status();
+        ui.weak(format!("Resident media: {:.1} / 256 MiB",budget.total_used_bytes as f64/1048576.0));
+        ui.weak("Export always uses originals. Proxies never replace source files.");
+        ui.weak("A missing or disabled proxy uses the original preview.");
+    });
+}
 
 impl Default for TimelineUi {
     fn default() -> Self {
@@ -118,6 +246,7 @@ impl Default for TimelineUi {
             ripple_move: false,
             playing: false,
             zoom: 1.0,
+            gutter_width: default_gutter_width(),
             snap_frames: true,
             last_time: 0.0,
             play_direction: 0,
@@ -315,7 +444,7 @@ fn frame_thumbnails(app: &mut PhotoStoreApp, ctx: &egui::Context, tl: &photostor
             continue;
         };
         preview_succeeded = true;
-        let texture = ctx.load_texture(format!("timeline-frame-{key}"), image, egui::TextureOptions::LINEAR);
+        let Some(texture) = load_thumbnail(ctx,format!("timeline-frame-{key}"), image) else { ids.push(None); continue; };
         ids.push(Some(texture.id()));
         app.ui.timeline.frame_thumbs.push((key, texture));
     }
@@ -1073,6 +1202,7 @@ pub fn media_bin(app: &mut PhotoStoreApp, parent: &mut Ui) {
             let mut seen = std::collections::HashSet::new();
             let mut sources = Vec::new();
             for (_, _, layer) in doc.walk() {
+                if layer.video.as_ref().is_some_and(|v|v.asset_id.is_some()) || matches!(&layer.content,photostore_doc::LayerContent::Smart(s) if s.asset_id.is_some()){continue;}
                 let identity = if let Some(video) = &layer.video {
                     match &video.source {
                         photostore_doc::VideoSource::File { path } => format!("video:{path}"),
@@ -1084,13 +1214,14 @@ pub fn media_bin(app: &mut PhotoStoreApp, parent: &mut Ui) {
                     format!("layer:{}", layer.id.0)
                 };
                 if seen.insert(identity) {
-                    sources.push((layer.id, layer.name.clone(), layer.content.kind_name().to_string()));
+                    sources.push((layer.id, layer.name.clone(), if layer.video.is_some() { "Video".to_string() } else { layer.content.kind_name().to_string() }));
                 }
             }
             if sources.is_empty() {
                 ui.label(RichText::new("Import an image or video to add a source.").color(tokens.text_dim));
             }
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                source_library(app,ui,&doc,current);
                 for (layer_id, name, kind) in sources {
                     let Some(layer) = doc.layer(layer_id) else { continue };
                     let row_id = egui::Id::new(("timeline-media-source", doc_id.0, layer_id.0));
@@ -1140,12 +1271,12 @@ pub fn media_bin(app: &mut PhotoStoreApp, parent: &mut Ui) {
                                     } else {
                                         layer.surface().cloned()
                                     };
-                                    surface.map(|surface| {
+                                    surface.and_then(|surface| {
                                         let image = linked_movie_thumbnail(&surface, doc.bounds());
-                                        let handle = ui.ctx().load_texture(thumb_key.clone(), image, egui::TextureOptions::LINEAR);
+                                        let handle = load_thumbnail(ui.ctx(),thumb_key.clone(),image)?;
                                         let id = handle.id();
                                         app.ui.timeline.frame_thumbs.push((thumb_key.clone(), handle));
-                                        id
+                                        Some(id)
                                     })
                                 });
                                 let thumb_response = if let Some(texture) = texture {

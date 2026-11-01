@@ -332,6 +332,7 @@ impl Ctx<'_> {
             };
             LayerContent::Smart(SmartObject {
                 contents_id,
+                asset_id: None,
                 source: SmartSource::Linked { path: id },
                 transform,
                 smart_filters: stack.filters,

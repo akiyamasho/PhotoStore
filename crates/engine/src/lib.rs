@@ -64,6 +64,12 @@ pub mod lens_cmds;
 pub mod magnetic_cmds;
 pub mod mask_view_cmds;
 pub mod media_backend;
+pub mod media_budget;
+pub mod media_proxy;
+mod media_asset_cmds;
+mod media_insert_cmds;
+#[cfg(not(target_arch = "wasm32"))]
+mod media_audio_output;
 mod migrate_cmds;
 pub mod mode_cmds;
 pub mod movie_cache;
@@ -102,6 +108,8 @@ pub mod stamp_cmds;
 pub mod swatch_cmds;
 pub mod symmetry_cmds;
 mod timeline_cmds;
+#[cfg(test)]
+mod timeline_completion_tests;
 mod timeline_editor_cmds;
 pub mod transform_cmds;
 mod trap_cmds;
@@ -192,6 +200,9 @@ pub struct DocState {
     pub source_read_only: bool,
     /// Increments on every change; UIs re-render when it moves.
     pub revision: u64,
+    /// Authored edits/undo/redo only; timeline seeks and decoded preview swaps do not invalidate
+    /// immutable timeline interval indexes.
+    pub content_revision: u64,
     pub saved_revision: u64,
     /// Area changed by the latest revision (None = assume everything changed).
     pub last_damage: Option<photostore_geom::Rect>,
@@ -228,6 +239,7 @@ impl DocState {
             path,
             source_read_only: false,
             revision: 1,
+            content_revision: 1,
             saved_revision: 1,
             last_damage: None,
             coalesce: None,
@@ -590,6 +602,7 @@ impl Session {
         let mut doc = (*before).clone();
         let mut active = st.active_layer;
         let r = f(&mut doc, &mut active)?;
+        doc.reconcile_media_assets().map_err(EngineError::Other)?;
         video_cmds::validate_linked_movie_edits(label, &before, &doc)?;
         // Painting or adjusting a smart filter mask changes the rendered layer cache. Refresh
         // inside this transaction so an unavailable linked source aborts the edit atomically.
@@ -633,6 +646,7 @@ impl Session {
             st.history.set_current_layers(layers);
         }
         st.coalesce = key;
+        st.content_revision=st.content_revision.wrapping_add(1);
         st.revision += 1;
         st.last_damage = unchanged.then_some(photostore_geom::Rect::EMPTY);
         Ok(r)
@@ -743,6 +757,7 @@ impl Session {
                 st.doc = d;
                 Arc::make_mut(&mut st.doc).recording = recording;
                 restore_target(st, layers);
+                st.content_revision=st.content_revision.wrapping_add(1);
                 st.revision += 1;
                 st.last_damage = damage;
                 true
@@ -769,6 +784,7 @@ impl Session {
                 st.doc = d;
                 Arc::make_mut(&mut st.doc).recording = recording;
                 restore_target(st, layers);
+                st.content_revision=st.content_revision.wrapping_add(1);
                 st.revision += 1;
                 st.last_damage = damage;
                 true

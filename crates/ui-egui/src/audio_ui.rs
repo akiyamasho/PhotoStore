@@ -503,7 +503,7 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
             let (lane, _) = ui.allocate_exact_size(vec2(lane_width, LANE_HEIGHT), Sense::hover());
             ui.painter_at(lane).rect_filled(lane, 2.0, t.field);
             for clip in &track.clips {
-                draw_clip(ui, app, doc, clip, lane, duration, playhead, f64::from(timeline.fps.max(0.001)), snap, &t);
+                draw_clip(ui, app, doc, clip, lane, duration, playhead, timeline.project_rate().as_f64(), snap, &t);
             }
             let x = lane.left() + lane.width() * timeline.current as f32 / timeline.duration.max(1) as f32;
             ui.painter_at(lane).line_segment([egui::pos2(x, lane.top()), egui::pos2(x, lane.bottom())], egui::Stroke::new(1.5, t.accent));
@@ -553,7 +553,7 @@ pub fn show_workspace(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline,
                     painter.rect_filled(lane, 0.0, tokens.field);
                     painter.line_segment([lane.left_bottom(), lane.right_bottom()], egui::Stroke::new(1.0, tokens.separator));
                     for clip in &track.clips {
-                        draw_clip(ui, app, doc, clip, lane, duration, playhead, f64::from(timeline.fps.max(0.001)), snap, &tokens);
+                        draw_clip(ui, app, doc, clip, lane, duration, playhead, timeline.project_rate().as_f64(), snap, &tokens);
                     }
                     let x = lane.left() + lane.width() * timeline.current as f32 / timeline.duration.max(1) as f32;
                     painter.line_segment([pos2(x, lane.top()), pos2(x, lane.bottom())], egui::Stroke::new(1.5, tokens.accent));

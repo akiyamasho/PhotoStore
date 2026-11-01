@@ -669,6 +669,7 @@ mod tests {
             let l = Layer::new(
                 "so",
                 LayerContent::Smart(SmartObject {
+                    asset_id: None,
                     contents_id: photostore_doc::SmartContentsId::fresh(),
                     source: SmartSource::Linked { path: String::new() },
                     transform: photostore_geom::Affine::IDENTITY,

@@ -1,5 +1,33 @@
 # Implementation decisions
 
+## 2026-11-01: Timeline source, clock, and derived-media completion
+
+External media uses stable document-local source records with revision metadata, while timeline
+placements remain editable layer/audio instances. Relink is explicit and compatibility-checked.
+Project frame rate retains an optional rational alongside the legacy rate, and one source-time
+mapping is shared by preview and export. The presentation path holds the requested current frame
+until it is ready and rejects stale asynchronous completions; decode completion alone is not a
+document edit.
+
+Retained movie frames, timeline textures, and waveform bins share a 256 MiB accounted budget with
+category caps of 160/64/32 MiB. At most two heavy derived-media jobs run at once; background work
+leaves a slot for current-frame requests. These are retained-cache limits, not a process or GPU
+memory ceiling. Optional disk proxies default off and are capped at 10 GiB. A current matching
+proxy may be used for preview only; exports, rasterization/materialization, and clipboard copies
+resolve original source media. Proxy frames are expanded to the source canvas dimensions, so lower
+resolution proxies reduce image detail/decode work but do not reduce the layer's retained footprint.
+
+Audio uses a bounded native 48 kHz stereo sample-clock path when the default device supports it,
+with the existing streaming ffplay fallback. Export is tagged Rec.709 SDR by default and uses an
+8-bit decoder intermediate; unsupported HDR conversion fails instead of silently clipping. H.264
+MP4 requires an explicit background for alpha-bearing output. Affine Smart Object animation can be
+baked to editable frames; perspective/warp remains outside this conversion.
+
+These decisions describe the integrated source pass. The production build, focused tests, native
+interaction/audio/export acceptance, and measured performance results remain pending. See the
+[implementation plan](plans/video-timeline-completion-2026-11-01.md) and
+[candidate receipt](releases/0.20.0.md).
+
 ## 2026-10-25: Selection-scoped Generative Fill context bar
 
 The Generative Fill command keeps generation and provider validation in the shared engine, while

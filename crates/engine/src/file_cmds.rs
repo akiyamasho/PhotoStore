@@ -247,6 +247,10 @@ pub(crate) fn encode(doc: &Document, path: &str, save: impl Into<SaveOpts>) -> R
         opts.encode.webp_quality = q;
         opts.encode.webp_lossless = false;
     }
+    // Native archives retain linked sources and can be saved offline. Pixel exports require originals.
+    let native=std::path::Path::new(path).extension().and_then(|s|s.to_str()).is_some_and(|s|s.eq_ignore_ascii_case("pcraft"));
+    let original=if native {None}else{crate::video_cmds::original_output_snapshot(doc)?};
+    let doc=original.as_ref().unwrap_or(doc);
     photostore_io::export(doc, path, &opts).map(|r| (r.bytes, r.warnings)).map_err(|e| EngineError::Other(format!("{path}: {e}")))
 }
 

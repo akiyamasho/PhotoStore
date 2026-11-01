@@ -13,6 +13,13 @@ const MAX_TIMELINE_FRAMES: usize = 1_000_000;
 const MAX_SECONDS: f64 = 86_400.0 * 365.0;
 const MAX_NAME_CHARS: usize = 256;
 
+pub(crate) fn source_sample_rates(doc:&photostore_doc::Document)->std::collections::HashMap<photostore_doc::MediaAssetId,u32> {
+    doc.media_assets.iter().filter_map(|a|a.metadata.as_ref().and_then(|m|m.audio.as_ref()).map(|m|(a.id,m.sample_rate))).collect()
+}
+pub(crate) fn nearest_source_sample(seconds:f64,rate:Option<u32>)->f64 {
+    rate.filter(|r|*r>0).map_or(seconds,|r|(seconds*f64::from(r)).round()/f64::from(r))
+}
+
 fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
     EngineError::BadParams { cmd: cmd.into(), msg: msg.into() }
 }
@@ -97,6 +104,7 @@ fn clip_from(p: &Value, id: u64, path: String, source_duration: f64) -> Result<A
         Some(v) => Some(LayerId(v.as_u64().filter(|x| *x > 0).ok_or_else(|| bad("timeline.addAudioClip", "linkedVideo must be a positive integer"))?)),
     };
     Ok(AudioClip {
+        asset_id: None,
         id,
         name,
         path,
@@ -145,9 +153,9 @@ fn valid_name(value: &str, field: &str) -> Result<String> {
 fn extend_timeline(t: &mut photostore_doc::Timeline, end_seconds: f64) -> Result<()> {
     bounded_seconds(end_seconds, "timeline end", false)?;
     let needed = match t.mode {
-        photostore_doc::TimelineMode::Video => (end_seconds * f64::from(t.fps.max(0.001))).ceil() as usize,
+        photostore_doc::TimelineMode::Video => (end_seconds * t.project_rate().as_f64()).ceil() as usize,
         photostore_doc::TimelineMode::FrameAnimation => {
-            let fallback = 1.0 / f64::from(t.fps.max(0.001));
+            let fallback = 1.0 / t.project_rate().as_f64();
             let frames = t.duration;
             let time = t.frame_start_seconds(frames);
             if time + 1e-9 >= end_seconds {
@@ -164,7 +172,7 @@ fn extend_timeline(t: &mut photostore_doc::Timeline, end_seconds: f64) -> Result
     }
     if needed > t.duration {
         if t.mode == photostore_doc::TimelineMode::FrameAnimation {
-            let fallback = (1000.0 / f64::from(t.fps.max(0.001))).round().clamp(1.0, u32::MAX as f64) as u32;
+            let fallback = (1000.0 / t.project_rate().as_f64()).round().clamp(1.0, u32::MAX as f64) as u32;
             t.frame_delays_ms.resize(needed, fallback);
         }
         t.duration = needed.max(1);
@@ -423,6 +431,7 @@ fn split_clip(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|v| bounded_seconds(v.as_f64().ok_or_else(|| bad("timeline.splitAudioClip", "timeSeconds must be a number"))?, "timeSeconds", false))
         .transpose()?;
     s.edit("Split Audio Clip", |d, _| {
+        let rates=source_sample_rates(d);
         let t = timeline_mut(d)?;
         validate_timeline(t)?;
         if t.audio_tracks.iter().map(|x| x.clips.len()).sum::<usize>() >= MAX_CLIPS {
@@ -438,7 +447,12 @@ fn split_clip(s: &mut Session, p: &Value) -> Result<Value> {
         right.id = fresh_clip_id(t)?;
         let rid = right.id;
         right.start_seconds += cut;
-        right.trim_in_seconds += cut * left.speed;
+        let elapsed_frames=(cut*t.project_rate().as_f64()).round().max(0.0) as usize;
+        if !left.speed_curve.is_empty() && (cut*t.project_rate().as_f64()-elapsed_frames as f64).abs()>1e-6 {return Err(bad("timeline.splitAudioClip","speed-curve audio must be split on a project frame boundary"));}
+        let timing=photostore_doc::ClipPlayback{source_in_seconds:left.trim_in_seconds,speed:left.speed,speed_curve:left.speed_curve.clone(),speed_curve_offset_frames:left.speed_curve_offset_frames};
+        let delta=if left.speed_curve.is_empty(){cut*left.speed}else{timing.source_delta_seconds(elapsed_frames,t.project_rate().as_f64())};
+        right.trim_in_seconds=nearest_source_sample(left.trim_in_seconds+delta,left.asset_id.and_then(|id|rates.get(&id).copied()));
+        right.speed_curve_offset_frames=right.speed_curve_offset_frames.saturating_add(elapsed_frames);
         right.duration_seconds -= cut;
         right.envelope_offset_seconds += cut;
         right.linked_video = None;
@@ -490,7 +504,7 @@ pub fn audio_mix_for_range(t: &photostore_doc::Timeline, start: f64, end: f64) -
     }
     validate_timeline(t)?;
     let mut out = Vec::new();
-    let timeline_fps = f64::from(t.fps.max(0.001));
+    let timeline_fps = t.project_rate().as_f64();
     for tr in &t.audio_tracks {
         if tr.muted {
             continue;
@@ -585,6 +599,7 @@ pub(crate) fn add_linked_movie_audio(
     };
     let cid = fresh_clip_id(t)?;
     t.audio_tracks[ti].clips.push(AudioClip {
+        asset_id: None,
         id: cid,
         name: "Movie Audio".into(),
         path,

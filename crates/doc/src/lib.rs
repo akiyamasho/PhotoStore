@@ -50,7 +50,8 @@ pub use vector::{
     ClippingPath, FillRule, Knot, LineCap, LineJoin, LiveShape, NamedPath, Path, PathOp, ShapeLayer, ShapeStroke, StrokeAlign, Subpath, VectorMask,
 };
 pub use video::{
-    AudioClip, AudioTrack, ClipPlayback, FrameEffectsState, FrameLayerState, LayerTimelineRange, SpeedCurvePoint, MAX_OPACITY_ANIMATION_FRAME, MAX_OPACITY_ANIMATION_KEYS,
+    AudioClip, AudioTrack, ClipPlayback, FrameEffectsState, FrameLayerState, LayerTimelineRange, MediaAsset, MediaAssetFingerprint, MediaAssetId,
+    MediaAssetMetadata, MediaAudioMetadata, MediaVideoMetadata, RationalRate, SpeedCurvePoint, MAX_OPACITY_ANIMATION_FRAME, MAX_OPACITY_ANIMATION_KEYS,
     MAX_OPACITY_ANIMATION_TRACKS, MAX_POSITION_ANIMATION_FRAME, MAX_POSITION_ANIMATION_KEYS, MAX_POSITION_ANIMATION_TRACKS, MAX_POSITION_COORDINATE,
     MAX_TRANSFORM_ANIMATION_FRAME, MAX_TRANSFORM_ANIMATION_KEYS, MovieBacking, OnionSkinBlend, OnionSkinSettings, OpacityAnimation, OpacityInterpolation,
     OpacityKeyframe, PositionAnimation, PositionInterpolation, PositionKeyframe, Timeline, TimelineLoop, TimelineMode, TransformAnimation,
@@ -480,6 +481,8 @@ pub struct SmartObject {
     pub contents_id: SmartContentsId,
     /// Embedded source file bytes (PSD, PNG, …) or linked path.
     pub source: SmartSource,
+    /// Stable external source identity for linked Smart Objects; embedded objects have none.
+    pub asset_id: Option<MediaAssetId>,
     pub transform: Affine,
     pub smart_filters: Vec<SmartFilter>,
     /// Rendered appearance.
@@ -511,6 +514,7 @@ impl SmartObject {
         Self {
             contents_id: SmartContentsId::fresh(),
             source,
+            asset_id: None,
             transform,
             smart_filters: Vec::new(),
             cache,
@@ -843,6 +847,9 @@ pub struct Document {
     pub variables: Variables,
     /// Window › Timeline (None until a video timeline is created).
     pub timeline: Option<Timeline>,
+    /// External media used by video, audio, and linked Smart Object references.
+    /// The catalog belongs to the document so clip instances share stable source identities.
+    pub media_assets: Vec<MediaAsset>,
     /// Action-driven native recording state. New documents leave recording disabled until the engine opts in.
     pub recording: Option<Recording>,
 }
@@ -882,6 +889,7 @@ impl Document {
             slices: Slices::default(),
             variables: Variables::default(),
             timeline: None,
+            media_assets: Vec::new(),
             recording: None,
         }
     }
@@ -913,6 +921,74 @@ impl Document {
 
     pub fn bounds(&self) -> Rect {
         Rect::from_size(self.size)
+    }
+
+    /// Reconcile legacy path-backed references with the document-owned stable source catalog.
+    /// This is used at format migration and after imports/copies, never during rendering.
+    pub fn reconcile_media_assets(&mut self) -> std::result::Result<(), String> {
+        const MAX_MEDIA_ASSETS: usize = 4096;
+        let mut by_id = std::collections::HashMap::new();
+        let mut by_path = std::collections::HashMap::new();
+        if self.media_assets.len() > MAX_MEDIA_ASSETS {
+            return Err("document exceeds the 4096 external media source limit".into());
+        }
+        for asset in &self.media_assets {
+            if asset.id.0 == 0 || asset.path.is_empty() || asset.revision == 0 || by_id.insert(asset.id, asset.path.clone()).is_some() {
+                return Err("media source catalog contains invalid or duplicate identities".into());
+            }
+            by_path.entry(asset.path.clone()).or_insert(asset.id);
+        }
+
+        fn bind(
+            path: &str,
+            current: Option<MediaAssetId>,
+            assets: &mut Vec<MediaAsset>,
+            by_id: &std::collections::HashMap<MediaAssetId, String>,
+            by_path: &mut std::collections::HashMap<String, MediaAssetId>,
+        ) -> std::result::Result<Option<MediaAssetId>, String> {
+            if path.is_empty() { return Ok(None); }
+            if let Some(id) = current.filter(|id| by_id.get(id).is_some_and(|saved| saved == path)) {
+                return Ok(Some(id));
+            }
+            if let Some(id) = by_path.get(path) { return Ok(Some(*id)); }
+            if assets.len() >= MAX_MEDIA_ASSETS { return Err("document exceeds the 4096 external media source limit".into()); }
+            let id = MediaAssetId::fresh();
+            assets.push(MediaAsset { id, revision: 1, path: path.to_owned(), fingerprint: None, metadata: None });
+            by_path.insert(path.to_owned(), id);
+            Ok(Some(id))
+        }
+
+        fn walk_layers(
+            layers: &mut [Layer],
+            assets: &mut Vec<MediaAsset>,
+            by_id: &std::collections::HashMap<MediaAssetId, String>,
+            by_path: &mut std::collections::HashMap<String, MediaAssetId>,
+        ) -> std::result::Result<(), String> {
+            for layer in layers {
+                if let Some(video) = layer.video.as_mut() {
+                    video.asset_id = match &video.source {
+                        VideoSource::File { path } => bind(path, video.asset_id, assets, by_id, by_path)?,
+                        VideoSource::Blank => None,
+                    };
+                }
+                if let LayerContent::Smart(smart) = &mut layer.content {
+                    smart.asset_id = match &smart.source {
+                        SmartSource::Linked { path } => bind(path, smart.asset_id, assets, by_id, by_path)?,
+                        SmartSource::Embedded { .. } => None,
+                    };
+                }
+                if let Some(children) = layer.children_mut() { walk_layers(children, assets, by_id, by_path)?; }
+            }
+            Ok(())
+        }
+
+        walk_layers(&mut self.layers, &mut self.media_assets, &by_id, &mut by_path)?;
+        if let Some(timeline) = &mut self.timeline {
+            for clip in timeline.audio_tracks.iter_mut().flat_map(|track| track.clips.iter_mut()) {
+                clip.asset_id = bind(&clip.path, clip.asset_id, &mut self.media_assets, &by_id, &mut by_path)?;
+            }
+        }
+        Ok(())
     }
 
     /// Nesting depth of the deepest layer: 0 for a root-level layer, 1 inside one group, and so

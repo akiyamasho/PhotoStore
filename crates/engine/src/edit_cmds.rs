@@ -112,13 +112,15 @@ fn merged_surface(doc: &Document) -> Surface {
 
 fn copy(s: &mut Session, merged: bool) -> Result<Value> {
     let d = s.active().ok_or(EngineError::NoDocument)?;
-    let canvas = d.doc.bounds();
+    let original=crate::video_cmds::original_output_snapshot(&d.doc)?;
+    let source=original.as_ref().unwrap_or(&d.doc);
+    let canvas = source.bounds();
     let clip = if merged {
-        lift(&merged_surface(&d.doc), d.doc.selection.as_ref(), canvas)
+        lift(&merged_surface(source), source.selection.as_ref(), canvas)
     } else {
         let id = d.active_layer.ok_or(EngineError::Other("no active layer".into()))?;
-        let surf = d.doc.layer(id).and_then(Layer::surface).ok_or(EngineError::Other("the active layer has no pixels".into()))?;
-        lift(surf, d.doc.selection.as_ref(), canvas)
+        let surf = source.layer(id).and_then(Layer::surface).ok_or(EngineError::Other("the active layer has no pixels".into()))?;
+        lift(surf, source.selection.as_ref(), canvas)
     };
     if clip.bounds.is_empty() {
         return Err(EngineError::Other("Could not copy: the selected area is empty".into()));
@@ -287,7 +289,8 @@ fn merge_visible(s: &mut Session) -> Result<Value> {
         // Composite of visible layers only (hidden ones stay where they are).
         let mut solo = doc.clone();
         solo.layers.retain(|l| l.visible);
-        let buf = photostore_compose::flatten(&solo);
+        let original=crate::video_cmds::original_output_snapshot(&solo)?;
+        let buf = photostore_compose::flatten(original.as_ref().unwrap_or(&solo));
         let buf = if is_background { buf.over_background([1.0, 1.0, 1.0]) } else { buf };
         let fmt = doc.pixel_format();
         let fmt = if is_background { fmt } else { PixelFormat::new(fmt.mode, fmt.sample, true) };

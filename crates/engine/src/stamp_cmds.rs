@@ -45,7 +45,8 @@ fn with_alpha(doc: &Document) -> PixelFormat {
 fn stamp_layer(doc: &Document, name: String) -> Result<Layer> {
     let fmt = with_alpha(doc);
     let mut layer = Layer::raster(name, fmt);
-    *crate::pixels_mut(&mut layer)? = photostore_compose::flatten_to_surface(doc, fmt, None);
+    let original=crate::video_cmds::original_output_snapshot(doc)?;
+    *crate::pixels_mut(&mut layer)? = photostore_compose::flatten_to_surface(original.as_ref().unwrap_or(doc), fmt, None);
     Ok(layer)
 }
 
@@ -108,7 +109,8 @@ fn stamp_down(s: &mut Session, p: &Value) -> Result<Value> {
         tmp.layers = vec![base, upper];
         let fmt = doc.pixel_format();
         let fmt = if lower.locks.transparency { fmt } else { PixelFormat::new(fmt.mode, fmt.sample, true) };
-        let surf = photostore_compose::flatten_to_surface(&tmp, fmt, None);
+        let original=crate::video_cmds::original_output_snapshot(&tmp)?;
+        let surf = photostore_compose::flatten_to_surface(original.as_ref().unwrap_or(&tmp), fmt, None);
         let mut merged = Layer::new(lower.name.clone(), LayerContent::Raster(surf));
         merged.id = lower.id;
         merged.blend = lower.blend;

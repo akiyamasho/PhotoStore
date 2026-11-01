@@ -186,6 +186,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "alsa"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "812947049edcd670a82cd5c73c3661d2e58468577ba8489de58e1a73c04cbd5d"
+dependencies = [
+ "alsa-sys",
+ "bitflags 2.13.2",
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
+name = "alsa-sys"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad7569085a265dd3f607ebecce7458eaab2132a84393534c95b18dcbc3f31e04"
+dependencies = [
+ "libc",
+ "pkg-config",
+]
+
+[[package]]
 name = "ambient-authority"
 version = "0.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1113,6 +1135,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "coreaudio-rs"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d5d7dca3ebcf65a035582c9ad4385371a9d9ee6537474d2a278f4e1e475bb58"
+dependencies = [
+ "bitflags 2.13.2",
+ "libc",
+ "objc2-audio-toolbox",
+ "objc2-core-audio",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+]
+
+[[package]]
+name = "cpal"
+version = "0.18.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f02e8d0327b42d3e2e4ab2119af397344eb9fc54a34bf0ddeaa1277af8681f1"
+dependencies = [
+ "alsa",
+ "block2 0.6.2",
+ "coreaudio-rs",
+ "dasp_sample",
+ "jni",
+ "js-sys",
+ "libc",
+ "mach2",
+ "ndk",
+ "ndk-context",
+ "num-derive",
+ "num-traits",
+ "objc2 0.6.4",
+ "objc2-audio-toolbox",
+ "objc2-avf-audio",
+ "objc2-core-audio",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "web-sys",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1243,6 +1309,12 @@ dependencies = [
  "quote",
  "syn 3.0.6",
 ]
+
+[[package]]
+name = "dasp_sample"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c87e182de0887fd5361989c677c4e8f5000cd9491d6d563161a8f3a5519fc7f"
 
 [[package]]
 name = "data-url"
@@ -3171,6 +3243,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "mach2"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
+
+[[package]]
 name = "maybe-owned"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3544,6 +3622,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-audio-toolbox"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6948501a91121d6399b79abaa33a8aa4ea7857fe019f341b8c23ad6e81b79b08"
+dependencies = [
+ "bitflags 2.13.2",
+ "libc",
+ "objc2 0.6.4",
+ "objc2-core-audio",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
 name = "objc2-av-foundation"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3571,6 +3664,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13a380031deed8e99db00065c45937da434ca987c034e13b87e4441f9e4090be"
 dependencies = [
+ "bitflags 2.13.2",
  "objc2 0.6.4",
  "objc2-foundation 0.3.2",
 ]
@@ -3620,6 +3714,7 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-core-audio-types",
  "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
 ]
 
 [[package]]
@@ -4173,7 +4268,7 @@ dependencies = [
 
 [[package]]
 name = "photostore"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "arboard",
  "async-io",
@@ -4215,7 +4310,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-affinity"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "crc32fast",
  "flate2",
@@ -4225,7 +4320,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-algo"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "photostore-color",
  "photostore-geom",
@@ -4238,7 +4333,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-automation"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "base64",
  "cap-std",
@@ -4260,7 +4355,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-cli"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "photostore-automation",
  "photostore-codecs",
@@ -4274,7 +4369,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-cms"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "moxcms",
  "rayon",
@@ -4282,7 +4377,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-codecs"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "exr",
  "flate2",
@@ -4303,7 +4398,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-color"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "photostore-cms",
  "serde",
@@ -4311,7 +4406,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-compose"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "criterion",
  "photostore-color",
@@ -4326,7 +4421,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-doc"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "photostore-color",
  "photostore-geom",
@@ -4337,9 +4432,10 @@ dependencies = [
 
 [[package]]
 name = "photostore-engine"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "blake3",
+ "cpal",
  "flate2",
  "photostore-affinity",
  "photostore-algo",
@@ -4369,7 +4465,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-format"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "blake3",
  "flate2",
@@ -4388,14 +4484,14 @@ dependencies = [
 
 [[package]]
 name = "photostore-geom"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "photostore-gpu"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "half",
  "log",
@@ -4412,14 +4508,14 @@ dependencies = [
 
 [[package]]
 name = "photostore-heif"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "heic-rs",
 ]
 
 [[package]]
 name = "photostore-io"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "blake3",
  "crc32fast",
@@ -4448,14 +4544,14 @@ dependencies = [
 
 [[package]]
 name = "photostore-ops"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "photostore-doc",
 ]
 
 [[package]]
 name = "photostore-paint"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "photostore-color",
  "photostore-geom",
@@ -4466,7 +4562,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-plugins"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "photostore-color",
  "photostore-geom",
@@ -4481,7 +4577,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-psd"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "flate2",
  "photostore-psd",
@@ -4492,7 +4588,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-raster"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "photostore-color",
  "photostore-geom",
@@ -4502,7 +4598,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-raw"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "flate2",
  "jxl-oxide",
@@ -4515,7 +4611,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-tablet"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "block2 0.6.2",
  "objc2 0.6.4",
@@ -4527,7 +4623,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-testkit"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "memory-stats",
  "photostore-color",
@@ -4538,7 +4634,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-text"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "flate2",
  "parley",
@@ -4552,7 +4648,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-ui-egui"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "base64",
  "eframe",
@@ -4589,7 +4685,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-vector"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "photostore-color",
  "photostore-doc",
@@ -4600,7 +4696,7 @@ dependencies = [
 
 [[package]]
 name = "photostore-web"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "eframe",
  "egui",
@@ -7433,7 +7529,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "serde",
  "serde_json",

@@ -1,6 +1,6 @@
 # Video timeline workflow: research, design, and proposal (2026-11-01)
 
-**Status:** The initial research/design pass was followed by explicit user authorization to implement all open issues and enhancements, push, tag, release, and reinstall the normal PhotoStore app. The 0.19.0 pass integrates the existing major overhaul with additional timeline layout/editing/cache improvements. The generated image remains a design reference, never a runtime capture or manual acceptance. Implementation and delivery evidence is recorded in [0.19.0](../releases/0.19.0.md). Proposed architecture and performance targets below remain distinguished from shipped behavior.
+**Status:** The initial research/design pass was followed by explicit user authorization to implement all open issues and enhancements, push, tag, release, and reinstall the normal PhotoStore app. The 0.19.0 pass integrates the existing major overhaul with additional timeline layout/editing/cache improvements. The generated image remains a design reference, never a runtime capture or manual acceptance. Implementation and delivery evidence is recorded in [0.19.0](../releases/0.19.0.md). This is the historical proposal; the follow-up [architecture completion record](video-timeline-completion-2026-11-01.md) and [0.20.0 receipt](../releases/0.20.0.md) supersede its implementation status. Performance targets remain unaccepted.
 
 - [Generated design concept and provenance](../design/2026-11-01/README.md)
 - [Timeline workspace status and prior implementation evidence](../timeline-workflow.md)

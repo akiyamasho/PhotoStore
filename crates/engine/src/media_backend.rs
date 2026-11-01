@@ -69,6 +69,52 @@ pub struct MediaInfo {
     pub frame_count: Option<u64>,
     pub has_audio: bool,
     pub codec_name: Option<String>,
+    #[serde(default)]
+    pub time_base: Option<Rational>,
+    #[serde(default)]
+    pub color_transfer: Option<String>,
+    #[serde(default)]
+    pub color_primaries: Option<String>,
+    #[serde(default)]
+    pub color_space: Option<String>,
+}
+pub(crate) fn ensure_sdr(info:&MediaInfo)->Result<()> {
+    if matches!(info.color_transfer.as_deref(),Some("smpte2084"|"arib-std-b67")) {
+        return Err(MediaBackendError::InvalidInput("HDR movie transfer requires a supported explicit tone map; convert a derived SDR copy before import/export (original media is preserved)".into()));
+    }
+    Ok(())
+}
+
+fn decoded_surface(info:&MediaInfo,bytes:&[u8],format:PixelFormat,width:u32,height:u32)->Result<Surface> {
+    use photostore_cms::{Curve,Transform,Intent,builtin::Builtin};
+    ensure_sdr(info)?;
+    let primaries=match info.color_primaries.as_deref() {
+        None|Some("unknown"|"unspecified"|"bt709")=>0,
+        Some("bt2020")=>1,
+        Some("smpte432")=>2,
+        Some(other)=>return Err(MediaBackendError::InvalidInput(format!("unsupported video primaries `{other}`; convert a derived Rec.709 SDR copy first"))),
+    };
+    let transfer=match info.color_transfer.as_deref() {
+        None|Some("unknown"|"unspecified"|"iec61966-2-1")=>0,
+        Some("bt709"|"smpte170m"|"bt2020-10"|"bt2020-12")=>1,
+        Some("linear")=>2,Some("gamma22")=>3,Some("gamma28")=>4,
+        Some(other)=>return Err(MediaBackendError::InvalidInput(format!("unsupported video transfer `{other}`; convert a derived Rec.709 SDR copy first"))),
+    };
+    let rgb_format=PixelFormat{mode:photostore_color::ColorMode::Rgb,sample:format.sample,alpha:true};
+    let surface=Surface::from_interleaved(PixelFormat::RGBA8,Rect::from_xywh(0,0,width,height),bytes).convert(rgb_format);
+    if primaries==0 && transfer==0 {return Ok(surface.convert(format));}
+    type Entry=std::sync::OnceLock<std::result::Result<std::sync::Arc<Transform>,String>>;
+    static COLOR:[Entry;15]=[const{std::sync::OnceLock::new()};15];
+    let transform=COLOR[primaries*5+transfer].get_or_init(|| {
+        let mut profile=match primaries {1=>Builtin::Rec2020,2=>Builtin::DisplayP3,_=>Builtin::Srgb}.profile().clone();
+        profile.trc=match transfer {
+            0=>Builtin::Srgb.profile().trc.clone(),
+            1=>{let a=1.099;let curve=Curve::Parametric{kind:3,p:[1.0/0.45,1.0/a,(a-1.0)/a,1.0/4.5,0.081,0.0,0.0]};Some([curve.clone(),curve.clone(),curve])},
+            gamma=>{let curve=Curve::Gamma(match gamma{2=>1.0,3=>2.2,_=>2.8});Some([curve.clone(),curve.clone(),curve])}
+        };
+        Transform::new(&profile,Builtin::Srgb.profile(),Intent::RelativeColorimetric,true).map(std::sync::Arc::new).map_err(|e|e.to_string())
+    }).as_ref().map_err(|e|MediaBackendError::InvalidInput(format!("source video color transform failed: {e}")))?;
+    Ok(crate::color_cmds::convert_surface(&surface,photostore_color::ColorMode::Rgb,rgb_format,transform).convert(format))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,6 +171,8 @@ pub struct AudioMixClip {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AudioInfo {
+    #[serde(default)]
+    pub codec_name: Option<String>,
     pub duration_seconds: f64,
     pub channels: u32,
     pub sample_rate: u32,
@@ -153,7 +201,7 @@ pub fn software_availability() -> (bool, bool) {
     (resolve_binary("PHOTOSTORE_FFMPEG", "ffmpeg").is_some(), resolve_binary("PHOTOSTORE_FFPROBE", "ffprobe").is_some())
 }
 
-fn resolve_binary(variable: &str, default: &str) -> Option<PathBuf> {
+pub(crate) fn resolve_binary(variable: &str, default: &str) -> Option<PathBuf> {
     if let Ok(p) = env::var(variable) {
         if !p.is_empty() && Path::new(&p).is_file() {
             return Some(PathBuf::from(p));
@@ -294,7 +342,7 @@ pub fn probe(path: impl AsRef<Path>) -> Result<MediaInfo> {
             "-protocol_whitelist",
             "file,pipe",
             "-show_entries",
-            "stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,duration,nb_frames:format=duration",
+            "stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,time_base,color_transfer,color_primaries,color_space,duration,nb_frames:format=duration",
             "-of",
             "json",
         ])
@@ -370,6 +418,10 @@ pub fn probe(path: impl AsRef<Path>) -> Result<MediaInfo> {
         frame_count,
         has_audio: streams.iter().any(|s| s.get("codec_type").and_then(Value::as_str) == Some("audio")),
         codec_name,
+        time_base: video.get("time_base").and_then(Value::as_str).and_then(|s| parse_rational(s).ok()),
+        color_transfer: video.get("color_transfer").and_then(Value::as_str).map(str::to_owned),
+        color_primaries: video.get("color_primaries").and_then(Value::as_str).map(str::to_owned),
+        color_space: video.get("color_space").and_then(Value::as_str).map(str::to_owned),
     })
 }
 
@@ -386,7 +438,7 @@ pub fn probe_audio(path: impl AsRef<Path>) -> Result<AudioInfo> {
             "-select_streams",
             "a:0",
             "-show_entries",
-            "stream=channels,sample_rate,duration:format=duration",
+            "stream=codec_name,channels,sample_rate,duration:format=duration",
             "-of",
             "json",
         ])
@@ -447,7 +499,7 @@ pub fn probe_audio(path: impl AsRef<Path>) -> Result<AudioInfo> {
     if !duration.is_finite() || duration <= 0.0 {
         return Err(MediaBackendError::Metadata("invalid audio duration".into()));
     }
-    Ok(AudioInfo { duration_seconds: duration, channels, sample_rate })
+    Ok(AudioInfo { duration_seconds: duration, channels, sample_rate, codec_name:st.get("codec_name").and_then(Value::as_str).map(str::to_owned) })
 }
 
 /// Stream mono PCM through ffmpeg and accumulate bounded RMS/peak bins. No duration-sized PCM
@@ -563,7 +615,9 @@ where
 /// A streaming preview: one ffmpeg mixer feeds one ffplay process through a pipe.
 pub struct AudioPreview {
     mixer: Child,
-    player: Child,
+    player: Option<Child>,
+    #[cfg(not(target_arch = "wasm32"))]
+    native: Option<crate::media_audio_output::Output>,
     mixer_err: mpsc::Receiver<Vec<u8>>,
     player_err: mpsc::Receiver<Vec<u8>>,
     done: bool,
@@ -579,7 +633,12 @@ impl AudioPreview {
         }
         validate_audio_clips(clips)?;
         let ffmpeg = resolve_binary("PHOTOSTORE_FFMPEG", "ffmpeg").ok_or(MediaBackendError::Unsupported)?;
-        let ffplay = resolve_ffplay().ok_or_else(|| MediaBackendError::Process("ffplay is unavailable; install ffplay or set PHOTOSTORE_FFPLAY".into()))?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let native = crate::media_audio_output::Output::new().ok();
+        #[cfg(not(target_arch = "wasm32"))]
+        let native_output = native.is_some();
+        #[cfg(target_arch = "wasm32")]
+        let native_output = false;
         let mut mix = Command::new(ffmpeg);
         mix.args(["-v", "error", "-threads", "1", "-filter_threads", "1", "-filter_complex_threads", "1", "-protocol_whitelist", "file,pipe"]);
         for clip in clips {
@@ -591,7 +650,7 @@ impl AudioPreview {
         }
         let filter = audio_filter(clips, 0, duration_seconds, "out")?;
         let filter_script = add_filter_complex(&mut mix, &filter)?;
-        mix.args(["-map", "[out]", "-threads:a", "1", "-f", "wav", "-ac", "2", "-ar", "48000", "pipe:1"]).stdout(Stdio::piped()).stderr(Stdio::piped());
+        mix.args(["-map", "[out]", "-threads:a", "1", "-f", if native_output { "f32le" } else { "wav" }, "-ac", "2", "-ar", "48000", "pipe:1"]).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut mixer = mix.spawn()?;
         let mixer_err = stderr_drain(&mut mixer);
         let stdout = match mixer.stdout.take() {
@@ -602,6 +661,19 @@ impl AudioPreview {
                 let _ = mixer_err.recv();
                 return Err(MediaBackendError::Process("ffmpeg mixer stdout unavailable".into()));
             }
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(mut output) = native {
+            if let Err(error) = output.attach(stdout) {
+                let _ = mixer.kill(); let _ = mixer.wait(); output.stop();
+                return Err(MediaBackendError::Process(format!("native audio output failed: {error}")));
+            }
+            let (_, player_err) = mpsc::channel();
+            return Ok(Self { mixer, player:None, native:Some(output), mixer_err, player_err, done:false, _filter_script:filter_script });
+        }
+        let ffplay = match resolve_ffplay() {
+            Some(path) => path,
+            None => { let _=mixer.kill(); let _=mixer.wait(); return Err(MediaBackendError::Process("audio output is unsupported and ffplay is unavailable; install ffplay or set PHOTOSTORE_FFPLAY".into())); }
         };
         let mut player_command = Command::new(ffplay);
         player_command
@@ -620,7 +692,7 @@ impl AudioPreview {
         };
         let mut player = player;
         let player_err = stderr_drain(&mut player);
-        Ok(Self { mixer, player, mixer_err, player_err, done: false, _filter_script: filter_script })
+        Ok(Self { mixer, player:Some(player), #[cfg(not(target_arch = "wasm32"))] native:None, mixer_err, player_err, done: false, _filter_script: filter_script })
     }
     pub fn poll(&mut self) -> Result<bool> {
         if self.done {
@@ -640,7 +712,11 @@ impl AudioPreview {
                 return Err(MediaBackendError::Process(format!("ffmpeg mixer failed: {diagnostic}")));
             }
         }
-        let player_status = match self.player.try_wait() {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(output) = &self.native {
+            return output.poll().map_err(MediaBackendError::Process);
+        }
+        let player_status = match self.player.as_mut().ok_or_else(|| MediaBackendError::Process("audio output is absent".into()))?.try_wait() {
             Ok(status) => status,
             Err(error) => {
                 self.stop();
@@ -660,12 +736,21 @@ impl AudioPreview {
     }
     pub fn stop(&mut self) {
         let _ = self.mixer.kill();
-        let _ = self.player.kill();
+        if let Some(player)=&mut self.player { let _=player.kill(); }
         let _ = self.mixer.wait();
-        let _ = self.player.wait();
+        if let Some(player)=&mut self.player { let _=player.wait(); }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(output)=&mut self.native { output.stop(); }
         self.done = true;
         let _ = self.mixer_err.try_recv();
         let _ = self.player_err.try_recv();
+    }
+    /// Device-callback sample clock when native 48 kHz stereo output is supported.
+    /// External ffplay output intentionally returns None and uses the monotonic fallback.
+    pub fn position_seconds(&self) -> Option<f64> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(output)=&self.native { return Some(output.position_seconds()); }
+        None
     }
 }
 impl Drop for AudioPreview {
@@ -718,7 +803,7 @@ fn curve_source_delta(clip: &AudioMixClip, frames: usize) -> Result<f64> {
 
 fn curve_tempo_filter(clip: &AudioMixClip) -> Result<(String, String)> {
     if clip.speed_curve.is_empty() {
-        return Ok((String::new(), atempo_chain(clip.speed)?));
+        return Ok((String::new(), atempo_chain(clip.speed)?.trim_start_matches(',').to_owned()));
     }
     if !clip.timeline_fps.is_finite() || clip.timeline_fps <= 0.0 {
         return Err(MediaBackendError::InvalidInput("speed curve timeline frame rate is invalid".into()));
@@ -891,8 +976,10 @@ fn audio_filter(clips: &[AudioMixClip], input_offset: usize, output_duration: f6
             chain.push(',');
             chain.push_str(&commands);
         }
-        chain.push(',');
-        chain.push_str(&tempo);
+        if !tempo.is_empty() {
+            chain.push(',');
+            chain.push_str(&tempo);
+        }
         if let Some(duration) = clip.duration_seconds {
             chain.push_str(&format!(",atrim=duration={}", format_seconds(duration)));
         }
@@ -947,7 +1034,7 @@ pub fn decode_single_frame(path: impl AsRef<Path>, index: u64, format: PixelForm
     }
     let seconds = index as f64 * info.fps.den as f64 / info.fps.num as f64;
     let bytes = decode_bytes_at(path.as_ref(), &info, seconds, &format!("frame {index}"), false)?;
-    Ok(Surface::from_interleaved(PixelFormat::RGBA8, Rect::from_xywh(0, 0, info.width, info.height), &bytes).convert(format))
+    decoded_surface(&info,&bytes,format,info.width,info.height)
 }
 
 /// Decode the frame at a source presentation time without converting that time back to a
@@ -963,11 +1050,18 @@ pub fn decode_single_frame_at(path: impl AsRef<Path>, seconds: f64, format: Pixe
 /// The bounded movie cache retains source-identity-qualified probe metadata so decoding each
 /// visible frame does not launch another ffprobe process. Public callers still probe normally.
 pub(crate) fn decode_single_frame_at_with_info(path: &Path, info: &MediaInfo, seconds: f64, format: PixelFormat) -> Result<Surface> {
+    decode_single_frame_at_with_info_scaled(path, info, seconds, format, info.width, info.height)
+}
+
+/// A preview proxy retains the original layer footprint; only its pixel detail is reduced.
+/// This helper explicitly expands a derived frame to that footprint without changing source data.
+pub(crate) fn decode_single_frame_at_with_info_scaled(path: &Path, info: &MediaInfo, seconds: f64, format: PixelFormat, width: u32, height: u32) -> Result<Surface> {
+    ensure_sdr(info)?;
     if !seconds.is_finite() || seconds < 0.0 || seconds > info.duration_seconds {
         return Err(MediaBackendError::InvalidInput("source timestamp must be finite and within the movie duration".into()));
     }
-    let bytes = decode_bytes_at(path, info, seconds, &format!("timestamp {seconds:.9}s"), true)?;
-    Ok(Surface::from_interleaved(PixelFormat::RGBA8, Rect::from_xywh(0, 0, info.width, info.height), &bytes).convert(format))
+    let bytes = decode_bytes_at_size(path, info, seconds, &format!("timestamp {seconds:.9}s"), true, width, height)?;
+    decoded_surface(info,&bytes,format,width,height)
 }
 
 fn decode_bytes(path: &Path, info: &MediaInfo, index: u64) -> Result<Vec<u8>> {
@@ -975,10 +1069,55 @@ fn decode_bytes(path: &Path, info: &MediaInfo, index: u64) -> Result<Vec<u8>> {
     decode_bytes_at(path, info, seek, &format!("frame {index}"), false)
 }
 
-fn decode_bytes_at(path: &Path, info: &MediaInfo, seconds: f64, requested: &str, presentation_time: bool) -> Result<Vec<u8>> {
+/// Small constant-rate lookahead for preview only. The caller owns the exact timestamp keys;
+/// nonlinear/reverse mappings use single-frame sampling. One process amortizes decoder startup,
+/// while both the raw read and converted surfaces have a strict bounded window.
+pub(crate) fn decode_preview_window(path: &Path, info: &MediaInfo, seconds: f64, step: f64, count: usize, format: PixelFormat, width: u32, height: u32) -> Result<Vec<Surface>> {
+    ensure_sdr(info)?;
+    if !seconds.is_finite() || seconds < 0.0 || seconds >= info.duration_seconds || !step.is_finite() || !(0.001..=10.0).contains(&step)
+        || width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION {
+        return Err(MediaBackendError::InvalidInput("invalid preview window time or dimensions".into()));
+    }
+    let per = (width as usize).checked_mul(height as usize).and_then(|n| n.checked_mul(4))
+        .ok_or_else(|| MediaBackendError::InvalidInput("preview window dimensions overflow".into()))?;
+    let retained = (width as usize).checked_mul(height as usize).and_then(|n| n.checked_mul(format.bytes_per_pixel()))
+        .ok_or_else(|| MediaBackendError::InvalidInput("preview window pixel size overflows".into()))?;
+    let bounded = count.clamp(1, 8).min((32 * 1024 * 1024 / per.max(retained).max(1)).max(1));
+    if per > MAX_FRAME_BYTES as usize { return Err(MediaBackendError::InvalidInput("preview frame exceeds 512 MiB".into())); }
     let exe = resolve_binary("PHOTOSTORE_FFMPEG", "ffmpeg").ok_or(MediaBackendError::Unsupported)?;
-    let size = (info.width as u64)
-        .checked_mul(info.height as u64)
+    let mut command = Command::new(exe);
+    command.args(["-v","error","-threads","1","-filter_threads","1","-protocol_whitelist","file,pipe","-copyts","-start_at_zero","-noaccurate_seek"]);
+    if let Some(codec) = decoder_codec(info) { command.args(["-c:v", codec]); }
+    command.args(["-ss", &format!("{:.6}",(seconds * 1_000_000.0).floor()/1_000_000.0), "-i"]).arg(path);
+    let mut filter = format!("settb=1/1000000000,setpts=PTS-{seconds:.9}/TB,fps=fps={:.12}:start_time=0:round=up:eof_action=pass", 1.0/step);
+    if (width,height) != (info.width,info.height) { filter.push_str(&format!(",scale={width}:{height}:flags=bilinear")); }
+    let mut child = command.args(["-vf",&filter,"-frames:v",&bounded.to_string(),"-f","rawvideo","-pix_fmt","rgba","pipe:1"])
+        .stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let err_rx = stderr_drain(&mut child);
+    let bytes = match child.stdout.take().map(|s| bounded_reader(s, per.saturating_mul(bounded).saturating_add(1))).transpose() {
+        Ok(data) => data.unwrap_or_default(),
+        Err(error) => { let _=child.kill(); let _=child.wait(); let _=err_rx.recv(); return Err(error.into()); }
+    };
+    let status = child.wait()?;
+    let stderr = err_rx.recv().unwrap_or_default();
+    if !status.success() { return Err(command_error(status,&stderr,"ffmpeg")); }
+    if bytes.is_empty() || bytes.len() % per != 0 || bytes.len() > per.saturating_mul(bounded) {
+        return Err(MediaBackendError::Process("preview decoder returned a truncated or oversized window".into()));
+    }
+    bytes.chunks_exact(per).map(|raw|decoded_surface(info,raw,format,width,height)).collect()
+}
+
+fn decode_bytes_at(path: &Path, info: &MediaInfo, seconds: f64, requested: &str, presentation_time: bool) -> Result<Vec<u8>> {
+    decode_bytes_at_size(path, info, seconds, requested, presentation_time, info.width, info.height)
+}
+
+fn decode_bytes_at_size(path: &Path, info: &MediaInfo, seconds: f64, requested: &str, presentation_time: bool, width: u32, height: u32) -> Result<Vec<u8>> {
+    if width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION {
+        return Err(MediaBackendError::InvalidInput("invalid preview output dimensions".into()));
+    }
+    let exe = resolve_binary("PHOTOSTORE_FFMPEG", "ffmpeg").ok_or(MediaBackendError::Unsupported)?;
+    let size = (width as u64)
+        .checked_mul(height as u64)
         .and_then(|n| n.checked_mul(4))
         .ok_or_else(|| MediaBackendError::InvalidInput("frame dimensions overflow".into()))?;
     if size > MAX_FRAME_BYTES {
@@ -999,9 +1138,10 @@ fn decode_bytes_at(path: &Path, info: &MediaInfo, seconds: f64, requested: &str,
         command.args(["-c:v", codec]);
     }
     command.args(["-ss", &seek, "-i"]).arg(path);
-    if presentation_time {
-        command.args(["-vf", &format!("settb=1/1000000000,setpts=PTS-{seconds:.9}/TB,fps=fps=1:start_time=0:round=up:eof_action=pass")]);
-    }
+    let mut filters = Vec::new();
+    if presentation_time { filters.push(format!("settb=1/1000000000,setpts=PTS-{seconds:.9}/TB,fps=fps=1:start_time=0:round=up:eof_action=pass")); }
+    if (width, height) != (info.width, info.height) { filters.push(format!("scale={width}:{height}:flags=bilinear")); }
+    if !filters.is_empty() { command.args(["-vf", &filters.join(",")]); }
     let mut child = command
         .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"])
         .stdout(Stdio::piped())
@@ -1084,7 +1224,7 @@ pub fn decode_sequence(path: impl AsRef<Path>, format: PixelFormat, max_bytes: u
             let _ = err_rx.recv();
             return Err(MediaBackendError::Process(format!("truncated decoded frame: {e}")));
         }
-        out.push(Surface::from_interleaved(PixelFormat::RGBA8, Rect::from_xywh(0, 0, info.width, info.height), &frame_bytes).convert(format));
+        out.push(decoded_surface(&info,&frame_bytes,format,info.width,info.height)?);
     }
     drop(stdout);
     let status = match child.wait() {
@@ -1159,7 +1299,7 @@ where
             let _ = err_rx.recv();
             return Err(MediaBackendError::Process(format!("truncated decoded frame: {e}")));
         }
-        out.push(Surface::from_interleaved(PixelFormat::RGBA8, Rect::from_xywh(0, 0, info.width, info.height), &raw).convert(format));
+        out.push(decoded_surface(&info,&raw,format,info.width,info.height)?);
     }
     drop(stdout);
     let status = guard.finish()?;
@@ -1243,15 +1383,16 @@ where
     cmd.args(["-map", "0:v:0"]);
     match cfg.format {
         VideoFormat::Mp4H264 => {
-            cmd.args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"]);
+            cmd.args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0,scale=out_color_matrix=bt709:out_range=tv,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=limited", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"]);
         }
         VideoFormat::MovProResAlpha => {
-            cmd.args(["-c:v", "prores_ks", "-profile:v", "4", "-pix_fmt", "yuva444p10le", "-c:a", "aac"]);
+            cmd.args(["-vf","scale=out_color_matrix=bt709:out_range=tv,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=limited","-c:v", "prores_ks", "-profile:v", "4", "-pix_fmt", "yuva444p10le", "-c:a", "aac"]);
         }
         VideoFormat::WebmVp9Alpha => {
-            cmd.args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0", "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-auto-alt-ref", "0", "-c:a", "libopus"]);
+            cmd.args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0,scale=out_color_matrix=bt709:out_range=tv,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=limited", "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-auto-alt-ref", "0", "-c:a", "libopus"]);
         }
     }
+    cmd.args(["-color_primaries","bt709","-color_trc","bt709","-colorspace","bt709","-color_range","tv"]);
     if cfg.duration_frames.is_none() {
         let _ = fs::remove_file(&tmp);
         return Err(MediaBackendError::InvalidInput("duration_frames must be finite and positive".into()));
@@ -1265,9 +1406,11 @@ where
         VideoFormat::MovProResAlpha => "mov",
         VideoFormat::WebmVp9Alpha => "webm",
     };
-    cmd.arg("-frames:v")
-        .arg(cfg.duration_frames.unwrap_or(0).to_string())
-        .args(["-shortest", "-f", mux, "-filter_complex_threads", "1", "-threads:v", "1"])
+    // The producer writes exactly duration_frames. A video-frame output limit can terminate
+    // audio before its last packets are encoded; bound both streams by the exact duration.
+    cmd.arg("-t")
+        .arg(format_seconds(output_duration))
+        .args(["-f", mux, "-filter_complex_threads", "1", "-threads:v", "1"])
         .arg("-y")
         .arg(&tmp);
     let child = match cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn() {

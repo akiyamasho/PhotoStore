@@ -647,8 +647,12 @@ fn rasterize_one(s: &mut Session, id: LayerId, only: Option<&str>, key: &str) ->
             let label = if kind == "fill" { "Rasterize Fill Content" } else { "Rasterize Smart Object" };
             s.coalesce_request = Some(key.to_string());
             let r = s.edit(label, |doc, _| {
-                let snap = doc.layer(id).cloned().ok_or(EngineError::NoLayer(id))?;
-                let px = content_pixels(doc, &snap);
+                let mut isolated=doc.clone();
+                isolated.layers=vec![doc.layer(id).cloned().ok_or(EngineError::NoLayer(id))?];
+                let original=crate::video_cmds::original_output_snapshot(&isolated)?;
+                let source=original.as_ref().unwrap_or(&isolated);
+                let snap = source.layer(id).cloned().ok_or(EngineError::NoLayer(id))?;
+                let px = content_pixels(source, &snap);
                 let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
                 l.content = LayerContent::Raster(px);
                 if kind == "smart" { l.transform_animation = None; }

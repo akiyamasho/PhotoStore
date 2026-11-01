@@ -510,6 +510,7 @@ impl PcraftWriter {
         convert::validate_timeline_positions(doc.timeline.as_ref())?;
         convert::validate_timeline_document_layer_refs(doc.timeline.as_ref(), &doc.layers)?;
         convert::validate_movie_backings(&doc.layers)?;
+        convert::validate_document_media_assets(doc)?;
         if let Some(recording) = &doc.recording {
             convert::validate_recording(recording)?;
         }

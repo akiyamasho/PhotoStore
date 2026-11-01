@@ -37,6 +37,7 @@ struct Key {
     source: SourceIdentity,
     position: Position,
     format: PixelFormat,
+    output_size: Option<(u32, u32)>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Position {
@@ -57,7 +58,7 @@ impl Key {
 
 #[derive(Default)]
 struct Cache {
-    frames: HashMap<Key, (Surface, usize)>,
+    frames: HashMap<Key, (Surface, usize, crate::media_budget::Reservation)>,
     frame_order: VecDeque<Key>,
     errors: HashMap<Key, String>,
     error_order: VecDeque<Key>,
@@ -68,18 +69,40 @@ struct Cache {
     pending_current: HashMap<ConsumerKey, HashSet<Key>>,
     media_info: HashMap<SourceIdentity, crate::media_backend::MediaInfo>,
     media_info_order: VecDeque<SourceIdentity>,
+    source_generation: HashMap<String, u64>,
     bytes: usize,
 }
 
+#[derive(Clone)]
 struct Job {
     key: Key,
     path: String,
     consumer: Option<u64>,
     thumbnail: bool,
+    source_generation: u64,
+    window: Option<FrameWindow>,
+}
+#[derive(Clone)]
+struct FrameWindow {
+    keys: Vec<Key>,
+    times: Vec<f64>,
+    step_seconds: f64,
 }
 impl Job {
     fn consumer_key(&self) -> ConsumerKey {
         self.key.consumer(self.consumer)
+    }
+
+    fn keys(&self) -> Vec<Key> {
+        self.window.as_ref().map_or_else(|| vec![self.key.clone()], |window| window.keys.clone())
+    }
+
+    fn contains_key(&self, key: &Key) -> bool {
+        self.window.as_ref().map_or(&self.key == key, |window| window.keys.contains(key))
+    }
+
+    fn contains_path(&self, path: &str) -> bool {
+        self.window.as_ref().map_or(self.key.source.path == path, |window| window.keys.iter().any(|key| key.source.path == path))
     }
 }
 struct WorkerChannels {
@@ -126,7 +149,26 @@ impl WorkerQueue {
         }
     }
 
-    fn promote_thumbnail(&self, key: &Key, path: &str, consumer: u64) -> std::result::Result<Option<Job>, ()> {
+    fn remove_path(&self, path: &str) -> Vec<Job> {
+        let Ok(mut queues) = self.queues.lock() else { return Vec::new() };
+        let mut removed = Vec::new();
+        queues.current.retain(|job| {
+            if job.contains_path(path) { removed.push(job.clone()); false } else { true }
+        });
+        queues.thumbnails.retain(|job| {
+            if job.contains_path(path) { removed.push(job.clone()); false } else { true }
+        });
+        removed
+    }
+
+    fn drain(&self) -> Vec<Job> {
+        let Ok(mut queues) = self.queues.lock() else { return Vec::new() };
+        let mut jobs:Vec<_>=queues.current.drain(..).collect();
+        jobs.extend(queues.thumbnails.drain(..));
+        jobs
+    }
+
+    fn promote_thumbnail(&self, key: &Key, path: &str, consumer: u64, source_generation: u64) -> std::result::Result<Option<Job>, ()> {
         let mut queues = self.queues.lock().map_err(|_| ())?;
         let owner = key.consumer(Some(consumer));
         let replace_at = queues.current.iter().position(|queued| queued.consumer == Some(consumer) && queued.consumer_key() == owner);
@@ -136,7 +178,7 @@ impl WorkerQueue {
         let Some(thumbnail_at) = queues.thumbnails.iter().position(|queued| queued.key == *key) else { return Err(()) };
         queues.thumbnails.remove(thumbnail_at);
         let replaced = replace_at.and_then(|at| queues.current.remove(at));
-        queues.current.push_back(Job { key: key.clone(), path: path.to_owned(), consumer: Some(consumer), thumbnail: false });
+        queues.current.push_back(Job { key: key.clone(), path: path.to_owned(), consumer: Some(consumer), thumbnail: false, source_generation, window: None });
         self.ready.notify_one();
         Ok(replaced)
     }
@@ -181,6 +223,12 @@ pub fn take_error() -> Option<String> {
     LAST_ERROR.with(|e| e.borrow_mut().take())
 }
 
+/// Whether the current thread is requesting an interactive, nonblocking preview.
+/// Export and other full-quality callers stay on the original-source path.
+pub fn is_preview() -> bool {
+    NONBLOCKING.with(std::cell::Cell::get)
+}
+
 /// Attach a source-time or source-metadata failure to the existing movie-preview error channel.
 /// Blocking export callers receive it through `take_error`; nonblocking preview callers surface
 /// it through the bounded UI error queue.
@@ -204,10 +252,80 @@ pub fn take_preview_error() -> Option<String> {
 pub fn completion_generation() -> u64 {
     COMPLETION_GENERATION.load(Ordering::Acquire)
 }
+/// Settings/source changes also invalidate the displayed preview without authoring a document
+/// edit. The UI's existing completion subscription will resample its current timestamp.
+pub fn signal_refresh() { COMPLETION_GENERATION.fetch_add(1,Ordering::AcqRel); }
 
 /// Number of queued or active preview requests. UIs use this to keep polling while work is pending.
 pub fn pending_count() -> usize {
     cache().lock().map(|state| state.pending.len()).unwrap_or(0)
+}
+
+/// Invalidate retained and queued derived data for a changed/relinked source path. In-flight
+/// workers finish safely but their captured generation can no longer publish into the cache.
+pub fn invalidate_path(path: &str) {
+    let input = Path::new(path);
+    let resolved = std::fs::canonicalize(input)
+        .unwrap_or_else(|_| if input.is_absolute() { input.to_path_buf() } else { std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(input) });
+    let resolved = resolved.to_string_lossy().into_owned();
+    if let Ok(mut state) = cache().lock() {
+        let keys: Vec<Key> = state.frames.keys().chain(state.errors.keys()).chain(state.pending.iter()).filter(|key| key.source.path == resolved).cloned().collect();
+        for key in keys {
+            if let Some((_, bytes, _)) = state.frames.remove(&key) {
+                state.bytes = state.bytes.saturating_sub(bytes);
+            }
+            state.errors.remove(&key);
+            state.pending.remove(&key);
+            state.frame_order.retain(|cached| cached != &key);
+            state.error_order.retain(|cached| cached != &key);
+        }
+        state.pending_current.retain(|owner, keys| {
+            if owner.source.path == resolved { return false }
+            keys.retain(|key| key.source.path != resolved);
+            !keys.is_empty()
+        });
+        state.latest_current.retain(|owner, _| owner.source.path != resolved);
+        state.media_info.retain(|identity, _| identity.path != resolved);
+        state.media_info_order.retain(|identity| identity.path != resolved);
+        let generation = state.source_generation.entry(resolved.clone()).or_default();
+        *generation = generation.wrapping_add(1);
+    }
+    if let Some(worker) = WORKER.get().and_then(Option::as_ref) {
+        let removed = worker.queue.remove_path(&resolved);
+        if let Ok(mut state) = cache().lock() {
+            for job in removed {
+                remove_job_pending(&mut state, &job);
+            }
+        }
+    }
+    signal_refresh();
+}
+
+/// Release every retained frame/error and discard queued media jobs. Source generation guards
+/// ensure already-running jobs cannot repopulate this cleared cache.
+pub fn clear() {
+    let queued = WORKER.get().and_then(Option::as_ref).map(|worker| worker.queue.drain()).unwrap_or_default();
+    if let Ok(mut state) = cache().lock() {
+        let paths: HashSet<String> = state.pending.iter().map(|key| key.source.path.clone())
+            .chain(state.frames.keys().map(|key| key.source.path.clone()))
+            .chain(state.errors.keys().map(|key| key.source.path.clone()))
+            .chain(queued.iter().map(|job| job.key.source.path.clone())).collect();
+        for path in paths {
+            let generation = state.source_generation.entry(path).or_default();
+            *generation = generation.wrapping_add(1);
+        }
+        state.frames.clear();
+        state.frame_order.clear();
+        state.errors.clear();
+        state.error_order.clear();
+        state.pending.clear();
+        state.pending_current.clear();
+        state.latest_current.clear();
+        state.media_info.clear();
+        state.media_info_order.clear();
+        state.bytes = 0;
+    }
+    signal_refresh();
 }
 
 fn cache() -> &'static Mutex<Cache> {
@@ -243,28 +361,46 @@ fn process_job(job: Job) {
     let owner = job.consumer_key();
     if !job.thumbnail && job.consumer.is_some()
         && let Ok(mut state) = cache().lock()
-        && state.latest_current.get(&owner) != Some(&job.key)
+        && (!state.latest_current.get(&owner).is_some_and(|key| job.contains_key(key))
+            || state.source_generation.get(&job.key.source.path).copied().unwrap_or(0) != job.source_generation)
     {
-        clear_pending_current(&mut state, &owner, &job.key);
-        state.pending.remove(&job.key);
+        for key in job.keys() {
+            clear_pending_current(&mut state, &owner, &key);
+            state.pending.remove(&key);
+        }
         if !state.pending_current.contains_key(&owner) {
             state.latest_current.remove(&owner);
         }
         COMPLETION_GENERATION.fetch_add(1, Ordering::AcqRel);
         return;
     }
-    let decoded = decode(&job.key, job.key.format);
+    let decoded = match &job.window {
+        Some(window) => decode_window(&job.key, &job.path, window, job.thumbnail),
+        None => decode(&job.key, job.key.format, job.thumbnail).map(|(surface, reservation)| vec![(job.key.clone(), surface, reservation)]),
+    };
     if let Ok(mut state) = cache().lock() {
-        let current = job.thumbnail || job.consumer.is_none() || state.latest_current.get(&owner) == Some(&job.key);
-        state.pending.remove(&job.key);
-        if !job.thumbnail && job.consumer.is_some() { clear_pending_current(&mut state, &owner, &job.key); }
+        let current = (job.thumbnail || job.consumer.is_none() || state.latest_current.get(&owner).is_some_and(|key| job.contains_key(key)))
+            && state.source_generation.get(&job.key.source.path).copied().unwrap_or(0) == job.source_generation;
+        for key in job.keys() {
+            state.pending.remove(&key);
+            if !job.thumbnail && job.consumer.is_some() { clear_pending_current(&mut state, &owner, &key); }
+        }
         match decoded {
-            Ok(surface) => {
-                if let Err(error) = insert_frame(&mut state, job.key.clone(), surface) {
-                    if current { insert_error(&mut state, job.key.clone(), error); }
+            Ok(frames) if current => {
+                for (key, surface, reservation) in frames {
+                    if let Err(error) = insert_frame(&mut state, key.clone(), surface, reservation) {
+                        insert_error(&mut state, key, error);
+                    }
                 }
             }
-            Err(error) if current => insert_error(&mut state, job.key.clone(), error),
+            Ok(_) => {}
+            Err(error) if current => {
+                if let Some(key) = job.window.as_ref().and_then(|window| state.latest_current.get(&owner).filter(|latest| window.keys.contains(latest)).cloned()) {
+                    insert_error(&mut state, key, error);
+                } else {
+                    insert_error(&mut state, job.key.clone(), error);
+                }
+            }
             Err(_) => {}
         }
         if !job.thumbnail && job.consumer.is_some() && state.latest_current.get(&owner) == Some(&job.key) {
@@ -286,18 +422,30 @@ fn clear_pending_current(state: &mut Cache, owner: &ConsumerKey, key: &Key) {
     }
 }
 
-fn insert_frame(state: &mut Cache, key: Key, surface: Surface) -> Result<(), String> {
+fn remove_job_pending(state: &mut Cache, job: &Job) {
+    for key in job.keys() {
+        state.pending.remove(&key);
+        if job.consumer.is_some() {
+            clear_pending_current(state, &job.consumer_key(), &key);
+        }
+    }
+}
+
+fn insert_frame(state: &mut Cache, key: Key, surface: Surface, mut reservation: crate::media_budget::Reservation) -> Result<(), String> {
     let bytes = cache_bytes(&surface);
     if bytes > CACHE_LIMIT {
         return Err(format!("movie preview frame exceeds the {} MiB cache limit", CACHE_LIMIT / (1024 * 1024)));
     }
-    if let Some((_, previous)) = state.frames.remove(&key) {
+    if !reservation.resize(bytes) {
+        return Err("movie preview could not reserve its decoded frame within the shared media cache budget".into());
+    }
+    if let Some((_, previous, _)) = state.frames.remove(&key) {
         state.bytes = state.bytes.saturating_sub(previous);
         state.frame_order.retain(|cached| cached != &key);
     }
     while state.bytes.saturating_add(bytes) > CACHE_LIMIT {
         let Some(old) = state.frame_order.pop_front() else { break };
-        if let Some((_, old_bytes)) = state.frames.remove(&old) {
+        if let Some((_, old_bytes, _)) = state.frames.remove(&old) {
             state.bytes = state.bytes.saturating_sub(old_bytes);
         }
     }
@@ -306,7 +454,7 @@ fn insert_frame(state: &mut Cache, key: Key, surface: Surface) -> Result<(), Str
     }
     state.bytes += bytes;
     state.frame_order.push_back(key.clone());
-    state.frames.insert(key, (surface, bytes));
+    state.frames.insert(key, (surface, bytes, reservation));
     Ok(())
 }
 
@@ -328,16 +476,22 @@ fn worker() -> Option<&'static WorkerChannels> {
     WORKER
         .get_or_init(|| {
             let queue = std::sync::Arc::new(WorkerQueue { queues: Mutex::new(Queues::default()), ready: Condvar::new() });
-            let thread_queue = queue.clone();
-            if std::thread::Builder::new()
-                .name("photostore-movie-preview".into())
-                .spawn(move || {
-                    while let Some(job) = thread_queue.pop() {
-                        process_job(job);
-                    }
-                })
-                .is_ok()
-            {
+            let mut started = false;
+            for worker_index in 0..2 {
+                let thread_queue = queue.clone();
+                if std::thread::Builder::new()
+                    .name(format!("photostore-movie-preview-{worker_index}"))
+                    .spawn(move || {
+                        while let Some(job) = thread_queue.pop() {
+                            process_job(job);
+                        }
+                    })
+                    .is_ok()
+                {
+                    started = true;
+                }
+            }
+            if started {
                 Some(WorkerChannels { queue })
             } else {
                 None
@@ -397,7 +551,46 @@ fn media_info_for(source: &SourceIdentity) -> Result<crate::media_backend::Media
     Ok(probed)
 }
 
-fn decode(key: &Key, format: PixelFormat) -> Result<Surface, String> {
+fn reserve_frame_bytes(bytes: usize, thumbnail: bool) -> Result<crate::media_budget::Reservation, String> {
+    if bytes > CACHE_LIMIT {
+        return Err(format!("movie preview frame exceeds the {} MiB cache limit", CACHE_LIMIT / (1024 * 1024)));
+    }
+    loop {
+        let kind = if thumbnail {
+            crate::media_budget::MediaKind::Thumbnail
+        } else {
+            crate::media_budget::MediaKind::MovieFrame
+        };
+        if let Some(reservation) = crate::media_budget::reserve(kind, bytes) {
+            return Ok(reservation);
+        }
+        let status = crate::media_budget::status();
+        let (used, limit) = match kind {
+            crate::media_budget::MediaKind::MovieFrame => (status.movie_frame_used_bytes, crate::media_budget::MOVIE_FRAME_BUDGET_BYTES),
+            crate::media_budget::MediaKind::Thumbnail => (status.thumbnail_used_bytes, crate::media_budget::THUMBNAIL_BUDGET_BYTES),
+            crate::media_budget::MediaKind::Waveform => (status.waveform_used_bytes, crate::media_budget::WAVEFORM_BUDGET_BYTES),
+        };
+        let category_full = bytes > limit.saturating_sub(used);
+        let Ok(mut state) = cache().lock() else { return Err("movie frame cache is unavailable".into()) };
+        let old_index = state.frame_order.iter().position(|key| {
+            !category_full || state.frames.get(key).is_some_and(|(_, _, reservation)| reservation.kind() == kind)
+        });
+        let Some(old_index) = old_index else {
+            return Err("movie preview frame cannot fit in the shared derived-media cache".into());
+        };
+        let Some(old) = state.frame_order.remove(old_index) else { continue };
+        if let Some((_, old_bytes, _)) = state.frames.remove(&old) {
+            state.bytes = state.bytes.saturating_sub(old_bytes);
+        }
+    }
+}
+
+fn decode(key: &Key, format: PixelFormat, thumbnail: bool) -> Result<(Surface, crate::media_budget::Reservation), String> {
+    let _permit = crate::media_budget::acquire_decoder(if thumbnail {
+        crate::media_budget::DecodePriority::Background
+    } else {
+        crate::media_budget::DecodePriority::Foreground
+    }).ok_or_else(|| "media decode capacity is unavailable".to_owned())?;
     let path = key.source.path.as_str();
     let info = media_info_for(&key.source)?;
     let position = &key.position;
@@ -405,7 +598,8 @@ fn decode(key: &Key, format: PixelFormat) -> Result<Surface, String> {
         Position::Frame(index) => format!("frame {index}"),
         Position::TimestampNanos(nanos) => format!("timestamp {:.9}s", *nanos as f64 / 1_000_000_000.0),
     };
-    let bytes = estimated_frame_bytes(info.width, info.height, format)
+    let output_size = key.output_size.unwrap_or((info.width, info.height));
+    let bytes = estimated_frame_bytes(output_size.0, output_size.1, format)
         .ok_or_else(|| format!("movie source `{path}` {label} size overflows addressable memory"))?;
     if bytes > CACHE_LIMIT {
         return Err(format!(
@@ -413,41 +607,195 @@ fn decode(key: &Key, format: PixelFormat) -> Result<Surface, String> {
             CACHE_LIMIT / (1024 * 1024)
         ));
     }
-    match position {
+    let reservation = reserve_frame_bytes(bytes, thumbnail)?;
+    let decoded = match position {
         Position::Frame(index) => {
+            if key.output_size.is_some() {
+                return Err("frame-index proxy decoding is unavailable; use a source-time preview request".into());
+            }
             let mut frames = crate::media_backend::decode_sequence_range(path, *index as u64, *index as u64, format, CACHE_LIMIT as u64, |_, _| true)
                 .map_err(|e| format!("movie source `{path}` frame {index} failed: {e}"))?;
             frames.pop().ok_or_else(|| format!("movie source `{path}` did not contain frame {index}"))
         }
-        Position::TimestampNanos(nanos) => crate::media_backend::decode_single_frame_at_with_info(
-            Path::new(path), &info, *nanos as f64 / 1_000_000_000.0, format,
+        Position::TimestampNanos(nanos) => crate::media_backend::decode_single_frame_at_with_info_scaled(
+            Path::new(path), &info, *nanos as f64 / 1_000_000_000.0, format, output_size.0, output_size.1,
         )
             .map_err(|e| format!("movie source `{path}` {label} failed: {e}")),
+    }?;
+    Ok((decoded, reservation))
+}
+
+fn decode_window(key: &Key, path: &str, window: &FrameWindow, thumbnail: bool) -> Result<Vec<(Key, Surface, crate::media_budget::Reservation)>, String> {
+    let _permit = crate::media_budget::acquire_decoder(if thumbnail {
+        crate::media_budget::DecodePriority::Background
+    } else {
+        crate::media_budget::DecodePriority::Foreground
+    }).ok_or_else(|| "media decode capacity is unavailable".to_owned())?;
+    if window.keys.len() < 2 || window.keys.len() != window.times.len() {
+        return Err("invalid movie preview window".into());
     }
+    let info = media_info_for(&key.source)?;
+    let output_size = key.output_size.unwrap_or((info.width, info.height));
+    let retained_frame_bytes = estimated_frame_bytes(output_size.0, output_size.1, key.format)
+        .ok_or_else(|| "movie preview window output size overflows addressable memory".to_owned())?;
+    let raw_frame_bytes = (output_size.0 as usize).checked_mul(output_size.1 as usize).and_then(|bytes| bytes.checked_mul(4))
+        .ok_or_else(|| "movie preview window raw size overflows addressable memory".to_owned())?;
+    if retained_frame_bytes > CACHE_LIMIT {
+        return Err(format!("movie preview frame exceeds the {} MiB shared frame-cache limit", CACHE_LIMIT / (1024 * 1024)));
+    }
+    let per_frame = raw_frame_bytes.max(retained_frame_bytes).max(1);
+    let bounded_count = window.keys.len().min(8).min((32 * 1024 * 1024 / per_frame).max(1)).min((CACHE_LIMIT / retained_frame_bytes.max(1)).max(1));
+    let mut reservations = Vec::with_capacity(bounded_count);
+    for _ in 0..bounded_count {
+        reservations.push(reserve_frame_bytes(retained_frame_bytes, thumbnail)?);
+    }
+    let surfaces = crate::media_backend::decode_preview_window(
+        Path::new(path), &info, window.times[0], window.step_seconds, bounded_count, key.format, output_size.0, output_size.1,
+    ).map_err(|error| format!("movie source `{path}` preview window failed: {error}"))?;
+    Ok(window.keys.iter().take(surfaces.len()).cloned().zip(surfaces).zip(reservations)
+        .map(|((key, surface), reservation)| (key, surface, reservation)).collect())
 }
 
 pub fn frame(path: &str, index: usize, fmt: PixelFormat) -> Result<Option<Surface>, String> {
-    frame_with_position(path, Position::Frame(index), fmt, false, None)
+    frame_with_position(path, Position::Frame(index), fmt, false, None, None)
 }
 
 /// Request an on-demand current frame, coalesced independently for each visible layer consumer.
 pub fn frame_for_consumer(path: &str, index: usize, fmt: PixelFormat, consumer: u64) -> Result<Option<Surface>, String> {
-    frame_with_position(path, Position::Frame(index), fmt, false, Some(consumer))
+    frame_with_position(path, Position::Frame(index), fmt, false, Some(consumer), None)
 }
 
 /// Request a linked-movie frame at an exact source time, coalesced independently for each consumer.
 pub fn frame_at_seconds_for_consumer(path: &str, seconds: f64, fmt: PixelFormat, consumer: u64) -> Result<Option<Surface>, String> {
-    frame_with_position(path, timestamp_position(seconds)?, fmt, false, Some(consumer))
+    frame_with_position(path, timestamp_position(seconds)?, fmt, false, Some(consumer), None)
+}
+
+/// Request an exact linked-movie preview frame, scaling a disk-proxy decode back to the source
+/// canvas dimensions. The cache key retains this output size; full-resolution export still uses
+/// the original-source APIs above.
+pub fn frame_at_seconds_for_consumer_scaled(
+    path: &str,
+    seconds: f64,
+    fmt: PixelFormat,
+    consumer: u64,
+    output_size: (u32, u32),
+) -> Result<Option<Surface>, String> {
+    frame_with_position(path, timestamp_position(seconds)?, fmt, false, Some(consumer), Some(output_size))
+}
+
+/// Request an exact-time frame at a specified output size without consumer coalescing. This is
+/// used for nested documents and other independent timeline presenters that can request distinct
+/// timestamps from the same source concurrently.
+pub fn frame_at_seconds_scaled(
+    path: &str,
+    seconds: f64,
+    fmt: PixelFormat,
+    output_size: (u32, u32),
+) -> Result<Option<Surface>, String> {
+    frame_with_position(path, timestamp_position(seconds)?, fmt, false, None, Some(output_size))
+}
+
+/// Prefetch a bounded set of uniformly spaced exact timestamps for forward playback. Every cache
+/// key uses the caller's supplied timestamp; irregular timelines fall back to requesting only the
+/// exact current frame.
+pub fn frame_at_times_for_consumer(path: &str, times: &[f64], fmt: PixelFormat, consumer: u64) -> Result<Vec<Option<Surface>>, String> {
+    frame_at_times_for_consumer_scaled(path, times, fmt, consumer, None)
+}
+
+/// Scaled-output variant for explicit disk-proxy preview while retaining source-canvas geometry.
+pub fn frame_at_times_for_consumer_scaled(
+    path: &str,
+    times: &[f64],
+    fmt: PixelFormat,
+    consumer: u64,
+    output_size: Option<(u32, u32)>,
+) -> Result<Vec<Option<Surface>>, String> {
+    if times.is_empty() || times.len() > 16 {
+        return Err("preview lookahead must contain 1 to 16 timestamps".into());
+    }
+    let source = source_identity(path)?;
+    let mut keys = Vec::with_capacity(times.len());
+    for seconds in times {
+        keys.push(Key { source: source.clone(), position: timestamp_position(*seconds)?, format: fmt, output_size });
+    }
+    let step = if times.len() > 1 { times[1] - times[0] } else { 0.0 };
+    let regular = times.len() > 1
+        && step.is_finite()
+        && step > 0.0
+        && times.windows(2).all(|pair| ((pair[1] - pair[0]) - step).abs() <= 1e-9_f64.max(step.abs() * 1e-9));
+    if !regular {
+        let result = frame_with_position(path, keys[0].position.clone(), fmt, false, Some(consumer), output_size)?;
+        return Ok(std::iter::once(result).chain((1..times.len()).map(|_| None)).collect());
+    }
+    if !NONBLOCKING.with(std::cell::Cell::get) {
+        let result = frame_with_position(path, keys[0].position.clone(), fmt, false, Some(consumer), output_size)?;
+        return Ok(std::iter::once(result).chain((1..times.len()).map(|_| None)).collect());
+    }
+
+    let owner = keys[0].consumer(Some(consumer));
+    let mut cached = Vec::with_capacity(keys.len());
+    let generation;
+    let work_keys;
+    let work_times;
+    {
+        let mut state = cache().lock().map_err(|_| "movie frame cache is unavailable".to_owned())?;
+        for key in &keys {
+            if let Some((surface, _, _)) = state.frames.get(key).cloned() {
+                state.frame_order.retain(|cached| cached != key);
+                state.frame_order.push_back(key.clone());
+                cached.push(Some(surface));
+            } else {
+                cached.push(None);
+            }
+        }
+        generation = state.source_generation.get(&source.path).copied().unwrap_or(0);
+        if cached.iter().all(Option::is_some) {
+            return Ok(cached);
+        }
+        // Refill ahead of the playhead, without decoding already-cached frames again.
+        // A lookahead may inspect 16 keys, but each queued job retains at most eight.
+        let missing=cached.iter().position(Option::is_none).unwrap_or(0);
+        work_keys=keys[missing..(missing+8).min(keys.len())].to_vec();
+        work_times=times[missing..(missing+8).min(times.len())].to_vec();
+        if state.pending.contains(&work_keys[0]) {
+            return Ok(cached);
+        }
+    }
+    let Some(worker) = worker() else { return Err("movie preview worker could not be started".into()) };
+    let job = Job {
+        key: work_keys[0].clone(),
+        path: path.to_owned(),
+        consumer: Some(consumer),
+        thumbnail: false,
+        source_generation: generation,
+        window: Some(FrameWindow { keys: work_keys.clone(), times: work_times, step_seconds: step }),
+    };
+    let mut state = cache().lock().map_err(|_| "movie frame cache is unavailable".to_owned())?;
+    state.latest_current.insert(owner.clone(), work_keys[0].clone());
+    match worker.queue.push(job) {
+        Ok(replaced) => {
+            if let Some(replaced) = replaced {
+                remove_job_pending(&mut state, &replaced);
+            }
+            state.pending.extend(work_keys.iter().cloned());
+            state.pending_current.entry(owner).or_default().extend(work_keys.iter().cloned());
+            Ok(cached)
+        }
+        Err(_) => {
+            state.latest_current.remove(&owner);
+            Err("movie preview queue is full; try again shortly".into())
+        }
+    }
 }
 
 /// Request an exact-time frame without coalescing it with another caller's pending request.
 pub fn frame_at_seconds(path: &str, seconds: f64, fmt: PixelFormat) -> Result<Option<Surface>, String> {
-    frame_with_position(path, timestamp_position(seconds)?, fmt, false, None)
+    frame_with_position(path, timestamp_position(seconds)?, fmt, false, None, None)
 }
 
 /// Request an exact-time frame for a thumbnail. Current canvas frames retain queue priority.
 pub fn frame_thumbnail_at_seconds(path: &str, seconds: f64, fmt: PixelFormat) -> Result<Option<Surface>, String> {
-    frame_with_position(path, timestamp_position(seconds)?, fmt, true, None)
+    frame_with_position(path, timestamp_position(seconds)?, fmt, true, None, None)
 }
 
 fn timestamp_position(seconds: f64) -> Result<Position, String> {
@@ -460,10 +808,10 @@ fn timestamp_position(seconds: f64) -> Result<Position, String> {
 
 /// Request an on-demand frame for a timeline thumbnail. Current canvas frames have priority.
 pub fn frame_thumbnail(path: &str, index: usize, fmt: PixelFormat) -> Result<Option<Surface>, String> {
-    frame_with_position(path, Position::Frame(index), fmt, true, None)
+    frame_with_position(path, Position::Frame(index), fmt, true, None, None)
 }
 
-fn frame_with_position(path: &str, position: Position, fmt: PixelFormat, thumbnail: bool, consumer: Option<u64>) -> Result<Option<Surface>, String> {
+fn frame_with_position(path: &str, position: Position, fmt: PixelFormat, thumbnail: bool, consumer: Option<u64>, output_size: Option<(u32, u32)>) -> Result<Option<Surface>, String> {
     let source = match source_identity(path) {
         Ok(source) => source,
         Err(error) => {
@@ -477,7 +825,7 @@ fn frame_with_position(path: &str, position: Position, fmt: PixelFormat, thumbna
             return Err(error);
         }
     };
-    let key = Key { source, position, format: fmt };
+    let key = Key { source, position, format: fmt, output_size };
     let owner = key.consumer(consumer);
     if let Ok(mut state) = cache().lock() {
         if !thumbnail && consumer.is_some()
@@ -485,7 +833,7 @@ fn frame_with_position(path: &str, position: Position, fmt: PixelFormat, thumbna
         {
             state.latest_current.insert(owner.clone(), key.clone());
         }
-        if let Some((surface, _)) = state.frames.get(&key).cloned() {
+        if let Some((surface, _, _)) = state.frames.get(&key).cloned() {
             state.frame_order.retain(|k| k != &key);
             state.frame_order.push_back(key);
             return Ok(Some(surface));
@@ -503,12 +851,10 @@ fn frame_with_position(path: &str, position: Position, fmt: PixelFormat, thumbna
             if state.pending.contains(&key) {
                 if !thumbnail && let Some(consumer) = consumer {
                     if let Some(worker) = worker() {
-                        if let Ok(replaced) = worker.queue.promote_thumbnail(&key, path, consumer) {
+                        let generation = state.source_generation.get(&key.source.path).copied().unwrap_or(0);
+                        if let Ok(replaced) = worker.queue.promote_thumbnail(&key, path, consumer, generation) {
                             if let Some(replaced) = replaced {
-                                if replaced.key != key {
-                                    state.pending.remove(&replaced.key);
-                                    clear_pending_current(&mut state, &replaced.consumer_key(), &replaced.key);
-                                }
+                                remove_job_pending(&mut state, &replaced);
                             }
                             state.latest_current.insert(owner.clone(), key.clone());
                             state.pending_current.entry(owner).or_default().insert(key.clone());
@@ -527,14 +873,13 @@ fn frame_with_position(path: &str, position: Position, fmt: PixelFormat, thumbna
                 state.pending_current.entry(owner.clone()).or_default().insert(key.clone());
             }
             state.pending.insert(key.clone());
-            let job = Job { key: key.clone(), path: path.to_owned(), consumer, thumbnail };
+            let generation = state.source_generation.get(&key.source.path).copied().unwrap_or(0);
+    let job = Job { key: key.clone(), path: path.to_owned(), consumer, thumbnail, source_generation: generation, window: None };
             match worker.queue.push(job) {
                 Ok(replaced) => {
                     if let Some(discarded) = replaced {
                         state.pending.remove(&discarded.key);
-                        if discarded.consumer.is_some() {
-                            clear_pending_current(&mut state, &discarded.consumer_key(), &discarded.key);
-                        }
+                        remove_job_pending(&mut state, &discarded);
                     }
                 }
                 Err(_) => {
@@ -549,10 +894,14 @@ fn frame_with_position(path: &str, position: Position, fmt: PixelFormat, thumbna
         return Ok(None);
     }
 
-    match decode(&key, fmt) {
-        Ok(surface) => {
+    let generation = cache().lock().map(|state| state.source_generation.get(&key.source.path).copied().unwrap_or(0)).unwrap_or(0);
+    match decode(&key, fmt, thumbnail) {
+        Ok((surface, reservation)) => {
             if let Ok(mut state) = cache().lock() {
-                if let Err(error) = insert_frame(&mut state, key.clone(), surface.clone()) {
+                if state.source_generation.get(&key.source.path).copied().unwrap_or(0) != generation {
+                    return Err("movie source was invalidated while its preview frame was decoding".into());
+                }
+                if let Err(error) = insert_frame(&mut state, key.clone(), surface.clone(), reservation) {
                     insert_error(&mut state, key, error.clone());
                     LAST_ERROR.with(|v| *v.borrow_mut() = Some(error.clone()));
                     return Err(error);
