@@ -517,11 +517,30 @@ impl Surface {
                     + (tile_rect.x0 - coordinate.tx * TILE_SIZE) as usize) * 4;
                 let source_row = &bytes[source..source + span * 3];
                 let target_row = &mut tile.data[destination..destination + span * 4];
-                for (src, dst) in source_row.chunks_exact(3).zip(target_row.chunks_exact_mut(4)) {
-                    if let Some(lut) = ramps {
+                if let Some(lut) = ramps {
+                    for (src, dst) in source_row.chunks_exact(3).zip(target_row.chunks_exact_mut(4)) {
                         dst[0] = lut[0][src[0] as usize]; dst[1] = lut[1][src[1] as usize]; dst[2] = lut[2][src[2] as usize];
-                    } else { dst[..3].copy_from_slice(src); }
-                    dst[3] = 255;
+                        dst[3] = 255;
+                    }
+                } else {
+                    // Process four RGB pixels per iteration. The fixed 12-to-16 byte
+                    // expansion gives LLVM a larger independent store group to SLP
+                    // vectorize, while avoiding per-pixel branching and preserving a
+                    // small scalar tail for partial tile rows.
+                    let mut source_blocks = source_row.chunks_exact(12);
+                    let mut target_blocks = target_row.chunks_exact_mut(16);
+                    for (src, dst) in source_blocks.by_ref().zip(target_blocks.by_ref()) {
+                        dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = 255;
+                        dst[4] = src[3]; dst[5] = src[4]; dst[6] = src[5]; dst[7] = 255;
+                        dst[8] = src[6]; dst[9] = src[7]; dst[10] = src[8]; dst[11] = 255;
+                        dst[12] = src[9]; dst[13] = src[10]; dst[14] = src[11]; dst[15] = 255;
+                    }
+                    let src_tail = source_blocks.remainder();
+                    let dst_tail = target_blocks.into_remainder();
+                    for (src, dst) in src_tail.chunks_exact(3).zip(dst_tail.chunks_exact_mut(4)) {
+                        dst[..3].copy_from_slice(src);
+                        dst[3] = 255;
+                    }
                 }
             }
         }
