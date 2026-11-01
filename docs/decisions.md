@@ -745,3 +745,5 @@ The bounded original-resolution target and limitations are in the
 [0.20.5 receipt](releases/0.20.5.md).
 
 Warm decoder-session reservations take priority over evictable derived frames within the existing shared target. Reclaim optional movie frames while pinning current requests before retiring a source process, so a warm frame cache cannot turn each later timestamp into a decoder restart.
+
+Dense changing byte-compatible GPU pages pack directly into mapped COPY_SRC transfer buffers and encode buffer-to-texture copies in order with the render passes. The command buffer retains each allocation; existing staged-byte flushes bound in-flight work. This removes the full-page CPU temporary and queue-side recopy without reusing a buffer while commands may still reference it. Sparse/shared-fill paths remain available.

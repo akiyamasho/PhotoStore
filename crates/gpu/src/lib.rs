@@ -1276,7 +1276,7 @@ impl Compositor {
                 let bytes = convert_tile(surface, None, kind, TileCoord::new(0, 0));
                 self.staged += put_tiles(device, queue, encoder, &r, &missing, &bytes);
             }
-            if let Some(bytes) = write_dense_direct_page(queue, &r, &present) {
+            if let Some(bytes) = write_dense_direct_page(device, encoder, &r, &present) {
                 stats.dense_page_uploads += 1;
                 self.staged += bytes as u64;
                 stats.tiles_uploaded += present.len();
@@ -1325,7 +1325,7 @@ impl Compositor {
             };
             self.staged += put_tiles(device, queue, encoder, r, &gone, &bytes);
         }
-        if let Some(bytes) = write_dense_direct_page(queue, r, &changed) {
+        if let Some(bytes) = write_dense_direct_page(device, encoder, r, &changed) {
             stats.dense_page_uploads += 1;
             self.staged += bytes as u64;
             stats.tiles_uploaded += changed.len();
@@ -1697,7 +1697,7 @@ fn tile_grid(canvas: Rect) -> Rect {
 /// A dense changing movie page is one transfer, rather than dozens of tiny texture writes.
 /// Sparse brush damage and shared solid tiles retain the existing tile/copy path. The temporary
 /// is bounded to one resident page (at most PAGE² texels) and is released after queue staging.
-fn write_dense_direct_page(queue: &wgpu::Queue, resident: &Resident, tiles: &[(TileCoord, Arc<Tile>)]) -> Option<usize> {
+fn write_dense_direct_page(device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, resident: &Resident, tiles: &[(TileCoord, Arc<Tile>)]) -> Option<usize> {
     let region = resident.region;
     if !matches!(resident.kind, TexKind::Rgba8Direct | TexKind::R8Direct)
         || tiles.len() < 4 || tiles.len() != region.tiles().count()
@@ -1711,13 +1711,21 @@ fn write_dense_direct_page(queue: &wgpu::Queue, resident: &Resident, tiles: &[(T
     let bpp = resident.kind.bytes_per_pixel();
     let stride = region.width() as usize * bpp;
     let length = stride.checked_mul(region.height() as usize)?;
-    let mut data = Vec::new();
-    data.try_reserve_exact(length).ok()?;
-    data.resize(length, 0);
+    if tiles.iter().any(|(coordinate, _)| coordinate.rect().intersect(&region) != coordinate.rect()) { return None; }
+    // Pack into the transfer allocation itself. A CPU Vec followed by queue.write_texture
+    // copied each changing movie page twice before the GPU could use it. The command buffer
+    // retains this buffer until its copy completes; existing staged-byte flushes bound it.
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("pc_dense_movie_upload"),
+        size: length as u64,
+        usage: wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: true,
+    });
+    let slice = buffer.slice(..);
+    let mut data = slice.get_mapped_range_mut().ok()?;
     let tile_row = TILE_SIZE as usize * bpp;
     for (coordinate, tile) in tiles {
         let rect = coordinate.rect();
-        if rect.intersect(&region) != rect { return None; }
         let x = (rect.x0 - region.x0) as usize * bpp;
         let y = (rect.y0 - region.y0) as usize;
         for row in 0..TILE_SIZE as usize {
@@ -1726,10 +1734,11 @@ fn write_dense_direct_page(queue: &wgpu::Queue, resident: &Resident, tiles: &[(T
             data[to..to + tile_row].copy_from_slice(&tile.bytes()[from..from + tile_row]);
         }
     }
-    queue.write_texture(
+    drop(data);
+    buffer.unmap();
+    encoder.copy_buffer_to_texture(
+        wgpu::TexelCopyBufferInfo {buffer:&buffer,layout:wgpu::TexelCopyBufferLayout {offset:0,bytes_per_row:Some(stride as u32),rows_per_image:Some(region.height())}},
         wgpu::TexelCopyTextureInfo {texture:&resident.texture,mip_level:0,origin:wgpu::Origin3d::ZERO,aspect:wgpu::TextureAspect::All},
-        &data,
-        wgpu::TexelCopyBufferLayout {offset:0,bytes_per_row:Some(stride as u32),rows_per_image:Some(region.height())},
         wgpu::Extent3d {width:region.width(),height:region.height(),depth_or_array_layers:1});
     Some(length)
 }
