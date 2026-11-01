@@ -94,6 +94,8 @@ pub struct Stats {
     pub chunks: usize,
     pub slots: u32,
     pub tiles_uploaded: usize,
+    /// Whole-page transfers replacing dense groups of per-tile writes.
+    pub dense_page_uploads: usize,
     pub bytes_uploaded: usize,
     /// Effect layers whose shape was (re)rendered, fully or partially.
     pub fx_shapes: usize,
@@ -1274,15 +1276,23 @@ impl Compositor {
                 let bytes = convert_tile(surface, None, kind, TileCoord::new(0, 0));
                 self.staged += put_tiles(device, queue, encoder, &r, &missing, &bytes);
             }
-            let staged = &mut self.staged;
-            convert_tiles(surface, present, kind, |t, cs, bytes| {
-                *staged += put_tiles(device, queue, encoder, &r, cs, bytes);
-                for &c in cs {
-                    stats.tiles_uploaded += 1;
-                    stats.bytes_uploaded += bytes.len();
-                    r.tiles.insert(c, t.clone());
-                }
-            });
+            if let Some(bytes) = write_dense_direct_page(queue, &r, &present) {
+                stats.dense_page_uploads += 1;
+                self.staged += bytes as u64;
+                stats.tiles_uploaded += present.len();
+                stats.bytes_uploaded += bytes;
+                r.tiles.extend(present);
+            } else {
+                let staged = &mut self.staged;
+                convert_tiles(surface, present, kind, |t, cs, bytes| {
+                    *staged += put_tiles(device, queue, encoder, &r, cs, bytes);
+                    for &c in cs {
+                        stats.tiles_uploaded += 1;
+                        stats.bytes_uploaded += bytes.len();
+                        r.tiles.insert(c, t.clone());
+                    }
+                });
+            }
             self.residents.insert(key, r);
         }
         // Present: inserted above when it was missing or stale.
@@ -1315,15 +1325,23 @@ impl Compositor {
             };
             self.staged += put_tiles(device, queue, encoder, r, &gone, &bytes);
         }
-        let staged = &mut self.staged;
-        convert_tiles(surface, changed, kind, |t, cs, bytes| {
-            *staged += put_tiles(device, queue, encoder, r, cs, bytes);
-            for &c in cs {
-                stats.tiles_uploaded += 1;
-                stats.bytes_uploaded += bytes.len();
-                r.tiles.insert(c, t.clone());
-            }
-        });
+        if let Some(bytes) = write_dense_direct_page(queue, r, &changed) {
+            stats.dense_page_uploads += 1;
+            self.staged += bytes as u64;
+            stats.tiles_uploaded += changed.len();
+            stats.bytes_uploaded += bytes;
+            r.tiles.extend(changed);
+        } else {
+            let staged = &mut self.staged;
+            convert_tiles(surface, changed, kind, |t, cs, bytes| {
+                *staged += put_tiles(device, queue, encoder, r, cs, bytes);
+                for &c in cs {
+                    stats.tiles_uploaded += 1;
+                    stats.bytes_uploaded += bytes.len();
+                    r.tiles.insert(c, t.clone());
+                }
+            });
+        }
         Some((key, [region.x0, region.y0, region.width() as i32, region.height() as i32]))
     }
 
@@ -1676,6 +1694,46 @@ fn tile_grid(canvas: Rect) -> Rect {
     Rect::new(canvas.x0.div_euclid(t) * t, canvas.y0.div_euclid(t) * t, (canvas.x1 + t - 1).div_euclid(t) * t, (canvas.y1 + t - 1).div_euclid(t) * t)
 }
 
+/// A dense changing movie page is one transfer, rather than dozens of tiny texture writes.
+/// Sparse brush damage and shared solid tiles retain the existing tile/copy path. The temporary
+/// is bounded to one resident page (at most PAGE² texels) and is released after queue staging.
+fn write_dense_direct_page(queue: &wgpu::Queue, resident: &Resident, tiles: &[(TileCoord, Arc<Tile>)]) -> Option<usize> {
+    let region = resident.region;
+    if !matches!(resident.kind, TexKind::Rgba8Direct | TexKind::R8Direct)
+        || tiles.len() < 4 || tiles.len() != region.tiles().count()
+        || region.width() > PAGE || region.height() > PAGE
+        || region.x0.rem_euclid(TILE_SIZE) != 0 || region.y0.rem_euclid(TILE_SIZE) != 0
+        || region.width() % TILE_SIZE as u32 != 0 || region.height() % TILE_SIZE as u32 != 0 {
+        return None;
+    }
+    let distinct: std::collections::HashSet<_> = tiles.iter().map(|(_, tile)| Arc::as_ptr(tile)).collect();
+    if distinct.len() < tiles.len() / 2 { return None; }
+    let bpp = resident.kind.bytes_per_pixel();
+    let stride = region.width() as usize * bpp;
+    let length = stride.checked_mul(region.height() as usize)?;
+    let mut data = Vec::new();
+    data.try_reserve_exact(length).ok()?;
+    data.resize(length, 0);
+    let tile_row = TILE_SIZE as usize * bpp;
+    for (coordinate, tile) in tiles {
+        let rect = coordinate.rect();
+        if rect.intersect(&region) != rect { return None; }
+        let x = (rect.x0 - region.x0) as usize * bpp;
+        let y = (rect.y0 - region.y0) as usize;
+        for row in 0..TILE_SIZE as usize {
+            let to = (y + row) * stride + x;
+            let from = row * tile_row;
+            data[to..to + tile_row].copy_from_slice(&tile.bytes()[from..from + tile_row]);
+        }
+    }
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {texture:&resident.texture,mip_level:0,origin:wgpu::Origin3d::ZERO,aspect:wgpu::TextureAspect::All},
+        &data,
+        wgpu::TexelCopyBufferLayout {offset:0,bytes_per_row:Some(stride as u32),rows_per_image:Some(region.height())},
+        wgpu::Extent3d {width:region.width(),height:region.height(),depth_or_array_layers:1});
+    Some(length)
+}
+
 fn write_tile(queue: &wgpu::Queue, r: &Resident, c: TileCoord, bytes: &[u8]) {
     let tr = c.rect();
     let bpp = r.kind.bytes_per_pixel() as u32;
@@ -1763,6 +1821,12 @@ fn convert_tiles(surface: &Surface, tiles: Vec<(TileCoord, Arc<Tile>)>, kind: Te
                 groups.push((t, vec![c]));
             }
         }
+    }
+    // These tiles already have the exact GPU byte layout. Borrow them until write_texture
+    // copies into staging instead of allocating/copying every changing movie tile first.
+    if matches!(kind, TexKind::Rgba8Direct | TexKind::R8Direct) {
+        for (tile, coordinates) in &groups { put(tile, coordinates, tile.bytes()); }
+        return groups.len();
     }
     for batch in groups.chunks(CONVERT_BATCH) {
         // A tile's content is the same at every coordinate sharing it: convert it at the first.

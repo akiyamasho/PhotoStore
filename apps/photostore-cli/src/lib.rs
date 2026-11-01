@@ -10,6 +10,8 @@ use photostore_automation::{AuthorizedWorkspace, Headless, PhotoStoreMcp, files,
 use photostore_io::ExportOptions;
 use serde_json::{Value, json};
 
+mod playback_bench;
+
 pub const USAGE: &str = "\
 photostore-cli: headless PhotoStore
 
@@ -28,6 +30,8 @@ USAGE:
       {\"command\": id, \"params\": {…}} objects or bare ids, as a recorded action or droplet stores them
       (a list, or wrapped in {\"actions\": …}, {\"steps\": …} or a droplet). An --out folder that is the
       --in folder is refused, as the results would replace the originals; --in-place allows it.
+  photostore-cli playback-bench --paths <JSON-array> --frames <2-600> [--rate <1-120>]
+      Explicit local headless GPU compositor measurement for movie sources (no screenshot or GUI).
   photostore-cli droplet <file.pcdroplet> <file-or-dir>… [--out <dir>]
       Run a droplet (File › Automate › Create Droplet) on images and folders.
   photostore-cli commands [--json] [--filter <text>]
@@ -67,6 +71,7 @@ const SUBCOMMANDS: &[Subcommand] = &[
     Subcommand { name: "batch", values: &["--actions", "--in", "--out", "--format", "--quality"], bare: &["--in-place", "--tiff-layers"], run: batch },
     Subcommand { name: "droplet", values: &["--out"], bare: &[], run: droplet },
     Subcommand { name: "commands", values: &["--filter"], bare: &["--json"], run: |a, out, _| commands(a, out) },
+    Subcommand { name: "playback-bench", values: &["--paths", "--frames", "--rate"], bare: &[], run: playback_bench::run },
     Subcommand {
         name: "mcp",
         values: &["--bridge", "--control-token", "--control-token-file", "--automation-read-root", "--automation-write-root"],

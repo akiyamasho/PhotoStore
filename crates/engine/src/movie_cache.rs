@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Mutex, OnceLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Condvar,
     },
     time::SystemTime,
@@ -15,12 +15,15 @@ use photostore_color::PixelFormat;
 use photostore_raster::Surface;
 
 pub fn frame_budget_bytes()->usize {crate::media_budget::retained_limit_bytes()}
+
+/// Successfully started preview workers; querying never starts a worker.
+pub fn worker_count()->usize {WORKER.get().and_then(Option::as_ref).map_or(0,|worker|worker.queue.workers.load(Ordering::Relaxed))}
 const ERROR_LIMIT: usize = 128;
 const REQUEST_LIMIT: usize = 16;
 const THUMBNAIL_REQUEST_LIMIT: usize = 4;
-// Two preview workers may each retain a small round-robin set of decoder sessions. The shared
-// media-budget reservation below makes this an upper bound, not a guarantee under cache pressure.
-const MAX_SEQUENTIAL_STREAMS_PER_WORKER: usize = 4;
+// Partition at most eight resident sessions over a host-sized worker pool. Shared memory
+// reservations may shrink the set further; active work has a separate memory/CPU admission gate.
+const MAX_SEQUENTIAL_STREAMS: usize = 8;
 static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
 static WORKER: OnceLock<Option<WorkerChannels>> = OnceLock::new();
 static COMPLETION_GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -120,6 +123,7 @@ struct Queues {
     next_worker:usize,
 }
 struct WorkerQueue {
+    workers: AtomicUsize,
     queues: Mutex<Queues>,
     ready: Condvar,
 }
@@ -135,7 +139,7 @@ impl WorkerQueue {
         if job.consumer.is_some() {
             let owner=job.consumer_key();
             if !queues.assignments.contains_key(&owner) {
-                let worker=queues.next_worker%2;queues.next_worker=queues.next_worker.wrapping_add(1);
+                let worker=queues.next_worker%self.workers.load(Ordering::Relaxed).max(1);queues.next_worker=queues.next_worker.wrapping_add(1);
                 queues.assignments.insert(owner.clone(),worker);queues.assignment_order.push_back(owner);
                 while queues.assignment_order.len()>64 {if let Some(old)=queues.assignment_order.pop_front(){queues.assignments.remove(&old);}}
             }
@@ -194,7 +198,7 @@ impl WorkerQueue {
         queues.thumbnails.remove(thumbnail_at);
         let replaced = replace_at.and_then(|at| queues.current.remove(at));
         if !queues.assignments.contains_key(&owner) {
-            let worker=queues.next_worker%2;queues.next_worker=queues.next_worker.wrapping_add(1);
+            let worker=queues.next_worker%self.workers.load(Ordering::Relaxed).max(1);queues.next_worker=queues.next_worker.wrapping_add(1);
             queues.assignments.insert(owner.clone(),worker);queues.assignment_order.push_back(owner);
         }
         queues.current.push_back(Job { key: key.clone(), path: path.to_owned(), consumer: Some(consumer), thumbnail: false, source_generation, window: None });
@@ -549,7 +553,8 @@ fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<Sequentia
         // than retaining an unaccounted session. This keeps the cache useful without treating
         // the configured allowance as a process-wide memory cap.
         if active._memory.is_some() {
-            if streams.len()>=MAX_SEQUENTIAL_STREAMS_PER_WORKER{streams.remove(0);}
+            let workers=WORKER.get().and_then(Option::as_ref).map_or(1,|worker|worker.queue.workers.load(Ordering::Relaxed).max(1));
+            if streams.len()>=MAX_SEQUENTIAL_STREAMS/workers{streams.remove(0);}
             streams.push(active);
         }
     }}
@@ -628,9 +633,10 @@ fn report_source_error(state: &mut Cache, error: &str) {
 fn worker() -> Option<&'static WorkerChannels> {
     WORKER
         .get_or_init(|| {
-            let queue = std::sync::Arc::new(WorkerQueue { queues: Mutex::new(Queues::default()), ready: Condvar::new() });
-            let mut started = false;
-            for worker_index in 0..2 {
+            let queue = std::sync::Arc::new(WorkerQueue { workers: AtomicUsize::new(1), queues: Mutex::new(Queues::default()), ready: Condvar::new() });
+            let mut started = 0usize;
+            for _ in 0..crate::media_budget::preview_worker_count() {
+                let worker_index = started;
                 let thread_queue = queue.clone();
                 if std::thread::Builder::new()
                     .name(format!("photostore-movie-preview-{worker_index}"))
@@ -644,10 +650,11 @@ fn worker() -> Option<&'static WorkerChannels> {
                     })
                     .is_ok()
                 {
-                    started = true;
+                    started += 1;
                 }
             }
-            if started {
+            if started > 0 {
+                queue.workers.store(started,Ordering::Relaxed);
                 Some(WorkerChannels { queue })
             } else {
                 None

@@ -33,7 +33,24 @@ pub fn retained_limit_bytes()->usize {
     configure(CONFIGURED_ALLOWANCE.load(Ordering::Relaxed));
     RETAINED_LIMIT.load(Ordering::Relaxed)
 }
-pub const MAX_HEAVY_DECODERS: usize = 2;
+pub const MAX_HEAVY_DECODERS: usize = 4;
+
+/// Keep UI/OS capacity available while using independent cores for concurrent source frames.
+/// Power-of-two pools keep the global eight-session ceiling evenly partitioned.
+pub fn preview_worker_count() -> usize {
+    static WORKERS: OnceLock<usize> = OnceLock::new();
+    *WORKERS.get_or_init(|| match std::thread::available_parallelism().map_or(1, usize::from) {
+        8.. => 4,
+        4..=7 => 2,
+        _ => 1,
+    })
+}
+
+/// Admission shrinks with the existing shared memory allowance; sleeping workers are cheap.
+/// Keep the existing two-slot floor so one background source job cannot occupy the only slot.
+pub fn decoder_parallelism() -> usize {
+    preview_worker_count().max(2).min((retained_limit_bytes() / (128 << 20)).max(2)).min(MAX_HEAVY_DECODERS)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MediaKind {
@@ -157,7 +174,7 @@ fn decoders() -> &'static (Mutex<DecoderState>, Condvar) {
     DECODERS.get_or_init(|| (Mutex::new(DecoderState::default()), Condvar::new()))
 }
 
-/// Acquire one of at most two heavyweight media slots. Background work leaves one slot available
+/// Acquire a host- and memory-bounded heavyweight media slot. Background work leaves capacity available
 /// for current playback/interactive frames and yields to waiting foreground requests.
 pub fn acquire_decoder(priority: DecodePriority) -> Option<DecodePermit> {
     acquire_decoder_while(priority, || false)
@@ -178,7 +195,7 @@ pub fn acquire_decoder_while(priority: DecodePriority, mut cancelled: impl FnMut
             ready.notify_all();
             return None;
         }
-        let can_enter = state.active < MAX_HEAVY_DECODERS
+        let can_enter = state.active < decoder_parallelism()
             && match priority {
                 DecodePriority::Foreground => true,
                 DecodePriority::Background => state.background < 1 && state.foreground_waiters == 0,

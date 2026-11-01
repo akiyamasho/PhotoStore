@@ -7,11 +7,13 @@ use egui::{Color32, Id, Rect, RichText, Sense, Ui, pos2, vec2};
 use photostore_doc::{AudioClip, AudioTrack, DocId, Timeline};
 use serde_json::{Value, json};
 use std::path::Path;
+use std::hash::{Hash, Hasher};
+use std::collections::{HashMap, VecDeque};
 
 const AUDIO_EXTENSIONS: &[&str] = &["wav", "mp3", "m4a", "aac", "flac", "aiff", "aif", "ogg", "opus", "mp4", "mov", "webm", "mkv", "avi", "m4v"];
 const NAME_WIDTH: f32 = 164.0;
 const LANE_HEIGHT: f32 = 32.0;
-pub(crate) const TIMELINE_AUDIO_ROW_HEIGHT: f32 = 48.0;
+pub(crate) const TIMELINE_AUDIO_ROW_HEIGHT: f32 = 32.0;
 const RULER_HEIGHT: f32 = 24.0;
 
 #[derive(Clone, Copy, Debug)]
@@ -94,6 +96,84 @@ fn selected_id(doc: DocId) -> Id {
 }
 fn selected_ids_id(doc: DocId) -> Id {
     Id::new(("audio-selected-many", doc.0))
+}
+
+#[derive(Clone, Default)]
+struct WaveTextureCache { entries: HashMap<u64, (egui::TextureHandle, u64)>, order: VecDeque<u64> }
+
+fn waveform_uv(visible: Rect, content: Rect) -> Rect {
+    let w = content.width().max(1.0);
+    let h = content.height().max(1.0);
+    Rect::from_min_max(
+        pos2(((visible.left() - content.left()) / w).clamp(0.0, 1.0), ((visible.top() - content.top()) / h).clamp(0.0, 1.0)),
+        pos2(((visible.right() - content.left()) / w).clamp(0.0, 1.0), ((visible.bottom() - content.top()) / h).clamp(0.0, 1.0)),
+    )
+}
+
+fn waveform_texture(ui: &Ui, doc: DocId, clip: &AudioClip, height: usize, fps: f64, playing: bool) -> Option<egui::TextureHandle> {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    doc.hash(&mut hasher);
+    clip.id.hash(&mut hasher);
+    clip.path.hash(&mut hasher);
+    clip.trim_in_seconds.to_bits().hash(&mut hasher);
+    clip.duration_seconds.to_bits().hash(&mut hasher);
+    clip.speed.to_bits().hash(&mut hasher);
+    clip.speed_curve_offset_frames.hash(&mut hasher);
+    for point in &clip.speed_curve { point.frame.hash(&mut hasher); point.speed.to_bits().hash(&mut hasher); }
+    height.hash(&mut hasher);
+    clip.volume.to_bits().hash(&mut hasher);
+    fps.to_bits().hash(&mut hasher);
+    let key = hasher.finish();
+    let cache_id = Id::new("audio-wave-textures");
+    let cached = ui.ctx().data_mut(|data| {
+        let cache = data.get_temp_mut_or_default::<WaveTextureCache>(cache_id);
+        let found = cache.entries.get(&key).cloned();
+        if found.is_some() { cache.order.retain(|existing| *existing != key); cache.order.push_back(key); }
+        found
+    });
+    if playing { return cached.map(|(texture, _)| texture); }
+    let current_generation = photostore_engine::audio_waveform_cache::completion_generation();
+    if let Some((texture, cached_generation)) = cached.as_ref() {
+        if *cached_generation == current_generation { return Some(texture.clone()); }
+    }
+    let waveform = photostore_engine::audio_waveform_cache::request(&clip.path, 1024).ok()?;
+    let generation = photostore_engine::audio_waveform_cache::completion_generation();
+    if matches!(&waveform.status, photostore_engine::audio_waveform_cache::WaveformStatus::Pending) {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
+        return cached.map(|(texture, _)| texture);
+    }
+    if waveform.bins.is_empty() { return cached.map(|(texture, _)| texture); }
+    let width = 1024usize;
+    let mut pixels = vec![egui::Color32::TRANSPARENT; width * height];
+    let fps = fps.max(0.001);
+    let source_duration = waveform.duration_seconds.unwrap_or(clip.source_duration_seconds).max(0.001);
+    let playback = photostore_doc::ClipPlayback {
+        source_in_seconds: clip.trim_in_seconds,
+        speed: clip.speed,
+        speed_curve: clip.speed_curve.clone(),
+        speed_curve_offset_frames: clip.speed_curve_offset_frames,
+    };
+    for x in 0..width {
+        let fraction = x as f64 / width.saturating_sub(1).max(1) as f64;
+        let frame = (fraction * clip.duration_seconds * fps).round().max(0.0) as usize;
+        let source_time = clip.trim_in_seconds + playback.source_delta_seconds(frame, fps);
+        let index = ((source_time / source_duration * waveform.bins.len() as f64) as usize).min(waveform.bins.len() - 1);
+        let amplitude = (waveform.bins[index].peak.clamp(0.0, 1.0) * clip.volume.clamp(0.0, 1.0)) as f32;
+        let half = (height as f32 * 0.5 * amplitude).max(0.5);
+        let mid = (height as f32 - 1.0) * 0.5;
+        for y in 0..height {
+            if (y as f32 - mid).abs() <= half { pixels[y * width + x] = egui::Color32::from_white_alpha(220); }
+        }
+    }
+    let texture = ui.ctx().load_texture(format!("audio-waveform-{key}"), egui::ColorImage::new([width, height], pixels), egui::TextureOptions::LINEAR);
+    ui.ctx().data_mut(|data| {
+        let cache = data.get_temp_mut_or_default::<WaveTextureCache>(cache_id);
+        cache.entries.insert(key, (texture.clone(), generation));
+        cache.order.retain(|existing| *existing != key);
+        cache.order.push_back(key);
+        while cache.order.len() > 64 { if let Some(old) = cache.order.pop_front() { cache.entries.remove(&old); } }
+    });
+    Some(texture)
 }
 
 pub(crate) fn clear_selection(ctx: &egui::Context, doc: DocId) {
@@ -224,44 +304,12 @@ fn draw_clip(ui: &mut Ui, app: &mut PhotoStoreApp, doc: DocId, clip: &AudioClip,
     painter.rect_filled(rect.intersect(lane), 3.0, fill);
     let visible = rect.intersect(lane).intersect(ui.clip_rect());
     let waveform_visible = visible.width() >= 8.0;
-    let bin_count = (visible.width().ceil() as usize * 2).clamp(16, 4096);
     if waveform_visible {
-        match photostore_engine::audio_waveform_cache::request(&clip.path, bin_count) {
-            Ok(waveform) if !waveform.bins.is_empty() => {
-                if matches!(&waveform.status, photostore_engine::audio_waveform_cache::WaveformStatus::Pending) {
-                    let _ = photostore_engine::audio_waveform_cache::completion_generation();
-                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
-                }
-                let source_duration = waveform.duration_seconds.unwrap_or(clip.source_duration_seconds).max(0.001);
-                let playback = photostore_doc::ClipPlayback {
-                    source_in_seconds: clip.trim_in_seconds,
-                    speed: clip.speed,
-                    speed_curve: clip.speed_curve.clone(),
-                    speed_curve_offset_frames: clip.speed_curve_offset_frames,
-                };
-                let mid = rect.center().y;
-                let half = (rect.height() * 0.43).max(1.0);
-                let count = (visible.width().ceil() as usize).max(1);
-                for pixel in 0..count {
-                    let x = visible.left() + pixel as f32 + 0.5;
-                    let fraction = ((x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0) as f64;
-                    let output_frame = (fraction * clip.duration_seconds * fps).round().max(0.0) as usize;
-                    let source_time = clip.trim_in_seconds + playback.source_delta_seconds(output_frame, fps);
-                    let f = (source_time / source_duration).clamp(0.0, 1.0);
-                    let index = ((f * waveform.bins.len() as f64) as usize).min(waveform.bins.len() - 1);
-                    let bin = &waveform.bins[index];
-                    let volume = clip.volume.min(1.0) as f32;
-                    let peak = (bin.peak.clamp(0.0, 1.0) * volume * half).clamp(0.0, half);
-                    let rms = (bin.rms.clamp(0.0, 1.0) * volume * half).clamp(0.0, half);
-                    painter.line_segment([pos2(x, mid - peak), pos2(x, mid + peak)], egui::Stroke::new(1.0, Color32::from_white_alpha(125)));
-                    painter.line_segment([pos2(x, mid - rms), pos2(x, mid + rms)], egui::Stroke::new(1.0, Color32::WHITE));
-                }
-            }
-            Ok(_) => {}
-            Err(error) => {
-                app.ui.status = error;
-                app.ui.status_error = true;
-            }
+        let playing = app.ui.timeline.playing || app.timeline_playback.playing;
+        if let Some(texture) = waveform_texture(ui, doc, clip, 32, fps, playing) {
+            painter.image(texture.id(), visible, waveform_uv(visible, rect), if clip.muted { Color32::from_gray(155) } else { Color32::WHITE });
+        } else if !playing {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
         }
     }
     let label = format!("♪ {}", clip.name);
@@ -611,6 +659,65 @@ pub fn show_owned_workspace(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Tim
                 });
         });
     }
+}
+
+/// Paint linked audio as a narrow waveform strip inside its video/layer clip row.
+/// These strips are intentionally display-only for ordinary gestures; their context menu
+/// keeps audio-specific actions available without making a linked soundtrack drift away.
+pub(crate) fn paint_owned_in_row(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane: Rect, audio_by_owner: &std::collections::HashMap<photostore_doc::LayerId,Vec<photostore_doc::AudioTrack>>, layers: &[photostore_doc::LayerId]) {
+    let Some(doc) = target_doc(app) else { return };
+    let tokens = Tokens::get(ui.ctx());
+    let duration = timeline.duration_seconds().max(0.001);
+    for owner in layers {
+        let Some(tracks) = audio_by_owner.get(owner) else { continue };
+        for track in tracks {
+            for clip in track.clips.iter().filter(|clip| clip.linked_video == Some(*owner)) {
+                let left = lane.left() + lane.width() * (clip.start_seconds / duration) as f32;
+                let right = lane.left() + lane.width() * ((clip.start_seconds + clip.duration_seconds) / duration) as f32;
+                let band = Rect::from_min_max(pos2(left, lane.bottom() - 11.0), pos2(right.max(left + 8.0), lane.bottom() - 2.0));
+                let visible = band.intersect(lane).intersect(ui.clip_rect());
+                if visible.width() < 6.0 { continue; }
+                let painter = ui.painter_at(lane);
+                let base = if clip.muted || track.muted { tokens.text_dim } else { tokens.accent };
+                painter.rect_filled(band.intersect(lane), 2.0, base.gamma_multiply(0.52));
+                let playing = app.ui.timeline.playing || app.timeline_playback.playing;
+                if let Some(texture) = waveform_texture(ui, doc, clip, 16, timeline.project_rate().as_f64(), playing) {
+                    painter.image(texture.id(), visible, waveform_uv(visible, band), if clip.muted || track.muted { Color32::from_gray(150) } else { Color32::WHITE });
+                } else if !playing {
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(180));
+                }
+                let response = ui.interact(band, Id::new(("embedded-audio", doc.0, clip.id)), Sense::click());
+                response.context_menu(|menu| {
+                    menu.label(&clip.name);
+                    if menu.button(if clip.muted { "Unmute audio" } else { "Mute audio" }).clicked() {
+                        dispatch(app, "timeline.setAudioClip", json!({"clip":clip.id,"muted":!clip.muted}));
+                        menu.close();
+                    }
+                });
+            }
+        }
+    }
+}
+
+/// Draw independently editable audio clips in an imported audio layer's own row, replacing
+/// the otherwise-empty raster placeholder. The owner index avoids rescanning every audio track.
+pub(crate) fn draw_audio_layer_in_row(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane: Rect, owner: photostore_doc::LayerId, audio_by_owner: &std::collections::HashMap<photostore_doc::LayerId,Vec<photostore_doc::AudioTrack>>, snap: bool) -> bool {
+    let Some(doc) = target_doc(app) else { return false };
+    let Some(tracks) = audio_by_owner.get(&owner) else { return false };
+    let standalone: Vec<_> = tracks.iter().filter(|track| track.clips.iter().any(|clip| clip.linked_video.is_none())).collect();
+    if standalone.is_empty() { return false; }
+    let duration = timeline.duration_seconds().max(0.001);
+    let playhead = app.timeline_playback.display_time(timeline);
+    let fps = timeline.project_rate().as_f64();
+    for track in standalone {
+        for clip in track.clips.iter().filter(|clip| clip.linked_video.is_none()) {
+            draw_clip(ui, app, doc, clip, lane, duration, playhead, fps, snap, &Tokens::get(ui.ctx()));
+        }
+    }
+    let frame = app.timeline_playback.display_frame(timeline);
+    let x = lane.left() + lane.width() * frame as f32 / timeline.duration.max(1) as f32;
+    ui.painter_at(lane).line_segment([pos2(x, lane.top()), pos2(x, lane.bottom())], egui::Stroke::new(1.5, Tokens::get(ui.ctx()).accent));
+    true
 }
 
 pub fn target_doc(app: &PhotoStoreApp) -> Option<DocId> {

@@ -63,7 +63,7 @@ use serde_json::{Value, json};
 const NAME_WIDTH: f32 = 164.0;
 const LANE_HEIGHT: f32 = 34.0;
 const TIMELINE_GUTTER_WIDTH: f32 = 180.0;
-const VIDEO_TRACK_HEIGHT: f32 = 56.0;
+const VIDEO_TRACK_HEIGHT: f32 = 48.0;
 const STILL_TRACK_HEIGHT: f32 = 40.0;
 const TIMELINE_RULER_HEIGHT: f32 = 28.0;
 
@@ -2267,12 +2267,9 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                 for row in view.rows.iter() {
                     let track_id=row.id;let track_name=&row.name;let layers=&row.layers;let track_locked=row.locked;let track_muted=row.muted;
                     let row_height=row.height;
-                    let owned_rows = layers.iter().map(|layer| view.audio_by_owner.get(layer).map_or(0, Vec::len)).sum::<usize>();
-                    let audio_height = crate::audio_ui::TIMELINE_AUDIO_ROW_HEIGHT + ui.spacing().item_spacing.y;
-                    let row_rect=Rect::from_min_size(ui.next_widget_position(),vec2(ui.available_width(),row_height + owned_rows as f32 * audio_height));
+                    let row_rect=Rect::from_min_size(ui.next_widget_position(),vec2(ui.available_width(),row_height));
                     if !row_rect.intersects(ui.clip_rect()) {
                         ui.allocate_space(vec2(ui.available_width(),row_height));
-                        if owned_rows > 0 { ui.allocate_space(vec2(ui.available_width(),owned_rows as f32 * audio_height)); }
                         continue;
                     }
                     ui.horizontal(|ui| {
@@ -2308,7 +2305,21 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                             }
                             action = Some(("timeline.editor.setTrack", p));
                         }
-                        let label_rect = Rect::from_min_max(pos2(g.left() + 60.0, g.top()), g.right_bottom());
+                        let owned_audio: Vec<_> = layers.iter().flat_map(|layer| view.audio_by_owner.get(layer).into_iter().flatten().map(move |track| (*layer, track))).collect();
+                        if !owned_audio.is_empty() {
+                            let audio_muted = owned_audio.iter().all(|(_, track)| track.muted || track.clips.iter().all(|clip| clip.muted));
+                            let audio_button = crate::icons::button(&mut gutter_ui, if audio_muted { "volume-x" } else { "volume-2" }, 15.0, audio_muted, "Mute layer audio");
+                            if audio_button.clicked() {
+                                for (owner, _) in &owned_audio {
+                                    if let Err(error) = app.run("timeline.setLayerAudio", json!({"document":doc.0,"layer":owner.0,"muted":!audio_muted})) {
+                                        app.ui.status = error;
+                                        app.ui.status_error = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        let label_rect = Rect::from_min_max(pos2(g.left() + if owned_audio.is_empty() { 60.0 } else { 82.0 }, g.top()), g.right_bottom());
                         gutter_ui.painter().with_clip_rect(label_rect).text(
                             label_rect.left_center() + egui::Vec2::new(3.0, 0.0),
                             egui::Align2::LEFT_CENTER,
@@ -2382,6 +2393,9 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                                         marquee_candidates.push((layer_id, clip_rect));
                                         paint_clip_thumbnails(app, ui, &document, layer, range, clip_rect);
                                         paint_timeline_clip_label(ui, clip_rect, &format!("▶ {}", layer.name), &tokens);
+                                    } else if crate::audio_ui::draw_audio_layer_in_row(app, ui, timeline, lane, layer_id, &view.audio_by_owner, snap) {
+                                        // Imported audio layers use this row for their editable waveform;
+                                        // do not draw the empty raster layer-range placeholder beneath it.
                                     } else if let Some(range) = range {
                                         let start = range.start;
                                         let end = range.end;
@@ -2544,6 +2558,7 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                                 }
                                 let x = lane.left() + lane.width() * frame as f32 / duration as f32;
                                 painter.line_segment([pos2(x, lane.top()), pos2(x, lane.bottom())], egui::Stroke::new(1.5, tokens.accent));
+                                crate::audio_ui::paint_owned_in_row(app, ui, timeline, lane, &view.audio_by_owner, layers);
                                 if let Some(drag) = ui.ctx().data(|data| data.get_temp::<MarqueeDrag>(marquee_id)) {
                                     let rect = Rect::from_two_pos(drag.start, drag.current).intersect(lane);
                                     painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, tokens.accent), egui::StrokeKind::Inside);
@@ -2551,7 +2566,6 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                             });
                         let _ = lane_output.state.offset;
                     });
-                    crate::audio_ui::show_owned_workspace(app, ui, timeline, lane_width, gutter, snap, scroll_x, &view.audio_by_owner, layers);
                 }
                 if marquee_finished {
                     let drag = ui.ctx().data(|data| data.get_temp::<MarqueeDrag>(marquee_id));

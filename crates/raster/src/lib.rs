@@ -469,6 +469,34 @@ impl Surface {
         s
     }
 
+    /// Build an RGBA8 surface while applying a channel-wise encoded-byte lookup table.
+    /// The source frame stays borrowed and the converted bytes are written straight into
+    /// destination tiles, avoiding a second full-frame allocation for decoded media.
+    pub fn from_interleaved_rgba8_lut(r: Rect, bytes: &[u8], ramps: &[[u8; 256]; 3]) -> Self {
+        let mut out = Self::new(PixelFormat::RGBA8);
+        let width = r.width() as usize;
+        for coordinate in r.tiles() {
+            let tile_rect = coordinate.rect().intersect(&r);
+            let span = tile_rect.width() as usize;
+            let tile = out.tile_mut(coordinate);
+            for y in tile_rect.y0..tile_rect.y1 {
+                let source = (((y - r.y0) as usize) * width + (tile_rect.x0 - r.x0) as usize) * 4;
+                let destination = (((y - coordinate.ty * TILE_SIZE) as usize * TILE_SIZE as usize)
+                    + (tile_rect.x0 - coordinate.tx * TILE_SIZE) as usize) * 4;
+                let source_row = &bytes[source..source + span * 4];
+                let target_row = &mut tile.data[destination..destination + span * 4];
+                // Fixed-size chunks let LLVM eliminate per-channel frame/tile bounds checks.
+                for (source_pixel, target_pixel) in source_row.chunks_exact(4).zip(target_row.chunks_exact_mut(4)) {
+                    target_pixel[0] = ramps[0][source_pixel[0] as usize];
+                    target_pixel[1] = ramps[1][source_pixel[1] as usize];
+                    target_pixel[2] = ramps[2][source_pixel[2] as usize];
+                    target_pixel[3] = source_pixel[3];
+                }
+            }
+        }
+        out
+    }
+
     /// Write interleaved encoded bytes (same format as the surface) into `r`.
     pub fn write_interleaved(&mut self, r: Rect, bytes: &[u8]) {
         let bpp = self.format.bytes_per_pixel();

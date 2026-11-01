@@ -726,3 +726,20 @@ headless preparation native playback FPS or claiming CapCut parity. See the
 [layered-media plan](plans/layered-media-2026-11-01.md) and [0.20.4 receipt](releases/0.20.4.md).
 
 Normal 0.20.4 was built once, measured with two/six overlapping 4K source paths, verified, published and atomically installed from `9fa1ffb6f38b70e4b3ec9ebdb5ba4203ef086cf5`. The stale-opacity regression and focused audio ownership/permission boundaries passed on the shipped binary; native GPU/display/audio performance remains unverified. [Delivery and exact evidence](releases/0.20.4.md).
+
+## 2026-11-01: Bounded concurrent 4K pipeline and internal waveform bands
+
+Fold linked audio into the video row; standalone sound gets one row. Waveform textures have bounded
+retention and reuse during playback, avoiding cold source work and per-pixel shape reconstruction.
+Use exact CMS byte ramps directly while constructing decoded RGBA8 tiles. Borrow direct-format
+GPU tile bytes, and batch dense pages into bounded transfers; sparse edits and shared solid tiles
+retain their existing paths. Choose 1/2/4 preview workers from available cores, partition the same
+eight-session ceiling across the successfully started workers, and apply memory-based decode
+admission with the existing foreground/background capacity floor. The media allowance is unchanged.
+
+A CLI-only local `playback-bench` uses the production hardware compositor, waits for GPU completion,
+supports paced deadlines, and checks a few final composed pixels against CPU reference. No GUI,
+screenshot, per-frame CPU readback, hardware-decode claim or private preference mutation is involved.
+The bounded original-resolution target and limitations are in the
+[performance plan](plans/4k-performance-2026-11-01.md); final-source results belong in the
+[0.20.5 receipt](releases/0.20.5.md).

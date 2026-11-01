@@ -11,9 +11,23 @@ pub(crate) fn measure(path: &str, requested: usize, allowance: usize) -> Result<
     measure_inner(path, requested, allowance, None)
 }
 fn measure_inner(path: &str, requested: usize, allowance: usize, ctx: Option<&crate::jobs::JobCtx>) -> Result<Value> {
-    measure_sources_inner(&[path.to_owned()], requested, allowance, ctx)
+    measure_sources_inner(&[path.to_owned()], requested, allowance, ctx, None)
 }
-fn measure_sources_inner(paths: &[String], requested: usize, allowance: usize, ctx: Option<&crate::jobs::JobCtx>) -> Result<Value> {
+pub fn measure_with_frame_callback(
+    paths: &[String],
+    requested: usize,
+    allowance: usize,
+    on_frame: &mut dyn FnMut(&photostore_doc::Document) -> Result<()>,
+) -> Result<Value> {
+    measure_sources_inner(paths, requested, allowance, None, Some(on_frame))
+}
+fn measure_sources_inner(
+    paths: &[String],
+    requested: usize,
+    allowance: usize,
+    ctx: Option<&crate::jobs::JobCtx>,
+    mut on_frame: Option<&mut dyn FnMut(&photostore_doc::Document) -> Result<()>>,
+) -> Result<Value> {
     if paths.is_empty() || paths.len() > 16 {
         return Err(EngineError::Other("measurement needs 1..16 source paths".into()));
     }
@@ -74,6 +88,7 @@ fn measure_sources_inner(paths: &[String], requested: usize, allowance: usize, c
     let _preview = crate::movie_cache::PreviewScope::enter();
     let run = Instant::now();
     let mut waits = Vec::with_capacity(count);
+    let mut decode_waits = Vec::with_capacity(count);
     let mut hashes = vec![HashSet::new(); layer_ids.len()];
     let mut properties_preserved = true;
     let mut polls = 0usize;
@@ -99,8 +114,13 @@ fn measure_sources_inner(paths: &[String], requested: usize, allowance: usize, c
             }
             std::thread::sleep(Duration::from_millis(1));
         }
-        waits.push(begin.elapsed().as_secs_f64() * 1000.0);
+        let ready_ms = begin.elapsed().as_secs_f64() * 1000.0;
         let state = session.active().ok_or(EngineError::NoDocument)?;
+        if let Some(on_frame) = on_frame.as_deref_mut() {
+            on_frame(&state.doc)?;
+        }
+        decode_waits.push(ready_ms);
+        waits.push(begin.elapsed().as_secs_f64() * 1000.0);
         for (index, id) in layer_ids.iter().enumerate() {
             let layer = state.doc.layer(*id).ok_or_else(|| EngineError::Other("measurement layer disappeared".into()))?;
             properties_preserved &= layer.visible && (layer.opacity - if index == 0 { 1.0 } else { 0.5 }).abs() < 1e-6;
@@ -127,7 +147,7 @@ fn measure_sources_inner(paths: &[String], requested: usize, allowance: usize, c
         "frames":count,"preparationMs":preparation_ms,"coldFirstFrameMs":waits[0],"warmP50Ms":percentile(0.5),"warmP95Ms":percentile(0.95),"warmFramesPerSecond":(count-1) as f64/warm_seconds,
         "elapsedSeconds":elapsed,"polls":polls,"persistentDecoderLaunches":crate::media_backend::preview_stream_launches().saturating_sub(launches),"decodeProcessLaunches":crate::media_backend::decode_process_launches().saturating_sub(decode_launches),"distinctSampledPixelHashes":hashes[0].len(),"distinctHashesPerLayer":hashes.iter().map(HashSet::len).collect::<Vec<_>>(),"layerPropertiesPreserved":properties_preserved,"sources":sources,"layerCount":layer_ids.len(),
         "maxRetainedDerivedBytes":max_bytes,"maxEstimatedDecoderSessionBytes":max_decoder_bytes,"retainedBudgetBytes":crate::media_budget::status().total_limit_bytes,
-        "historyUnchanged":state.history.past_len()==0,"clean":state.saved_revision==state.revision,"requestWaitMs":waits,
+        "historyUnchanged":state.history.past_len()==0,"clean":state.saved_revision==state.revision,"requestWaitMs":waits,"decodeReadyWaitMs":decode_waits,"previewWorkers":crate::movie_cache::worker_count(),"configuredPreviewWorkers":crate::media_budget::preview_worker_count(),"activeDecodeLimit":crate::media_budget::decoder_parallelism(),
         "scope":"Headless decode/cache/document presentation preparation, original geometry and exact timestamps. Excludes native GPU/paint/display/input/audio-device output; throughput is not native playback FPS."}))
 }
 pub(crate) fn specs() -> Vec<CommandSpec> {
@@ -170,7 +190,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
                 false,
                 move |ctx| {
                     ctx.check()?;
-                    measure_sources_inner(&paths, frames, allowance, Some(ctx))
+                    measure_sources_inner(&paths, frames, allowance, Some(ctx), None)
                 },
                 |_, value| Ok(value),
             )

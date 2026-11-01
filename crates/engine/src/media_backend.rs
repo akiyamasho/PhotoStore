@@ -88,6 +88,13 @@ pub(crate) fn ensure_sdr(info:&MediaInfo)->Result<()> {
 fn decoded_surface(info:&MediaInfo,bytes:&[u8],format:PixelFormat,width:u32,height:u32)->Result<Surface> {
     use photostore_cms::{Curve,Transform,Intent,builtin::Builtin};
     ensure_sdr(info)?;
+    let expected = u64::from(width).checked_mul(u64::from(height)).and_then(|n| n.checked_mul(4))
+        .filter(|&n| width > 0 && height > 0 && width <= MAX_DIMENSION && height <= MAX_DIMENSION && n <= MAX_FRAME_BYTES)
+        .and_then(|n| usize::try_from(n).ok())
+        .ok_or_else(|| MediaBackendError::InvalidInput("decoded movie frame dimensions exceed supported bounds".into()))?;
+    if bytes.len() != expected {
+        return Err(MediaBackendError::InvalidInput(format!("decoded movie frame has {} bytes; expected {expected}", bytes.len())));
+    }
     let primaries=match info.color_primaries.as_deref() {
         None|Some("unknown"|"unspecified"|"bt709")=>0,
         Some("bt2020")=>1,
@@ -125,9 +132,7 @@ fn decoded_surface(info:&MediaInfo,bytes:&[u8],format:PixelFormat,width:u32,heig
             for i in 0..256 {for channel in 0..3 {ramps[channel][i]=output[i*3+channel];}}
             ramps
         });
-        let mut converted=bytes.to_vec();
-        for pixel in converted.chunks_exact_mut(4) {for channel in 0..3 {pixel[channel]=ramps[channel][pixel[channel] as usize];}}
-        return Ok(Surface::from_interleaved(format,Rect::from_xywh(0,0,width,height),&converted));
+        return Ok(Surface::from_interleaved_rgba8_lut(Rect::from_xywh(0,0,width,height),bytes,ramps));
     }
     let rgb_format=PixelFormat{mode:photostore_color::ColorMode::Rgb,sample:format.sample,alpha:true};
     let surface=Surface::from_interleaved(PixelFormat::RGBA8,Rect::from_xywh(0,0,width,height),bytes).convert(rgb_format);

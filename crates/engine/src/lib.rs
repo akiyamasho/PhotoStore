@@ -66,6 +66,7 @@ pub mod mask_view_cmds;
 pub mod media_backend;
 pub mod media_budget;
 mod media_performance;
+pub use media_performance::measure_with_frame_callback;
 pub mod media_proxy;
 mod media_asset_cmds;
 mod media_insert_cmds;
