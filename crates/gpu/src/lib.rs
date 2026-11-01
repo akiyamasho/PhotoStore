@@ -35,6 +35,7 @@
 pub mod bounds;
 mod fx;
 mod normal_stack;
+mod page_upload;
 pub mod health;
 pub mod plan;
 
@@ -99,6 +100,8 @@ pub struct Stats {
     pub dense_page_uploads: usize,
     /// Chunks whose supported Normal stack was composed in one pass.
     pub fused_chunks: usize,
+    pub pooled_upload_pages: usize,
+    pub upload_pack_ms: f64,
     pub bytes_uploaded: usize,
     /// Effect layers whose shape was (re)rendered, fully or partially.
     pub fx_shapes: usize,
@@ -389,6 +392,10 @@ pub struct Compositor {
     kit: Kit,
     normal_stack: Option<normal_stack::Pipelines>,
     normal_stack_disabled: bool,
+    upload_belt: Option<wgpu::util::StagingBelt>,
+    upload_jobs: Vec<page_upload::Job>,
+    pooled_uploads: bool,
+    upload_submission: Option<wgpu::SubmissionIndex>,
     pool: Vec<(wgpu::Texture, wgpu::TextureView)>,
     residents: HashMap<ResKey, Resident>,
     fx: HashMap<FxKey, FxEntry>,
@@ -597,6 +604,10 @@ impl Compositor {
             kit: Kit { pipelines, bgl0, bgl1, dummy },
             normal_stack: None,
             normal_stack_disabled: false,
+            upload_belt: None,
+            upload_jobs: Vec::new(),
+            pooled_uploads: false,
+            upload_submission: None,
             pool: Vec::new(),
             residents: HashMap::new(),
             fx: HashMap::new(),
@@ -814,7 +825,8 @@ impl Compositor {
     ) -> Result<Stats, Unsupported> {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("pc_compose") });
         let stats = self.encode_inner(device, queue, &mut encoder, doc, region, &mut sink, true)?;
-        queue.submit([encoder.finish()]);
+        let index = queue.submit([encoder.finish()]);
+        if self.pooled_uploads { self.upload_submission = Some(index); }
         Ok(stats)
     }
 
@@ -866,6 +878,21 @@ impl Compositor {
         let region = region.intersect(&canvas);
         let plan = plan(doc)?;
         self.check_fx(doc, &plan)?;
+        self.pooled_uploads = cfg!(not(target_arch = "wasm32")) && flush
+            && self.acc_format == wgpu::TextureFormat::Rgba32Float
+            && !self.normal_stack_disabled && normal_stack::recognize(&plan).is_some();
+        if self.pooled_uploads {
+            // Every pooled source belongs to a recognized stack of at most eight pages per
+            // cell. Wait for the preceding pooled frame before reusing its mapped arena.
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(index) = self.upload_submission.take() {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| device.poll(wgpu::PollType::Wait {
+                    submission_index: Some(index), timeout: Some(std::time::Duration::from_secs(30)),
+                }))).map_err(|_| Unsupported("GPU upload completion failed; use CPU rendering or restart the graphics device".into()))?
+                    .map_err(|error| Unsupported(format!("GPU upload completion failed: {error}")))?;
+            }
+            if self.upload_belt.is_none() { self.upload_belt = Some(wgpu::util::StagingBelt::new(device.clone(), 32 << 20)); }
+        }
         self.pattern_mode = doc.pixel_format().mode;
         let mut stats = Stats { passes: plan.passes.len(), slots: plan.slots, ..Default::default() };
         if region.is_empty() {
@@ -904,6 +931,7 @@ impl Compositor {
             cells.sort_by_key(focused);
         }
         let flush_bytes = FLUSH_BYTES.min(self.memory_budget() / 8).max(16 << 20);
+        let flush_bytes = if self.pooled_uploads { flush_bytes.min(64 << 20) } else { flush_bytes };
         stats.cells = cells.len();
         // The previous intermediate submit (waited for before the next is queued; the web has
         // no blocking wait and relies on the browser's own scheduling).
@@ -926,7 +954,7 @@ impl Compositor {
             let chunks = grid_rects(part, self.chunk);
             stats.chunks += chunks.len();
             work += part.width() as u64 * part.height() as u64 * plan.passes.len() as u64;
-            self.run_cell(device, queue, encoder, doc.id, &plan, &paged, cell, &fr, &chunks, &mut stats, sink);
+            self.run_cell(device, queue, encoder, doc.id, &plan, &paged, cell, &fr, &chunks, &mut stats, sink)?;
             let (evicted, bytes) = self.evict();
             stats.evicted += evicted;
             freed += bytes;
@@ -934,6 +962,7 @@ impl Compositor {
                 // Submit what's recorded, and wait for the previous submit, so at most two
                 // batches of uploads and evicted pages are in flight.
                 let done = std::mem::replace(encoder, device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("pc_compose") }));
+                if self.pooled_uploads && let Some(belt) = &mut self.upload_belt { belt.finish_and_recall_on_submit(&done); }
                 let index = queue.submit([done.finish()]);
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some(prev) = last_submit.replace(index) {
@@ -967,6 +996,7 @@ impl Compositor {
         self.fx.retain(|(id, _), e| e.doc != doc.id || e.last_used == frame || live.contains(id));
         stats.evicted += self.evict().0;
         self.temps.retain(|(_, used)| frame.saturating_sub(*used) < 240);
+        if self.pooled_uploads && let Some(belt) = &mut self.upload_belt { belt.finish_and_recall_on_submit(encoder); }
         Ok(stats)
     }
 
@@ -1096,11 +1126,20 @@ impl Compositor {
         chunks: &[Rect],
         stats: &mut Stats,
         sink: &mut dyn FnMut(&mut wgpu::CommandEncoder, ChunkOut<'_>),
-    ) {
+    ) -> Result<(), Unsupported> {
         if chunks.is_empty() {
-            return;
+            return Ok(());
         }
         let bound = self.bind_cell(device, queue, encoder, doc, plan, paged, cell, fr, stats);
+        if !self.upload_jobs.is_empty() {
+            let started = std::time::Instant::now();
+            let result = page_upload::pack(std::mem::take(&mut self.upload_jobs));
+            stats.upload_pack_ms += started.elapsed().as_secs_f64() * 1000.0;
+            if let Err(error) = result {
+                self.upload_belt = None;
+                return Err(error);
+            }
+        }
 
         // Chunk pool.
         while self.pool.len() < plan.slots as usize {
@@ -1122,7 +1161,7 @@ impl Compositor {
         }
 
         if self.try_run_normal_stack(device, queue, encoder, plan, &bound, chunks, stats, sink) {
-            return;
+            return Ok(());
         }
 
         // Uniforms: chunk records, then one record per pass.
@@ -1234,6 +1273,7 @@ impl Compositor {
             let (t, v) = &self.pool[plan.root as usize];
             sink(encoder, ChunkOut { rect: *c, texture: t, view: v });
         }
+        Ok(())
     }
 
     /// Upload changed tiles of `surface` within `region` (its tile area inside one page cell);
@@ -1254,6 +1294,7 @@ impl Compositor {
             return None;
         }
         let format = surface.format();
+        let pooled = self.pooled_uploads;
         let kind = TexKind::for_surface(key.1, format);
         let cmyk = if format.mode == photostore_color::ColorMode::Cmyk { self.cmyk } else { 0 };
         let stale = self.residents.get(&key).is_none_or(|r| r.region != region || r.kind != kind || r.format != format || r.cmyk != cmyk);
@@ -1287,8 +1328,9 @@ impl Compositor {
                 let bytes = convert_tile(surface, None, kind, TileCoord::new(0, 0));
                 self.staged += put_tiles(device, queue, encoder, &r, &missing, &bytes);
             }
-            if let Some(bytes) = write_dense_direct_page(device, encoder, &r, &present) {
+            if let Some(bytes) = write_dense_direct_page(device, encoder, &r, &present, self.upload_belt.as_mut().filter(|_| pooled), &mut self.upload_jobs) {
                 stats.dense_page_uploads += 1;
+                stats.pooled_upload_pages += usize::from(pooled);
                 self.staged += bytes as u64;
                 stats.tiles_uploaded += present.len();
                 stats.bytes_uploaded += bytes;
@@ -1336,8 +1378,9 @@ impl Compositor {
             };
             self.staged += put_tiles(device, queue, encoder, r, &gone, &bytes);
         }
-        if let Some(bytes) = write_dense_direct_page(device, encoder, r, &changed) {
+        if let Some(bytes) = write_dense_direct_page(device, encoder, r, &changed, self.upload_belt.as_mut().filter(|_| pooled), &mut self.upload_jobs) {
             stats.dense_page_uploads += 1;
+            stats.pooled_upload_pages += usize::from(pooled);
             self.staged += bytes as u64;
             stats.tiles_uploaded += changed.len();
             stats.bytes_uploaded += bytes;
@@ -1708,7 +1751,14 @@ fn tile_grid(canvas: Rect) -> Rect {
 /// A dense changing movie page is one transfer, rather than dozens of tiny texture writes.
 /// Sparse brush damage and shared solid tiles retain the existing tile/copy path. The temporary
 /// is bounded to one resident page (at most PAGE² texels) and is released after queue staging.
-fn write_dense_direct_page(device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, resident: &Resident, tiles: &[(TileCoord, Arc<Tile>)]) -> Option<usize> {
+fn write_dense_direct_page(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    resident: &Resident,
+    tiles: &[(TileCoord, Arc<Tile>)],
+    belt: Option<&mut wgpu::util::StagingBelt>,
+    jobs: &mut Vec<page_upload::Job>,
+) -> Option<usize> {
     let region = resident.region;
     if !matches!(resident.kind, TexKind::Rgba8Direct | TexKind::R8Direct)
         || tiles.len() < 4 || tiles.len() != region.tiles().count()
@@ -1723,6 +1773,17 @@ fn write_dense_direct_page(device: &wgpu::Device, encoder: &mut wgpu::CommandEnc
     let stride = region.width() as usize * bpp;
     let length = stride.checked_mul(region.height() as usize)?;
     if tiles.iter().any(|(coordinate, _)| coordinate.rect().intersect(&region) != coordinate.rect()) { return None; }
+    if let Some(belt) = belt {
+        let slice = belt.allocate(NonZeroU64::new(length as u64)?, NonZeroU64::new(256)?);
+        let buffer = slice.buffer().clone();
+        let offset = slice.offset();
+        encoder.copy_buffer_to_texture(
+            wgpu::TexelCopyBufferInfo {buffer:&buffer,layout:wgpu::TexelCopyBufferLayout {offset,bytes_per_row:Some(stride as u32),rows_per_image:Some(region.height())}},
+            wgpu::TexelCopyTextureInfo {texture:&resident.texture,mip_level:0,origin:wgpu::Origin3d::ZERO,aspect:wgpu::TextureAspect::All},
+            wgpu::Extent3d {width:region.width(),height:region.height(),depth_or_array_layers:1});
+        jobs.push(page_upload::Job {buffer,offset,length,stride,region,tiles:tiles.to_vec(),unmap_after:false});
+        return Some(length);
+    }
     // Pack into the transfer allocation itself. A CPU Vec followed by queue.write_texture
     // copied each changing movie page twice before the GPU could use it. The command buffer
     // retains this buffer until its copy completes; existing staged-byte flushes bound it.

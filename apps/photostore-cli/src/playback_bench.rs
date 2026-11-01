@@ -60,6 +60,8 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
     let mut uploaded_tiles = 0usize;
     let mut dense_page_uploads = 0usize;
     let mut fused_chunks = 0usize;
+    let mut pooled_upload_pages = 0usize;
+    let mut pack_ms = Vec::with_capacity(frames);
     let mut render_chunks = 0usize;
     let mut dimensions: Option<(u32, u32)> = None;
     let mut output_texture: Option<wgpu::Texture> = None;
@@ -122,6 +124,8 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
         uploaded_tiles = uploaded_tiles.saturating_add(stats.tiles_uploaded);
         dense_page_uploads = dense_page_uploads.saturating_add(stats.dense_page_uploads);
         fused_chunks = fused_chunks.saturating_add(stats.fused_chunks);
+        pooled_upload_pages = pooled_upload_pages.saturating_add(stats.pooled_upload_pages);
+        pack_ms.push(stats.upload_pack_ms);
         render_chunks = render_chunks.saturating_add(stats.chunks);
         let frame = doc.timeline.as_ref().map_or(0, |t| t.current);
         if let Some(rate) = rate {
@@ -153,6 +157,8 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
     warm_gpu_ms.sort_by(f64::total_cmp);
     let mut warm_encode_ms = encode_ms.iter().skip(1).copied().collect::<Vec<_>>();
     warm_encode_ms.sort_by(f64::total_cmp);
+    let mut warm_pack_ms = pack_ms.iter().skip(1).copied().collect::<Vec<_>>();
+    warm_pack_ms.sort_by(f64::total_cmp);
     let percentile = |p: f64| warm_gpu_ms[((warm_gpu_ms.len() - 1) as f64 * p).round() as usize];
     let mut ordered_lateness = lateness_ms.clone();
     ordered_lateness.sort_by(f64::total_cmp);
@@ -180,6 +186,9 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
                 "tilesUploaded": uploaded_tiles,
             "densePageUploads": dense_page_uploads,
                 "fusedChunks": fused_chunks,
+                "pooledUploadPages": pooled_upload_pages,
+                "uploadPackP50Ms": warm_pack_ms[((warm_pack_ms.len() - 1) as f64 * 0.50).round() as usize],
+                "uploadPackP95Ms": warm_pack_ms[((warm_pack_ms.len() - 1) as f64 * 0.95).round() as usize],
                 "compositeChunks": render_chunks,
                 "coldCompositeWaitMs": cold_gpu_ms,
                 "compositeWaitP50Ms": percentile(0.50),
