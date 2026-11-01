@@ -188,7 +188,7 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
         object.insert("cadence".into(), json!({"targetRate":rate,"warmFrameCount":lateness_ms.len(),"over5msDeadlineCount":lateness_ms.iter().filter(|ms|**ms>5.0).count(),"p95LatenessMs":late_p95,"maxLatenessMs":ordered_lateness.last().copied().unwrap_or(0.0),"perFrameLatenessMs":lateness_ms,"coldStartExcluded":true}));
         object.insert("rendererScope".into(), json!("PhotoStore native wgpu compositor on the reported hardware adapter; per-frame completion includes render submission and bounded device.poll wait. No hardware decode claim."));
     }
-    serde_json::to_writer_pretty(out, &report).map_err(|e| e.to_string())?;
+    serde_json::to_writer_pretty(&mut *out, &report).map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;
     Ok(())
 }
