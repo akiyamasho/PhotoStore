@@ -21,6 +21,8 @@ pub fn worker_count()->usize {WORKER.get().and_then(Option::as_ref).map_or(0,|wo
 const ERROR_LIMIT: usize = 128;
 const REQUEST_LIMIT: usize = 16;
 const THUMBNAIL_REQUEST_LIMIT: usize = 4;
+// Covers the eight retained decoder sessions, current queue and running workers with headroom.
+const CONSUMER_AFFINITY_LIMIT: usize = 128;
 const PROTECTED_CURRENT_LIMIT: usize = 64;
 const PROTECTED_CURRENT_TTL: std::time::Duration = std::time::Duration::from_secs(2);
 // Partition at most eight resident sessions over a host-sized worker pool. Shared memory
@@ -122,9 +124,10 @@ struct WorkerChannels {
 struct Queues {
     current: VecDeque<Job>,
     thumbnails: VecDeque<Job>,
-    assignments:HashMap<ConsumerKey,usize>,
-    assignment_order:VecDeque<ConsumerKey>,
-    next_worker:usize,
+    assignments: HashMap<ConsumerKey, usize>,
+    warm_owners: HashSet<ConsumerKey>,
+    active_owners: HashSet<ConsumerKey>,
+    next_worker: usize,
 }
 struct WorkerQueue {
     workers: AtomicUsize,
@@ -132,6 +135,34 @@ struct WorkerQueue {
     ready: Condvar,
 }
 impl WorkerQueue {
+    fn prune_assignments(queues:&mut Queues) {
+        let queued:HashSet<_>=queues.current.iter().map(Job::consumer_key).collect();
+        let warm=&queues.warm_owners;
+        let active=&queues.active_owners;
+        queues.assignments.retain(|owner,_|warm.contains(owner)||active.contains(owner)||queued.contains(owner));
+    }
+
+    /// Decoder sessions are worker-local, so retain each consumer's assignment while its stream
+    /// is warm or its job is queued/running. Reassigning a warm owner can launch a duplicate FFmpeg process.
+    fn assign_owner(&self, queues: &mut Queues, owner: ConsumerKey) {
+        if !queues.assignments.contains_key(&owner) {
+            let worker=queues.next_worker%self.workers.load(Ordering::Relaxed).max(1);
+            queues.next_worker=queues.next_worker.wrapping_add(1);
+            queues.assignments.insert(owner,worker);
+        }
+    }
+
+    fn reconcile_owners(&self, worker_index: usize, streams: &[SequentialStream]) {
+        let Ok(mut queues)=self.queues.lock() else{return};
+        let warm:HashSet<_>=streams.iter().map(|stream|stream.owner.clone()).collect();
+        let active:Vec<_>=queues.active_owners.iter().filter(|owner|queues.assignments.get(*owner)==Some(&worker_index)).cloned().collect();
+        for owner in active { queues.active_owners.remove(&owner); }
+        let assignments=&queues.assignments;
+        queues.warm_owners.retain(|owner|assignments.get(owner)!=Some(&worker_index));
+        queues.warm_owners.extend(warm);
+        Self::prune_assignments(&mut queues);
+    }
+
     fn push(&self, job: Job) -> std::result::Result<Option<Job>, Job> {
         let Ok(mut queues) = self.queues.lock() else { return Err(job) };
         if job.thumbnail {
@@ -140,13 +171,9 @@ impl WorkerQueue {
             self.ready.notify_all();
             return Ok(None);
         }
-        if job.consumer.is_some() {
-            let owner=job.consumer_key();
-            if !queues.assignments.contains_key(&owner) {
-                let worker=queues.next_worker%self.workers.load(Ordering::Relaxed).max(1);queues.next_worker=queues.next_worker.wrapping_add(1);
-                queues.assignments.insert(owner.clone(),worker);queues.assignment_order.push_back(owner);
-                while queues.assignment_order.len()>64 {if let Some(old)=queues.assignment_order.pop_front(){queues.assignments.remove(&old);}}
-            }
+        if let Some(consumer)=job.consumer {
+            let owner=job.key.consumer(Some(consumer));
+            if !queues.assignments.contains_key(&owner) && queues.assignments.len()>=CONSUMER_AFFINITY_LIMIT { return Err(job); }
         }
         let replaced = job.consumer.and_then(|consumer| {
             let owner = job.key.consumer(Some(consumer));
@@ -155,6 +182,10 @@ impl WorkerQueue {
         });
         if replaced.is_none() && queues.current.len() >= REQUEST_LIMIT {
             return Err(job);
+        }
+        if let Some(consumer)=job.consumer {
+            let owner=job.key.consumer(Some(consumer));
+            self.assign_owner(&mut queues,owner);
         }
         queues.current.push_back(job);
         self.ready.notify_all();
@@ -165,7 +196,11 @@ impl WorkerQueue {
         let mut queues = self.queues.lock().map_err(|_|())?;
         loop {
             let current=queues.current.iter().position(|job|job.consumer.is_none() || queues.assignments.get(&job.consumer_key()).copied().unwrap_or(0)==worker_index).and_then(|index|queues.current.remove(index));
-            if let Some(job)=current.or_else(||queues.thumbnails.pop_front()){return Ok(Some(job));}
+            if let Some(job)=current {
+                if job.consumer.is_some(){queues.active_owners.insert(job.consumer_key());}
+                return Ok(Some(job));
+            }
+            if let Some(job)=queues.thumbnails.pop_front(){return Ok(Some(job));}
             let (next,timeout)=self.ready.wait_timeout(queues,std::time::Duration::from_secs(2)).map_err(|_|())?;
             queues=next;
             if timeout.timed_out(){return Ok(None);}
@@ -181,6 +216,7 @@ impl WorkerQueue {
         queues.thumbnails.retain(|job| {
             if job.contains_path(path) { removed.push(job.clone()); false } else { true }
         });
+        Self::prune_assignments(&mut queues);
         removed
     }
 
@@ -188,6 +224,7 @@ impl WorkerQueue {
         let Ok(mut queues) = self.queues.lock() else { return Vec::new() };
         let mut jobs:Vec<_>=queues.current.drain(..).collect();
         jobs.extend(queues.thumbnails.drain(..));
+        Self::prune_assignments(&mut queues);
         jobs
     }
 
@@ -199,12 +236,10 @@ impl WorkerQueue {
             return Err(());
         }
         let Some(thumbnail_at) = queues.thumbnails.iter().position(|queued| queued.key == *key) else { return Err(()) };
+        if !queues.assignments.contains_key(&owner) && queues.assignments.len()>=CONSUMER_AFFINITY_LIMIT { return Err(()); }
         queues.thumbnails.remove(thumbnail_at);
         let replaced = replace_at.and_then(|at| queues.current.remove(at));
-        if !queues.assignments.contains_key(&owner) {
-            let worker=queues.next_worker%self.workers.load(Ordering::Relaxed).max(1);queues.next_worker=queues.next_worker.wrapping_add(1);
-            queues.assignments.insert(owner.clone(),worker);queues.assignment_order.push_back(owner);
-        }
+        self.assign_owner(&mut queues,owner);
         queues.current.push_back(Job { key: key.clone(), path: path.to_owned(), consumer: Some(consumer), thumbnail: false, source_generation, window: None });
         self.ready.notify_all();
         Ok(replaced)
@@ -702,8 +737,8 @@ fn worker() -> Option<&'static WorkerChannels> {
                     .spawn(move || {
                         let mut stream=Vec::new();
                         loop {match thread_queue.pop(worker_index){
-                            Ok(Some(job))=>process_job(job,&mut stream),
-                            Ok(None)=>stream.clear(), // Retire an idle owned decoder after two seconds.
+                            Ok(Some(job))=>{process_job(job,&mut stream);thread_queue.reconcile_owners(worker_index,&stream);},
+                            Ok(None)=>{stream.clear();thread_queue.reconcile_owners(worker_index,&stream);}, // Retire an idle owned decoder after two seconds.
                             Err(())=>break,
                         }}
                     })

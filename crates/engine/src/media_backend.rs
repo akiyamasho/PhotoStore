@@ -1458,6 +1458,7 @@ enum PreviewPacket {Frame(Vec<u8>),Eof,Error(String)}
 pub(crate) struct PreviewDecoder {
     child:Child,
     receiver:Option<mpsc::Receiver<PreviewPacket>>,
+    recycle:Option<mpsc::SyncSender<Vec<u8>>>,
     reader:Option<thread::JoinHandle<()>>,
     stderr:mpsc::Receiver<Vec<u8>>,
     info:MediaInfo,
@@ -1520,10 +1521,18 @@ impl PreviewDecoder {
         let stderr=stderr_drain(&mut child);
         let Some(mut stdout)=child.stdout.take() else {let _=child.kill();let _=child.wait();return Err(MediaBackendError::Process("sequential preview stdout unavailable".into()));};
         let (sender,receiver)=mpsc::sync_channel(2);
+        // Four vector tokens bound the complete pipe-side pool: reader, two queued packets,
+        // and caller/recycled storage. This matches the existing four-frame session estimate.
+        let (recycle,recycled)=mpsc::sync_channel(4);
+        for _ in 0..4 { let _=recycle.send(Vec::new()); }
         let reader=match thread::Builder::new().name("photostore-preview-pipe".into()).spawn(move || {
             loop {
-                let mut bytes=Vec::new();
-                if bytes.try_reserve_exact(per).is_err() {let _=sender.send(PreviewPacket::Error("cannot reserve sequential preview frame".into()));break;}
+                // Reuse the caller's previous raw frame buffers. This keeps skipped frames on
+                // the sequential path from allocating and freeing another multi-megabyte Vec
+                // every time the timeline advances.
+                let Ok(mut bytes)=recycled.recv() else {break};
+                bytes.clear();
+                if bytes.capacity()<per && bytes.try_reserve_exact(per).is_err() {let _=sender.send(PreviewPacket::Error("cannot reserve sequential preview frame".into()));break;}
                 bytes.resize(per,0);
                 let mut offset=0;
                 while offset<per {
@@ -1538,7 +1547,7 @@ impl PreviewDecoder {
             }
         }) {Ok(reader)=>reader,Err(error)=>{let _=child.kill();let _=child.wait();return Err(error.into());}};
         PREVIEW_STREAM_LAUNCHES.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-        Ok(Self{child,receiver:Some(receiver),reader:Some(reader),stderr,info:info.clone(),format,width,height,rgb24,path:path.to_path_buf(),origin_seconds:seconds,step,raw_frames:0,hardware,hardware_fallback_used:false})
+        Ok(Self{child,receiver:Some(receiver),recycle:Some(recycle),reader:Some(reader),stderr,info:info.clone(),format,width,height,rgb24,path:path.to_path_buf(),origin_seconds:seconds,step,raw_frames:0,hardware,hardware_fallback_used:false})
     }
     fn read_raw_packet(&mut self)->Result<Option<Vec<u8>>> {
         let packet=self.receiver.as_ref().ok_or_else(||MediaBackendError::Process("preview stream retired".into()))?
@@ -1555,6 +1564,8 @@ impl PreviewDecoder {
     fn retire_owned(&mut self) {
         self.receiver.take();
         let _=self.child.kill();let _=self.child.wait();
+        // Closing the token channel wakes a reader that is waiting for a reusable buffer.
+        self.recycle.take();
         if let Some(reader)=self.reader.take(){let _=reader.join();}
     }
     fn read_raw(&mut self)->Result<Option<Vec<u8>>> {
@@ -1583,6 +1594,7 @@ impl PreviewDecoder {
                 // Transfer process ownership only after the old hardware pipe has been fully retired.
                 std::mem::swap(&mut self.child,&mut replacement.child);
                 self.receiver=replacement.receiver.take(); self.reader=replacement.reader.take();
+                self.recycle=replacement.recycle.take();
                 std::mem::swap(&mut self.stderr,&mut replacement.stderr);
                 self.origin_seconds=seconds;self.raw_frames=0;
                 match self.read_raw_packet() {
@@ -1594,8 +1606,17 @@ impl PreviewDecoder {
             Err(fallback)=>Err(MediaBackendError::Process(format!("hardware preview failed ({original}); software fallback could not start: {fallback}"))),
         }
     }
-    pub(crate) fn next_frame(&mut self)->Result<Option<Surface>> {self.read_raw()?.map(|bytes|if self.rgb24 {decoded_surface_rgb24(&self.info,&bytes,self.format,self.width,self.height)}else{decoded_surface(&self.info,&bytes,self.format,self.width,self.height)}).transpose()}
-    pub(crate) fn skip_frame(&mut self)->Result<bool> {Ok(self.read_raw()?.is_some())}
+    pub(crate) fn next_frame(&mut self)->Result<Option<Surface>> {
+        let Some(bytes)=self.read_raw()? else{return Ok(None)};
+        let surface=if self.rgb24 {decoded_surface_rgb24(&self.info,&bytes,self.format,self.width,self.height)}else{decoded_surface(&self.info,&bytes,self.format,self.width,self.height)};
+        if let Some(recycle)=&self.recycle {let _=recycle.try_send(bytes);}
+        surface.map(Some)
+    }
+    pub(crate) fn skip_frame(&mut self)->Result<bool> {
+        let Some(bytes)=self.read_raw()? else{return Ok(false)};
+        if let Some(recycle)=&self.recycle {let _=recycle.try_send(bytes);}
+        Ok(true)
+    }
 }
 impl Drop for PreviewDecoder {
     fn drop(&mut self) {

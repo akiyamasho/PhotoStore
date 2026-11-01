@@ -186,6 +186,8 @@ pub(crate) fn sync_plain_for_nested(doc: &mut Document) {
 fn sync_plain_impl(doc: &mut Document, coalesce: bool, prefetch: bool) {
     let cur = doc.timeline.as_ref().map_or(0, |t| t.current);
     let timeline_fps = doc.timeline.as_ref().map_or(30.0_f64, |t| t.project_rate().as_f64());
+    let states=doc.timeline.as_ref().and_then(|timeline| if timeline.mode==photostore_doc::TimelineMode::FrameAnimation {timeline.frame_states.get(cur)}else{timeline.property_frames.get(cur)});
+    let visible_linked_movies=visible_linked_movie_layers(doc,cur,states.map(Vec::as_slice));
     let ranges = doc
         .timeline
         .as_ref()
@@ -204,7 +206,7 @@ fn sync_plain_impl(doc: &mut Document, coalesce: bool, prefetch: bool) {
         })
         .unwrap_or_default();
     let geometry = doc.clone();
-    sync_layers(&geometry, &mut doc.layers, cur, timeline_fps, &ranges, coalesce, prefetch);
+    sync_layers(&geometry, &mut doc.layers, cur, timeline_fps, &ranges, &visible_linked_movies, coalesce, prefetch);
     if let Some(t) = &doc.timeline
         && let Some(states) = if matches!(t.mode, photostore_doc::TimelineMode::FrameAnimation) { t.frame_states.get(cur) } else { t.property_frames.get(cur) }
     {
@@ -212,7 +214,9 @@ fn sync_plain_impl(doc: &mut Document, coalesce: bool, prefetch: bool) {
         apply_states(&geometry, &mut doc.layers, states);
     }
     if let Some(t) = &doc.timeline {
-        apply_ranges(&mut doc.layers, cur, &t.layer_ranges, t.frame_states.get(cur).or_else(|| t.property_frames.get(cur)));
+        // The sync-time range snapshot includes muted visual tracks. Applying the persisted
+        // ranges here would restore their layers to visible after decode was skipped above.
+        apply_ranges(&mut doc.layers, cur, &ranges, t.frame_states.get(cur).or_else(|| t.property_frames.get(cur)));
     }
     // Authored opacity stopwatches are evaluated after legacy video keyframes and dense
     // property snapshots. In video mode they own the displayed opacity for every layer that
@@ -222,6 +226,24 @@ fn sync_plain_impl(doc: &mut Document, coalesce: bool, prefetch: bool) {
         apply_owned_position(doc, cur);
         apply_owned_transform(&mut doc.layers, cur);
     }
+}
+
+fn layer_visible_for_frame(doc:&Document,layer:&Layer,frame:usize,states:Option<&[FrameLayerState]>)->bool {
+    let range=doc.timeline.as_ref().and_then(|timeline|timeline.layer_ranges.iter().find(|range|range.layer==layer.id));
+    let authored=states.and_then(|states|states.iter().find(|state|state.layer==layer.id)).map(|state|state.visible);
+    let enabled=range.map_or_else(||authored.unwrap_or(layer.visible),|range|range.enabled && frame>=range.start && frame<range.end.max(range.start.saturating_add(1)) && authored.unwrap_or(true));
+    enabled && !doc.timeline.as_ref().is_some_and(|timeline|timeline.visual_tracks.iter().any(|track|track.muted && track.layers.contains(&layer.id)))
+}
+
+fn linked_movie_layer_visible(doc:&Document,path:&[usize],layer:&Layer,frame:usize,states:Option<&[FrameLayerState]>)->bool {
+    layer_visible_for_frame(doc,layer,frame,states)
+        && (1..path.len()).all(|depth|doc.layer_at(&path[..depth]).is_some_and(|ancestor|layer_visible_for_frame(doc,ancestor,frame,states)))
+}
+
+fn visible_linked_movie_layers(doc:&Document,frame:usize,states:Option<&[FrameLayerState]>)->std::collections::HashSet<LayerId> {
+    doc.walk().into_iter().filter_map(|(path,_,layer)| {
+        (layer.video.as_ref().is_some_and(|video|video.movie_backing.is_some()) && linked_movie_layer_visible(doc,&path,layer,frame,states)).then_some(layer.id)
+    }).collect()
 }
 
 fn apply_owned_transform(layers: &mut [Layer], frame: usize) {
@@ -452,18 +474,16 @@ fn linked_frame_status(doc: &Document) -> Result<bool> {
     let cur = doc.timeline.as_ref().map_or(0, |t| t.current);
     let fps = doc.timeline.as_ref().map_or(30.0, |t| t.project_rate().as_f64());
     let ranges = doc.timeline.as_ref().map(|t| t.layer_ranges.as_slice()).unwrap_or(&[]);
-    for (_, _, layer) in doc.walk() {
-        if !layer.visible { continue; }
+    let states=doc.timeline.as_ref().and_then(|timeline|if timeline.mode==photostore_doc::TimelineMode::FrameAnimation {timeline.frame_states.get(cur)}else{timeline.property_frames.get(cur)});
+    for (path, _, layer) in doc.walk() {
+        if !linked_movie_layer_visible(doc,&path,layer,cur,states.map(Vec::as_slice)) { continue; }
         let Some(video) = layer.video.as_ref() else { continue };
         check_live_movie_source(doc,video).map_err(EngineError::Other)?;
         if video.movie_backing.is_none() { continue; }
         let seconds = linked_source_seconds(cur, fps, video, ranges.iter().find(|r| r.layer == layer.id))?;
         let photostore_doc::VideoSource::File { path } = &video.source else { return Err(EngineError::Other("linked movie has no original source path".into())) };
-        match movie_source_frame(path, seconds, PixelFormat{mode:photostore_color::ColorMode::Rgb,..doc.pixel_format()}, None, &[]) {
-            Ok(Some(surface)) => {
-                let surface = movie_surface_for_document(doc, surface)?;
-                crate::transform_cmds::validate_video_placement(&Homography(video.placement), surface.content_bounds())?;
-            },
+        match movie_source_frame_for_video(doc,video,path,seconds,PixelFormat{mode:photostore_color::ColorMode::Rgb,..doc.pixel_format()},None,&[]) {
+            Ok(Some(frame)) => validate_linked_movie_frame(doc, video, &frame.surface, frame.reduced)?,
             Ok(None) => return Ok(false),
             Err(error) => return Err(EngineError::Other(error)),
         }
@@ -477,16 +497,10 @@ pub(crate) fn request_presentation_frame(doc:&Document,frame:usize)->Result<bool
     let Some(timeline)=&doc.timeline else{return Ok(true)};
     let fps=timeline.project_rate().as_f64();
     let states=if timeline.mode==photostore_doc::TimelineMode::FrameAnimation {timeline.frame_states.get(frame)}else{timeline.property_frames.get(frame)};
-    let visible=|layer:&Layer| {
-        let range=timeline.layer_ranges.iter().find(|range|range.layer==layer.id);
-        let authored=states.and_then(|states|states.iter().find(|state|state.layer==layer.id)).map(|state|state.visible);
-        let enabled=range.map_or_else(||authored.unwrap_or(layer.visible),|range|range.enabled && frame>=range.start && frame<range.end.max(range.start.saturating_add(1)) && authored.unwrap_or(true));
-        enabled && !timeline.visual_tracks.iter().any(|track|track.muted && track.layers.contains(&layer.id))
-    };
     let mut ready=true;
     for (path,_,layer) in doc.walk() {
         let Some(video)=layer.video.as_ref().filter(|video|video.movie_backing.is_some()) else{continue};
-        if !visible(layer) || !(1..path.len()).all(|depth|doc.layer_at(&path[..depth]).is_some_and(&visible)){continue;}
+        if !linked_movie_layer_visible(doc,&path,layer,frame,states.map(Vec::as_slice)){continue;}
         check_live_movie_source(doc,video).map_err(EngineError::Other)?;
         let photostore_doc::VideoSource::File{path}=&video.source else{return Err(EngineError::Other("linked movie has no original source".into()));};
         let range=timeline.layer_ranges.iter().find(|range|range.layer==layer.id);
@@ -499,9 +513,8 @@ pub(crate) fn request_presentation_frame(doc:&Document,frame:usize)->Result<bool
         use std::hash::{Hash,Hasher};
         let mut identity=std::collections::hash_map::DefaultHasher::new();
         (doc.id.0,layer.id.0,crate::movie_cache::consumer_namespace()).hash(&mut identity);
-        if let Some(surface) = movie_source_frame(path,seconds,PixelFormat{mode:photostore_color::ColorMode::Rgb,..doc.pixel_format()},Some(identity.finish()),&times).map_err(EngineError::Other)? {
-            let surface = movie_surface_for_document(doc, surface)?;
-            crate::transform_cmds::validate_video_placement(&Homography(video.placement), surface.content_bounds())?;
+        if let Some(frame)=movie_source_frame_for_video(doc, video, path, seconds, PixelFormat{mode:photostore_color::ColorMode::Rgb,..doc.pixel_format()},Some(identity.finish()),&times).map_err(EngineError::Other)? {
+            validate_linked_movie_frame(doc, video, &frame.surface, frame.reduced)?;
         } else {
             ready=false;
         }
@@ -539,9 +552,13 @@ fn validate_resident_video_placements(doc: &Document) -> Result<()> {
 }
 
 fn movie_source_frame(path:&str,seconds:f64,format:PixelFormat,consumer:Option<u64>,times:&[f64])->std::result::Result<Option<Surface>,String> {
+    movie_source_frame_with_size(path,seconds,format,consumer,times,None)
+}
+
+fn movie_source_frame_with_size(path:&str,seconds:f64,format:PixelFormat,consumer:Option<u64>,times:&[f64],requested_size:Option<(u32,u32)>)->std::result::Result<Option<Surface>,String> {
     let proxy=if crate::movie_cache::is_preview() {crate::media_proxy::preview_source(path).map_err(|e|e.to_string())?} else {None};
     let source=proxy.as_ref().map_or(path,|proxy|proxy.proxy_path.as_str());
-    let size=proxy.as_ref().map(|proxy|(proxy.source_width,proxy.source_height));
+    let size=requested_size.or_else(||proxy.as_ref().map(|proxy|(proxy.source_width,proxy.source_height)));
     match consumer {
         Some(id) if times.len()>1=>crate::movie_cache::frame_at_times_for_consumer_scaled(source,times,format,id,size).map(|frames|frames.into_iter().next().flatten()),
         Some(id)=>match size {
@@ -553,6 +570,73 @@ fn movie_source_frame(path:&str,seconds:f64,format:PixelFormat,consumer:Option<u
             None=>crate::movie_cache::frame_at_seconds(source,seconds,format),
         }
     }
+}
+
+#[derive(Clone)]
+struct LinkedMovieFrame {
+    surface: Surface,
+    placement: Homography,
+    reduced: bool,
+}
+
+/// Choose a reduced decode only for the safe, common preview case. The original placement is
+/// still validated against original source dimensions; the returned placement maps decoded pixels
+/// into the same document geometry. Everything outside this narrow case uses original decoding.
+fn linked_preview_decode(doc:&Document,video:&VideoData)->Option<((u32,u32),Homography)> {
+    if !crate::movie_cache::is_preview() { return None; }
+    // Reduction is safe only when the source fingerprint was previously captured and checked by
+    // the caller. Without that trust anchor, keep decoding full size and validate that frame's
+    // actual footprint, even if stale or incomplete metadata happens to be present.
+    let bounds=linked_movie_trusted_metadata_bounds(doc,video)?;
+    let (width,height)=(bounds.width(),bounds.height());
+    if bounds.x0!=0 || bounds.y0!=0 || width==0 || height==0 { return None; }
+    let m=video.placement;
+    // Restrict optimization to an ordinary positive, axis-aligned reduction with integral
+    // dimensions and integral translation. Perspective, reflections, rotations, and fractional
+    // offsets remain on the established full-resolution warp path.
+    if m[1]!=0.0 || m[3]!=0.0 || m[6]!=0.0 || m[7]!=0.0 || m[8]!=1.0
+        || !m[0].is_finite() || !m[4].is_finite() || !m[2].is_finite() || !m[5].is_finite()
+        || m[0]<=0.0 || m[4]<=0.0 || m[0]>1.0 || m[4]>1.0
+        || m[2].fract()!=0.0 || m[5].fract()!=0.0 { return None; }
+    let placed_w=(f64::from(width)*m[0]).round();
+    let placed_h=(f64::from(height)*m[4]).round();
+    if placed_w<1.0 || placed_h<1.0 || placed_w>f64::from(width) || placed_h>f64::from(height)
+        || (f64::from(width)*m[0]-placed_w).abs()>1e-7 || (f64::from(height)*m[4]-placed_h).abs()>1e-7 { return None; }
+    let (placed_w,placed_h)=(placed_w as u32,placed_h as u32);
+    if placed_w==width && placed_h==height { return None; }
+    let scale_x=f64::from(width)/f64::from(placed_w);
+    let scale_y=f64::from(height)/f64::from(placed_h);
+    let mut effective=Homography(m).mul(&Homography([scale_x,0.0,0.0,0.0,scale_y,0.0,0.0,0.0,1.0]));
+    if (effective.0[0]-1.0).abs()>1e-7 || (effective.0[4]-1.0).abs()>1e-7
+        || effective.0[1]!=0.0 || effective.0[3]!=0.0 || effective.0[2].fract()!=0.0 || effective.0[5].fract()!=0.0 { return None; }
+    // The only accepted residual is bounded floating-point error from integer dimension ratios.
+    // Snap that residual away so sync takes the exact integer-translation fast path.
+    effective.0[0]=1.0;
+    effective.0[4]=1.0;
+    Some(((placed_w,placed_h),effective))
+}
+
+fn linked_movie_trusted_metadata_bounds(doc:&Document,video:&VideoData)->Option<photostore_geom::Rect> {
+    let asset=video.asset_id.and_then(|id|doc.media_assets.iter().find(|asset|asset.id==id))?;
+    asset.fingerprint.as_ref()?;
+    let metadata=asset.metadata.as_ref()?.video.as_ref()?;
+    (metadata.width>0 && metadata.height>0).then(||photostore_geom::Rect::from_xywh(0,0,metadata.width,metadata.height))
+}
+
+fn validate_linked_movie_frame(doc:&Document,video:&VideoData,surface:&Surface,reduced:bool)->Result<()> {
+    let bounds=if reduced {
+        linked_movie_trusted_metadata_bounds(doc,video).ok_or_else(||EngineError::Other("trusted linked movie geometry is unavailable".into()))?
+    } else {
+        surface.content_bounds()
+    };
+    crate::transform_cmds::validate_video_placement(&Homography(video.placement),bounds)
+}
+
+fn movie_source_frame_for_video(doc:&Document,video:&VideoData,path:&str,seconds:f64,format:PixelFormat,consumer:Option<u64>,times:&[f64])->std::result::Result<Option<LinkedMovieFrame>,String> {
+    let optimized=linked_preview_decode(doc,video);
+    let requested=optimized.map(|(size,_)|size);
+    let surface=movie_source_frame_with_size(path,seconds,format,consumer,times,requested)?;
+    Ok(surface.map(|surface|LinkedMovieFrame{surface,placement:optimized.map_or(Homography(video.placement),|(_,placement)|placement),reduced:optimized.is_some()}))
 }
 
 pub(crate) fn movie_surface_for_document(doc:&Document,surface:Surface)->Result<Surface> {
@@ -575,7 +659,7 @@ fn check_live_movie_source(doc:&Document,video:&VideoData)->std::result::Result<
     Ok(())
 }
 
-fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[photostore_doc::LayerTimelineRange], coalesce: bool, prefetch:bool) {
+fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_fps: f64, ranges: &[photostore_doc::LayerTimelineRange], visible_linked_movies:&std::collections::HashSet<LayerId>, coalesce: bool, prefetch:bool) {
     for l in layers.iter_mut() {
         let transform = l.video.as_ref().map(|v| keyframe_transform(v, cur));
         if let Some((_, _, opacity)) = transform {
@@ -600,6 +684,7 @@ fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_f
             .and_then(|v| {
                 let index = source_index(cur, timeline_fps, v, ranges.iter().find(|range| range.layer == l.id));
                 if v.movie_backing.is_some() {
+                    if !visible_linked_movies.contains(&l.id) { return None; }
                     if let Err(error)=check_live_movie_source(geometry,v){crate::movie_cache::note_error(error);return None;}
                     let photostore_doc::VideoSource::File { path } = &v.source else {
                         crate::movie_cache::note_error("linked movie backing has no original file source".into());
@@ -624,24 +709,28 @@ fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_f
                                 if let Ok(time)=linked_source_seconds(frame,timeline_fps,v,range) {times.push(time);}
                             }
                         }
-                        movie_source_frame(path, seconds, PixelFormat{mode:photostore_color::ColorMode::Rgb,..geometry.pixel_format()}, Some(identity.finish()), &times).ok().flatten()
+                        movie_source_frame_for_video(geometry,v,path,seconds,PixelFormat{mode:photostore_color::ColorMode::Rgb,..geometry.pixel_format()},Some(identity.finish()),&times).ok().flatten().map(|frame|(frame.surface,frame.placement,frame.reduced))
                     } else {
-                        movie_source_frame(path, seconds, PixelFormat{mode:photostore_color::ColorMode::Rgb,..geometry.pixel_format()}, None, &[]).ok().flatten()
+                        movie_source_frame_for_video(geometry,v,path,seconds,PixelFormat{mode:photostore_color::ColorMode::Rgb,..geometry.pixel_format()},None,&[]).ok().flatten().map(|frame|(frame.surface,frame.placement,frame.reduced))
                     }
                 } else {
-                    v.frames.get(index.min(v.frames.len().saturating_sub(1))).cloned()
+                    v.frames.get(index.min(v.frames.len().saturating_sub(1))).cloned().map(|surface|(surface,Homography(v.placement),false))
                 }
             })
-            .and_then(|surface| {
+            .and_then(|(surface,placement,reduced)| {
                 let surface=if l.video.as_ref().is_some_and(|v|v.movie_backing.is_some()) {match movie_surface_for_document(geometry,surface) {Ok(surface)=>surface,Err(error)=>{crate::movie_cache::note_error(error.to_string());return None;}}} else {surface};
                 let Some(video) = l.video.as_ref() else { return Some(surface) };
-                let placement = Homography(video.placement);
                 let src = surface.content_bounds();
-                if let Err(error) = crate::transform_cmds::validate_video_placement(&placement, src) {
+                let validation=if video.movie_backing.is_some() {
+                    validate_linked_movie_frame(geometry,video,&surface,reduced)
+                } else {crate::transform_cmds::validate_video_placement(&placement, src)};
+                if let Err(error) = validation {
                     crate::movie_cache::note_error(error.to_string());
                     return None;
                 }
-                let surface = if placement == Homography::IDENTITY || src.is_empty() { surface } else { warp_surface(&surface, src, &placement, Interp::Bicubic) };
+                let surface = if src.is_empty() || placement==Homography::IDENTITY { surface }
+                    else if let Some((dx,dy))=integer_translation(&placement) { surface.translated(dx,dy,src) }
+                    else { warp_surface(&surface, src, &placement, Interp::Bicubic) };
                 let (dx, dy, _) = desired.map_or((0, 0, 1), |p| (p.0, p.1, 1));
                 let dx = dx.clamp(-1_000_000, 1_000_000);
                 let dy = dy.clamp(-1_000_000, 1_000_000);
@@ -663,9 +752,18 @@ fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_f
             }
         }
         if let Some(ch) = l.children_mut() {
-            sync_layers(geometry, ch, cur, timeline_fps, ranges, coalesce, prefetch);
+            sync_layers(geometry, ch, cur, timeline_fps, ranges, visible_linked_movies, coalesce, prefetch);
         }
     }
+}
+
+fn integer_translation(placement:&Homography)->Option<(i32,i32)> {
+    let m=placement.0;
+    if m[0]==1.0 && m[1]==0.0 && m[2].is_finite() && m[2].fract()==0.0
+        && m[3]==0.0 && m[4]==1.0 && m[5].is_finite() && m[5].fract()==0.0
+        && m[6]==0.0 && m[7]==0.0 && m[8]==1.0 {
+        Some((i32::try_from(m[2] as i64).ok()?,i32::try_from(m[5] as i64).ok()?))
+    } else { None }
 }
 
 /// Sample the position and opacity track at a document-timeline frame.

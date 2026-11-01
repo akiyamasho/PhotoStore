@@ -1244,6 +1244,10 @@ impl PhotoStoreApp {
 impl eframe::App for PhotoStoreApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let _movie_preview_scope = photostore_engine::movie_cache::PreviewScope::enter();
+        if !self.session.preview_waker_installed() {
+            let repaint = ctx.clone();
+            self.session.set_preview_waker(std::sync::Arc::new(move || repaint.request_repaint()));
+        }
         if let Some(error) = photostore_engine::movie_cache::take_preview_error() {
             if self.ui.timeline.movie_preview_error.as_deref() != Some(error.as_str()) {
                 self.ui.timeline.movie_preview_error = Some(error.clone());
@@ -1270,8 +1274,8 @@ impl eframe::App for PhotoStoreApp {
                     self.movie_preview_generation = movie_generation;
                     ctx.request_repaint();
                 } else {
-                    // A background edit owns the active document; retry the refresh after it settles.
-                    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                    // Background preparation or an authored edit is pending; poll without doing its work here.
+                    ctx.request_repaint_after(std::time::Duration::from_millis(6));
                 }
             }
         }

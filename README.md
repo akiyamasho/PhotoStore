@@ -10,13 +10,12 @@ PhotoStore is a Rust-native image editor maintained as a personal fork of PhotoC
 
 Download the macOS Apple Silicon package from [PhotoStore releases](https://github.com/akiyamasho/PhotoStore/releases). For a local install, use Rust stable 1.95+:
 
-The 0.20.6 Apple Silicon macOS release source fixes video-layer transform routing and placement,
-moves video-frame/GPU/audio preparation off the native UI thread, removes the redundant Media
-sidebar, and makes Space play/pause global outside focused canvas interaction and text entry.
+The 0.20.7 Apple Silicon macOS release source stabilizes the preview toolbar, reduces linked-video
+buffering work and raw-frame allocations, and corrects late-Space panning and pen popup routing.
 Stable-release checks are available under **Help → Check for Updates…** using existing GitHub CLI
 (`gh`) authentication. The app and CLI use the persistent local PhotoStore certificate, not
 Developer ID and not notarized. See [in-app updates](docs/app-updates.md) and the
-[0.20.6 delivery record](docs/releases/0.20.6.md).
+[0.20.7 delivery record](docs/releases/0.20.7.md).
 
 ```sh
 CARGO_BUILD_JOBS=1 cargo install --path apps/photostore --bin photostore --locked
@@ -33,15 +32,14 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 
 ## Current release source
 
-PhotoStore 0.20.6 keeps source-backed video placement across frames and native save/load. Transform
-handles take priority over Zoom/Rotate drags. Native frame preparation, GPU composition (including
-its CPU fallback) and audio setup/teardown use bounded background workers, keeping the last complete
-canvas visible while preparing a new one. Layers and timeline clips remain the media workflow;
-there is no separate Media import sidebar. Space plays/pauses from ordinary panels and controls;
-a focused drawing canvas retains hold-Space panning and text fields retain typing.
-[Download 0.20.6](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.6).
-See [delivery and scope](docs/releases/0.20.6.md). The [0.20.5 original-4K evidence](docs/releases/0.20.5.md)
-remains historical; no native input/display latency or new FPS claim follows from these changes.
+PhotoStore 0.20.7 keeps preview status in a fixed toolbar slot, moves paused completion work off
+the UI thread, wakes transport on completed preparation, skips hidden media and retains decoder
+worker ownership. Four reusable raw buffers reduce allocation churn. Eligible axis-aligned scaled
+videos decode at placed preview dimensions while original media/export remain full quality.
+Late Space chords preserve stroke ownership and pen secondary presses use their delivered position.
+[Download 0.20.7](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.7).
+See [delivery and scope](docs/releases/0.20.7.md). The [0.20.5 original-4K evidence](docs/releases/0.20.5.md)
+remains historical; native input/display latency is not established by headless measurements.
 The [0.20.4 layer/audio fixes](docs/releases/0.20.4.md) and prior layer/input workflows remain.
 Native display scanout, audio-device and pan/Cintiq acceptance remain manual. Measurements must
 identify resolution, source count, hardware, scope and cold/warm behavior; no blanket CapCut parity

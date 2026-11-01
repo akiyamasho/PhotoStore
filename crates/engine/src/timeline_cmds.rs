@@ -774,6 +774,7 @@ struct PresentationWorkerState {
     wake:Condvar,
     latest:AtomicU64,
     stopped:AtomicBool,
+    wake_ui: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -784,8 +785,8 @@ struct PresentationWorker {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl PresentationWorker {
-    fn new()->Result<Self> {
-        let state=Arc::new(PresentationWorkerState{mailbox:Mutex::new(PresentationMailbox::default()),wake:Condvar::new(),latest:AtomicU64::new(0),stopped:AtomicBool::new(false)});
+    fn new(wake_ui: Option<Arc<dyn Fn() + Send + Sync>>)->Result<Self> {
+        let state=Arc::new(PresentationWorkerState{mailbox:Mutex::new(PresentationMailbox::default()),wake:Condvar::new(),latest:AtomicU64::new(0),stopped:AtomicBool::new(false),wake_ui});
         let worker_state=Arc::clone(&state);
         let thread=std::thread::Builder::new().name("photostore-preview-presenter".into()).spawn(move||presentation_worker_loop(worker_state))
             .map_err(|error|EngineError::Other(format!("could not start the background video presentation worker: {error}")))?;
@@ -900,7 +901,11 @@ fn presentation_worker_loop(state:Arc<PresentationWorkerState>) {
             let completed=PresentationResult{document:request.document,content_revision:request.content_revision,base_frame:request.base_frame,frame:request.frame,generation:request.generation,result};
             if !presentation_cancelled(&state,request.generation) {
                 let mut mailbox=match state.mailbox.lock(){Ok(mailbox)=>mailbox,Err(error)=>error.into_inner()};
-                if !presentation_cancelled(&state,request.generation) {mailbox.completed=Some(completed);}
+                if !presentation_cancelled(&state,request.generation) {
+                    mailbox.completed=Some(completed);
+                    drop(mailbox);
+                    if let Some(wake) = &state.wake_ui { wake(); }
+                }
             }
         }
     }
@@ -923,6 +928,13 @@ fn native_preview_scope()->bool {
     {false}
     #[cfg(not(target_arch = "wasm32"))]
     {crate::movie_cache::is_preview()}
+}
+
+/// Poll the same worker used by transport when a paused movie cache completes. Once the exact
+/// frame is published, later thumbnail/decode-ahead completions are a cheap no-op.
+pub(crate) fn refresh_current_preview(s: &mut Session) -> Result<bool> {
+    let frame = s.active().and_then(|st| st.doc.timeline.as_ref()).map(|t| t.current).ok_or(EngineError::NoDocument)?;
+    Ok(present_frame(s, &json!({"frame":frame}))?.get("ready").and_then(Value::as_bool) == Some(true))
 }
 
 fn present_frame(s: &mut Session, p: &Value) -> Result<Value> {
@@ -966,7 +978,7 @@ fn present_frame(s: &mut Session, p: &Value) -> Result<Value> {
 
     #[cfg(not(target_arch = "wasm32"))]
     if asynchronous {
-        if pending.worker.is_none(){pending.worker=Some(PresentationWorker::new()?);pending.generation=pending.worker.as_ref().map_or(1,PresentationWorker::next_generation);}
+        if pending.worker.is_none(){pending.worker=Some(PresentationWorker::new(s.preview_waker.clone())?);pending.generation=pending.worker.as_ref().map_or(1,PresentationWorker::next_generation);}
         let worker=pending.worker.as_ref().ok_or_else(||EngineError::Other("background presentation worker is unavailable".into()))?;
         if let Some(completed)=worker.try_take(pending.generation,pending.document,pending.content_revision,pending.base_frame,pending.frame) {
             pending.submitted=false;

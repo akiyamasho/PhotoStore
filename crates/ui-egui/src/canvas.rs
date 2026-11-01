@@ -2359,24 +2359,47 @@ struct CanvasPan {
 pub(crate) fn hand_pan_active(app: &PhotoStoreApp, ctx: &egui::Context) -> bool {
     app.session.active().is_some_and(|state| ctx.data(|data| data.get_temp::<CanvasPan>(egui::Id::new(("canvas-pan", ctx.viewport_id(), state.doc.id.0)))).is_some())
 }
-fn hand_pan_delta(ctx: &egui::Context, response: &egui::Response, hand: bool, key: egui::Id) -> Option<egui::Vec2> {
+fn hand_pan_delta(
+    ctx: &egui::Context,
+    response: &egui::Response,
+    hand: bool,
+    can_start: bool,
+    key: egui::Id,
+) -> Option<egui::Vec2> {
     let previous = ctx.data(|data| data.get_temp::<CanvasPan>(key));
-    let (position, button, origin, owned, down, released) = ctx.input(|input| {
+    let (position, button, origin, owned, down, pressed, released) = ctx.input(|input| {
         let pointer = &input.pointer;
         let button = previous.map(|pan| pan.button).unwrap_or_else(|| {
             if pointer.middle_down() || pointer.button_pressed(PointerButton::Middle) { PointerButton::Middle } else { PointerButton::Primary }
         });
-        (pointer.latest_pos(), button, pointer.press_origin(), response.is_pointer_button_down_on(), pointer.button_down(button), pointer.button_released(button))
+        (
+            pointer.latest_pos(),
+            button,
+            pointer.press_origin(),
+            response.is_pointer_button_down_on(),
+            pointer.button_down(button),
+            pointer.button_pressed(button),
+            pointer.button_released(button),
+        )
     });
     let Some(position) = position else {
         ctx.data_mut(|data| data.remove::<CanvasPan>(key));
         return None;
     };
-    if (!down && !released) || (previous.is_none() && (!hand || !owned || origin.is_none_or(|p| !response.rect.contains(p)))) {
+    if (!down && !released)
+        || (previous.is_none() && (!hand || !can_start || !owned || origin.is_none_or(|p| !response.rect.contains(p))))
+    {
         ctx.data_mut(|data| data.remove::<CanvasPan>(key));
         return None;
     }
-    let last = previous.map_or_else(|| origin.unwrap_or(position), |pan| pan.last);
+    // Space pressed after a drawing gesture began must not take over that stroke or jump the
+    // camera from its older press origin. A fresh pan starts at the current position unless its
+    // pointer button was pressed in this same frame; holding Space before pressing still includes
+    // the full movement from the actual press, even before egui's drag threshold.
+    let last = previous.map_or_else(
+        || if pressed { origin.unwrap_or(position) } else { position },
+        |pan| pan.last,
+    );
     ctx.data_mut(|data| {
         if down { data.insert_temp(key, CanvasPan { button, last: position }); }
         else { data.remove::<CanvasPan>(key); }
@@ -2516,7 +2539,13 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
         d.reposition = reposition;
         drawing = true;
     }
-    let temporary = crate::hold_keys::for_frame(app, &ctx, drawing || crate::type_transform::active(app));
+    // Do not let a newly pressed temporary key take over an in-progress canvas gesture (a held
+    // temporary tool already latched at pointer-down still remains active through release).
+    let temporary = crate::hold_keys::for_frame(
+        app,
+        &ctx,
+        drawing || app.drag.is_some() || crate::type_transform::active(app),
+    );
     let space_pan = temporary == Some(crate::hold_keys::Temporary::Hand);
     let middle = ui.input(|i| i.pointer.middle_down());
     let tool = match temporary {
@@ -2540,7 +2569,13 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
         crate::dialogs::pan_delta(&ctx, rect, app.ui.tool == Tool::Hand && !picking && !range_picking)
     } else { None };
     let hand_panning = if !under_dialog {
-        hand_pan_delta(&ctx, &response, tool == Tool::Hand, egui::Id::new(("canvas-pan", ctx.viewport_id(), doc.id.0)))
+        hand_pan_delta(
+            &ctx,
+            &response,
+            tool == Tool::Hand,
+            app.drag.is_none(),
+            egui::Id::new(("canvas-pan", ctx.viewport_id(), doc.id.0)),
+        )
     } else { None };
     if let Some(delta) = dialog_panning.or(hand_panning) {
         let delta = xf.unmap_vec(delta) / (view.zoom / ppp);

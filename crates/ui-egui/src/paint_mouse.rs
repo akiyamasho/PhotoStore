@@ -99,12 +99,14 @@ pub fn canvas_buttons(app: &mut PhotoStoreApp, response: &Response, tool: Tool) 
     let right_start = erase && response.drag_started_by(PointerButton::Secondary);
     let right_click = response.secondary_clicked();
     // A pen can move past egui's click threshold while its barrel button is held. Route the
-    // actual secondary press, not a release-classified click, so hover jitter cannot cancel it.
+    // actual secondary press, not a release-classified click. The event position is authoritative
+    // even when the native backend did not deliver a preceding hover event; the layer check keeps
+    // a popup or window above the canvas from being mistaken for a canvas press.
     let pressed_at = response.ctx.input(|input| input.events.iter().find_map(|event| match event {
         egui::Event::PointerButton { pos, button: PointerButton::Secondary, pressed: true, .. }
-            if response.rect.contains(*pos) && (response.hovered() || response.is_pointer_button_down_on()) => Some(*pos),
+            if response.rect.contains(*pos) => Some(*pos),
         _ => None,
-    }));
+    })).filter(|position| response.ctx.layer_id_at(*position) == Some(response.layer_id));
     let picker_gesture = egui::Id::new("brush-picker-secondary-gesture");
     let mut consumed = response.ctx.data(|data| data.get_temp::<bool>(picker_gesture)).unwrap_or(false);
     if !erase && !layer_menu && !resizing && !crate::brush_resize::is_right_gesture(mods)

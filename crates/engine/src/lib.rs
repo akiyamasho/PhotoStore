@@ -358,6 +358,8 @@ pub struct Session {
     pub timeline_clipboard: Option<Vec<TimelineClipSnapshot>>,
     /// At most one uncommitted decoded presentation candidate, independent of authored state.
     pending_presentation:Option<timeline_cmds::PendingPresentation>,
+    /// Native shell wakeup for completed preview preparation. Transient, never document data.
+    preview_waker: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Editable audio clip snapshots used by the timeline clipboard.
     pub timeline_audio_clipboard: Option<Vec<TimelineAudioClipSnapshot>>,
     /// Clip appearance and animation attributes, independent of the complete-media clipboard.
@@ -726,6 +728,15 @@ impl Session {
         if self.job_on(id).is_some() {
             return false;
         }
+        // A paused timeline also receives decode/thumbnail completions while the user pans or
+        // edits UI controls. Never do movie placement, CMS or Smart refresh on that UI thread.
+        #[cfg(not(target_arch = "wasm32"))]
+        if movie_cache::is_preview() && self.active().is_some_and(|st| st.doc.timeline.as_ref().is_some_and(|t| t.mode == photostore_doc::TimelineMode::Video)) {
+            return timeline_cmds::refresh_current_preview(self).unwrap_or_else(|error| {
+                movie_cache::note_error(error.to_string());
+                true
+            });
+        }
         let Some(st) = self.active_mut() else { return false };
         let snapshot = st.doc.clone();
         let mut doc = (*snapshot).clone();
@@ -740,6 +751,12 @@ impl Session {
         st.last_damage = None;
         true
     }
+
+    pub fn preview_waker_installed(&self) -> bool { self.preview_waker.is_some() }
+
+    /// Set before the first native presentation request. A shell can wake its event loop when
+    /// preparation finishes, instead of discovering it at the next 16 ms polling boundary.
+    pub fn set_preview_waker(&mut self, wake: Arc<dyn Fn() + Send + Sync>) { self.preview_waker = Some(wake); }
 
     pub fn undo(&mut self) -> bool {
         // A background job is computing from the current state: it must not move under it.

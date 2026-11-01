@@ -20,6 +20,8 @@ pub(crate) struct Runtime {
     expected_revision: u64,
     expected_frame: usize,
     pending_frame: Option<usize>,
+    pending_since: f64,
+    last_tick: f64,
     /// Clock-selected frame for playhead/timecode painting. This can be ahead of the last frame
     /// committed to the document while an exact preview request is waiting for decode.
     clock_frame: Option<usize>,
@@ -62,6 +64,8 @@ impl Default for Runtime {
             expected_revision: 0,
             expected_frame: 0,
             pending_frame: None,
+            pending_since: 0.0,
+            last_tick: 0.0,
             clock_frame: None,
             origin_history: (0, 0),
             timing_signature: 0,
@@ -112,6 +116,7 @@ impl Runtime {
         }
         self.origin_doc = None;
         self.pending_frame = None;
+        self.pending_since = 0.0;
         self.clock_frame = None;
         self.reverse_audio_reported = false;
         self.reverse_leg = false;
@@ -351,6 +356,7 @@ impl Runtime {
             return;
         }
         let now = ctx.input(|i| i.time);
+        self.last_tick = now;
         let Some((doc, revision, history, active_layer, doc_arc)) =
             app.session.active().map(|st| (st.doc.id, st.revision, (st.history.past_len(), st.history.future_len()), st.active_layer, st.doc.clone()))
         else {
@@ -530,12 +536,31 @@ impl Runtime {
         // Once presented, jump to the current clock target, dropping decode-late frames rather
         // than accumulating an ever-growing queue or showing another timestamp as current.
         if frame != t.current || self.pending_frame.is_some() {
+            if self.pending_frame.is_none() { self.pending_since = now; }
             let requested = *self.pending_frame.get_or_insert(frame);
             match app.run("timeline.presentFrame", json!({"frame": requested})) {
                 Ok(result) if result.get("ready").and_then(serde_json::Value::as_bool) == Some(true) => {
                     self.pending_frame = None;
                     self.expected_frame = requested;
                     self.expected_revision = app.session.active().map_or(revision, |st| st.revision);
+                    // Start the next clock-selected preparation in this same paint. Waiting
+                    // for another 16 ms UI tick serialized preparation and GPU presentation,
+                    // even when both workers could already be processing the next frame.
+                    if frame != requested {
+                        match app.run("timeline.presentFrame", json!({"frame":frame})) {
+                            Ok(next) if next.get("ready").and_then(serde_json::Value::as_bool) == Some(true) => {
+                                self.expected_frame = frame;
+                                self.expected_revision = app.session.active().map_or(self.expected_revision, |st| st.revision);
+                            }
+                            Ok(_) => { self.pending_frame = Some(frame); self.pending_since = now; }
+                            Err(error) => {
+                                self.stop();
+                                app.ui.status = format!("Video preview: {error}");
+                                app.ui.status_error = true;
+                                return;
+                            }
+                        }
+                    }
                 }
                 Ok(_) => {}
                 Err(error) => {
@@ -549,10 +574,14 @@ impl Runtime {
         if completed && self.pending_frame.is_none() && app.session.active().and_then(|st| st.doc.timeline.as_ref()).is_some_and(|t| t.current == frame) {
             self.stop();
         }
-        ctx.request_repaint_after(Duration::from_millis(16));
+        ctx.request_repaint_after(Duration::from_millis(if self.pending_frame.is_some() { 6 } else { 16 }));
     }
 
-    pub(crate) fn loading(&self) -> bool { self.preroll || self.pending_frame.is_some() }
+    pub(crate) fn loading(&self) -> bool {
+        // A normal in-flight preparation is not a user-visible stall. Keep its indicator quiet
+        // until the request has actually waited; the slot's geometry remains fixed either way.
+        self.preroll || (self.pending_frame.is_some() && self.last_tick - self.pending_since >= 0.1)
+    }
 
     /// Called only by the primary canvas after the exact decoded frame is scheduled for display.
     pub(crate) fn take_preroll_signal(&mut self, doc: photostore_doc::DocId, frame: usize) -> Option<Arc<AtomicBool>> {
