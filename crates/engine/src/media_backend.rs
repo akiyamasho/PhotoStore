@@ -896,6 +896,7 @@ impl AudioPreviewWorker {
         state.pending = Some((generation, request));
         state.status = AudioPreviewWorkerStatus::Starting(generation);
         shared.wake.notify_one();
+        drop(state);
         Ok(AudioPreviewHandle { shared, generation })
     }
 }

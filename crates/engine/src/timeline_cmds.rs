@@ -875,7 +875,7 @@ fn prepare_presentation(state:&PresentationWorkerState,request:&PresentationRequ
 #[cfg(not(target_arch = "wasm32"))]
 fn presentation_worker_loop(state:Arc<PresentationWorkerState>) {
     'worker: loop {
-        let request=loop {
+        let request={
             let mut mailbox=match state.mailbox.lock(){Ok(mailbox)=>mailbox,Err(error)=>error.into_inner()};
             loop {
                 if state.stopped.load(Ordering::Acquire) {
