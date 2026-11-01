@@ -55,6 +55,7 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
         .map_err(|e| format!("The hardware adapter could not initialize PhotoStore's GPU compositor: {e}"))?;
     compositor.set_health(health.clone());
     let mut gpu_ms = Vec::with_capacity(frames);
+    let mut encode_ms = Vec::with_capacity(frames);
     let mut uploaded_bytes = 0usize;
     let mut uploaded_tiles = 0usize;
     let mut dense_page_uploads = 0usize;
@@ -108,6 +109,7 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
                 );
             })
             .map_err(|e| EngineError::Other(format!("PhotoStore GPU compositor failed: {e}")))?;
+        encode_ms.push(started.elapsed().as_secs_f64() * 1000.0);
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| device.poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(WAIT_TIMEOUT) })))
             .map_err(|_| EngineError::Other("GPU device failed during completion wait".into()))?
             .map_err(|e| EngineError::Other(format!("GPU compositor completion wait failed: {e}")))?;
@@ -147,6 +149,8 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
     let cold_gpu_ms = gpu_ms.first().copied().unwrap_or(0.0);
     let mut warm_gpu_ms = gpu_ms.iter().skip(1).copied().collect::<Vec<_>>();
     warm_gpu_ms.sort_by(f64::total_cmp);
+    let mut warm_encode_ms = encode_ms.iter().skip(1).copied().collect::<Vec<_>>();
+    warm_encode_ms.sort_by(f64::total_cmp);
     let percentile = |p: f64| warm_gpu_ms[((warm_gpu_ms.len() - 1) as f64 * p).round() as usize];
     let mut ordered_lateness = lateness_ms.clone();
     ordered_lateness.sort_by(f64::total_cmp);
@@ -178,6 +182,9 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
                 "compositeWaitP50Ms": percentile(0.50),
                 "compositeWaitP95Ms": percentile(0.95),
                 "perFrameCompositeWaitMs": gpu_ms,
+                "cpuEncodeP50Ms": warm_encode_ms[((warm_encode_ms.len() - 1) as f64 * 0.50).round() as usize],
+                "cpuEncodeP95Ms": warm_encode_ms[((warm_encode_ms.len() - 1) as f64 * 0.95).round() as usize],
+                "perFrameCpuEncodeMs": encode_ms,
                 "finiteWaitTimeoutMs": WAIT_TIMEOUT.as_millis(),
                 "finalCompositeCopiedToOffscreenTexture": true,
                 "fullFrameReadback": false
