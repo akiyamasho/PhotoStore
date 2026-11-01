@@ -1,8 +1,6 @@
 # Concurrent 4K playback and compact audio — #23
 
-Status: implementation in progress after the 0.20.4 user report. The user explicitly requested
-completion of remaining performance work, many smooth 4K sources, compact audio within each video
-row, and push/release/reinstall of the latest normal app. Publication is authorized.
+Status: completed, published and atomically installed as normal 0.20.5 from `621e2401b1035b922b66576e9a6425fc6ca9b067`. The original-resolution eight-source hardware-compositor throughput and paced targets passed. [Exact evidence and scope](../releases/0.20.5.md). Native display/input/sound-device acceptance remains manual.
 
 ## Outcomes and dependencies
 
@@ -40,6 +38,7 @@ original geometry; do not pass the throughput gate by silently lowering source r
 - The shared retained target remains derived from Memory Usage and physical RAM; don't increase
   the allowance or write private preferences during installation. Decoder working-set estimates
   are not a total process/GPU/codec memory cap.
+- Video pre-roll freezes the starting frame until decode and primary canvas GPU completion are ready, then starts audio and anchors the clock. Fresh readiness signals on stop/seek/rebase prevent an old completion from starting a later play. Frame Animation retains its existing timing.
 - Audio drawing uses a bounded texture cache and a single image draw per visible waveform.
   Reuse cached waveforms during playback; do not launch cold waveform extraction or stat source
   files just to draw every frame. Nonlinear speed and trim sampling must remain aligned.
