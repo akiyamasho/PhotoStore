@@ -985,6 +985,10 @@ impl Compositor {
         // no blocking wait and relies on the browser's own scheduling).
         #[cfg(not(target_arch = "wasm32"))]
         let mut last_submit: Option<wgpu::SubmissionIndex> = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut stream_submits = std::collections::VecDeque::new();
+        let mut stream_bytes = 0u64;
+        let stream_window = (self.memory_budget() / 8).clamp(32 << 20, 256 << 20);
         // Work recorded and bytes evicted since the last submit.
         let (mut work, mut freed) = (0u64, 0u64);
         for part in cells {
@@ -1007,19 +1011,26 @@ impl Compositor {
             stats.evicted += evicted;
             freed += bytes;
             if flush && (self.staged >= flush_bytes || work >= FLUSH_WORK || freed >= flush_bytes) {
-                // Submit what's recorded, and wait for the previous submit, so at most two
-                // batches of uploads and evicted pages are in flight.
+                // General refreshes retain the two-batch gate. Supported streams use a
+                // byte/count-bounded window so CPU packing can keep the GPU queue fed.
                 let done = std::mem::replace(encoder, device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("pc_compose") }));
                 if self.pooled_uploads && let Some(belt) = &mut self.upload_belt { belt.finish_and_recall_on_submit(&done); }
                 let index = queue.submit([done.finish()]);
                 #[cfg(not(target_arch = "wasm32"))]
-                if let Some(prev) = last_submit.replace(index) {
-                    if self.pooled_uploads {
+                if self.pooled_uploads {
+                    stream_bytes = stream_bytes.saturating_add(self.staged);
+                    stream_submits.push_back((index, self.staged));
+                    // A byte-bounded window lets packing and small GPU cells overlap. A
+                    // wait after every second cell serialized the shared-memory path.
+                    while stream_bytes >= stream_window || stream_submits.len() >= 8 {
+                        let Some((prev, bytes)) = stream_submits.pop_front() else { break };
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| device.poll(wgpu::PollType::Wait {
                             submission_index: Some(prev), timeout: Some(std::time::Duration::from_secs(30)),
                         }))).map_err(|_| Unsupported("GPU transfer batch failed".into()))?
                             .map_err(|error| Unsupported(format!("GPU transfer batch failed: {error}")))?;
-                    } else { match &self.health {
+                        stream_bytes = stream_bytes.saturating_sub(bytes);
+                    }
+                } else if let Some(prev) = last_submit.replace(index) { match &self.health {
                         Some(h) => {
                             h.wait(device, Some(prev));
                         }
@@ -1027,7 +1038,6 @@ impl Compositor {
                             let _ = device.poll(wgpu::PollType::Wait { submission_index: Some(prev), timeout: None });
                         }
                     } }
-                }
                 #[cfg(target_arch = "wasm32")]
                 let _ = index;
                 self.staged = 0;

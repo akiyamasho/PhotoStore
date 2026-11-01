@@ -94,6 +94,9 @@ fn measure_sources_inner(
     let mut polls = 0usize;
     let mut max_bytes = 0usize;
     let mut max_decoder_bytes = 0usize;
+    let mut sampled_pixels = Vec::new();
+    sampled_pixels.try_reserve_exact(8 * 16 * photostore_geom::TILE_SIZE as usize * 4)
+        .map_err(|_| EngineError::Other("could not reserve the bounded playback observation buffer".into()))?;
     for frame in 0..count {
         if let Some(ctx) = ctx {
             ctx.check()?;
@@ -125,17 +128,17 @@ fn measure_sources_inner(
             let layer = state.doc.layer(*id).ok_or_else(|| EngineError::Other("measurement layer disappeared".into()))?;
             properties_preserved &= layer.visible && (layer.opacity - if index == 0 { 1.0 } else { 0.5 }).abs() < 1e-6;
             if let Some(surface) = layer.surface() {
-                let mut hash = blake3::Hasher::new();
+                sampled_pixels.clear();
                 let stride = surface.tile_count() / 8 + 1;
                 for (_, (_, tile)) in surface.tiles().enumerate().filter(|(index, _)| index % stride == 0).take(8) {
                     // Bounded spatial observation, rather than hashing megabytes per layer
                     // inside a paced playback loop. Pixel fidelity is checked separately.
                     let row_bytes = photostore_geom::TILE_SIZE as usize * surface.format().bytes_per_pixel();
                     for row in (0..photostore_geom::TILE_SIZE as usize).step_by(16) {
-                        hash.update(&tile.bytes()[row * row_bytes..(row + 1) * row_bytes]);
+                        sampled_pixels.extend_from_slice(&tile.bytes()[row * row_bytes..(row + 1) * row_bytes]);
                     }
                 }
-                hashes[index].insert(hash.finalize());
+                hashes[index].insert(blake3::hash(&sampled_pixels));
             }
         }
         let budget = crate::media_budget::status();
