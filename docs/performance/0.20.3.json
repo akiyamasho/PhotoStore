@@ -1,5 +1,5 @@
 {
-  "status": "Two focused data-preservation checks passed; production compiler/build and delivery pending",
+  "status": "Published and atomically installed; two focused data checks and production build passed; native input/device acceptance pending",
   "checks": [
     {
       "args": [
@@ -24,5 +24,36 @@
     "failed": 0,
     "runtime_seconds": 1.43
   },
-  "scope": "Synthetic source and disposable documents only: deferred import native persistence/activation/audio/range/work area/atomic failure/undo; same/cross-document source-preserving copy/catalog IDs/placement/undo. No broad QA, CUA, live capture or native physical input/device acceptance."
+  "scope": "Synthetic source and disposable documents only: deferred import native persistence/activation/audio/range/work area/atomic failure/undo; same/cross-document source-preserving copy/catalog IDs/placement/undo. No broad QA, CUA, live capture or native physical input/device acceptance.",
+  "source_sha": "e7de47f6b1103ee32f8bbb6b06daee8054c04473",
+  "release": {
+    "source_sha": "e7de47f6b1103ee32f8bbb6b06daee8054c04473",
+    "tag": "refs/tags/v0.20.3",
+    "release_id": 430365712,
+    "url": "https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.3",
+    "published_at": "2026-11-01T04:40:40Z",
+    "latest": "v0.20.3",
+    "assets": {
+      "photostore-0.20.3-macos-aarch64.dmg": {
+        "id": 697338008,
+        "size": 45460687,
+        "digest": "sha256:69c9590fefe4a37e920c4d3f6855ffbca186b71cda039194ad5f2769fed9dee4",
+        "browser_download_url": "https://github.com/akiyamasho/PhotoStore/releases/download/v0.20.3/photostore-0.20.3-macos-aarch64.dmg"
+      },
+      "photostore-cli-0.20.3-macos-aarch64.zip": {
+        "id": 697338007,
+        "size": 32512249,
+        "digest": "sha256:ca13d7e6aa20dd9c59e860760321ea2ef0047ad44055d75c96b3bba052c88a7f",
+        "browser_download_url": "https://github.com/akiyamasho/PhotoStore/releases/download/v0.20.3/photostore-cli-0.20.3-macos-aarch64.zip"
+      },
+      "SHA256SUMS": {
+        "id": 697338009,
+        "size": 208,
+        "digest": "sha256:93a83227c3ec57e055a12efc83836afac44c22e561637a38130e5fc38bed1306",
+        "browser_download_url": "https://github.com/akiyamasho/PhotoStore/releases/download/v0.20.3/SHA256SUMS"
+      }
+    }
+  },
+  "build_seconds": 665.061,
+  "installed": true
 }

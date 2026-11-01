@@ -57,7 +57,8 @@ input or UI latency. No private recording frame is a repository asset or issue u
 Two focused required data boundaries cover deferred video save/reopen, static Frame Animation,
 Video activation/range/audio/work-area/undo and failed activation atomicity; and source-preserving
 same/cross-document copies, media catalog rebinding and invalid placement. They are not a broad
-UI QA sweep. Results, single production compiler/build and artifact delivery belong in the
+UI QA sweep. Both checks and the single production app/CLI build passed; verified artifacts were published and
+atomically installed as normal 0.20.3. Exact results/source/artifact delivery are in the
 [0.20.3 release record](../releases/0.20.3.md).
 
 Native Wacom delivery, Space-drag feel, physical shortcut routing and OS file-drop acceptance

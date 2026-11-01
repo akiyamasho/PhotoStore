@@ -704,3 +704,7 @@ so pen hover jitter does not cancel a release-classified click; the opening even
 the popup or leave a stray paint gesture. Preserve resize/erase/layer-pick intent and sampled
 stroke data. The [implementation record](plans/layer-input-workflows-2026-11-01.md) distinguishes
 source implementation, focused data boundaries and pending native device acceptance.
+
+Both focused data boundaries passed. Normal 0.20.3 was built, verified, published and atomically
+installed from `e7de47f6b1103ee32f8bbb6b06daee8054c04473`. The running session was preserved.
+Native shortcut/drop/pan/Cintiq acceptance remains manual; see the [release receipt](releases/0.20.3.md).
