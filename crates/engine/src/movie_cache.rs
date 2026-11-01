@@ -21,6 +21,8 @@ pub fn worker_count()->usize {WORKER.get().and_then(Option::as_ref).map_or(0,|wo
 const ERROR_LIMIT: usize = 128;
 const REQUEST_LIMIT: usize = 16;
 const THUMBNAIL_REQUEST_LIMIT: usize = 4;
+const PROTECTED_CURRENT_LIMIT: usize = 64;
+const PROTECTED_CURRENT_TTL: std::time::Duration = std::time::Duration::from_secs(2);
 // Partition at most eight resident sessions over a host-sized worker pool. Shared memory
 // reservations may shrink the set further; active work has a separate memory/CPU admission gate.
 const MAX_SEQUENTIAL_STREAMS: usize = 8;
@@ -72,6 +74,8 @@ struct Cache {
     seen_source_errors: VecDeque<String>,
     pending: HashSet<Key>,
     latest_current: HashMap<ConsumerKey, Key>,
+    protected_current: HashMap<ConsumerKey, (Key, std::time::Instant)>,
+    protected_current_order: VecDeque<ConsumerKey>,
     pending_current: HashMap<ConsumerKey, HashSet<Key>>,
     media_info: HashMap<SourceIdentity, crate::media_backend::MediaInfo>,
     media_info_order: VecDeque<SourceIdentity>,
@@ -320,6 +324,8 @@ pub fn invalidate_path(path: &str) {
             !keys.is_empty()
         });
         state.latest_current.retain(|owner, _| owner.source.path != resolved);
+        state.protected_current.retain(|owner, _| owner.source.path != resolved);
+        state.protected_current_order.retain(|owner| owner.source.path != resolved);
         state.media_info.retain(|identity, _| identity.path != resolved);
         state.media_info_order.retain(|identity| identity.path != resolved);
         let generation = state.source_generation.entry(resolved.clone()).or_default();
@@ -356,6 +362,8 @@ pub fn clear() {
         state.pending.clear();
         state.pending_current.clear();
         state.latest_current.clear();
+        state.protected_current.clear();
+        state.protected_current_order.clear();
         state.media_info.clear();
         state.media_info_order.clear();
         state.bytes = 0;
@@ -576,8 +584,9 @@ fn reserve_stream_memory(size:(u32,u32))->Result<crate::media_budget::Reservatio
         // each resumed stream was immediately discarded and relaunched on its next request.
         // Free optional frames first, keeping every consumer's latest requested frame pinned.
         let Ok(mut state)=cache().lock() else {return Err("movie frame cache is unavailable".into())};
+        prune_protected_current(&mut state, std::time::Instant::now());
         let old_index=state.frame_order.iter().position(|key| {
-            !state.latest_current.values().any(|requested|requested==key)
+            !is_pinned_current(&state,key)
         });
         let Some(old_index)=old_index else {
             return Err("preview decoder sessions exceed the shared derived-media allowance".into());
@@ -587,6 +596,28 @@ fn reserve_stream_memory(size:(u32,u32))->Result<crate::media_budget::Reservatio
             state.bytes=state.bytes.saturating_sub(old_bytes);
         }
     }
+}
+
+fn prune_protected_current(state:&mut Cache,now:std::time::Instant) {
+    state.protected_current.retain(|_,(_,recorded)|now.duration_since(*recorded)<PROTECTED_CURRENT_TTL);
+    state.protected_current_order.retain(|owner|state.protected_current.contains_key(owner));
+}
+
+fn record_protected_current(state:&mut Cache,owner:&ConsumerKey,key:&Key) {
+    let now=std::time::Instant::now();
+    prune_protected_current(state,now);
+    state.protected_current.remove(owner);
+    state.protected_current_order.retain(|existing|existing!=owner);
+    state.protected_current.insert(owner.clone(),(key.clone(),now));
+    state.protected_current_order.push_back(owner.clone());
+    while state.protected_current_order.len()>PROTECTED_CURRENT_LIMIT {
+        if let Some(old)=state.protected_current_order.pop_front(){state.protected_current.remove(&old);}
+    }
+}
+
+fn is_pinned_current(state:&Cache,key:&Key)->bool {
+    state.latest_current.values().any(|requested|requested==key)
+        || state.protected_current.values().any(|(requested,_)|requested==key)
 }
 
 fn clear_pending_current(state: &mut Cache, owner: &ConsumerKey, key: &Key) {
@@ -608,6 +639,7 @@ fn remove_job_pending(state: &mut Cache, job: &Job) {
 }
 
 fn insert_frame(state: &mut Cache, key: Key, surface: Surface, mut reservation: crate::media_budget::Reservation) -> Result<(), String> {
+    prune_protected_current(state,std::time::Instant::now());
     let bytes = cache_bytes(&surface);
     if bytes > frame_budget_bytes() {
         return Err(format!("movie preview frame exceeds the {} MiB cache limit", frame_budget_bytes() / (1024 * 1024)));
@@ -620,7 +652,9 @@ fn insert_frame(state: &mut Cache, key: Key, surface: Surface, mut reservation: 
         state.frame_order.retain(|cached| cached != &key);
     }
     while state.bytes.saturating_add(bytes) > frame_budget_bytes() {
-        let Some(old) = state.frame_order.pop_front() else { break };
+        let old_index=state.frame_order.iter().position(|old|!is_pinned_current(state,old));
+        let Some(old_index)=old_index else { break };
+        let Some(old)=state.frame_order.remove(old_index) else {continue};
         if let Some((_, old_bytes, _)) = state.frames.remove(&old) {
             state.bytes = state.bytes.saturating_sub(old_bytes);
         }
@@ -754,8 +788,9 @@ fn reserve_frame_bytes(bytes: usize, thumbnail: bool) -> Result<crate::media_bud
         };
         let category_full = bytes > limit.saturating_sub(used);
         let Ok(mut state) = cache().lock() else { return Err("movie frame cache is unavailable".into()) };
+        prune_protected_current(&mut state,std::time::Instant::now());
         let old_index = state.frame_order.iter().position(|key| {
-            !state.latest_current.values().any(|requested|requested==key)
+            !is_pinned_current(&state,key)
                 && (!category_full || state.frames.get(key).is_some_and(|(_, _, reservation)| reservation.kind() == kind))
         });
         let Some(old_index) = old_index else {
@@ -897,12 +932,17 @@ pub fn frame_at_times_for_consumer_scaled(
         return Err("preview lookahead must contain 1 to 16 timestamps".into());
     }
     let source = source_identity(path)?;
+    // Keep the per-consumer sequential decode window deliberately small. Longer windows
+    // repeatedly queued distant frames while playback lagged, which pushed each worker's
+    // decoder cursor far ahead of the current request and forced a process restart next poll.
+    let active_times = &times[..times.len().min(3)];
     let mut keys = Vec::with_capacity(times.len());
     for seconds in times {
         keys.push(Key { source: source.clone(), position: timestamp_position(*seconds)?, format: fmt, output_size });
     }
-    let step = if times.len() > 1 { times[1] - times[0] } else { 0.0 };
-    let regular = times.len() > 1
+    keys.truncate(active_times.len());
+    let step = if active_times.len() > 1 { active_times[1] - active_times[0] } else { 0.0 };
+    let regular = active_times.len() > 1
         && step.is_finite()
         && step > 0.0
         && times.windows(2).all(|pair| ((pair[1] - pair[0]) - step).abs() <= 1e-9_f64.max(step.abs() * 1e-9));
@@ -922,6 +962,7 @@ pub fn frame_at_times_for_consumer_scaled(
     let work_times;
     {
         let mut state = cache().lock().map_err(|_| "movie frame cache is unavailable".to_owned())?;
+        record_protected_current(&mut state, &owner, &keys[0]);
         for key in &keys {
             if let Some((surface, _, _)) = state.frames.get(key).cloned() {
                 state.frame_order.retain(|cached| cached != key);
@@ -934,15 +975,14 @@ pub fn frame_at_times_for_consumer_scaled(
         generation = state.source_generation.get(&source.path).copied().unwrap_or(0);
         if state.pending_current.contains_key(&owner){state.latest_current.insert(owner.clone(),keys[0].clone());}
         if cached.iter().all(Option::is_some) {
-            return Ok(cached);
+            return Ok(cached.into_iter().chain((active_times.len()..times.len()).map(|_| None)).collect());
         }
-        // Refill ahead of the playhead, without decoding already-cached frames again.
-        // A lookahead may inspect 16 keys, but each queued job retains at most eight.
+        // Refill only the bounded near-playhead window, without decoding cached frames again.
         let missing=cached.iter().position(Option::is_none).unwrap_or(0);
         work_keys=keys[missing..(missing+8).min(keys.len())].to_vec();
-        work_times=times[missing..(missing+8).min(times.len())].to_vec();
+        work_times=active_times[missing..(missing+8).min(active_times.len())].to_vec();
         if state.pending.contains(&work_keys[0]) {
-            return Ok(cached);
+            return Ok(cached.into_iter().chain((active_times.len()..times.len()).map(|_| None)).collect());
         }
     }
     let Some(worker) = worker() else { return Err("movie preview worker could not be started".into()) };
@@ -963,13 +1003,13 @@ pub fn frame_at_times_for_consumer_scaled(
             }
             state.pending.extend(work_keys.iter().cloned());
             state.pending_current.entry(owner).or_default().extend(work_keys.iter().cloned());
-            Ok(cached)
+            Ok(cached.into_iter().chain((active_times.len()..times.len()).map(|_| None)).collect())
         }
         Err(_) => {
             if !state.pending_current.contains_key(&owner){state.latest_current.remove(&owner);}
             // A crowded multi-layer scene applies backpressure. Retrying after queued frames
             // complete is normal buffering, not a source error that stops the transport.
-            Ok(cached)
+            Ok(cached.into_iter().chain((active_times.len()..times.len()).map(|_| None)).collect())
         }
     }
 }
@@ -1014,6 +1054,9 @@ fn frame_with_position(path: &str, position: Position, fmt: PixelFormat, thumbna
     let key = Key { source, position, format: fmt, output_size };
     let owner = key.consumer(consumer);
     if let Ok(mut state) = cache().lock() {
+        if !thumbnail && consumer.is_some() {
+            record_protected_current(&mut state, &owner, &key);
+        }
         if !thumbnail && consumer.is_some()
             && state.pending_current.get(&owner).is_some_and(|pending| pending.contains(&key))
         {
