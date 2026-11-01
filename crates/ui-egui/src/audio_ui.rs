@@ -158,7 +158,7 @@ fn waveform_texture(ui: &Ui, doc: DocId, clip: &AudioClip, height: usize, fps: f
         let frame = (fraction * clip.duration_seconds * fps).round().max(0.0) as usize;
         let source_time = clip.trim_in_seconds + playback.source_delta_seconds(frame, fps);
         let index = ((source_time / source_duration * waveform.bins.len() as f64) as usize).min(waveform.bins.len() - 1);
-        let amplitude = (waveform.bins[index].peak.clamp(0.0, 1.0) * clip.volume.clamp(0.0, 1.0)) as f32;
+        let amplitude = waveform.bins[index].peak.clamp(0.0, 1.0) * clip.volume.clamp(0.0, 1.0) as f32;
         let half = (height as f32 * 0.5 * amplitude).max(0.5);
         let mid = (height as f32 - 1.0) * 0.5;
         for y in 0..height {
