@@ -567,8 +567,26 @@ fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<Sequentia
 fn reserve_stream_memory(size:(u32,u32))->Result<crate::media_budget::Reservation,String> {
     let bytes=(size.0 as usize).checked_mul(size.1 as usize).and_then(|pixels|pixels.checked_mul(4*4))
         .ok_or_else(||"preview decoder memory estimate overflows addressable memory".to_owned())?;
-    crate::media_budget::reserve(crate::media_budget::MediaKind::DecoderSession,bytes)
-        .ok_or_else(||"preview decoder sessions exceed the shared derived-media allowance".to_owned())
+    loop {
+        if let Some(reservation)=crate::media_budget::reserve(crate::media_budget::MediaKind::DecoderSession,bytes) {
+            return Ok(reservation);
+        }
+        // Decoder-session reservations share the derived-media ceiling with retained movie
+        // frames. A direct reserve here used to fail as soon as the frame cache was warm, so
+        // each resumed stream was immediately discarded and relaunched on its next request.
+        // Free optional frames first, keeping every consumer's latest requested frame pinned.
+        let Ok(mut state)=cache().lock() else {return Err("movie frame cache is unavailable".into())};
+        let old_index=state.frame_order.iter().position(|key| {
+            !state.latest_current.values().any(|requested|requested==key)
+        });
+        let Some(old_index)=old_index else {
+            return Err("preview decoder sessions exceed the shared derived-media allowance".into());
+        };
+        let Some(old)=state.frame_order.remove(old_index) else {continue};
+        if let Some((_,old_bytes,_))=state.frames.remove(&old) {
+            state.bytes=state.bytes.saturating_sub(old_bytes);
+        }
+    }
 }
 
 fn clear_pending_current(state: &mut Cache, owner: &ConsumerKey, key: &Key) {

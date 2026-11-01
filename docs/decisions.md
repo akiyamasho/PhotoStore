@@ -743,3 +743,5 @@ screenshot, per-frame CPU readback, hardware-decode claim or private preference 
 The bounded original-resolution target and limitations are in the
 [performance plan](plans/4k-performance-2026-11-01.md); final-source results belong in the
 [0.20.5 receipt](releases/0.20.5.md).
+
+Warm decoder-session reservations take priority over evictable derived frames within the existing shared target. Reclaim optional movie frames while pinning current requests before retiring a source process, so a warm frame cache cannot turn each later timestamp into a decoder restart.
