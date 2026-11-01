@@ -66,7 +66,9 @@ pub(crate) fn recognize(plan: &Plan<'_>) -> Option<Stack> {
                     || p.tex.is_some() || p.mask.is_some() || p.clip.is_some() || p.lut.is_some()
                     || p.gradient || p.map.is_some() || p.pattern.is_some() || p.adjust_kind != 0
                     || p.color != [0.0; 4] || p.params.iter().flatten().any(|v| *v != 0.0)
-                    || p.extra.iter().any(|v| *v != 0.0)
+                    || p.extra[..3].iter().any(|v| *v != 0.0)
+                    // Ordinary layers carry gamma=1 even when gamma blending is disabled.
+                    || !matches!(p.extra[3], 0.0 | 1.0)
                 { return None; }
                 let (Some(a), Some(b)) = (p.a, p.b) else { return None; };
                 let SlotValue::Stack(mut stack) = values.get(&a)?.clone() else { return None; };
