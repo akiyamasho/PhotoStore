@@ -804,3 +804,5 @@ Whole-tile shared-buffer uploads use direct compositor-worker copies. Profiling 
 Video transport wakeups align with project-frame boundaries instead of always waiting another 16 ms near the next boundary. This changes sampling opportunity only; source timing/audio clocks and Frame Animation remain authoritative.
 
 The serial-copy experiment reached the average rate but missed deadline cadence. Cooperative upload batches supersede it: caller participation plus at most three ready helpers, job-count completion (no idle-helper barrier), bounded latest-batch metadata and per-caller ownership across concurrency, and complete mapped-copy teardown before submission. Row-repacking keeps Rayon. [Measured cadence failure](performance/0.20.7-after-copy.json).
+
+The 0.20.7 paced correction distinguishes missing-current decode jobs from optional near-playhead refills. Workers service eligible urgent requests first and yield lookahead only to urgent work they can actually serve. Foreign worker queues and optional jobs must not globally suppress prefetch. The three-frame timestamp window, source timing, retained-memory ceiling and stable stream affinity remain unchanged.

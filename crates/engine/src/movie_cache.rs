@@ -91,6 +91,7 @@ struct Job {
     path: String,
     consumer: Option<u64>,
     thumbnail: bool,
+    urgent: bool,
     source_generation: u64,
     window: Option<FrameWindow>,
 }
@@ -165,6 +166,13 @@ impl WorkerQueue {
         Self::prune_assignments(&mut queues);
     }
 
+    fn promote_owner_current(&self, owner:&ConsumerKey) {
+        let Ok(mut queues)=self.queues.lock() else{return};
+        if let Some(job)=queues.current.iter_mut().find(|job|job.consumer_key()==*owner) {
+            job.urgent=true;
+        }
+    }
+
     fn push(&self, job: Job) -> std::result::Result<Option<Job>, Job> {
         let Ok(mut queues) = self.queues.lock() else { return Err(job) };
         if job.thumbnail {
@@ -197,7 +205,9 @@ impl WorkerQueue {
     fn pop(&self,worker_index:usize) -> Result<Option<Job>,()> {
         let mut queues = self.queues.lock().map_err(|_|())?;
         loop {
-            let current=queues.current.iter().position(|job|job.consumer.is_none() || queues.assignments.get(&job.consumer_key()).copied().unwrap_or(0)==worker_index).and_then(|index|queues.current.remove(index));
+            let urgent=queues.current.iter().position(|job|job.urgent && (job.consumer.is_none() || queues.assignments.get(&job.consumer_key()).copied().unwrap_or(0)==worker_index));
+            let current_index=urgent.or_else(||queues.current.iter().position(|job|job.consumer.is_none() || queues.assignments.get(&job.consumer_key()).copied().unwrap_or(0)==worker_index));
+            let current=current_index.and_then(|index|queues.current.remove(index));
             if let Some(job)=current {
                 if job.consumer.is_some(){queues.active_owners.insert(job.consumer_key());}
                 return Ok(Some(job));
@@ -242,7 +252,7 @@ impl WorkerQueue {
         queues.thumbnails.remove(thumbnail_at);
         let replaced = replace_at.and_then(|at| queues.current.remove(at));
         self.assign_owner(&mut queues,owner);
-        queues.current.push_back(Job { key: key.clone(), path: path.to_owned(), consumer: Some(consumer), thumbnail: false, source_generation, window: None });
+        queues.current.push_back(Job { key: key.clone(), path: path.to_owned(), consumer: Some(consumer), thumbnail: false, urgent: true, source_generation, window: None });
         self.ready.notify_all();
         Ok(replaced)
     }
@@ -437,7 +447,7 @@ pub fn estimated_frame_bytes(width: u32, height: u32, format: PixelFormat) -> Op
     tw.checked_mul(th)?.checked_mul(tile.checked_mul(tile)?)?.checked_mul(format.bytes_per_pixel())
 }
 
-fn process_job(job: Job, stream:&mut Vec<SequentialStream>) {
+fn process_job(job: Job, stream:&mut Vec<SequentialStream>,worker_index:usize) {
     let owner = job.consumer_key();
     if !job.thumbnail && job.consumer.is_some()
         && let Ok(mut state) = cache().lock()
@@ -453,7 +463,7 @@ fn process_job(job: Job, stream:&mut Vec<SequentialStream>) {
         COMPLETION_GENERATION.fetch_add(1, Ordering::AcqRel);
         return;
     }
-    if let Some(window)=&job.window {process_stream_window(&job,window,stream);return;}
+    if let Some(window)=&job.window {process_stream_window(&job,window,stream,worker_index);return;}
     if !job.thumbnail {stream.retain(|active|active.owner!=job.consumer_key());}
     let decoded=decode(&job.key,job.key.format,job.thumbnail).map(|(surface,reservation)|vec![(job.key.clone(),surface,reservation)]);
     if let Ok(mut state) = cache().lock() {
@@ -523,7 +533,7 @@ fn job_current(state:&Cache,job:&Job)->bool {
         }))
 }
 /// Publish frames one at a time. Waiting for a whole multi-frame batch is visible latency.
-fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<SequentialStream>) {
+fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<SequentialStream>,worker_index:usize) {
     streams.retain(|active|active.last_used.elapsed()<std::time::Duration::from_secs(2));
     let mut stream=streams.iter().position(|active|active.owner==job.consumer_key()).map(|index|streams.remove(index));
     let mut ended=false;
@@ -542,7 +552,14 @@ fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<Sequentia
         let skip=((window.times[0]-active.next_time())/active.step).round().max(0.0) as usize;
         for _ in 0..skip {if !active.decoder.skip_frame().map_err(|e|e.to_string())?{return Err("preview source ended before requested timestamp".into());}active.next_index+=1;}
         for (index,key) in window.keys.iter().take(8).enumerate() {
-            if index>0 && WORKER.get().and_then(Option::as_ref).is_some_and(|worker|worker.queue.queues.lock().map(|queues|queues.current.iter().any(|queued|queued.consumer_key()!=job.consumer_key())).unwrap_or(false)){break;}
+            // Only yield lookahead for a queued request this worker can serve. Foreign workers'
+            // current jobs must not suppress every stream's prefetch in a layered timeline.
+            let competing_current=index>0 && WORKER.get().and_then(Option::as_ref).is_some_and(|worker|worker.queue.queues.lock().map(|queues|queues.current.iter().any(|queued| {
+                if !queued.urgent {return false;}
+                if queued.consumer_key()==job.consumer_key(){return true;}
+                queued.consumer.is_none() || queues.assignments.get(&queued.consumer_key())==Some(&worker_index)
+            })).unwrap_or(false));
+            if index>0 && competing_current {break;}
             if !cache().lock().map(|state|job_current(&state,job)).unwrap_or(false){break;}
             let reservation=match reserve_frame_bytes(bytes,false){
                 Ok(reservation)=>reservation,
@@ -739,7 +756,7 @@ fn worker() -> Option<&'static WorkerChannels> {
                     .spawn(move || {
                         let mut stream=Vec::new();
                         loop {match thread_queue.pop(worker_index){
-                            Ok(Some(job))=>{process_job(job,&mut stream);thread_queue.reconcile_owners(worker_index,&stream);},
+                            Ok(Some(job))=>{process_job(job,&mut stream,worker_index);thread_queue.reconcile_owners(worker_index,&stream);},
                             Ok(None)=>{stream.clear();thread_queue.reconcile_owners(worker_index,&stream);}, // Retire an idle owned decoder after two seconds.
                             Err(())=>break,
                         }}
@@ -1026,6 +1043,14 @@ pub fn frame_at_times_for_consumer_scaled(
         work_keys=keys[missing..(missing+8).min(keys.len())].to_vec();
         work_times=active_times[missing..(missing+8).min(active_times.len())].to_vec();
         if state.pending.contains(&work_keys[0]) {
+            // A queued prefetch can become the visible missing frame as playback advances.
+            // Promote it while preserving cache->queue lock order; an already-active job is
+            // absent from the queue and will observe the current request through job_current.
+            if cached[0].is_none() {
+                if let Some(worker)=WORKER.get().and_then(Option::as_ref) {
+                    worker.queue.promote_owner_current(&owner);
+                }
+            }
             return Ok(cached.into_iter().chain((active_times.len()..times.len()).map(|_| None)).collect());
         }
     }
@@ -1035,6 +1060,8 @@ pub fn frame_at_times_for_consumer_scaled(
         path: path.to_owned(),
         consumer: Some(consumer),
         thumbnail: false,
+        // Only missing visible-current work is urgent; cached-current window refill is optional.
+        urgent: cached[0].is_none(),
         source_generation: generation,
         window: Some(FrameWindow { keys: work_keys.clone(), times: work_times, step_seconds: step }),
     };
@@ -1147,7 +1174,7 @@ fn frame_with_position(path: &str, position: Position, fmt: PixelFormat, thumbna
             }
             state.pending.insert(key.clone());
             let generation = state.source_generation.get(&key.source.path).copied().unwrap_or(0);
-    let job = Job { key: key.clone(), path: path.to_owned(), consumer, thumbnail, source_generation: generation, window: None };
+    let job = Job { key: key.clone(), path: path.to_owned(), consumer, thumbnail, urgent: !thumbnail, source_generation: generation, window: None };
             match worker.queue.push(job) {
                 Ok(replaced) => {
                     if let Some(discarded) = replaced {
