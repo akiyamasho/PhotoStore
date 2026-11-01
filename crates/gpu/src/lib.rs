@@ -1731,7 +1731,7 @@ fn write_dense_direct_page(device: &wgpu::Device, encoder: &mut wgpu::CommandEnc
         for row in 0..TILE_SIZE as usize {
             let to = (y + row) * stride + x;
             let from = row * tile_row;
-            data[to..to + tile_row].copy_from_slice(&tile.bytes()[from..from + tile_row]);
+            data.slice(to..to + tile_row).copy_from_slice(&tile.bytes()[from..from + tile_row]);
         }
     }
     drop(data);
