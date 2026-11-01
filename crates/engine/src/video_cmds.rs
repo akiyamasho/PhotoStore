@@ -164,7 +164,8 @@ pub fn sync(doc: &mut Document) {
     // Smart objects are rendered outside the ordinary layer sync because their source is a
     // nested document. Refreshing here makes timeline seeks update an embedded animated source
     // without adding a history entry for every playhead step.
-    let ids: Vec<_> = doc.walk().into_iter().filter_map(|(_, _, l)| matches!(l.content, LayerContent::Smart(_)).then_some(l.id)).collect();
+    let ids: Vec<_> = if crate::movie_cache::is_preview() { visible_smart_layer_ids(doc) }
+        else { doc.walk().into_iter().filter_map(|(_, _, l)| matches!(l.content, LayerContent::Smart(_)).then_some(l.id)).collect() };
     for id in ids {
         let _ = crate::smart_cmds::refresh_animated(doc, id);
     }
@@ -243,6 +244,17 @@ fn linked_movie_layer_visible(doc:&Document,path:&[usize],layer:&Layer,frame:usi
 fn visible_linked_movie_layers(doc:&Document,frame:usize,states:Option<&[FrameLayerState]>)->std::collections::HashSet<LayerId> {
     doc.walk().into_iter().filter_map(|(path,_,layer)| {
         (layer.video.as_ref().is_some_and(|video|video.movie_backing.is_some()) && linked_movie_layer_visible(doc,&path,layer,frame,states)).then_some(layer.id)
+    }).collect()
+}
+
+fn visible_smart_layer_ids(doc: &Document) -> Vec<LayerId> {
+    let frame = doc.timeline.as_ref().map_or(0, |timeline| timeline.current);
+    let states = doc.timeline.as_ref().and_then(|timeline| if timeline.mode == photostore_doc::TimelineMode::FrameAnimation {
+        timeline.frame_states.get(frame)
+    } else { timeline.property_frames.get(frame) });
+    doc.walk().into_iter().filter_map(|(path, _, layer)| {
+        (matches!(layer.content, LayerContent::Smart(_))
+            && linked_movie_layer_visible(doc, &path, layer, frame, states.map(Vec::as_slice))).then_some(layer.id)
     }).collect()
 }
 
@@ -528,7 +540,7 @@ pub(crate) fn sync_for_presentation(doc: &mut Document) -> Result<bool> {
     validate_resident_video_placements(doc)?;
     sync_plain_impl(doc,true,true);
     if !linked_frame_status(doc)? { return Ok(false); }
-    let ids: Vec<_> = doc.walk().into_iter().filter_map(|(_, _, l)| (l.visible && matches!(l.content, LayerContent::Smart(_))).then_some(l.id)).collect();
+    let ids = visible_smart_layer_ids(doc);
     for id in ids {
         if let Err(error) = crate::smart_cmds::refresh_animated(doc, id) {
             if error.to_string().contains("still loading") { return Ok(false); }
