@@ -23,7 +23,9 @@ fn read_source(i: u32, doc: vec2<i32>) -> vec4<f32> {
     let s = params.sources[i];
     if (doc.x < s.region.x || doc.y < s.region.y || doc.x >= s.region.x+s.region.z || doc.y >= s.region.y+s.region.w) { return s.fallback; }
     let p = doc - s.region.xy;
-    let index = u32(p.y * s.region.z + p.x);
+    let tile_columns = u32(s.region.z / 256);
+    let tile_index = u32(p.y / 256) * tile_columns + u32(p.x / 256);
+    let index = tile_index * 65536u + u32(p.y % 256) * 256u + u32(p.x % 256);
     switch i {
         case 0u: { return unpack4x8unorm(src0.values[index]); }
         case 1u: { return unpack4x8unorm(src1.values[index]); }

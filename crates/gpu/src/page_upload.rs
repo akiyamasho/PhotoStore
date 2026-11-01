@@ -18,6 +18,8 @@ pub(super) struct Job {
     pub stride: usize,
     pub region: Rect,
     pub tiles: Vec<(TileCoord, Arc<Tile>)>,
+    /// Store whole tiles contiguously for shaders that address the upload tile-major.
+    pub tile_major: bool,
     pub unmap_after: bool,
 }
 
@@ -88,6 +90,19 @@ fn pack_one_inner(job: &mut Job) -> Result<(), Unsupported> {
     let mut mapped = job.buffer.slice(job.offset..end).get_mapped_range_mut()
         .map_err(|e| Unsupported(format!("could not map page upload buffer: {e:?}")))?;
     let mut write = mapped.slice(..);
+    if job.tile_major {
+        if TILE_SIZE != 256 {
+            return Err(Unsupported("tile-major page uploads require 256-pixel tiles".into()));
+        }
+        for (index, (_, tile)) in job.tiles.iter().enumerate() {
+            let start = index.checked_mul(tile_len).ok_or_else(|| Unsupported("page upload tile offset overflows".into()))?;
+            let end = start.checked_add(tile_len).ok_or_else(|| Unsupported("page upload tile range overflows".into()))?;
+            write.slice(start..end).copy_from_slice(tile.bytes());
+        }
+        drop(write);
+        drop(mapped);
+        return Ok(());
+    }
     for (tile_y, strip) in job.tiles.chunks_exact(columns).enumerate() {
         for row in 0..tile_side {
             let dst_start = (tile_y * tile_side + row) * job.stride;

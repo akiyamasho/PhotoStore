@@ -55,6 +55,7 @@ impl crate::Compositor {
         sink: &mut dyn FnMut(&mut wgpu::CommandEncoder, crate::ChunkOut<'_>),
     ) -> Result<bool, Unsupported> {
         if self.acc_format != wgpu::TextureFormat::Rgba32Float || self.buffer_stack_disabled { return Ok(false); }
+        if photostore_geom::TILE_SIZE != 256 { return Ok(false); }
         let Some(stack) = normal_stack::recognize(plan) else { return Ok(false); };
         if self.buffer_stack.is_none() {
             let (pipelines, error) = crate::first_error(device, || Pipelines::new(device));
@@ -103,7 +104,7 @@ impl crate::Compositor {
                 let slice = belt.allocate(wgpu::BufferSize::new(aligned as u64).ok_or_else(|| Unsupported("mapped source allocation is empty".into()))?, alignment);
                 buffer = slice.buffer().clone(); offset = slice.offset(); size = aligned as u64;
                 drop(slice);
-                jobs.push(page_upload::Job { buffer: buffer.clone(), offset, length: aligned, stride: region.width() as usize * 4, region, tiles, unmap_after: false });
+                jobs.push(page_upload::Job { buffer: buffer.clone(), offset, length: aligned, stride: region.width() as usize * 4, region, tiles, tile_major: true, unmap_after: false });
             }
             sources.push(Src { buffer, offset, size, region, color, opacity });
         }

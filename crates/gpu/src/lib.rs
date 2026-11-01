@@ -1848,7 +1848,7 @@ fn write_dense_direct_page(
             wgpu::TexelCopyBufferInfo {buffer:&buffer,layout:wgpu::TexelCopyBufferLayout {offset,bytes_per_row:Some(stride as u32),rows_per_image:Some(region.height())}},
             wgpu::TexelCopyTextureInfo {texture:&resident.texture,mip_level:0,origin:wgpu::Origin3d::ZERO,aspect:wgpu::TextureAspect::All},
             wgpu::Extent3d {width:region.width(),height:region.height(),depth_or_array_layers:1});
-        jobs.push(page_upload::Job {buffer,offset,length,stride,region,tiles:tiles.to_vec(),unmap_after:false});
+        jobs.push(page_upload::Job {buffer,offset,length,stride,region,tiles:tiles.to_vec(),unmap_after:false,tile_major:false});
         return Some(length);
     }
     // Pack into the transfer allocation itself. A CPU Vec followed by queue.write_texture

@@ -523,17 +523,19 @@ impl Surface {
                         dst[3] = 255;
                     }
                 } else {
-                    // Process four RGB pixels per iteration. The fixed 12-to-16 byte
-                    // expansion gives LLVM a larger independent store group to SLP
-                    // vectorize, while avoiding per-pixel branching and preserving a
-                    // small scalar tail for partial tile rows.
+                    // Three packed words become four opaque pixels. Word-sized loads
+                    // and stores avoid twelve byte-load/store pairs per group; explicit
+                    // little-endian conversion keeps the byte order portable.
                     let mut source_blocks = source_row.chunks_exact(12);
                     let mut target_blocks = target_row.chunks_exact_mut(16);
                     for (src, dst) in source_blocks.by_ref().zip(target_blocks.by_ref()) {
-                        dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = 255;
-                        dst[4] = src[3]; dst[5] = src[4]; dst[6] = src[5]; dst[7] = 255;
-                        dst[8] = src[6]; dst[9] = src[7]; dst[10] = src[8]; dst[11] = 255;
-                        dst[12] = src[9]; dst[13] = src[10]; dst[14] = src[11]; dst[15] = 255;
+                        let a = u32::from_le_bytes([src[0], src[1], src[2], src[3]]);
+                        let b = u32::from_le_bytes([src[4], src[5], src[6], src[7]]);
+                        let c = u32::from_le_bytes([src[8], src[9], src[10], src[11]]);
+                        dst[0..4].copy_from_slice(&((a & 0x00ff_ffff) | 0xff00_0000).to_le_bytes());
+                        dst[4..8].copy_from_slice(&(((a >> 24) | (b << 8)) & 0x00ff_ffff | 0xff00_0000).to_le_bytes());
+                        dst[8..12].copy_from_slice(&(((b >> 16) | (c << 16)) & 0x00ff_ffff | 0xff00_0000).to_le_bytes());
+                        dst[12..16].copy_from_slice(&((c >> 8) | 0xff00_0000).to_le_bytes());
                     }
                     let src_tail = source_blocks.remainder();
                     let dst_tail = target_blocks.into_remainder();
