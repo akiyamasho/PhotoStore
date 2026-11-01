@@ -1,6 +1,6 @@
 # Issue #23 — major timeline workspace overhaul
 
-Status: source implementation `5aa7c4a3566a3825bb1acb191e9279bd556dec21` was published to `main` on 2026-10-31 in the user-approved push through `43f0e2b6fe0ac67037f32d967f49bf10c19cc3ea`. The required development build passed, and the latest consolidated runtime is staged without interrupting the existing app. Manual visual, interaction and export acceptance remain outstanding; issue #23 remains open. Current evidence and limits are recorded in [the workflow record](../timeline-workflow.md).
+Status: original overhaul, architecture and current source corrections are delivered through stable [v0.20.7](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.7), exact binary source `7c17226b4e0989a55a32c963ae4f39b63afd1054`. See [current evidence and limits](../releases/0.20.7.md). Earlier plan/reference descriptions below remain historical design context; they do not establish native manual acceptance or override the current normal-install/Space/Layers workflow.
 
 ## Requirement and evidence
 

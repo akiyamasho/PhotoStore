@@ -1,6 +1,6 @@
 # Timeline workspace
 
-> **Current delivery — 2026-11-01:** Stable [v0.20.0](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.0), exact source `19ce7efbbfe4cdbc8df004bec3a77fb0b4353a46`, is published and installed as the normal PhotoStore app and CLI. It fixes the decode-request starvation path behind a moving timeline with a frozen canvas and adds the source/relink catalog, rational project rate, bounded derived caches, opt-in disk proxies, native audio sample clock/fallback, affine Smart conversion and original-source output boundaries. Five focused engine and two format checks passed, along with the single production build and final artifact verification. See the [release receipt](releases/0.20.0.md), [architecture record](plans/video-timeline-completion-2026-11-01.md), and [GPT Image workflow reference](design/2026-11-01/timeline-completion/workflow.png). Native user/audio-device/performance acceptance is pending; no screenshot, full parity or measured real-project FPS claim is made. Prior [0.19.0 evidence](releases/0.19.0.md) remains historical.
+> **Current delivery — 2026-11-02:** Stable [v0.20.7](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.7), exact binary source `7c17226b4e0989a55a32c963ae4f39b63afd1054`, is published and installed as the normal app/CLI. This delivers stable preview toolbar geometry, background paused refresh/completion wakeup, hidden-media readiness, bounded decoder ownership/buffer reuse, eligible placed-size video preview and pan/pen event routing fixes. [Release/evidence](releases/0.20.7.md). Native scanout/input/audio acceptance is manual; historical statuses below describe earlier releases, not the current delivery.
 
 Issue #23 was reopened on 2026-10-27 after the prior timeline UI was rejected. This page records
 the major-overhaul implementation in source commit
@@ -37,12 +37,12 @@ references, with no CapCut or Photoshop assets copied.
   markers select and retime horizontally; Alt-drag edits value and time together in one
   `timeline.editor.key.moveValue` history operation. The inspector supports batch value editing for
   multiple selected keys. Audio clip details remain in the same Properties dock when audio is selected.
-- The left Media bin is a view of sources already present in the current document, with cached media
-  thumbnails and import actions. Add at Playhead and drag-to-timeline use the backend duplicate
-  command, preserving the user's clip clipboard.
-- The scoped shortcut table lives in the existing shortcut preference/export model. Timeline keys
-  are dispatched only after clicking the timeline and are excluded from the global Photoshop
-  dispatcher. This preserves canvas shortcuts, typing, modal controls, and shortcut capture. The
+- The separate Media/Import sidebar was removed in 0.20.6. Layers/clip context, Place and drop are
+  the media workflow; Relink, Replace Footage, Reload Frame and Rasterize remain on video layers.
+  Linked audio is a thin band in its video row; standalone audio has its own compact row.
+- The scoped shortcut table lives in the existing shortcut preference/export model. Most timeline keys
+  are scoped to the timeline/inspector; Space transport is available from ordinary controls outside
+  focused canvas interaction and text/modal entry. This preserves canvas shortcuts, typing, modal controls, and shortcut capture. The
   current table includes clip/key clipboard and attribute clipboard actions, transport, modes,
   markers, work area, Smart Object operations, media import, video render, audio extraction/volume,
   speed-curve controls, timeline zoom, key pane, key interpolation/navigation and player

@@ -1,0 +1,1327 @@
+{
+  "source_sha": "7c17226b4e0989a55a32c963ae4f39b63afd1054",
+  "binary_sha256": "7aa43cee3a2074770c7f38dd8a96706882ee733f5fd6bc3c4f5743f4810a361c",
+  "command": [
+    "/Users/computer/Desktop/dev/PhotoStore/target/macos-package/photostore-cli-0.20.7-macos-aarch64/photostore-cli",
+    "playback-bench",
+    "--paths",
+    "[\"/private/tmp/photostore-distinct-4k/source-1.mp4\", \"/private/tmp/photostore-distinct-4k/source-2.mp4\", \"/private/tmp/photostore-distinct-4k/source-3.mp4\", \"/private/tmp/photostore-distinct-4k/source-4.mp4\", \"/private/tmp/photostore-distinct-4k/source-5.mp4\", \"/private/tmp/photostore-distinct-4k/source-6.mp4\", \"/private/tmp/photostore-distinct-4k/source-7.mp4\", \"/private/tmp/photostore-distinct-4k/source-8.mp4\"]",
+    "--frames",
+    "90",
+    "--rate",
+    "30"
+  ],
+  "fixture_sha256": [
+    "1fa2e9a361b9935aa83527d9e5b785dd1c0dee297eb7af345e6191d4cc69bae3",
+    "93e4eb134fe0d5bb9405882c94a9fda5324d1e5e4c5ecdf1ced08e7eb6c06bca",
+    "f71589afb380571480831c31cf701f0890872740654c0acd6523a5b65aecec34",
+    "39d82248f8a67f2168a2a5fdde2545046308adab71a56f4e3d1356f56dd9833e",
+    "6bf2035924016a449fa8f456569db95f61dfd2a473de2666d40bc4517180f524",
+    "8b67c7dcb4eb00919a6b6f83965bcbc6d6f41cb703609f49373030b11564db97",
+    "520067a91845126bf9ba323050bee6e2f65e06196676584ff616a0f2832873cb",
+    "9c105cc7d6cba5a8ed3bd20dab988e6a1f89e5e4a30654c483319340e30d2e46"
+  ],
+  "fixture_provenance": {
+    "source": "Owned FFmpeg testsrc2 3840x2160 30fps H264 SDR fixture, hue-shifted into eight distinct source identities/bitstreams",
+    "hueDegrees": [
+      0,
+      45,
+      90,
+      135,
+      180,
+      225,
+      270,
+      315
+    ],
+    "durationSeconds": 6,
+    "privateMedia": false
+  },
+  "process_nice": 0,
+  "result": {
+    "activeDecodeLimit": 4,
+    "binaryVersion": "0.20.7 (7c17226b4, 2026-11-01)",
+    "cadence": {
+      "coldStartExcluded": true,
+      "maxLatenessMs": 11.590458,
+      "over5msDeadlineCount": 2,
+      "p95LatenessMs": 0.70175,
+      "perFrameLatenessMs": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.626458,
+        3.075375,
+        7.2773330000000005,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        11.590458,
+        0.0,
+        0.0,
+        0.0,
+        4.467582999999999,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.70175,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "targetRate": 30,
+      "warmFrameCount": 89
+    },
+    "clean": true,
+    "codec": "h264",
+    "coldFirstFrameMs": 976.3112080000001,
+    "configuredPreviewWorkers": 4,
+    "decodeProcessLaunches": 8,
+    "decodeReadyWaitMs": [
+      894.9579170000001,
+      1.351875,
+      2.298,
+      1.431542,
+      1.502209,
+      1.36875,
+      1.7761669999999998,
+      1.869458,
+      1.868208,
+      1.343166,
+      2.0233339999999997,
+      1.326709,
+      1.393458,
+      1.386625,
+      19.547124999999998,
+      1.356042,
+      6.735125,
+      1.471667,
+      12.642791,
+      1.452125,
+      1.347125,
+      1.334542,
+      1.6840410000000001,
+      1.369458,
+      6.544333,
+      1.456375,
+      1.373792,
+      2.765584,
+      1.606,
+      1.365,
+      1.213209,
+      1.333167,
+      6.801125,
+      1.5442909999999999,
+      1.358083,
+      2.649125,
+      1.348583,
+      6.896208,
+      1.325875,
+      1.428375,
+      1.322292,
+      1.410083,
+      1.320084,
+      2.62025,
+      1.4830830000000002,
+      2.610042,
+      1.346792,
+      1.3407499999999999,
+      1.338416,
+      2.759708,
+      1.368666,
+      6.546333,
+      1.325667,
+      1.355583,
+      1.339208,
+      1.378584,
+      1.3065,
+      1.380542,
+      1.534333,
+      1.344541,
+      1.542042,
+      1.3545829999999999,
+      1.332875,
+      1.3105829999999998,
+      12.203792,
+      3.2425,
+      1.328291,
+      1.3355419999999998,
+      1.444959,
+      1.556583,
+      1.3670419999999999,
+      1.394292,
+      1.315917,
+      3.230166,
+      1.31375,
+      5.740417,
+      1.661666,
+      1.3757920000000001,
+      1.504208,
+      2.851416,
+      1.3964590000000001,
+      1.333792,
+      1.502375,
+      1.329833,
+      1.436542,
+      1.344542,
+      1.305208,
+      1.403,
+      2.629125,
+      1.363125
+    ],
+    "distinctHashesPerLayer": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ],
+    "distinctSampledPixelHashes": 90,
+    "elapsedSeconds": 3.946641917,
+    "firstFrameEncodedTiles": [
+      {
+        "hash": "0113f3eaa8f23665f9479d338e0a05260c80786894a106ed5f8e3e3ea998dbfa",
+        "tx": 0,
+        "ty": 0
+      },
+      {
+        "hash": "faf462fc177f1d068fb06d3773658bbbc3aa9471086f10b7f92761faaae68848",
+        "tx": 0,
+        "ty": 1
+      },
+      {
+        "hash": "faf462fc177f1d068fb06d3773658bbbc3aa9471086f10b7f92761faaae68848",
+        "tx": 0,
+        "ty": 2
+      },
+      {
+        "hash": "faf462fc177f1d068fb06d3773658bbbc3aa9471086f10b7f92761faaae68848",
+        "tx": 0,
+        "ty": 3
+      },
+      {
+        "hash": "faf462fc177f1d068fb06d3773658bbbc3aa9471086f10b7f92761faaae68848",
+        "tx": 0,
+        "ty": 4
+      },
+      {
+        "hash": "faf462fc177f1d068fb06d3773658bbbc3aa9471086f10b7f92761faaae68848",
+        "tx": 0,
+        "ty": 5
+      },
+      {
+        "hash": "faf462fc177f1d068fb06d3773658bbbc3aa9471086f10b7f92761faaae68848",
+        "tx": 0,
+        "ty": 6
+      },
+      {
+        "hash": "faf462fc177f1d068fb06d3773658bbbc3aa9471086f10b7f92761faaae68848",
+        "tx": 0,
+        "ty": 7
+      },
+      {
+        "hash": "c5aae1f5aa485be6da0780028100d549b306e756e8e2c4156c771bee00d2fdb0",
+        "tx": 0,
+        "ty": 8
+      },
+      {
+        "hash": "13ba83c6b8f57791c71761774d233ae95c7ac1a14ea1063e5748fb577f31ece6",
+        "tx": 1,
+        "ty": 0
+      },
+      {
+        "hash": "faf462fc177f1d068fb06d3773658bbbc3aa9471086f10b7f92761faaae68848",
+        "tx": 1,
+        "ty": 1
+      },
+      {
+        "hash": "faf462fc177f1d068fb06d3773658bbbc3aa9471086f10b7f92761faaae68848",
+        "tx": 1,
+        "ty": 2
+      },
+      {
+        "hash": "faf462fc177f1d068fb06d3773658bbbc3aa9471086f10b7f92761faaae68848",
+        "tx": 1,
+        "ty": 3
+      },
+      {
+        "hash": "faf462fc177f1d068fb06d3773658bbbc3aa9471086f10b7f92761faaae68848",
+        "tx": 1,
+        "ty": 4
+      },
+      {
+        "hash": "faf462fc177f1d068fb06d3773658bbbc3aa9471086f10b7f92761faaae68848",
+        "tx": 1,
+        "ty": 5
+      },
+      {
+        "hash": "faf462fc177f1d068fb06d3773658bbbc3aa9471086f10b7f92761faaae68848",
+        "tx": 1,
+        "ty": 6
+      },
+      {
+        "hash": "faf462fc177f1d068fb06d3773658bbbc3aa9471086f10b7f92761faaae68848",
+        "tx": 1,
+        "ty": 7
+      },
+      {
+        "hash": "c5aae1f5aa485be6da0780028100d549b306e756e8e2c4156c771bee00d2fdb0",
+        "tx": 1,
+        "ty": 8
+      },
+      {
+        "hash": "604f9d9c9726f4a9eabc22c6d66d22a4b43110d7a2517611d1a68f7c8a251170",
+        "tx": 2,
+        "ty": 0
+      },
+      {
+        "hash": "1d5288c58e663fb25f964319ad150a71985d41fe8b1fb60670edb7cf87c4abb0",
+        "tx": 2,
+        "ty": 1
+      },
+      {
+        "hash": "1d5288c58e663fb25f964319ad150a71985d41fe8b1fb60670edb7cf87c4abb0",
+        "tx": 2,
+        "ty": 2
+      },
+      {
+        "hash": "1d5288c58e663fb25f964319ad150a71985d41fe8b1fb60670edb7cf87c4abb0",
+        "tx": 2,
+        "ty": 3
+      },
+      {
+        "hash": "1d5288c58e663fb25f964319ad150a71985d41fe8b1fb60670edb7cf87c4abb0",
+        "tx": 2,
+        "ty": 4
+      },
+      {
+        "hash": "1d5288c58e663fb25f964319ad150a71985d41fe8b1fb60670edb7cf87c4abb0",
+        "tx": 2,
+        "ty": 5
+      },
+      {
+        "hash": "1d5288c58e663fb25f964319ad150a71985d41fe8b1fb60670edb7cf87c4abb0",
+        "tx": 2,
+        "ty": 6
+      },
+      {
+        "hash": "1d5288c58e663fb25f964319ad150a71985d41fe8b1fb60670edb7cf87c4abb0",
+        "tx": 2,
+        "ty": 7
+      },
+      {
+        "hash": "04f5ff2e922448a2d00a2729d756dd34611689ffb2eb0cc2dbba890a77ef9f52",
+        "tx": 2,
+        "ty": 8
+      },
+      {
+        "hash": "debbe9312efe407eed971d5eb29d5f15c216562a2330349e27c2f6dae384b7f0",
+        "tx": 3,
+        "ty": 0
+      },
+      {
+        "hash": "881b47a519581f52a9134155b30d7acdb1b9a75e7a5d3490c15835c59c55aaba",
+        "tx": 3,
+        "ty": 1
+      },
+      {
+        "hash": "a1536b031ec7a51e5a4d18e3e946fd43e0f60c1692512f8a271080be72d5164f",
+        "tx": 3,
+        "ty": 2
+      },
+      {
+        "hash": "a1536b031ec7a51e5a4d18e3e946fd43e0f60c1692512f8a271080be72d5164f",
+        "tx": 3,
+        "ty": 3
+      },
+      {
+        "hash": "a1536b031ec7a51e5a4d18e3e946fd43e0f60c1692512f8a271080be72d5164f",
+        "tx": 3,
+        "ty": 4
+      },
+      {
+        "hash": "a1536b031ec7a51e5a4d18e3e946fd43e0f60c1692512f8a271080be72d5164f",
+        "tx": 3,
+        "ty": 5
+      },
+      {
+        "hash": "21d6e8bb5a4c7ffd6afa72aff08b7285e9cf6cd36a1cdfaf143381f6faaa5f0c",
+        "tx": 3,
+        "ty": 6
+      },
+      {
+        "hash": "a1536b031ec7a51e5a4d18e3e946fd43e0f60c1692512f8a271080be72d5164f",
+        "tx": 3,
+        "ty": 7
+      },
+      {
+        "hash": "b4734af2570314b36dab4f33abef66f9c40318311b417f8c7431d002bf3d98e9",
+        "tx": 3,
+        "ty": 8
+      },
+      {
+        "hash": "a1536b031ec7a51e5a4d18e3e946fd43e0f60c1692512f8a271080be72d5164f",
+        "tx": 4,
+        "ty": 0
+      },
+      {
+        "hash": "4c20e7766817e1053fa6d9aa63e8c3073dfd136431f46eb67c0e91329e9d0a92",
+        "tx": 4,
+        "ty": 1
+      },
+      {
+        "hash": "a1536b031ec7a51e5a4d18e3e946fd43e0f60c1692512f8a271080be72d5164f",
+        "tx": 4,
+        "ty": 2
+      },
+      {
+        "hash": "a1536b031ec7a51e5a4d18e3e946fd43e0f60c1692512f8a271080be72d5164f",
+        "tx": 4,
+        "ty": 3
+      },
+      {
+        "hash": "a1536b031ec7a51e5a4d18e3e946fd43e0f60c1692512f8a271080be72d5164f",
+        "tx": 4,
+        "ty": 4
+      },
+      {
+        "hash": "a1536b031ec7a51e5a4d18e3e946fd43e0f60c1692512f8a271080be72d5164f",
+        "tx": 4,
+        "ty": 5
+      },
+      {
+        "hash": "a1536b031ec7a51e5a4d18e3e946fd43e0f60c1692512f8a271080be72d5164f",
+        "tx": 4,
+        "ty": 6
+      },
+      {
+        "hash": "a1536b031ec7a51e5a4d18e3e946fd43e0f60c1692512f8a271080be72d5164f",
+        "tx": 4,
+        "ty": 7
+      },
+      {
+        "hash": "b4734af2570314b36dab4f33abef66f9c40318311b417f8c7431d002bf3d98e9",
+        "tx": 4,
+        "ty": 8
+      },
+      {
+        "hash": "fa3d051506d2b336a27853876535192e3a261be873011d25560308b7d6d1b2fa",
+        "tx": 5,
+        "ty": 0
+      },
+      {
+        "hash": "97048e99155498ebf29ff4d479afc743ab81074c6b3ef594d400ec438d6cb6b2",
+        "tx": 5,
+        "ty": 1
+      },
+      {
+        "hash": "a2dbaac364a34b9d9435574c23d5742a539e8aa9e69343720a55a14d2b33a24d",
+        "tx": 5,
+        "ty": 2
+      },
+      {
+        "hash": "a2dbaac364a34b9d9435574c23d5742a539e8aa9e69343720a55a14d2b33a24d",
+        "tx": 5,
+        "ty": 3
+      },
+      {
+        "hash": "a2dbaac364a34b9d9435574c23d5742a539e8aa9e69343720a55a14d2b33a24d",
+        "tx": 5,
+        "ty": 4
+      },
+      {
+        "hash": "a2dbaac364a34b9d9435574c23d5742a539e8aa9e69343720a55a14d2b33a24d",
+        "tx": 5,
+        "ty": 5
+      },
+      {
+        "hash": "a2dbaac364a34b9d9435574c23d5742a539e8aa9e69343720a55a14d2b33a24d",
+        "tx": 5,
+        "ty": 6
+      },
+      {
+        "hash": "a2dbaac364a34b9d9435574c23d5742a539e8aa9e69343720a55a14d2b33a24d",
+        "tx": 5,
+        "ty": 7
+      },
+      {
+        "hash": "96a559e25b4f6f17bf21a62e32dc779f4f1f2d027965f552984ee149594b5d01",
+        "tx": 5,
+        "ty": 8
+      },
+      {
+        "hash": "fa3d051506d2b336a27853876535192e3a261be873011d25560308b7d6d1b2fa",
+        "tx": 6,
+        "ty": 0
+      },
+      {
+        "hash": "d855cf053f8e11cc8ad4e4800e8dc17bce870981d8f3ca6a14acc86cfdc187f5",
+        "tx": 6,
+        "ty": 1
+      },
+      {
+        "hash": "654e4a46892355898a7c7033c52ebdbe81b392885b7ce2de473e5696b67570de",
+        "tx": 6,
+        "ty": 2
+      },
+      {
+        "hash": "fa3d051506d2b336a27853876535192e3a261be873011d25560308b7d6d1b2fa",
+        "tx": 6,
+        "ty": 3
+      },
+      {
+        "hash": "fa3d051506d2b336a27853876535192e3a261be873011d25560308b7d6d1b2fa",
+        "tx": 6,
+        "ty": 4
+      },
+      {
+        "hash": "fa3d051506d2b336a27853876535192e3a261be873011d25560308b7d6d1b2fa",
+        "tx": 6,
+        "ty": 5
+      },
+      {
+        "hash": "fa3d051506d2b336a27853876535192e3a261be873011d25560308b7d6d1b2fa",
+        "tx": 6,
+        "ty": 6
+      },
+      {
+        "hash": "fa3d051506d2b336a27853876535192e3a261be873011d25560308b7d6d1b2fa",
+        "tx": 6,
+        "ty": 7
+      },
+      {
+        "hash": "57fa61eeea56914d87a4d08ea765d0e2552ad06e23e16bce8ed40ad0c2dc3731",
+        "tx": 6,
+        "ty": 8
+      },
+      {
+        "hash": "8b782e83da993e487c2ef56499fd3d8f27c3565b0ed2063e767ce1072f5c0b93",
+        "tx": 7,
+        "ty": 0
+      },
+      {
+        "hash": "6cdc9b45ad439cb651e7093a63c13711647dc38a590c927309efc99e8af12306",
+        "tx": 7,
+        "ty": 1
+      },
+      {
+        "hash": "44d43ff2e0595ada989bd4d9af89b33327b3e4c4f481d63607caae6a165fb930",
+        "tx": 7,
+        "ty": 2
+      },
+      {
+        "hash": "8d20a80d891eef899f4e1b9ae788fd02888a37f43bccf98c9a2cbdae5e6757e6",
+        "tx": 7,
+        "ty": 3
+      },
+      {
+        "hash": "8d20a80d891eef899f4e1b9ae788fd02888a37f43bccf98c9a2cbdae5e6757e6",
+        "tx": 7,
+        "ty": 4
+      },
+      {
+        "hash": "8d20a80d891eef899f4e1b9ae788fd02888a37f43bccf98c9a2cbdae5e6757e6",
+        "tx": 7,
+        "ty": 5
+      },
+      {
+        "hash": "8d20a80d891eef899f4e1b9ae788fd02888a37f43bccf98c9a2cbdae5e6757e6",
+        "tx": 7,
+        "ty": 6
+      },
+      {
+        "hash": "8d20a80d891eef899f4e1b9ae788fd02888a37f43bccf98c9a2cbdae5e6757e6",
+        "tx": 7,
+        "ty": 7
+      },
+      {
+        "hash": "66eb2fcfbe4d2ca7112fe56cc375de1d23618d3515b2f813a0afd765e9baa23f",
+        "tx": 7,
+        "ty": 8
+      },
+      {
+        "hash": "29b7c901d8dca51ba8eeab4b7ec4b0543192b702f2a602d591cefc04651594f5",
+        "tx": 8,
+        "ty": 0
+      },
+      {
+        "hash": "29b7c901d8dca51ba8eeab4b7ec4b0543192b702f2a602d591cefc04651594f5",
+        "tx": 8,
+        "ty": 1
+      },
+      {
+        "hash": "62f82f460ef5b9f974768bc5277325417873acd214997a644619039281090b26",
+        "tx": 8,
+        "ty": 2
+      },
+      {
+        "hash": "29b7c901d8dca51ba8eeab4b7ec4b0543192b702f2a602d591cefc04651594f5",
+        "tx": 8,
+        "ty": 3
+      },
+      {
+        "hash": "29b7c901d8dca51ba8eeab4b7ec4b0543192b702f2a602d591cefc04651594f5",
+        "tx": 8,
+        "ty": 4
+      },
+      {
+        "hash": "29b7c901d8dca51ba8eeab4b7ec4b0543192b702f2a602d591cefc04651594f5",
+        "tx": 8,
+        "ty": 5
+      },
+      {
+        "hash": "29b7c901d8dca51ba8eeab4b7ec4b0543192b702f2a602d591cefc04651594f5",
+        "tx": 8,
+        "ty": 6
+      },
+      {
+        "hash": "29b7c901d8dca51ba8eeab4b7ec4b0543192b702f2a602d591cefc04651594f5",
+        "tx": 8,
+        "ty": 7
+      },
+      {
+        "hash": "7898a9d8347d7cf238fcc85e74fd3c4d744ed5f20b8ca881d7af08e47e4fb9fa",
+        "tx": 8,
+        "ty": 8
+      },
+      {
+        "hash": "3257c17205a3300c69719f5d2f46e3b51757f5cf2c6afc42261647f4e23bdf67",
+        "tx": 9,
+        "ty": 0
+      },
+      {
+        "hash": "29b7c901d8dca51ba8eeab4b7ec4b0543192b702f2a602d591cefc04651594f5",
+        "tx": 9,
+        "ty": 1
+      },
+      {
+        "hash": "d1161287df5f6299bbd9dcf76f78706835df2d802c1e05a27caf52fc750a2ac4",
+        "tx": 9,
+        "ty": 2
+      },
+      {
+        "hash": "29b7c901d8dca51ba8eeab4b7ec4b0543192b702f2a602d591cefc04651594f5",
+        "tx": 9,
+        "ty": 3
+      },
+      {
+        "hash": "29b7c901d8dca51ba8eeab4b7ec4b0543192b702f2a602d591cefc04651594f5",
+        "tx": 9,
+        "ty": 4
+      },
+      {
+        "hash": "b876bb603ead95567b7968021b2eb75fbf531741f9bb14bac5b22f9fde3957ba",
+        "tx": 9,
+        "ty": 5
+      },
+      {
+        "hash": "c3b9f4fe7de34f4395f8f0a27e4d1a19373de30cd7e34b0f5ca9d53f36beff5c",
+        "tx": 9,
+        "ty": 6
+      },
+      {
+        "hash": "6199c923690bd191f5279dddadae16e86aa84c8ff08e3479a91d084a6239546e",
+        "tx": 9,
+        "ty": 7
+      },
+      {
+        "hash": "7898a9d8347d7cf238fcc85e74fd3c4d744ed5f20b8ca881d7af08e47e4fb9fa",
+        "tx": 9,
+        "ty": 8
+      },
+      {
+        "hash": "dae2c28367427e207c39ea823bff4f3b1fd95479442d24f4676de74b2f2bd770",
+        "tx": 10,
+        "ty": 0
+      },
+      {
+        "hash": "5be34349ac3c135a1d3077aa06aee4135a43f4c40086d6fa485c816859ea30f6",
+        "tx": 10,
+        "ty": 1
+      },
+      {
+        "hash": "47f2dcf1bd8c4a58d71cf95a787c23c1b8e81850ab0a14c9330c6ed3adb457cb",
+        "tx": 10,
+        "ty": 2
+      },
+      {
+        "hash": "ecd8c19a3b12c9ad72e5f2252bddb7b4677684be7bdf81a81aeaa53d77cc5752",
+        "tx": 10,
+        "ty": 3
+      },
+      {
+        "hash": "1b58a04d8a53f55c055b3ee001f1f23a946911b4d1f296570ed5242d3995da65",
+        "tx": 10,
+        "ty": 4
+      },
+      {
+        "hash": "0f3eacda585bea5fc128d9aa7b40770a3aca24f2017cc3848b782d31b5a43b52",
+        "tx": 10,
+        "ty": 5
+      },
+      {
+        "hash": "4bf839b4d48107ff11c393ccd91572028279d087cbd74109f10d99e60691e904",
+        "tx": 10,
+        "ty": 6
+      },
+      {
+        "hash": "c5522824658b9e3f36e517780c75251a7cac29ebc7736b846c0581cb069b1b74",
+        "tx": 10,
+        "ty": 7
+      },
+      {
+        "hash": "9ad0b74821b87ba5d098871522028d85cde2f106f6010765ff2563cd84bcde81",
+        "tx": 10,
+        "ty": 8
+      },
+      {
+        "hash": "1b58a04d8a53f55c055b3ee001f1f23a946911b4d1f296570ed5242d3995da65",
+        "tx": 11,
+        "ty": 0
+      },
+      {
+        "hash": "09ed18eda0e1aa4e348a26d7c70a1d9963fba00b1b85cf669cade86d21a084ba",
+        "tx": 11,
+        "ty": 1
+      },
+      {
+        "hash": "e1ba666d3149dc42580ba1bff2ab3accb6c0aca5e32d05a97ad791474be47947",
+        "tx": 11,
+        "ty": 2
+      },
+      {
+        "hash": "50d010ec4da077dcd03c136a81e533f8ded222d93e9947f30f30882b5b04f94e",
+        "tx": 11,
+        "ty": 3
+      },
+      {
+        "hash": "1b58a04d8a53f55c055b3ee001f1f23a946911b4d1f296570ed5242d3995da65",
+        "tx": 11,
+        "ty": 4
+      },
+      {
+        "hash": "0a10489bfac95c97dacc54cabbafdcd7af551beb950fa7632766956cfc0a9fc8",
+        "tx": 11,
+        "ty": 5
+      },
+      {
+        "hash": "37491b2f12e2296f8a5d7e51aa639c4a45cc93428887ad9d83bb1655ee190547",
+        "tx": 11,
+        "ty": 6
+      },
+      {
+        "hash": "aa630c52a13c9266bf1307b5ad1530131c6f64f1b2e84d43ffb941682c4b6d81",
+        "tx": 11,
+        "ty": 7
+      },
+      {
+        "hash": "23b15962d1280041a61bed2fb544a04a21aeea9c44240ca1218b498714b83fec",
+        "tx": 11,
+        "ty": 8
+      },
+      {
+        "hash": "1567ea642f3aead65fcc326702f41a4c08bb52df8cc49242754e214a8c0e90cf",
+        "tx": 12,
+        "ty": 0
+      },
+      {
+        "hash": "1567ea642f3aead65fcc326702f41a4c08bb52df8cc49242754e214a8c0e90cf",
+        "tx": 12,
+        "ty": 1
+      },
+      {
+        "hash": "1567ea642f3aead65fcc326702f41a4c08bb52df8cc49242754e214a8c0e90cf",
+        "tx": 12,
+        "ty": 2
+      },
+      {
+        "hash": "47b5ce151ea9dd9c7897d56f152ee4fbd92331e9dca7813ead70879c7b5fae25",
+        "tx": 12,
+        "ty": 3
+      },
+      {
+        "hash": "4e9dd53b0ac22581e40d1c4e28f6b115c862adc5d4d7975ce7920b974bf45f85",
+        "tx": 12,
+        "ty": 4
+      },
+      {
+        "hash": "67c03cab7ca30a58db1fa2f88fe2c5209c506d438dd83351c0a83aaa14ed1853",
+        "tx": 12,
+        "ty": 5
+      },
+      {
+        "hash": "04f9e872df86e4e7b441188f0bed8cf6aea45f73f6c493139ddefa43394fa5d6",
+        "tx": 12,
+        "ty": 6
+      },
+      {
+        "hash": "a446749aea62fb963e1b55505ed2c7abb3b75731053b9d64aa7455ec0fbfe27b",
+        "tx": 12,
+        "ty": 7
+      },
+      {
+        "hash": "4162a5415e29d23373a8bedb304d6c2aec69a194026de1f8d9346fe8b49a2f6f",
+        "tx": 12,
+        "ty": 8
+      },
+      {
+        "hash": "559b9b42afa70b0a168ef438bda1da5e29adecc2e27c620a7cca623b41b8d05a",
+        "tx": 13,
+        "ty": 0
+      },
+      {
+        "hash": "559b9b42afa70b0a168ef438bda1da5e29adecc2e27c620a7cca623b41b8d05a",
+        "tx": 13,
+        "ty": 1
+      },
+      {
+        "hash": "559b9b42afa70b0a168ef438bda1da5e29adecc2e27c620a7cca623b41b8d05a",
+        "tx": 13,
+        "ty": 2
+      },
+      {
+        "hash": "d14cc9c3f88e9bc556a19467335d089eecc788a8096d97ecb0c722bce372cc01",
+        "tx": 13,
+        "ty": 3
+      },
+      {
+        "hash": "559b9b42afa70b0a168ef438bda1da5e29adecc2e27c620a7cca623b41b8d05a",
+        "tx": 13,
+        "ty": 4
+      },
+      {
+        "hash": "8b31f4e7a33e536cd49369ab74b2f8a1245dcfa151e369eb40c8aa01463790f7",
+        "tx": 13,
+        "ty": 5
+      },
+      {
+        "hash": "a933c02b510f646fd4e06a3557747eb7285a77d04aa43db9a82ee007e5fff3d3",
+        "tx": 13,
+        "ty": 6
+      },
+      {
+        "hash": "528a535d9fb419e36b5c8f664a8a68495afdf8996f584b7c93f1199b52092dcf",
+        "tx": 13,
+        "ty": 7
+      },
+      {
+        "hash": "ad5da8bc52c2eac6265bc197f0b5a511be4e465ded29826637b3d8c5a6b23c0c",
+        "tx": 13,
+        "ty": 8
+      },
+      {
+        "hash": "559b9b42afa70b0a168ef438bda1da5e29adecc2e27c620a7cca623b41b8d05a",
+        "tx": 14,
+        "ty": 0
+      },
+      {
+        "hash": "559b9b42afa70b0a168ef438bda1da5e29adecc2e27c620a7cca623b41b8d05a",
+        "tx": 14,
+        "ty": 1
+      },
+      {
+        "hash": "559b9b42afa70b0a168ef438bda1da5e29adecc2e27c620a7cca623b41b8d05a",
+        "tx": 14,
+        "ty": 2
+      },
+      {
+        "hash": "f61d15b688e407116370e7081d7a9a5bd33b74ca50905b45701347a97e74b03b",
+        "tx": 14,
+        "ty": 3
+      },
+      {
+        "hash": "15c65df821bfe7aeac2e6cf240836a0b0eb1e19885c3152b701f930233d7d380",
+        "tx": 14,
+        "ty": 4
+      },
+      {
+        "hash": "559b9b42afa70b0a168ef438bda1da5e29adecc2e27c620a7cca623b41b8d05a",
+        "tx": 14,
+        "ty": 5
+      },
+      {
+        "hash": "559b9b42afa70b0a168ef438bda1da5e29adecc2e27c620a7cca623b41b8d05a",
+        "tx": 14,
+        "ty": 6
+      },
+      {
+        "hash": "559b9b42afa70b0a168ef438bda1da5e29adecc2e27c620a7cca623b41b8d05a",
+        "tx": 14,
+        "ty": 7
+      },
+      {
+        "hash": "ad5da8bc52c2eac6265bc197f0b5a511be4e465ded29826637b3d8c5a6b23c0c",
+        "tx": 14,
+        "ty": 8
+      }
+    ],
+    "frames": 90,
+    "gpu": {
+      "accumulationFormat": "Rgba32Float",
+      "adapter": "Apple M1 Max",
+      "backend": "Metal",
+      "bytesUploaded": 25480396800,
+      "canvasHeight": 2160,
+      "canvasWidth": 3840,
+      "coldCompositeWaitMs": 33.139,
+      "compositeChunks": 1080,
+      "compositeWaitP50Ms": 12.359083,
+      "compositeWaitP95Ms": 25.842417,
+      "cpuEncodeP50Ms": 11.201374999999999,
+      "cpuEncodeP95Ms": 25.241667,
+      "densePageUploads": 8640,
+      "deviceType": "IntegratedGpu",
+      "finalCompositeCopiedToOffscreenTexture": true,
+      "finiteWaitTimeoutMs": 30000,
+      "fullFrameReadback": false,
+      "fullResolutionSources": true,
+      "fusedChunks": 1080,
+      "mappableSourcesFeature": true,
+      "perFrameCompositeWaitMs": [
+        33.139,
+        27.766292,
+        25.842417,
+        23.509417000000003,
+        18.369042,
+        16.759334,
+        27.746458,
+        32.3095,
+        34.032291,
+        13.266209,
+        11.583292,
+        14.1055,
+        20.615792000000003,
+        17.560665999999998,
+        19.102042,
+        9.223792,
+        14.725375000000001,
+        13.712958,
+        18.835958,
+        11.820541,
+        13.511875,
+        16.017500000000002,
+        14.419459000000002,
+        12.845374999999999,
+        10.135625000000001,
+        15.930791999999999,
+        14.838709,
+        13.251916000000001,
+        9.474708,
+        10.489666,
+        9.984958,
+        11.597708,
+        10.583834,
+        11.197959,
+        9.591667,
+        11.859417,
+        9.416374999999999,
+        9.128499999999999,
+        19.224916,
+        9.370625,
+        10.154708,
+        10.556708,
+        10.004791,
+        10.461042,
+        8.881375,
+        12.121917,
+        10.599167,
+        9.502875,
+        11.647,
+        14.436041,
+        10.891125,
+        12.392167,
+        12.425875,
+        14.415667000000001,
+        22.531792,
+        12.073084,
+        10.655459,
+        10.571375,
+        10.677292,
+        12.580124999999999,
+        10.543459,
+        10.277667000000001,
+        12.952292,
+        11.017791,
+        16.111833,
+        11.565667,
+        10.742792,
+        22.609792,
+        10.74925,
+        12.566832999999999,
+        12.267999999999999,
+        9.227457999999999,
+        17.005291,
+        15.902083000000001,
+        8.673791999999999,
+        22.746375,
+        15.395582999999998,
+        14.905791,
+        15.506499999999999,
+        12.359083,
+        21.737583,
+        9.199583,
+        14.4115,
+        15.325875,
+        15.811708000000001,
+        10.792584,
+        10.537457999999999,
+        10.6925,
+        9.63375,
+        10.922834
+      ],
+      "perFrameCpuEncodeMs": [
+        31.509583,
+        26.618541999999998,
+        25.241667,
+        22.267833,
+        17.282042,
+        15.20875,
+        27.226457999999997,
+        31.083125,
+        32.930833,
+        11.948959,
+        11.174042,
+        12.640333,
+        19.984667,
+        16.605041,
+        18.365333,
+        7.534375000000001,
+        13.970959,
+        10.995375,
+        18.028292,
+        9.582041,
+        12.6885,
+        14.299834,
+        13.916292,
+        11.82025,
+        9.395083,
+        14.734959,
+        14.119959,
+        12.055916,
+        8.882166999999999,
+        9.693083,
+        9.271958,
+        10.50925,
+        9.815875,
+        10.538834,
+        9.024208,
+        10.718,
+        8.868834000000001,
+        8.154167000000001,
+        18.455375,
+        8.646167,
+        9.455875,
+        9.335417,
+        9.562958,
+        9.302249999999999,
+        8.140875000000001,
+        10.918208,
+        9.732125,
+        8.522416999999999,
+        11.080292,
+        13.345332999999998,
+        10.366625,
+        11.467167,
+        11.611125,
+        13.393834,
+        21.875834,
+        11.201374999999999,
+        9.761042,
+        9.169542,
+        9.849917,
+        11.478917,
+        9.998834,
+        9.364458,
+        12.082,
+        9.820333,
+        15.148333,
+        10.23825,
+        10.2045,
+        21.472208,
+        10.257333000000001,
+        11.401665999999999,
+        11.343417,
+        8.405792,
+        16.177833,
+        14.794082999999999,
+        8.274709,
+        21.770667,
+        13.818624999999999,
+        13.731333,
+        14.767791,
+        10.927958,
+        20.995458000000003,
+        8.31725,
+        13.626125,
+        14.151583,
+        15.01975,
+        9.853375,
+        9.653875,
+        9.400833,
+        8.867625,
+        9.75925
+      ],
+      "pooledUploadPages": 8640,
+      "sharedBufferChunks": 1080,
+      "tilesUploaded": 97200,
+      "uploadPackP50Ms": 7.591461,
+      "uploadPackP95Ms": 19.646624
+    },
+    "hardwarePreviewAttempts": 8,
+    "hardwarePreviewFallbacks": 0,
+    "height": 2160,
+    "historyUnchanged": true,
+    "layerCount": 8,
+    "layerPropertiesPreserved": true,
+    "maxEstimatedDecoderSessionBytes": 1061683200,
+    "maxRetainedDerivedBytes": 2123366400,
+    "path": "/private/tmp/photostore-distinct-4k/source-1.mp4",
+    "persistentDecoderLaunches": 8,
+    "pixelHashSampling": {
+      "entireSelectedRows": true,
+      "maximumTilesPerLayer": 8,
+      "rowStride": 16
+    },
+    "pixelSampleCheck": {
+      "maximumChannelError": 0.0,
+      "passed": true,
+      "samples": 4,
+      "timed": false,
+      "tolerance": 0.004021568689495325
+    },
+    "polls": 870,
+    "preparationMs": 777.658,
+    "previewWorkers": 4,
+    "rendererScope": "PhotoStore native wgpu compositor on the reported hardware adapter; per-frame completion includes render submission and bounded device.poll wait. No hardware decode claim.",
+    "requestWaitMs": [
+      976.3112080000001,
+      32.458915999999995,
+      31.681208,
+      32.193125,
+      32.503584000000004,
+      31.90275,
+      29.525458,
+      34.181792,
+      35.90275,
+      27.010416,
+      30.433208999999998,
+      33.3525,
+      29.376375,
+      31.932250000000003,
+      38.651458,
+      22.470334,
+      31.293166999999997,
+      33.881375,
+      31.481333,
+      30.042709000000002,
+      28.361708,
+      33.212917000000004,
+      31.454957999999998,
+      31.744291,
+      30.915249999999997,
+      30.386209,
+      31.944667000000003,
+      31.758416999999998,
+      32.770916,
+      31.176667000000002,
+      31.902959000000003,
+      30.766624999999998,
+      29.936416,
+      33.510583,
+      31.697250000000004,
+      30.77,
+      32.58975,
+      28.860332999999997,
+      32.477,
+      33.422625,
+      31.015500000000003,
+      29.254083,
+      34.159667,
+      29.057583,
+      30.857958,
+      31.990084000000003,
+      32.09775,
+      31.947875,
+      29.531875,
+      30.230583,
+      32.683458,
+      29.542166,
+      32.604583999999996,
+      31.019624999999998,
+      29.827666999999998,
+      34.796334,
+      31.263083999999996,
+      31.859167,
+      31.378666,
+      29.600041,
+      33.730125,
+      31.121708,
+      31.196792000000002,
+      32.241416,
+      28.318167000000003,
+      31.218709,
+      34.663790999999996,
+      27.935084,
+      32.945292,
+      30.541249999999998,
+      29.041875,
+      34.469083,
+      28.924167,
+      32.217375,
+      29.431416,
+      31.521834,
+      34.153916,
+      30.002042,
+      32.597750000000005,
+      31.893875,
+      29.530041999999998,
+      35.145917,
+      29.499084,
+      31.960083,
+      31.497749999999996,
+      32.907417,
+      31.256958,
+      31.521459,
+      31.532583000000002,
+      29.913166
+    ],
+    "retainedBudgetBytes": 2147483648,
+    "scope": "Headless full-resolution PhotoStore GPU compositor completion for each decoded presentation frame. Excludes GUI, display scanout, input and audio output.",
+    "sourceFps": {
+      "denominator": 1,
+      "numerator": 30
+    },
+    "sources": [
+      {
+        "codec": "h264",
+        "height": 2160,
+        "path": "/private/tmp/photostore-distinct-4k/source-1.mp4",
+        "width": 3840
+      },
+      {
+        "codec": "h264",
+        "height": 2160,
+        "path": "/private/tmp/photostore-distinct-4k/source-2.mp4",
+        "width": 3840
+      },
+      {
+        "codec": "h264",
+        "height": 2160,
+        "path": "/private/tmp/photostore-distinct-4k/source-3.mp4",
+        "width": 3840
+      },
+      {
+        "codec": "h264",
+        "height": 2160,
+        "path": "/private/tmp/photostore-distinct-4k/source-4.mp4",
+        "width": 3840
+      },
+      {
+        "codec": "h264",
+        "height": 2160,
+        "path": "/private/tmp/photostore-distinct-4k/source-5.mp4",
+        "width": 3840
+      },
+      {
+        "codec": "h264",
+        "height": 2160,
+        "path": "/private/tmp/photostore-distinct-4k/source-6.mp4",
+        "width": 3840
+      },
+      {
+        "codec": "h264",
+        "height": 2160,
+        "path": "/private/tmp/photostore-distinct-4k/source-7.mp4",
+        "width": 3840
+      },
+      {
+        "codec": "h264",
+        "height": 2160,
+        "path": "/private/tmp/photostore-distinct-4k/source-8.mp4",
+        "width": 3840
+      }
+    ],
+    "startupLookaheadCapMs": 150,
+    "startupLookaheadReady": true,
+    "startupLookaheadWaitMs": 69.987208,
+    "warmFramesPerSecond": 29.96299359203777,
+    "warmP50Ms": 31.521459,
+    "warmP95Ms": 34.663790999999996,
+    "width": 3840
+  },
+  "data_and_gpu_checks_passed": true,
+  "encoded_first_frame_matches_prior_conversion": true,
+  "paced_target_passed": true,
+  "passed": true,
+  "scope": "One bounded original-resolution eight-distinct-source 4K H.264/30fps, 90-frame hardware compositor run through asynchronous engine presentation. Excludes native egui layout/input/scanout/audio output and eligible scaled-preview path. Not CapCut parity."
+}
