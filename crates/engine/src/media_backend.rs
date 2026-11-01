@@ -1063,7 +1063,10 @@ fn decoder_codec(info: &MediaInfo) -> Option<&'static str> {
 }
 
 fn opaque_8bit_source(info:&MediaInfo)->bool {
-    matches!(info.pixel_format.as_deref(),Some("yuv420p"|"yuv422p"|"yuv444p"|"yuv440p"|"yuv411p"|"yuv410p"|"yuvj420p"|"yuvj422p"|"yuvj444p"|"yuvj440p"|"nv12"))
+    // Some codecs (notably VP8/VP9) advertise yuv420p while carrying auxiliary
+    // alpha that their selected decoder restores. Only AVC is proven opaque here.
+    info.codec_name.as_deref()==Some("h264") &&
+        matches!(info.pixel_format.as_deref(),Some("yuv420p"|"yuv422p"|"yuv444p"|"yuv440p"|"yuv411p"|"yuv410p"|"yuvj420p"|"yuvj422p"|"yuvj444p"|"yuvj440p"|"nv12"))
 }
 
 fn parse_rational(s: &str) -> Result<Rational> {
