@@ -1,0 +1,21 @@
+{
+  "source_sha": "e06c8ae5d66db99bf43b76a3a91b2f9b9c5a6508",
+  "binary_sha256": "90e18adbd5dad53ec37e790ffbf4b34a21be9e6e2264dcabf5a545f7deec8c8b",
+  "passed": true,
+  "scope": "Focused final-CLI data-safety check only: static video placement, source/frame tile preservation, frame advance, native save/reopen, rasterize appearance. No GUI/focus/performance/audio-output acceptance.",
+  "fixture": "Owned synthetic 128x96 3-frame H.264 testsrc2; no private attachments used.",
+  "original_sha256": "821169501da4e7d8e67ade1f06277cdaa08c6750e53201695f205c35996361e1",
+  "placement": [
+    0.5,
+    0.0,
+    0.0,
+    0.0,
+    0.5,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+  ],
+  "frame": 1,
+  "rasterize_identical": true
+}
