@@ -22,3 +22,7 @@ One exact-source normal app/CLI production build, required artifact verification
 
 The original timeline/keyframe/shortcut requirements are implemented by the prior cited releases. Unsupported perspective animation, HDR/codec limits and the separate Smart affine footprint guard remain explicit product boundaries; they are not fabricated new parity claims. Close only landed source corrections with actual evidence. Keep any unverified native performance acceptance accurately distinguished from implemented/compiler-verified behavior.
 
+
+## Measured preparation failure
+
+The first unpublished 0.20.7 candidate passed pixel/state preservation but failed the unchanged eight-original-4K paced target at 15.19 frames/s. A targeted two-second sample identified repeated Surface::content_bounds scans in presentation readiness and synchronization. Identity transforms need neither footprint computation nor a destination allocation: skip those scans before touching pixels, retaining nontrivial transform validation. Eligible placed-size previews likewise avoid a decoded-bounds scan when their effective transform is identity. Returning an already-correct RGBA8 decode avoids another tile-map clone. Re-run only the failed bounded playback measurement on the corrected final binary, plus the required placement preservation boundary. [Failure receipt](../performance/0.20.7-before.json).

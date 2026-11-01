@@ -131,7 +131,12 @@ fn decoded_surface_from_rgba(info:&MediaInfo,rgba_bytes:Option<&[u8]>,rgb24_byte
             .ok_or_else(||MediaBackendError::InvalidInput("invalid decoded RGB24 frame geometry or byte count".into()));}
         Err(MediaBackendError::InvalidInput("decoded frame has no pixel data".into()))
     };
-    if primaries==0 && transfer==0 {return Ok(source()?.convert(format));}
+    if primaries==0 && transfer==0 {
+        let decoded=source()?;
+        // RGB24 input already expands to the native opaque RGBA8 surface. Avoid cloning its
+        // tile map through the identity `Surface::convert` on the common preview format.
+        return if format==PixelFormat::RGBA8 {Ok(decoded)} else {Ok(decoded.convert(format))};
+    }
     type Entry=std::sync::OnceLock<std::result::Result<std::sync::Arc<Transform>,String>>;
     static COLOR:[Entry;15]=[const{std::sync::OnceLock::new()};15];
     let transform=COLOR[primaries*5+transfer].get_or_init(|| {

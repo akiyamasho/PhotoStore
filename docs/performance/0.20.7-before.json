@@ -1,0 +1,50 @@
+{
+  "source_sha": "ba231c6551f75ca949d7311909c6a209aa471c8d",
+  "binary_sha256": "df1d4e2497bbf76a0c65db89454a559ea3dceb91a556c49460aed7104354148e",
+  "command": [
+    "/Users/computer/Desktop/dev/PhotoStore/target/macos-package/photostore-cli-0.20.7-macos-aarch64/photostore-cli",
+    "playback-bench",
+    "--paths",
+    "[\"/private/tmp/photostore-distinct-4k/source-1.mp4\", \"/private/tmp/photostore-distinct-4k/source-2.mp4\", \"/private/tmp/photostore-distinct-4k/source-3.mp4\", \"/private/tmp/photostore-distinct-4k/source-4.mp4\", \"/private/tmp/photostore-distinct-4k/source-5.mp4\", \"/private/tmp/photostore-distinct-4k/source-6.mp4\", \"/private/tmp/photostore-distinct-4k/source-7.mp4\", \"/private/tmp/photostore-distinct-4k/source-8.mp4\"]",
+    "--frames",
+    "90",
+    "--rate",
+    "30"
+  ],
+  "data_and_gpu_checks_passed": true,
+  "paced_target_passed": false,
+  "scope": "One bounded original-resolution eight-distinct-source 4K H.264/30fps, 90-frame hardware compositor run through asynchronous engine presentation. Excludes native egui layout/input/scanout/audio output and eligible scaled-preview path. Not CapCut parity.",
+  "measurements": {
+    "warmFramesPerSecond": 15.192475000390624,
+    "warmP50Ms": 59.64075,
+    "warmP95Ms": 81.612875,
+    "coldFirstFrameMs": 1919.5587079999998,
+    "distinctHashesPerLayer": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ],
+    "decodeProcessLaunches": 8,
+    "historyUnchanged": true,
+    "clean": true
+  },
+  "gpu": {
+    "adapter": "Apple M1 Max",
+    "backend": "Metal",
+    "fullResolutionSources": true,
+    "compositeWaitP50Ms": 8.495542,
+    "compositeWaitP95Ms": 12.575458
+  },
+  "cadence": {
+    "p95LatenessMs": 2774.592792,
+    "maxLatenessMs": 2889.8713740000003,
+    "over5msDeadlineCount": 89,
+    "warmFrameCount": 89
+  },
+  "profile": "A targeted two-second sample of the same owned reproduction confirmed Surface::content_bounds in request_presentation_frame/sync_layers/linked readiness. RGB24 construction was the intended fast path. Raw diagnostic sample stays local."
+}

@@ -556,6 +556,7 @@ fn validate_resident_video_placements(doc: &Document) -> Result<()> {
     let ranges = doc.timeline.as_ref().map(|timeline| timeline.layer_ranges.as_slice()).unwrap_or(&[]);
     for (_, _, layer) in doc.walk() {
         let Some(video) = layer.video.as_ref().filter(|video| video.movie_backing.is_none()) else { continue };
+        if video.placement == Homography::IDENTITY.0 { continue; }
         let index = source_index(frame, fps, video, ranges.iter().find(|range| range.layer == layer.id));
         let Some(source) = video.frames.get(index.min(video.frames.len().saturating_sub(1))) else { continue };
         crate::transform_cmds::validate_video_placement(&Homography(video.placement), source.content_bounds())?;
@@ -636,6 +637,9 @@ fn linked_movie_trusted_metadata_bounds(doc:&Document,video:&VideoData)->Option<
 }
 
 fn validate_linked_movie_frame(doc:&Document,video:&VideoData,surface:&Surface,reduced:bool)->Result<()> {
+    // Identity placement never warps or allocates a destination. The decoder already validates
+    // source geometry/budgets; scanning every boundary tile here served no safety purpose.
+    if video.placement == Homography::IDENTITY.0 { return Ok(()); }
     let bounds=if reduced {
         linked_movie_trusted_metadata_bounds(doc,video).ok_or_else(||EngineError::Other("trusted linked movie geometry is unavailable".into()))?
     } else {
@@ -732,21 +736,25 @@ fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_f
             .and_then(|(surface,placement,reduced)| {
                 let surface=if l.video.as_ref().is_some_and(|v|v.movie_backing.is_some()) {match movie_surface_for_document(geometry,surface) {Ok(surface)=>surface,Err(error)=>{crate::movie_cache::note_error(error.to_string());return None;}}} else {surface};
                 let Some(video) = l.video.as_ref() else { return Some(surface) };
-                let src = surface.content_bounds();
                 let validation=if video.movie_backing.is_some() {
                     validate_linked_movie_frame(geometry,video,&surface,reduced)
-                } else {crate::transform_cmds::validate_video_placement(&placement, src)};
+                } else if placement == Homography::IDENTITY { Ok(()) }
+                else {crate::transform_cmds::validate_video_placement(&placement, surface.content_bounds())};
                 if let Err(error) = validation {
                     crate::movie_cache::note_error(error.to_string());
                     return None;
                 }
-                let surface = if src.is_empty() || placement==Homography::IDENTITY { surface }
-                    else if let Some((dx,dy))=integer_translation(&placement) { surface.translated(dx,dy,src) }
-                    else { warp_surface(&surface, src, &placement, Interp::Bicubic) };
+                let surface = if placement==Homography::IDENTITY { surface }
+                    else {
+                        let src = surface.content_bounds();
+                        if src.is_empty() { surface }
+                        else if let Some((dx,dy))=integer_translation(&placement) { surface.translated(dx,dy,src) }
+                        else { warp_surface(&surface, src, &placement, Interp::Bicubic) }
+                    };
                 let (dx, dy, _) = desired.map_or((0, 0, 1), |p| (p.0, p.1, 1));
                 let dx = dx.clamp(-1_000_000, 1_000_000);
                 let dy = dy.clamp(-1_000_000, 1_000_000);
-                Some(if dx == 0 && dy == 0 { surface.clone() } else { surface.translated(dx, dy, surface.content_bounds()) })
+                Some(if dx == 0 && dy == 0 { surface } else { surface.translated(dx, dy, surface.content_bounds()) })
             });
         if let Some(f) = frame
             && let LayerContent::Raster(s) = &mut l.content
