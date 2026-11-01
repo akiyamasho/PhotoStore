@@ -39,6 +39,7 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
         power_preference: wgpu::PowerPreference::HighPerformance,
         force_fallback_adapter: false,
         compatible_surface: None,
+        ..Default::default()
     }))
     .map_err(|e| format!("No hardware GPU adapter is available for playback-bench: {e}. Use a machine with a supported GPU adapter."))?;
     let adapter_info = adapter.get_info();
@@ -232,7 +233,7 @@ fn verify_pixels(
         .map_err(|_| "GPU sample completion failed")?
         .map_err(|e| e.to_string())?;
     receive.recv_timeout(WAIT_TIMEOUT).map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
-    let mapped = buffer.slice(..).get_mapped_range();
+    let mapped = buffer.slice(..).get_mapped_range().map_err(|e| format!("GPU sample readback failed: {e}"))?;
     let mut maximum = 0.0f32;
     for (i, (_, _, color)) in expected.iter().enumerate() {
         let bytes = &mapped[i * 256..i * 256 + bytes_per_pixel];
