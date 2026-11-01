@@ -46,7 +46,9 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
     if adapter_info.device_type == wgpu::DeviceType::Cpu {
         return Err(format!("playback-bench selected CPU adapter `{}` ({:?}); a hardware GPU adapter is required", adapter_info.name, adapter_info.backend));
     }
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features: photostore_gpu::shared_source_features(&adapter), ..Default::default()
+    }))
         .map_err(|e| format!("Could not create the playback-bench GPU device: {e}"))?;
     let max_texture_dimension = device.limits().max_texture_dimension_2d;
     let health = photostore_gpu::DeviceHealth::watch(&device);
@@ -60,6 +62,7 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
     let mut uploaded_tiles = 0usize;
     let mut dense_page_uploads = 0usize;
     let mut fused_chunks = 0usize;
+    let mut buffer_source_chunks = 0usize;
     let mut pooled_upload_pages = 0usize;
     let mut pack_ms = Vec::with_capacity(frames);
     let mut render_chunks = 0usize;
@@ -124,6 +127,7 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
         uploaded_tiles = uploaded_tiles.saturating_add(stats.tiles_uploaded);
         dense_page_uploads = dense_page_uploads.saturating_add(stats.dense_page_uploads);
         fused_chunks = fused_chunks.saturating_add(stats.fused_chunks);
+        buffer_source_chunks = buffer_source_chunks.saturating_add(stats.buffer_source_chunks);
         pooled_upload_pages = pooled_upload_pages.saturating_add(stats.pooled_upload_pages);
         pack_ms.push(stats.upload_pack_ms);
         render_chunks = render_chunks.saturating_add(stats.chunks);
@@ -186,6 +190,8 @@ pub(super) fn run(args: &Args, out: &mut dyn Write, _err: &mut dyn Write) -> R {
                 "tilesUploaded": uploaded_tiles,
             "densePageUploads": dense_page_uploads,
                 "fusedChunks": fused_chunks,
+                "sharedBufferChunks": buffer_source_chunks,
+                "mappableSourcesFeature": device.features().contains(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS),
                 "pooledUploadPages": pooled_upload_pages,
                 "uploadPackP50Ms": warm_pack_ms[((warm_pack_ms.len() - 1) as f64 * 0.50).round() as usize],
                 "uploadPackP95Ms": warm_pack_ms[((warm_pack_ms.len() - 1) as f64 * 0.95).round() as usize],

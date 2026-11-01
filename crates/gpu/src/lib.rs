@@ -33,6 +33,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod bounds;
+mod buffer_stack;
 mod fx;
 mod normal_stack;
 mod page_upload;
@@ -56,6 +57,22 @@ pub use plan::{Kernel, Plan, Role, Unsupported, plan};
 /// (Posterize, Threshold, Hard Mix, Dissolve) must land on the same side of their thresholds as
 /// the CPU reference, and Color Burn/Dodge amplify input error.
 pub const ACC_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float; // default accumulation format; `preferred_acc_format` downgrades to Rgba16Float where 32-bit float isn't renderable
+
+/// Optional direct shared-memory source reads are confined to supported Apple Silicon adapters.
+/// Other devices retain the portable texture path and its existing device requirements.
+pub fn shared_source_features(adapter: &wgpu::Adapter) -> wgpu::Features {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        let info = adapter.get_info();
+        if info.backend == wgpu::Backend::Metal && info.device_type == wgpu::DeviceType::IntegratedGpu
+            && adapter.limits().max_storage_buffers_per_shader_stage >= 8
+            && adapter.features().contains(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS) {
+            return wgpu::Features::MAPPABLE_PRIMARY_BUFFERS;
+        }
+    }
+    let _ = adapter;
+    wgpu::Features::empty()
+}
 /// Effect intermediates (distances, blurs) and layer shapes.
 const MAP32: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 /// Final effect coverage maps (0..1; half precision is ~1/4000).
@@ -100,6 +117,7 @@ pub struct Stats {
     pub dense_page_uploads: usize,
     /// Chunks whose supported Normal stack was composed in one pass.
     pub fused_chunks: usize,
+    pub buffer_source_chunks: usize,
     pub pooled_upload_pages: usize,
     pub upload_pack_ms: f64,
     pub bytes_uploaded: usize,
@@ -392,6 +410,10 @@ pub struct Compositor {
     kit: Kit,
     normal_stack: Option<normal_stack::Pipelines>,
     normal_stack_disabled: bool,
+    buffer_stack: Option<buffer_stack::Pipelines>,
+    buffer_stack_disabled: bool,
+    buffer_sources: bool,
+    upload_storage: bool,
     upload_belt: Option<wgpu::util::StagingBelt>,
     upload_jobs: Vec<page_upload::Job>,
     pooled_uploads: bool,
@@ -604,6 +626,10 @@ impl Compositor {
             kit: Kit { pipelines, bgl0, bgl1, dummy },
             normal_stack: None,
             normal_stack_disabled: false,
+            buffer_stack: None,
+            buffer_stack_disabled: false,
+            buffer_sources: false,
+            upload_storage: false,
             upload_belt: None,
             upload_jobs: Vec::new(),
             pooled_uploads: false,
@@ -880,6 +906,11 @@ impl Compositor {
         self.pooled_uploads = cfg!(not(target_arch = "wasm32")) && flush
             && self.acc_format == wgpu::TextureFormat::Rgba32Float
             && !self.normal_stack_disabled && normal_stack::recognize(&plan).is_some();
+        self.buffer_sources = self.pooled_uploads && !self.buffer_stack_disabled && region == canvas
+            && device.features().contains(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS)
+            && doc.walk().into_iter().any(|(_, _, layer)| layer.video.as_ref().is_some_and(|video| {
+                video.movie_backing.is_some() && matches!(&video.source, photostore_doc::VideoSource::File { .. })
+            }));
         let mut regular_page = TILE_SIZE as u32;
         while regular_page * 2 <= self.max_dim.min(PAGE) { regular_page *= 2; }
         let page = if self.pooled_uploads { regular_page.min(CHUNK) } else { regular_page };
@@ -902,7 +933,13 @@ impl Compositor {
                 }))).map_err(|_| Unsupported("GPU upload completion failed; use CPU rendering or restart the graphics device".into()))?
                     .map_err(|error| Unsupported(format!("GPU upload completion failed: {error}")))?;
             }
-            if self.upload_belt.is_none() { self.upload_belt = Some(wgpu::util::StagingBelt::new(device.clone(), 32 << 20)); }
+            if self.upload_belt.is_none() || self.upload_storage != self.buffer_sources {
+                self.upload_belt = Some(if self.buffer_sources {
+                    wgpu::util::StagingBelt::new_with_buffer_usages(device.clone(), 32 << 20,
+                        wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::STORAGE)
+                } else { wgpu::util::StagingBelt::new(device.clone(), 32 << 20) });
+                self.upload_storage = self.buffer_sources;
+            }
         }
         self.pattern_mode = doc.pixel_format().mode;
         let mut stats = Stats { passes: plan.passes.len(), slots: plan.slots, ..Default::default() };
@@ -1146,17 +1183,6 @@ impl Compositor {
         if chunks.is_empty() {
             return Ok(());
         }
-        let bound = self.bind_cell(device, queue, encoder, doc, plan, paged, cell, fr, stats);
-        if !self.upload_jobs.is_empty() {
-            let started = std::time::Instant::now();
-            let result = page_upload::pack(std::mem::take(&mut self.upload_jobs));
-            stats.upload_pack_ms += started.elapsed().as_secs_f64() * 1000.0;
-            if let Err(error) = result {
-                self.upload_belt = None;
-                return Err(error);
-            }
-        }
-
         // Chunk pool.
         while self.pool.len() < plan.slots as usize {
             let t = device.create_texture(&wgpu::TextureDescriptor {
@@ -1174,6 +1200,21 @@ impl Compositor {
             });
             let v = t.create_view(&Default::default());
             self.pool.push((t, v));
+        }
+
+        if self.buffer_sources && self.try_run_buffer_stack(device, queue, encoder, plan, fr, cell, chunks, stats, sink)? {
+            return Ok(());
+        }
+
+        let bound = self.bind_cell(device, queue, encoder, doc, plan, paged, cell, fr, stats);
+        if !self.upload_jobs.is_empty() {
+            let started = std::time::Instant::now();
+            let result = page_upload::pack(std::mem::take(&mut self.upload_jobs));
+            stats.upload_pack_ms += started.elapsed().as_secs_f64() * 1000.0;
+            if let Err(error) = result {
+                self.upload_belt = None;
+                return Err(error);
+            }
         }
 
         if self.try_run_normal_stack(device, queue, encoder, plan, &bound, chunks, stats, sink) {
