@@ -460,7 +460,10 @@ fn linked_frame_status(doc: &Document) -> Result<bool> {
         let seconds = linked_source_seconds(cur, fps, video, ranges.iter().find(|r| r.layer == layer.id))?;
         let photostore_doc::VideoSource::File { path } = &video.source else { return Err(EngineError::Other("linked movie has no original source path".into())) };
         match movie_source_frame(path, seconds, PixelFormat{mode:photostore_color::ColorMode::Rgb,..doc.pixel_format()}, None, &[]) {
-            Ok(Some(_)) => {},
+            Ok(Some(surface)) => {
+                let surface = movie_surface_for_document(doc, surface)?;
+                crate::transform_cmds::validate_video_placement(&Homography(video.placement), surface.content_bounds())?;
+            },
             Ok(None) => return Ok(false),
             Err(error) => return Err(EngineError::Other(error)),
         }
@@ -496,7 +499,12 @@ pub(crate) fn request_presentation_frame(doc:&Document,frame:usize)->Result<bool
         use std::hash::{Hash,Hasher};
         let mut identity=std::collections::hash_map::DefaultHasher::new();
         (doc.id.0,layer.id.0,crate::movie_cache::consumer_namespace()).hash(&mut identity);
-        if movie_source_frame(path,seconds,PixelFormat{mode:photostore_color::ColorMode::Rgb,..doc.pixel_format()},Some(identity.finish()),&times).map_err(EngineError::Other)?.is_none(){ready=false;}
+        if let Some(surface) = movie_source_frame(path,seconds,PixelFormat{mode:photostore_color::ColorMode::Rgb,..doc.pixel_format()},Some(identity.finish()),&times).map_err(EngineError::Other)? {
+            let surface = movie_surface_for_document(doc, surface)?;
+            crate::transform_cmds::validate_video_placement(&Homography(video.placement), surface.content_bounds())?;
+        } else {
+            ready=false;
+        }
     }
     Ok(ready)
 }
@@ -504,6 +512,7 @@ pub(crate) fn request_presentation_frame(doc:&Document,frame:usize)->Result<bool
 /// Exact-time playback sampling, including editable nested documents. A loading child must not
 /// be published as a current frame merely because its last-valid Smart Object preview exists.
 pub(crate) fn sync_for_presentation(doc: &mut Document) -> Result<bool> {
+    validate_resident_video_placements(doc)?;
     sync_plain_impl(doc,true,true);
     if !linked_frame_status(doc)? { return Ok(false); }
     let ids: Vec<_> = doc.walk().into_iter().filter_map(|(_, _, l)| (l.visible && matches!(l.content, LayerContent::Smart(_))).then_some(l.id)).collect();
@@ -514,6 +523,19 @@ pub(crate) fn sync_for_presentation(doc: &mut Document) -> Result<bool> {
         }
     }
     Ok(true)
+}
+
+fn validate_resident_video_placements(doc: &Document) -> Result<()> {
+    let frame = doc.timeline.as_ref().map_or(0, |timeline| timeline.current);
+    let fps = doc.timeline.as_ref().map_or(30.0, |timeline| timeline.project_rate().as_f64());
+    let ranges = doc.timeline.as_ref().map(|timeline| timeline.layer_ranges.as_slice()).unwrap_or(&[]);
+    for (_, _, layer) in doc.walk() {
+        let Some(video) = layer.video.as_ref().filter(|video| video.movie_backing.is_none()) else { continue };
+        let index = source_index(frame, fps, video, ranges.iter().find(|range| range.layer == layer.id));
+        let Some(source) = video.frames.get(index.min(video.frames.len().saturating_sub(1))) else { continue };
+        crate::transform_cmds::validate_video_placement(&Homography(video.placement), source.content_bounds())?;
+    }
+    Ok(())
 }
 
 fn movie_source_frame(path:&str,seconds:f64,format:PixelFormat,consumer:Option<u64>,times:&[f64])->std::result::Result<Option<Surface>,String> {
@@ -612,15 +634,14 @@ fn sync_layers(geometry: &Document, layers: &mut [Layer], cur: usize, timeline_f
             })
             .and_then(|surface| {
                 let surface=if l.video.as_ref().is_some_and(|v|v.movie_backing.is_some()) {match movie_surface_for_document(geometry,surface) {Ok(surface)=>surface,Err(error)=>{crate::movie_cache::note_error(error.to_string());return None;}}} else {surface};
-                let surface = l.video.as_ref().map_or(surface.clone(), |video| {
-                    let placement = Homography(video.placement);
-                    if placement == Homography::IDENTITY {
-                        surface.clone()
-                    } else {
-                        let src = surface.content_bounds();
-                        if src.is_empty() { surface.clone() } else { warp_surface(&surface, src, &placement, Interp::Bicubic) }
-                    }
-                });
+                let Some(video) = l.video.as_ref() else { return Some(surface) };
+                let placement = Homography(video.placement);
+                let src = surface.content_bounds();
+                if let Err(error) = crate::transform_cmds::validate_video_placement(&placement, src) {
+                    crate::movie_cache::note_error(error.to_string());
+                    return None;
+                }
+                let surface = if placement == Homography::IDENTITY || src.is_empty() { surface } else { warp_surface(&surface, src, &placement, Interp::Bicubic) };
                 let (dx, dy, _) = desired.map_or((0, 0, 1), |p| (p.0, p.1, 1));
                 let dx = dx.clamp(-1_000_000, 1_000_000);
                 let dy = dy.clamp(-1_000_000, 1_000_000);
@@ -1403,6 +1424,9 @@ fn rasterize(s: &mut Session, _p: &Value) -> Result<Value> {
             let _blocking=crate::movie_cache::BlockingScope::enter();
             let source=crate::movie_cache::frame_at_seconds(path,time,PixelFormat{mode:photostore_color::ColorMode::Rgb,..doc.pixel_format()}).map_err(EngineError::Other)?.ok_or_else(||EngineError::Other("original frame is unavailable".into()))?;
             let surface=movie_surface_for_document(doc,source)?;
+            let placement = Homography(video.placement);
+            crate::transform_cmds::validate_video_placement(&placement, surface.content_bounds())?;
+            let surface = if placement == Homography::IDENTITY { surface } else { warp_surface(&surface, surface.content_bounds(), &placement, Interp::Bicubic) };
             let (dx,dy)=crate::position_cmds::sample_layer_position(doc,&snapshot,doc.timeline.as_ref().map_or(0,|t|t.current));
             let (dx,dy)=(dx.clamp(-1_000_000,1_000_000),dy.clamp(-1_000_000,1_000_000));
             Some(if dx==0 && dy==0 {surface}else{surface.translated(dx,dy,surface.content_bounds())})

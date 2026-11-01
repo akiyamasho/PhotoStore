@@ -67,6 +67,13 @@ pub fn entries(l: &Layer, multi: bool, has_selection: bool) -> Vec<Entry> {
     v.push(Some((tl!("Frame from Layers…"), "layer.new.frameFromLayers")));
     v.push(None);
     v.push(Some((tl!("Convert to Smart Object"), "layer.smartObjects.convertToSmartObject")));
+    if !multi && l.video.is_some() {
+        v.push(Some(("Replace Footage…", "layer.videoLayers.replaceFootage")));
+        v.push(Some(("Reload Frame", "layer.videoLayers.reloadFrame")));
+        if l.video.as_ref().is_some_and(|video| video.asset_id.is_some()) {
+            v.push(Some(("Relink Source…", "media.sources.relink")));
+        }
+    }
     if multi {
         // One item for the whole selection, whatever the clicked layer is: Rasterize acts on every
         // selected layer. Edit Contents and Convert to Layers work on one layer, so they are not
@@ -95,6 +102,7 @@ pub fn entries(l: &Layer, multi: bool, has_selection: bool) -> Vec<Entry> {
                 v.push(Some(("Rasterize Layer", "layer.rasterize.smartObject")));
             }
             LayerContent::Fill(_) => v.push(Some(("Rasterize Layer", "layer.rasterize.fillContent"))),
+            LayerContent::Raster(_) if l.video.is_some() => v.push(Some(("Rasterize Video Layer", "layer.videoLayers.rasterize"))),
             _ => v.push(Some(("Rasterize Layer", "layer.rasterize.layer"))),
         }
     }

@@ -22,6 +22,35 @@ fn bad(msg: impl Into<String>) -> EngineError {
     EngineError::BadParams { cmd: "edit.transform".into(), msg: msg.into() }
 }
 
+/// Validate the output footprint before a source frame is queued for projective warping.
+/// This is shared by edit-time transforms and every video presentation/rasterize boundary.
+pub(crate) fn validate_video_placement(placement: &Homography, source: Rect) -> Result<()> {
+    if placement.0.iter().any(|v| !v.is_finite()) || placement.inverse().is_none() {
+        return Err(bad("video placement must be finite and invertible"));
+    }
+    if *placement == Homography::IDENTITY || source.is_empty() {
+        return Ok(());
+    }
+    let corners = [(source.x0, source.y0), (source.x1, source.y0), (source.x1, source.y1), (source.x0, source.y1)];
+    let denominators: Vec<_> = corners.iter().map(|(x, y)| placement.0[6] * f64::from(*x) + placement.0[7] * f64::from(*y) + placement.0[8]).collect();
+    if denominators.iter().any(|w| !w.is_finite() || w.abs() < 1e-9)
+        || denominators.iter().any(|w| w.is_sign_positive() != denominators[0].is_sign_positive())
+    {
+        return Err(bad("video placement crosses a projective horizon"));
+    }
+    let mapped = corners.map(|(x, y)| placement.apply(f64::from(x), f64::from(y)));
+    let min_x = mapped.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+    let max_x = mapped.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+    let min_y = mapped.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+    let max_y = mapped.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+    if mapped.iter().any(|p| !p.0.is_finite() || !p.1.is_finite() || p.0.abs() > 1_000_000.0 || p.1.abs() > 1_000_000.0)
+        || (max_x - min_x).ceil() * (max_y - min_y).ceil() > (64u64 << 20) as f64
+    {
+        return Err(bad("video placement exceeds the supported transform footprint"));
+    }
+    Ok(())
+}
+
 /// Document-space bounds a transform of `layer` starts from (what Free Transform frames).
 /// Content scans are cached per tile: snapping asks for every layer's bounds per Move drag.
 pub fn transform_bounds(doc: &Document, layer: &Layer) -> Rect {
@@ -600,36 +629,10 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
             let before_translation = Homography([1.0, 0.0, -f64::from(dx), 0.0, 1.0, -f64::from(dy), 0.0, 0.0, 1.0]);
             let after_translation = Homography([1.0, 0.0, f64::from(dx), 0.0, 1.0, f64::from(dy), 0.0, 0.0, 1.0]);
             let placement = before_translation.mul(&h).mul(&after_translation).mul(&Homography(video.placement));
-            if placement.inverse().is_none() || placement.0.iter().any(|v| !v.is_finite()) {
-                return Err(bad("video placement must remain finite and invertible"));
-            }
             if let Some(source) = video.frames.first() {
-                let bounds = source.content_bounds();
-                if !bounds.is_empty() {
-                    let corners = [(bounds.x0, bounds.y0), (bounds.x1, bounds.y0), (bounds.x1, bounds.y1), (bounds.x0, bounds.y1)];
-                    let displayed_placement = after_translation.mul(&placement);
-                    let denominators: Vec<_> = corners
-                        .iter()
-                        .map(|(x, y)| displayed_placement.0[6] * f64::from(*x) + displayed_placement.0[7] * f64::from(*y) + displayed_placement.0[8])
-                        .collect();
-                    if denominators.iter().any(|w| !w.is_finite() || w.abs() < 1e-9)
-                        || denominators.iter().any(|w| w.is_sign_positive() != denominators[0].is_sign_positive())
-                        || corners.iter().any(|(x, y)| {
-                            let (x, y) = displayed_placement.apply(f64::from(*x), f64::from(*y));
-                            !x.is_finite() || !y.is_finite() || x.abs() > 1_000_000.0 || y.abs() > 1_000_000.0
-                        })
-                    {
-                        return Err(bad("video placement exceeds the supported one-million-pixel transform bounds"));
-                    }
-                    let mapped = corners.map(|(x, y)| displayed_placement.apply(f64::from(x), f64::from(y)));
-                    let min_x = mapped.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
-                    let max_x = mapped.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
-                    let min_y = mapped.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
-                    let max_y = mapped.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
-                    if (max_x - min_x).ceil() * (max_y - min_y).ceil() > (64u64 << 20) as f64 {
-                        return Err(bad("video placement exceeds the 64-megapixel transform footprint limit"));
-                    }
-                }
+                crate::transform_cmds::validate_video_placement(&after_translation.mul(&placement), source.content_bounds())?;
+            } else {
+                crate::transform_cmds::validate_video_placement(&placement, Rect::EMPTY)?;
             }
             video.placement = placement.0;
         }

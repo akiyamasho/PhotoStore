@@ -52,6 +52,18 @@ fn import_file(app: &mut PhotoStoreApp, command: &'static str, extensions: &'sta
     })
 }
 
+fn relink_active_source(app: &mut PhotoStoreApp) -> Result<Value, String> {
+    let state = app.session.active().ok_or("no document")?;
+    let document = state.doc.id;
+    let asset = state.active_layer.and_then(|id| state.doc.layer(id))
+        .and_then(|layer| layer.video.as_ref()).and_then(|video| video.asset_id)
+        .ok_or("the selected layer has no linked media source")?;
+    app.ask_file(FileDialogRequest::Open { multiple: false, initial_dir: None, extensions: None }, move |app, answer| {
+        let path = picked_path(answer)?;
+        app.with_document(document, |app| app.run("media.sources.relink", json!({"assetId":asset.0,"path":path})))
+    })
+}
+
 fn render_form(app: &mut PhotoStoreApp, target: DocId, path: String) -> Result<Value, String> {
     app.with_document(target, |app| render_form_on_document(app, target, path))
 }
@@ -193,6 +205,7 @@ pub fn invoke(app: &mut PhotoStoreApp, _ctx: &egui::Context, id: &str, params: &
     Some(match id {
         NEW_VIDEO => import_file(app, NEW_VIDEO, MOVIE_EXTENSIONS),
         REPLACE_FOOTAGE => import_file(app, REPLACE_FOOTAGE, MOVIE_EXTENSIONS),
+        "media.sources.relink" => relink_active_source(app),
         FRAMES_TO_LAYERS => import_file(app, FRAMES_TO_LAYERS, FRAME_EXTENSIONS),
         RENDER_VIDEO => render(app),
         _ => return None,

@@ -129,69 +129,6 @@ fn default_timeline_zoom() -> f32 {
 }
 fn default_gutter_width() -> f32 { 180.0 }
 
-fn relink_source(app:&mut PhotoStoreApp, document:photostore_doc::DocId, asset:u64) {
-    app.ask_file(crate::file_dialog::FileDialogRequest::Open {multiple:false,initial_dir:None,extensions:None},move |app,answer| {
-        let crate::file_dialog::FileDialogAnswer::Paths(paths)=answer else {return Err("Relink needs a local media file".into())};
-        let path=paths.first().ok_or("no replacement selected")?;
-        app.with_document(document,|app|app.run("media.sources.relink",json!({"assetId":asset,"path":path})))
-    });
-}
-
-/// Explicit source operations remain separate from layer/clip instances and their editable data.
-fn source_library(app:&mut PhotoStoreApp,ui:&mut Ui,doc:&photostore_doc::Document,current:usize) {
-    if doc.media_assets.is_empty() { return; }
-    ui.horizontal(|ui| {
-        ui.strong("Sources");
-        if ui.small_button("Refresh").on_hover_text("Reprobe source metadata; changed timing requires explicit relink.").clicked() {
-            if let Err(error)=app.run("media.sources.sync",json!({})) {app.ui.status=error;app.ui.status_error=true;}
-        }
-    });
-    let mut representatives=std::collections::HashMap::new();
-    for (_,_,layer) in doc.walk() {
-        if let Some(id)=layer.video.as_ref().and_then(|v|v.asset_id) {representatives.entry(id).or_insert(layer.id);}
-        if let photostore_doc::LayerContent::Smart(s)=&layer.content {if let Some(id)=s.asset_id {representatives.entry(id).or_insert(layer.id);}}
-    }
-    egui::ScrollArea::vertical().id_salt(("source-library",doc.id.0)).max_height(260.0).show_rows(ui,88.0,doc.media_assets.len(),|ui,rows| {
-    for asset in &doc.media_assets[rows] {
-        let metadata=std::fs::metadata(&asset.path).ok().filter(|m|m.is_file());
-        let present=metadata.is_some();
-        let changed=metadata.as_ref().zip(asset.fingerprint.as_ref()).is_some_and(|(m,saved)| {
-            let modified=m.modified().ok().and_then(|t|t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d|u64::try_from(d.as_nanos()).ok());
-            m.len()!=saved.byte_len || modified!=saved.modified_unix_nanos
-        });
-        let status=if !present {"Offline"} else if changed {"Changed — relink"} else {"Online"};
-        let name=std::path::Path::new(&asset.path).file_name().and_then(|n|n.to_str()).unwrap_or(&asset.path);
-        let representative=representatives.get(&asset.id).copied();
-        ui.group(|ui| {
-            ui.horizontal(|ui| {
-                let key=format!("source-card:{}:{}:{}",doc.id.0,asset.id.0,asset.revision);
-                let texture=app.ui.timeline.frame_thumbs.iter().find(|(k,_)|k==&key).map(|(_,t)|t.id()).or_else(|| {
-                    if app.ui.timeline.playing || app.timeline_playback.playing { return None; }
-                    let layer=representative.and_then(|id|doc.layer(id))?;
-                    let surface=layer.video.as_ref().and_then(|v|v.frames.first()).or_else(||layer.surface())?;
-                    let image=crate::transform_tex::read_surface(surface,None,doc.bounds(),64).0;
-                    let handle=load_thumbnail(ui.ctx(),key.clone(),image)?;let id=handle.id();
-                    app.ui.timeline.frame_thumbs.push((key,handle));Some(id)
-                });
-                if let Some(texture)=texture {ui.image((texture,egui::vec2(48.0,32.0)));}
-                ui.add(egui::Label::new(RichText::new(name).strong()).truncate()).on_hover_text(&asset.path);
-            });
-            ui.horizontal(|ui| {
-                ui.weak(format!("{status} · rev {}",asset.revision));
-                if ui.small_button("Relink…").clicked() {relink_source(app,doc.id,asset.id.0);}
-            });
-            ui.horizontal(|ui| {
-                if let Some(layer)=representative {if ui.small_button("Select").clicked() {let _=app.run("timeline.editor.select",json!({"document":doc.id.0,"layers":[layer.0]}));}}
-                if ui.add_enabled(present && !changed,egui::Button::new("Add at playhead").small()).clicked() {
-                    if let Err(error)=app.run("media.sources.insert",json!({"assetId":asset.id.0,"frame":current})) {app.ui.status=error;app.ui.status_error=true;}
-                }
-            });
-        });
-    }
-    });
-    ui.separator();
-}
-
 pub(crate) fn media_preview_menu(app:&mut PhotoStoreApp,ui:&mut Ui) {
     ui.menu_button("Preview quality & proxies",|ui| {
         let quality=photostore_engine::media_proxy::preview_quality().unwrap_or(photostore_engine::media_proxy::PreviewQuality::Original);
