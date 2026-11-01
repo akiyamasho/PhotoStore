@@ -97,7 +97,7 @@ passed 1/1 each during the implementation pass; they did not all run against the
 SHA. Manual visual, interaction and export acceptance remain outstanding. Do not claim full
 CapCut/Photoshop parity or close issue #23 until acceptance is complete.
 
-## Current source: scalable playback and authoring (0.20.2 delivery pending)
+## Current source: scalable playback and authoring (0.20.2 published and installed)
 
 This current-source pass follows the published 0.20.0 app and CLI. The [scalable playback plan](plans/scalable-playback-2026-11-01.md)
 and [GPT Image workflow reference](design/2026-11-01/smooth-playback/workflow.png), generated and
@@ -130,6 +130,7 @@ Eleven focused critical checks and the production 0.20.1 build/installation pass
 production hash inspection confirmed a cadence defect, despite improved latency: 180 requests
 contained only 120 distinct source frames. The corrected nanosecond-rounding boundary passed an
 additional original-frame-by-frame regression at 30 and 30000/1001 fps, with seeks/tail/VFR holds.
-The 0.20.2 production build and full-180-frame evidence remain pending. The pre-change warm blocking
+The 0.20.2 production build and full-180-frame evidence passed, and the corrected normal app/CLI
+were published and installed. See the [release/performance record](releases/0.20.2.md). The pre-change warm blocking
 exact-seek baseline was 640.39 ms for 1080p and 1,929.93 ms for 4K (five noninitial requests each),
 not native playback FPS. Native UI/audio acceptance remains pending; keep #23 open.

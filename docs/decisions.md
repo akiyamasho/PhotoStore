@@ -682,3 +682,9 @@ clock's quantization boundary. Keep exact/manual sampling and original export se
 complete sequences against original indexed decoding at 30 and 30000/1001 fps, including seeks,
 tail, VFR gaps and an earlier target; require complete fixture diversity in production evidence.
 Latency alone cannot satisfy cadence acceptance. See [0.20.2](releases/0.20.2.md).
+
+The additional cadence boundary check passed. Both final signed 180-frame production fixtures
+retained all 180 distinct sampled frame hashes with one decoder each. Normal 0.20.2 was built,
+verified, published and atomically installed from exact source `018567faf9ed2f2e181f6d05dc74ff6dd5542ffb`.
+See the [delivery/performance record](releases/0.20.2.md); headless evidence does not establish native
+UI/audio acceptance. Scheduler suppression continues through documentation-only delivery.
