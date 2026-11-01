@@ -52,6 +52,7 @@ pub(crate) struct Runtime {
     preroll_decoded: bool,
     preroll_submitted: bool,
     preroll_audio_started: bool,
+    preroll_window_started: Option<f64>,
     visual_ready: Arc<AtomicBool>,
 }
 
@@ -94,6 +95,7 @@ impl Default for Runtime {
             preroll_decoded: false,
             preroll_submitted: false,
             preroll_audio_started: false,
+            preroll_window_started: None,
             visual_ready: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -124,6 +126,7 @@ impl Runtime {
         self.preroll_decoded = false;
         self.preroll_submitted = false;
         self.preroll_audio_started = false;
+        self.preroll_window_started = None;
         self.visual_ready = Arc::new(AtomicBool::new(false));
     }
 
@@ -332,6 +335,7 @@ impl Runtime {
             self.preroll_decoded = false;
             self.preroll_submitted = false;
             self.preroll_audio_started = false;
+            self.preroll_window_started = None;
             self.visual_ready = Arc::new(AtomicBool::new(false));
             self.pending_frame = Some(self.start_frame);
         } else if let Err(error) = self.start_audio(t, &doc_arc, doc, self.start_frame) {
@@ -401,6 +405,7 @@ impl Runtime {
                 self.preroll_decoded = false;
                 self.preroll_submitted = false;
                 self.preroll_audio_started = false;
+                self.preroll_window_started = None;
                 self.visual_ready = Arc::new(AtomicBool::new(false));
                 self.pending_frame = Some(self.start_frame);
             } else if self.direction >= 0
@@ -437,6 +442,25 @@ impl Runtime {
                 && let Some(gpu) = app.gpu.as_ref()
             { gpu.poll_completion_callbacks(); }
             if self.preroll_decoded && self.visual_ready.load(Ordering::Acquire) {
+                // Keep the clock/audio stopped while the existing small decode window fills.
+                // This only polls metadata/cache readiness; no decode or sleep runs on the UI.
+                // A fixed cap keeps low-memory/irregular workloads from waiting indefinitely.
+                let began = *self.preroll_window_started.get_or_insert(now);
+                if self.direction >= 0 && now - began < photostore_engine::PREVIEW_PREROLL_MAX.as_secs_f64() {
+                    match app.run("timeline.previewWindowReady", json!({"frame": requested})) {
+                        Ok(result) if result.get("ready").and_then(serde_json::Value::as_bool) == Some(true) => {}
+                        Ok(_) => {
+                            ctx.request_repaint_after(Duration::from_millis(6));
+                            return;
+                        }
+                        Err(error) => {
+                            self.stop();
+                            app.ui.status = format!("Video preview: {error}");
+                            app.ui.status_error = true;
+                            return;
+                        }
+                    }
+                }
                 if !self.preroll_audio_started {
                     self.preroll_audio_started = true;
                     let fresh = app.session.active().map(|state| state.doc.clone());

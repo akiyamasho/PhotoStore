@@ -67,6 +67,9 @@ pub mod media_backend;
 pub mod media_budget;
 mod media_performance;
 pub use media_performance::measure_with_frame_callback;
+
+/// Maximum asynchronous lookahead preroll after the first visual frame is ready.
+pub const PREVIEW_PREROLL_MAX: std::time::Duration = std::time::Duration::from_millis(150);
 pub mod media_proxy;
 mod media_asset_cmds;
 mod media_insert_cmds;

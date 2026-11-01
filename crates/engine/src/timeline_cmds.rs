@@ -937,6 +937,18 @@ pub(crate) fn refresh_current_preview(s: &mut Session) -> Result<bool> {
     Ok(present_frame(s, &json!({"frame":frame}))?.get("ready").and_then(Value::as_bool) == Some(true))
 }
 
+fn preview_window_ready(s:&Session,p:&Value)->Result<Value> {
+    const CMD:&str="timeline.previewWindowReady";
+    strict_keys(p,&["frame","document"],CMD)?;
+    check_document(s,p,CMD)?;
+    let frame=p.get("frame").and_then(Value::as_u64).and_then(|value|usize::try_from(value).ok())
+        .ok_or_else(||bad(CMD,"frame must be a whole nonnegative frame".into()))?;
+    let doc=&s.active().ok_or(EngineError::NoDocument)?.doc;
+    let timeline=doc.timeline.as_ref().ok_or_else(||bad(CMD,"no timeline".into()))?;
+    if frame>=timeline.duration{return Err(bad(CMD,"frame is outside the timeline".into()));}
+    Ok(json!({"ready":crate::video_cmds::preview_window_ready(doc,frame)?}))
+}
+
 fn present_frame(s: &mut Session, p: &Value) -> Result<Value> {
     check_document(s,p,"timeline.presentFrame")?;
     let frame=p.get("frame").and_then(Value::as_u64).and_then(|value|usize::try_from(value).ok()).ok_or_else(||bad("timeline.presentFrame","frame must be a whole nonnegative frame".into()))?;
@@ -1602,6 +1614,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("timeline.delete", "Delete Timeline", "{} → {timeline:null}", has_timeline, |s, _| delete(s)),
         spec!("timeline.setFrame", "Go to Frame", r#"{frame} → {timeline}"#, has_timeline, |s, p| set_frame(s, p)),
         spec!("timeline.presentFrame", "Present Decoded Frame", r#"{frame,document?} → {ready,frame?,requestedFrame?}"#, has_timeline, |s, p| present_frame(s, p)),
+        spec!("timeline.previewWindowReady", "Check Preview Window", r#"{frame,document?} → {ready}"#, has_timeline, |s, p| preview_window_ready(s, p)),
         spec!("timeline.nextFrame", "Next Frame", "{} → {timeline}", has_timeline, |s, _| step(s, 1)),
         spec!("timeline.previousFrame", "Previous Frame", "{} → {timeline}", has_timeline, |s, _| step(s, -1)),
         spec!("timeline.setProps", "Timeline Settings", r#"{fps?, duration?, workStart?, workEnd?} → {timeline}"#, has_timeline, |s, p| set_props(s, p)),

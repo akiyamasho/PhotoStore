@@ -41,37 +41,6 @@ impl Tile {
     }
 }
 
-/// Append a tightly packed RGB24 row as opaque RGBA8 without clearing the destination first.
-fn append_rgb24_row(target: &mut Vec<u8>, source: &[u8], ramps: Option<&[[u8; 256]; 3]>) {
-    if let Some(lut) = ramps {
-        for src in source.chunks_exact(3) {
-            target.extend_from_slice(&[
-                lut[0][src[0] as usize],
-                lut[1][src[1] as usize],
-                lut[2][src[2] as usize],
-                255,
-            ]);
-        }
-        return;
-    }
-
-    let mut source_blocks = source.chunks_exact(12);
-    for src in source_blocks.by_ref() {
-        let a = u32::from_le_bytes([src[0], src[1], src[2], src[3]]);
-        let b = u32::from_le_bytes([src[4], src[5], src[6], src[7]]);
-        let c = u32::from_le_bytes([src[8], src[9], src[10], src[11]]);
-        let mut rgba = [0u8; 16];
-        rgba[0..4].copy_from_slice(&((a & 0x00ff_ffff) | 0xff00_0000).to_le_bytes());
-        rgba[4..8].copy_from_slice(&(((a >> 24) | (b << 8)) & 0x00ff_ffff | 0xff00_0000).to_le_bytes());
-        rgba[8..12].copy_from_slice(&(((b >> 16) | (c << 16)) & 0x00ff_ffff | 0xff00_0000).to_le_bytes());
-        rgba[12..16].copy_from_slice(&((c >> 8) | 0xff00_0000).to_le_bytes());
-        target.extend_from_slice(&rgba);
-    }
-    for src in source_blocks.remainder().chunks_exact(3) {
-        target.extend_from_slice(&[src[0], src[1], src[2], 255]);
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct Surface {
     format: PixelFormat,
@@ -541,16 +510,6 @@ impl Surface {
         for coordinate in r.tiles() {
             let tile_rect = coordinate.rect().intersect(&r);
             let span = tile_rect.width() as usize;
-            if tile_rect == coordinate.rect() {
-                let mut data = Vec::with_capacity((TILE_SIZE * TILE_SIZE) as usize * 4);
-                for y in tile_rect.y0..tile_rect.y1 {
-                    let source = (((y - r.y0) as usize) * width + (tile_rect.x0 - r.x0) as usize) * 3;
-                    let source_row = &bytes[source..source + span * 3];
-                    append_rgb24_row(&mut data, source_row, ramps);
-                }
-                out.tiles.insert(coordinate, Arc::new(Tile { data: data.into_boxed_slice() }));
-                continue;
-            }
             let tile = out.tile_mut(coordinate);
             for y in tile_rect.y0..tile_rect.y1 {
                 let source = (((y - r.y0) as usize) * width + (tile_rect.x0 - r.x0) as usize) * 3;

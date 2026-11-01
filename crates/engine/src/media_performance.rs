@@ -94,6 +94,8 @@ fn measure_sources_inner(
     let mut hashes = vec![HashSet::new(); layer_ids.len()];
     let mut properties_preserved = true;
     let mut polls = 0usize;
+    let mut startup_lookahead_wait_ms = 0.0;
+    let mut startup_lookahead_ready = false;
     let mut max_bytes = 0usize;
     let mut max_decoder_bytes = 0usize;
     let mut first_frame_tiles = Vec::new();
@@ -119,6 +121,16 @@ fn measure_sources_inner(
                 return Err(EngineError::Other(format!("presentation frame {frame} did not become ready within 15 seconds")));
             }
             std::thread::sleep(Duration::from_millis(1));
+        }
+        if frame == 0 {
+            // Match native forward playback: fill the existing bounded decode window before
+            // starting its clock, with the same cap. This is part of cold preparation.
+            let preroll = Instant::now();
+            while preroll.elapsed() < crate::PREVIEW_PREROLL_MAX {
+                if session.execute("timeline.previewWindowReady", json!({"frame":frame}))?["ready"] == true { startup_lookahead_ready = true; break; }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            startup_lookahead_wait_ms = preroll.elapsed().as_secs_f64() * 1000.0;
         }
         let ready_ms = begin.elapsed().as_secs_f64() * 1000.0;
         let state = session.active().ok_or(EngineError::NoDocument)?;
@@ -164,7 +176,7 @@ fn measure_sources_inner(
     let percentile = |p: f64| warm[((warm.len() - 1) as f64 * p).round() as usize];
     let state = session.active().ok_or(EngineError::NoDocument)?;
     Ok(json!({"path":path,"width":info.width,"height":info.height,"codec":info.codec_name,"sourceFps":{"numerator":info.fps.num,"denominator":info.fps.den},
-        "frames":count,"preparationMs":preparation_ms,"coldFirstFrameMs":waits[0],"warmP50Ms":percentile(0.5),"warmP95Ms":percentile(0.95),"warmFramesPerSecond":(count-1) as f64/warm_seconds,
+        "frames":count,"preparationMs":preparation_ms,"coldFirstFrameMs":waits[0],"startupLookaheadWaitMs":startup_lookahead_wait_ms,"startupLookaheadReady":startup_lookahead_ready,"startupLookaheadCapMs":crate::PREVIEW_PREROLL_MAX.as_millis(),"warmP50Ms":percentile(0.5),"warmP95Ms":percentile(0.95),"warmFramesPerSecond":(count-1) as f64/warm_seconds,
         "elapsedSeconds":elapsed,"polls":polls,"persistentDecoderLaunches":crate::media_backend::preview_stream_launches().saturating_sub(launches),"decodeProcessLaunches":crate::media_backend::decode_process_launches().saturating_sub(decode_launches),"hardwarePreviewAttempts":crate::media_backend::hardware_preview_attempts().saturating_sub(hardware_attempts),"hardwarePreviewFallbacks":crate::media_backend::hardware_preview_fallbacks().saturating_sub(hardware_fallbacks),"distinctSampledPixelHashes":hashes[0].len(),"distinctHashesPerLayer":hashes.iter().map(HashSet::len).collect::<Vec<_>>(),"layerPropertiesPreserved":properties_preserved,"sources":sources,"layerCount":layer_ids.len(),
         "maxRetainedDerivedBytes":max_bytes,"maxEstimatedDecoderSessionBytes":max_decoder_bytes,"retainedBudgetBytes":crate::media_budget::status().total_limit_bytes,"firstFrameEncodedTiles":first_frame_tiles,
         "historyUnchanged":state.history.past_len()==0,"clean":state.saved_revision==state.revision,"requestWaitMs":waits,"decodeReadyWaitMs":decode_waits,"pixelHashSampling":{"maximumTilesPerLayer":8,"rowStride":16,"entireSelectedRows":true},"previewWorkers":crate::movie_cache::worker_count(),"configuredPreviewWorkers":crate::media_budget::preview_worker_count(),"activeDecodeLimit":crate::media_budget::decoder_parallelism(),

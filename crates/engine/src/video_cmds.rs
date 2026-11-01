@@ -236,6 +236,10 @@ fn layer_visible_for_frame(doc:&Document,layer:&Layer,frame:usize,states:Option<
     enabled && !doc.timeline.as_ref().is_some_and(|timeline|timeline.visual_tracks.iter().any(|track|track.muted && track.layers.contains(&layer.id)))
 }
 
+fn timeline_states_at(timeline:&Timeline,frame:usize)->Option<&Vec<FrameLayerState>> {
+    if timeline.mode==photostore_doc::TimelineMode::FrameAnimation {timeline.frame_states.get(frame)}else{timeline.property_frames.get(frame)}
+}
+
 fn linked_movie_layer_visible(doc:&Document,path:&[usize],layer:&Layer,frame:usize,states:Option<&[FrameLayerState]>)->bool {
     layer_visible_for_frame(doc,layer,frame,states)
         && (1..path.len()).all(|depth|doc.layer_at(&path[..depth]).is_some_and(|ancestor|layer_visible_for_frame(doc,ancestor,frame,states)))
@@ -534,6 +538,58 @@ pub(crate) fn request_presentation_frame(doc:&Document,frame:usize)->Result<bool
     Ok(ready)
 }
 
+/// Nonblocking current-plus-two preview poll used to buffer native playback before transport
+/// starts. Unsupported or discontinuous timing falls back to checking the current frame only.
+pub(crate) fn preview_window_ready(doc:&Document,frame:usize)->Result<bool> {
+    let Some(timeline)=&doc.timeline else{return Ok(true)};
+    let _preview=crate::movie_cache::PreviewScope::enter();
+    let fps=timeline.project_rate().as_f64();
+    let mut ready=true;
+    for (layer_path,_,layer) in doc.walk() {
+        let Some(video)=layer.video.as_ref().filter(|video|video.movie_backing.is_some()) else{continue};
+        if !linked_movie_layer_visible(doc,&layer_path,layer,frame,timeline_states_at(timeline,frame).map(Vec::as_slice)){continue;}
+        check_live_movie_source(doc,video).map_err(EngineError::Other)?;
+        let photostore_doc::VideoSource::File{path:source_path}=&video.source else{return Err(EngineError::Other("linked movie has no original source path".into()));};
+        let range=timeline.layer_ranges.iter().find(|range|range.layer==layer.id);
+        let current=linked_source_seconds(frame,fps,video,range)?;
+        let window=regular_preview_window(doc,&layer_path,layer,video,frame,fps,range,current);
+        let times=window.as_deref().unwrap_or(std::slice::from_ref(&current));
+        use std::hash::{Hash,Hasher};
+        let mut identity=std::collections::hash_map::DefaultHasher::new();
+        (doc.id.0,layer.id.0,crate::movie_cache::consumer_namespace()).hash(&mut identity);
+        let frames=movie_source_frames_for_video(doc,video,source_path,current,PixelFormat{mode:photostore_color::ColorMode::Rgb,..doc.pixel_format()},Some(identity.finish()),times).map_err(EngineError::Other)?;
+        if frames.len()<times.len() || frames.iter().take(times.len()).any(Option::is_none) {ready=false;}
+    }
+    Ok(ready)
+}
+
+fn regular_preview_window(
+    doc:&Document,
+    path:&[usize],
+    layer:&Layer,
+    video:&VideoData,
+    frame:usize,
+    fps:f64,
+    range:Option<&photostore_doc::LayerTimelineRange>,
+    current:f64,
+)->Option<Vec<f64>> {
+    let timeline=doc.timeline.as_ref()?;
+    let end=frame.checked_add(2)?;
+    if timeline.mode!=photostore_doc::TimelineMode::Video || end>=timeline.duration || video.playback.awaiting_video_timeline
+        || range.and_then(|range|range.playback.as_ref()).is_some_and(|playback|!playback.speed_curve.is_empty()) {return None;}
+    let mut times=Vec::with_capacity(3);
+    times.push(current);
+    for at in frame+1..=end {
+        if !linked_movie_layer_visible(doc,path,layer,at,timeline_states_at(timeline,at).map(Vec::as_slice)) {return None;}
+        let Ok(seconds)=linked_source_seconds(at,fps,video,range) else{return None};
+        times.push(seconds);
+    }
+    let step=times[1]-times[0];
+    if !step.is_finite() || step<=0.0 || times[1..].iter().any(|time|!time.is_finite())
+        || times.windows(2).any(|pair|((pair[1]-pair[0])-step).abs()>1e-9_f64.max(step.abs()*1e-9)) {return None;}
+    Some(times)
+}
+
 /// Exact-time playback sampling, including editable nested documents. A loading child must not
 /// be published as a current frame merely because its last-valid Smart Object preview exists.
 pub(crate) fn sync_for_presentation(doc: &mut Document) -> Result<bool> {
@@ -564,24 +620,20 @@ fn validate_resident_video_placements(doc: &Document) -> Result<()> {
     Ok(())
 }
 
-fn movie_source_frame(path:&str,seconds:f64,format:PixelFormat,consumer:Option<u64>,times:&[f64])->std::result::Result<Option<Surface>,String> {
-    movie_source_frame_with_size(path,seconds,format,consumer,times,None)
-}
-
-fn movie_source_frame_with_size(path:&str,seconds:f64,format:PixelFormat,consumer:Option<u64>,times:&[f64],requested_size:Option<(u32,u32)>)->std::result::Result<Option<Surface>,String> {
+fn movie_source_frames_with_size(path:&str,seconds:f64,format:PixelFormat,consumer:Option<u64>,times:&[f64],requested_size:Option<(u32,u32)>)->std::result::Result<Vec<Option<Surface>>,String> {
     let proxy=if crate::movie_cache::is_preview() {crate::media_proxy::preview_source(path).map_err(|e|e.to_string())?} else {None};
     let source=proxy.as_ref().map_or(path,|proxy|proxy.proxy_path.as_str());
     let size=requested_size.or_else(||proxy.as_ref().map(|proxy|(proxy.source_width,proxy.source_height)));
     match consumer {
-        Some(id) if times.len()>1=>crate::movie_cache::frame_at_times_for_consumer_scaled(source,times,format,id,size).map(|frames|frames.into_iter().next().flatten()),
-        Some(id)=>match size {
+        Some(id) if times.len()>1=>crate::movie_cache::frame_at_times_for_consumer_scaled(source,times,format,id,size),
+        Some(id)=>Ok(vec![match size {
             Some(size)=>crate::movie_cache::frame_at_seconds_for_consumer_scaled(source,seconds,format,id,size),
             None=>crate::movie_cache::frame_at_seconds_for_consumer(source,seconds,format,id),
-        },
-        None=>match size {
+        }?]),
+        None=>Ok(vec![match size {
             Some(size)=>crate::movie_cache::frame_at_seconds_scaled(source,seconds,format,size),
             None=>crate::movie_cache::frame_at_seconds(source,seconds,format),
-        }
+        }?]),
     }
 }
 
@@ -649,10 +701,14 @@ fn validate_linked_movie_frame(doc:&Document,video:&VideoData,surface:&Surface,r
 }
 
 fn movie_source_frame_for_video(doc:&Document,video:&VideoData,path:&str,seconds:f64,format:PixelFormat,consumer:Option<u64>,times:&[f64])->std::result::Result<Option<LinkedMovieFrame>,String> {
+    Ok(movie_source_frames_for_video(doc,video,path,seconds,format,consumer,times)?.into_iter().next().flatten())
+}
+
+fn movie_source_frames_for_video(doc:&Document,video:&VideoData,path:&str,seconds:f64,format:PixelFormat,consumer:Option<u64>,times:&[f64])->std::result::Result<Vec<Option<LinkedMovieFrame>>,String> {
     let optimized=linked_preview_decode(doc,video);
     let requested=optimized.map(|(size,_)|size);
-    let surface=movie_source_frame_with_size(path,seconds,format,consumer,times,requested)?;
-    Ok(surface.map(|surface|LinkedMovieFrame{surface,placement:optimized.map_or(Homography(video.placement),|(_,placement)|placement),reduced:optimized.is_some()}))
+    let surfaces=movie_source_frames_with_size(path,seconds,format,consumer,times,requested)?;
+    Ok(surfaces.into_iter().map(|surface|surface.map(|surface|LinkedMovieFrame{surface,placement:optimized.map_or(Homography(video.placement),|(_,placement)|placement),reduced:optimized.is_some()})).collect())
 }
 
 pub(crate) fn movie_surface_for_document(doc:&Document,surface:Surface)->Result<Surface> {
