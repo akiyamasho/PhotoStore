@@ -232,6 +232,7 @@ pub fn authorize_engine_command(id: &str, params: &Value) -> Result<(), Automati
                 | "layer.videoLayers.newVideoLayerFromFile"
                 | "layer.videoLayers.replaceFootage"
                 | "layer.videoLayers.reloadFrame"
+                | "media.performance.measure"
                 | "timeline.addAudioClip"
                 | "timeline.relinkAudioClip"
                 | "recording.export"
@@ -674,6 +675,7 @@ mod tests {
             ("plugin.install", serde_json::json!({"path": "/outside/plugin.wasm"})),
             ("plugin.reload", serde_json::json!({"path": "/outside/plugins"})),
             ("plugin.reload", serde_json::json!({})),
+            ("media.performance.measure", serde_json::json!({"path": "/outside/movie.mp4", "frames": 2})),
             ("plugin.install", serde_json::json!({"path": " "})),
             ("swatches.import", serde_json::json!({"path": "/outside/set.aco"})),
             ("swatches.export", serde_json::json!({"path": "/outside/set.ase"})),
