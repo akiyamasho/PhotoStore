@@ -27,6 +27,13 @@ pub(super) fn pack(jobs: Vec<Job>) -> Result<(), Unsupported> {
     if jobs.is_empty() {
         return Ok(());
     }
+    // Shared-memory source buffers contain whole, already packed tiles. Sending each small
+    // transfer cell through an external rayon pool adds a blocking wake/join barrier per cell
+    // and competes with the decoder pool. Copy these tiles directly on the compositor worker;
+    // the row-repacking path below still benefits from parallel work.
+    if jobs.iter().all(|job| job.tile_major) {
+        return jobs.into_iter().try_for_each(pack_one);
+    }
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(pool) = worker_pool() {
         return pool.install(|| jobs.into_par_iter().map(pack_one).collect::<Result<Vec<()>, Unsupported>>().map(|_| ()));

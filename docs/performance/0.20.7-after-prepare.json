@@ -1,0 +1,49 @@
+{
+  "source_sha": "43393323b2e1e869e34d4677ee58d4e507aefe7a",
+  "binary_sha256": "e66cdd7e85e3951010a305e3f9ebfa9fea8a73ebdbad08bcf3ddf1162d504dc8",
+  "command": [
+    "/Users/computer/Desktop/dev/PhotoStore/target/macos-package/photostore-cli-0.20.7-macos-aarch64/photostore-cli",
+    "playback-bench",
+    "--paths",
+    "[\"/private/tmp/photostore-distinct-4k/source-1.mp4\", \"/private/tmp/photostore-distinct-4k/source-2.mp4\", \"/private/tmp/photostore-distinct-4k/source-3.mp4\", \"/private/tmp/photostore-distinct-4k/source-4.mp4\", \"/private/tmp/photostore-distinct-4k/source-5.mp4\", \"/private/tmp/photostore-distinct-4k/source-6.mp4\", \"/private/tmp/photostore-distinct-4k/source-7.mp4\", \"/private/tmp/photostore-distinct-4k/source-8.mp4\"]",
+    "--frames",
+    "90",
+    "--rate",
+    "30"
+  ],
+  "data_and_gpu_checks_passed": true,
+  "paced_target_passed": false,
+  "scope": "One bounded original-resolution eight-distinct-source 4K H.264/30fps, 90-frame hardware compositor run through asynchronous engine presentation. Excludes native egui layout/input/scanout/audio output and eligible scaled-preview path. Not CapCut parity.",
+  "measurements": {
+    "warmFramesPerSecond": 27.4429344405909,
+    "warmP50Ms": 34.295084,
+    "warmP95Ms": 50.07975,
+    "distinctHashesPerLayer": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ],
+    "historyUnchanged": true,
+    "clean": true
+  },
+  "preparationMedianMs": 1.596125,
+  "gpu": {
+    "adapter": "Apple M1 Max",
+    "backend": "Metal",
+    "compositeWaitP50Ms": 32.283666000000004,
+    "compositeWaitP95Ms": 48.496833,
+    "uploadPackP50Ms": 27.501666999999994,
+    "uploadPackP95Ms": 44.005208
+  },
+  "cadence": {
+    "p95LatenessMs": 301.928708,
+    "over5msDeadlineCount": 89,
+    "warmFrameCount": 89
+  },
+  "profile": "Targeted owned-workload sample: main compositor spends substantial time in rayon ThreadPool::install/LockLatch waits at transfer-cell packing boundaries. Tile-major copies require no row reordering. Raw profile stays local."
+}
