@@ -724,3 +724,5 @@ estimated memory reservations and a bounded pool; two active workers remain the 
 Performance measurements report all overlapping sources and exact evidence scope, without calling
 headless preparation native playback FPS or claiming CapCut parity. See the
 [layered-media plan](plans/layered-media-2026-11-01.md) and [0.20.4 receipt](releases/0.20.4.md).
+
+Normal 0.20.4 was built once, measured with two/six overlapping 4K source paths, verified, published and atomically installed from `9fa1ffb6f38b70e4b3ec9ebdb5ba4203ef086cf5`. The stale-opacity regression and focused audio ownership/permission boundaries passed on the shipped binary; native GPU/display/audio performance remains unverified. [Delivery and exact evidence](releases/0.20.4.md).

@@ -1,6 +1,6 @@
 # Layered media playback and ownership
 
-Status: implementation integrated for the 0.20.4 production build; delivery evidence pending. Separate reports: #33 stack order,
+Status: normal 0.20.4 published and atomically installed from `9fa1ffb6f38b70e4b3ec9ebdb5ba4203ef086cf5`. Focused data/permission checks and multi-source headless measurement passed; native display/audio performance remains manual. Separate reports: #33 stack order,
 #34 overlap/opacity playback, #35 layer-owned audio; #23 retains the wider timeline work.
 
 ## Contract and implementation order

@@ -1,0 +1,1724 @@
+{
+  "status": "Published and atomically installed; focused data/permission checks and multi-source preparation measurement passed; native GPU/display/audio acceptance pending",
+  "source_sha": "9fa1ffb6f38b70e4b3ec9ebdb5ba4203ef086cf5",
+  "build_seconds": 587.825,
+  "baseline": {
+    "version": "0.20.3 installed CLI",
+    "scope": "Synthetic headless reproduction of stale opacity snapshot override; no UI or private artwork",
+    "before": {
+      "blend": "Normal",
+      "bounds": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "clipped": false,
+      "fill": 1.0,
+      "hasMask": false,
+      "id": 5,
+      "kind": "Pixel",
+      "labelColor": "none",
+      "linkGroup": null,
+      "name": "photostore-timeline-motion 2",
+      "opacity": 0.5,
+      "selected": true,
+      "video": {
+        "fps": 30.0,
+        "frames": 90,
+        "movieBacking": {
+          "frame_count": 90,
+          "source_fps": 30.0,
+          "trim_in_frame": 0,
+          "trim_out_frame": 89
+        },
+        "residentFrames": 1,
+        "showAltered": true,
+        "source": {
+          "file": "/private/tmp/photostore-timeline-motion.mkv"
+        }
+      },
+      "visible": true
+    },
+    "after": {
+      "blend": "Normal",
+      "bounds": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "clipped": false,
+      "fill": 1.0,
+      "hasMask": false,
+      "id": 5,
+      "kind": "Pixel",
+      "labelColor": "none",
+      "linkGroup": null,
+      "name": "photostore-timeline-motion 2",
+      "opacity": 0.0,
+      "selected": true,
+      "video": {
+        "fps": 30.0,
+        "frames": 90,
+        "movieBacking": {
+          "frame_count": 90,
+          "source_fps": 30.0,
+          "trim_in_frame": 0,
+          "trim_out_frame": 89
+        },
+        "residentFrames": 1,
+        "showAltered": true,
+        "source": {
+          "file": "/private/tmp/photostore-timeline-motion.mkv"
+        }
+      },
+      "visible": true
+    },
+    "reproduced": true
+  },
+  "boundaries": {
+    "passed": true,
+    "scope": "Focused ownership data preservation: audio import/native roundtrip, duplicate and same/cross-document copy ID rebinding with untouched source, delete/undo, owner range timing, stale opacity snapshots with overlapping videos and independent movie audio owners; no native audio-device/UI acceptance",
+    "source_sha": "9fa1ffb6f38b70e4b3ec9ebdb5ba4203ef086cf5",
+    "binary_sha256": "ab63503af6af0b0f6bdf28042042eca7c40e2c722ee8923c4dee51966c55f647",
+    "checks": [
+      {
+        "commands": [
+          [
+            "timeline.create",
+            {
+              "duration": 90,
+              "fps": 30
+            }
+          ],
+          [
+            "timeline.addAudioLayer",
+            {
+              "path": "/private/tmp/photostore-layered-boundaries/tone.wav"
+            }
+          ],
+          [
+            "document.inspect",
+            {}
+          ]
+        ],
+        "replies": [
+          {
+            "command": "timeline.create",
+            "result": {
+              "timeline": {
+                "current": 0,
+                "duration": 90,
+                "fps": 30.0,
+                "fpsDenominator": 1,
+                "fpsNumerator": 30,
+                "layerRanges": [],
+                "linkedSelection": true,
+                "loop": "loop",
+                "loopCount": null,
+                "mainTrackMagnet": false,
+                "markers": [],
+                "mode": "video",
+                "onionSkin": false,
+                "onionSkinSettings": {
+                  "blend": "normal",
+                  "framesAfter": 0,
+                  "framesBefore": 1,
+                  "maxOpacity": 0.30000001192092896,
+                  "minOpacity": 0.30000001192092896,
+                  "spacing": 1
+                },
+                "previewSkimming": false,
+                "snapping": true,
+                "time": 0.0,
+                "visualTracks": [],
+                "workEnd": 90,
+                "workStart": 0
+              }
+            }
+          },
+          {
+            "command": "timeline.addAudioLayer",
+            "result": {
+              "clip": 1,
+              "layer": 3,
+              "track": 1
+            }
+          },
+          {
+            "command": "document.inspect",
+            "result": {
+              "activeLayer": 3,
+              "audioLayers": [
+                {
+                  "clips": [
+                    {
+                      "durationSeconds": 2.0,
+                      "id": 1,
+                      "muted": false,
+                      "name": "tone",
+                      "startSeconds": 0.0,
+                      "volume": 1.0
+                    }
+                  ],
+                  "layer": 3,
+                  "muted": false,
+                  "name": "tone",
+                  "track": 1
+                }
+              ],
+              "canRedo": false,
+              "canUndo": true,
+              "channels": {
+                "alpha": [],
+                "colors": [
+                  {
+                    "name": "Red",
+                    "visible": true
+                  },
+                  {
+                    "name": "Green",
+                    "visible": true
+                  },
+                  {
+                    "name": "Blue",
+                    "visible": true
+                  }
+                ],
+                "composite": "RGB",
+                "compositeVisible": true,
+                "layerMaskView": null,
+                "quickMask": null,
+                "target": {
+                  "kind": "composite"
+                }
+              },
+              "depth": 8,
+              "hasSelection": false,
+              "height": 32,
+              "history": [
+                "Open",
+                "Create Timeline",
+                "Import Audio as Layer"
+              ],
+              "id": 1,
+              "isolatedLayers": [],
+              "lastAppliedComp": null,
+              "layerComps": [],
+              "layerMaskView": null,
+              "layers": [
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    0,
+                    0
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 3,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "Audio \u00b7 tone",
+                  "opacity": 1.0,
+                  "selected": true,
+                  "visible": true
+                },
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    32,
+                    32
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 2,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "Background",
+                  "opacity": 1.0,
+                  "selected": false,
+                  "visible": true
+                }
+              ],
+              "measurement": {
+                "count": 0,
+                "countGroups": 0,
+                "ruler": null,
+                "scale": "1 pixels = 1.0000 pixels"
+              },
+              "mode": "Rgb",
+              "name": "Untitled",
+              "notes": [],
+              "quickMask": false,
+              "resolution": 72.0,
+              "revision": 3,
+              "selectedLayers": [
+                3
+              ],
+              "selectionBounds": null,
+              "symmetry": null,
+              "timeline": {
+                "current": 0,
+                "duration": 90,
+                "fps": 30.0
+              },
+              "variables": null,
+              "width": 32
+            }
+          }
+        ]
+      },
+      {
+        "commands": [
+          [
+            "layer.duplicate",
+            {
+              "layer": 3
+            }
+          ],
+          [
+            "document.inspect",
+            {}
+          ]
+        ],
+        "replies": [
+          {
+            "command": "layer.duplicate",
+            "result": {
+              "layer": 5
+            }
+          },
+          {
+            "command": "document.inspect",
+            "result": {
+              "activeLayer": 5,
+              "audioLayers": [
+                {
+                  "clips": [
+                    {
+                      "durationSeconds": 2.0,
+                      "id": 1,
+                      "muted": false,
+                      "name": "tone",
+                      "startSeconds": 0.0,
+                      "volume": 1.0
+                    }
+                  ],
+                  "layer": 3,
+                  "muted": false,
+                  "name": "tone",
+                  "track": 1
+                },
+                {
+                  "clips": [
+                    {
+                      "durationSeconds": 2.0,
+                      "id": 2,
+                      "muted": false,
+                      "name": "tone",
+                      "startSeconds": 0.0,
+                      "volume": 1.0
+                    }
+                  ],
+                  "layer": 5,
+                  "muted": false,
+                  "name": "tone",
+                  "track": 2
+                }
+              ],
+              "canRedo": false,
+              "canUndo": true,
+              "channels": {
+                "alpha": [],
+                "colors": [
+                  {
+                    "name": "Red",
+                    "visible": true
+                  },
+                  {
+                    "name": "Green",
+                    "visible": true
+                  },
+                  {
+                    "name": "Blue",
+                    "visible": true
+                  }
+                ],
+                "composite": "RGB",
+                "compositeVisible": true,
+                "layerMaskView": null,
+                "quickMask": null,
+                "target": {
+                  "kind": "composite"
+                }
+              },
+              "depth": 8,
+              "hasSelection": false,
+              "height": 32,
+              "history": [
+                "Open",
+                "Duplicate Layer"
+              ],
+              "id": 1,
+              "isolatedLayers": [],
+              "lastAppliedComp": null,
+              "layerComps": [],
+              "layerMaskView": null,
+              "layers": [
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    0,
+                    0
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 5,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "Audio \u00b7 tone copy",
+                  "opacity": 1.0,
+                  "selected": true,
+                  "visible": true
+                },
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    0,
+                    0
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 3,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "Audio \u00b7 tone",
+                  "opacity": 1.0,
+                  "selected": false,
+                  "visible": true
+                },
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    32,
+                    32
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 2,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "Background",
+                  "opacity": 1.0,
+                  "selected": false,
+                  "visible": true
+                }
+              ],
+              "measurement": {
+                "count": 0,
+                "countGroups": 0,
+                "ruler": null,
+                "scale": "1 pixels = 1.0000 pixels"
+              },
+              "mode": "Rgb",
+              "name": "Untitled",
+              "notes": [],
+              "quickMask": false,
+              "resolution": 72.0,
+              "revision": 2,
+              "selectedLayers": [
+                5
+              ],
+              "selectionBounds": null,
+              "symmetry": null,
+              "timeline": {
+                "current": 0,
+                "duration": 90,
+                "fps": 30.0
+              },
+              "variables": null,
+              "width": 32
+            }
+          }
+        ]
+      },
+      {
+        "commands": [
+          [
+            "layer.copyToDocument",
+            {
+              "document": 0,
+              "source": 0,
+              "allowSame": true,
+              "layers": [
+                3
+              ]
+            }
+          ]
+        ],
+        "replies": [
+          {
+            "command": "layer.copyToDocument",
+            "result": {
+              "document": 0,
+              "layers": [
+                6
+              ],
+              "offset": [
+                0,
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "commands": [
+          [
+            "file.new",
+            {
+              "width": 32,
+              "height": 32,
+              "depth": 8
+            }
+          ],
+          [
+            "layer.copyToDocument",
+            {
+              "source": 0,
+              "document": 1,
+              "layers": [
+                3
+              ]
+            }
+          ],
+          [
+            "document.inspect",
+            {}
+          ]
+        ],
+        "replies": [
+          {
+            "command": "file.new",
+            "result": {
+              "document": 1
+            }
+          },
+          {
+            "command": "layer.copyToDocument",
+            "result": {
+              "document": 1,
+              "layers": [
+                8
+              ],
+              "offset": [
+                0,
+                0
+              ]
+            }
+          },
+          {
+            "command": "document.inspect",
+            "result": {
+              "activeLayer": 8,
+              "audioLayers": [
+                {
+                  "clips": [
+                    {
+                      "durationSeconds": 2.0,
+                      "id": 1,
+                      "muted": false,
+                      "name": "tone",
+                      "startSeconds": 0.0,
+                      "volume": 1.0
+                    }
+                  ],
+                  "layer": 8,
+                  "muted": false,
+                  "name": "tone",
+                  "track": 1
+                }
+              ],
+              "canRedo": false,
+              "canUndo": true,
+              "channels": {
+                "alpha": [],
+                "colors": [
+                  {
+                    "name": "Red",
+                    "visible": true
+                  },
+                  {
+                    "name": "Green",
+                    "visible": true
+                  },
+                  {
+                    "name": "Blue",
+                    "visible": true
+                  }
+                ],
+                "composite": "RGB",
+                "compositeVisible": true,
+                "layerMaskView": null,
+                "quickMask": null,
+                "target": {
+                  "kind": "composite"
+                }
+              },
+              "depth": 8,
+              "hasSelection": false,
+              "height": 32,
+              "history": [
+                "Open",
+                "Duplicate Layer"
+              ],
+              "id": 5,
+              "isolatedLayers": [],
+              "lastAppliedComp": null,
+              "layerComps": [],
+              "layerMaskView": null,
+              "layers": [
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    0,
+                    0
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 8,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "Audio \u00b7 tone",
+                  "opacity": 1.0,
+                  "selected": true,
+                  "visible": true
+                },
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    32,
+                    32
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 6,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "Background",
+                  "opacity": 1.0,
+                  "selected": false,
+                  "visible": true
+                }
+              ],
+              "measurement": {
+                "count": 0,
+                "countGroups": 0,
+                "ruler": null,
+                "scale": "1 pixels = 1.0000 pixels"
+              },
+              "mode": "Rgb",
+              "name": "Untitled",
+              "notes": [],
+              "quickMask": false,
+              "resolution": 72.0,
+              "revision": 2,
+              "selectedLayers": [
+                8
+              ],
+              "selectionBounds": null,
+              "symmetry": null,
+              "timeline": {
+                "current": 0,
+                "duration": 90,
+                "fps": 30.0
+              },
+              "variables": null,
+              "width": 32
+            }
+          }
+        ]
+      },
+      {
+        "commands": [
+          [
+            "layer.delete",
+            {
+              "layer": 5
+            }
+          ]
+        ],
+        "replies": [
+          {
+            "command": "layer.delete",
+            "result": null
+          }
+        ]
+      },
+      {
+        "commands": [
+          [
+            "layer.delete",
+            {
+              "layer": 5
+            }
+          ],
+          [
+            "edit.undo",
+            {}
+          ]
+        ],
+        "replies": [
+          {
+            "command": "layer.delete",
+            "result": null
+          },
+          {
+            "command": "edit.undo",
+            "result": true
+          }
+        ]
+      },
+      {
+        "commands": [
+          [
+            "timeline.setLayerRange",
+            {
+              "layer": 3,
+              "start": 15,
+              "end": 45
+            }
+          ]
+        ],
+        "replies": [
+          {
+            "command": "timeline.setLayerRange",
+            "result": {
+              "timeline": {
+                "current": 0,
+                "duration": 90,
+                "fps": 30.0,
+                "fpsDenominator": 1,
+                "fpsNumerator": 30,
+                "layerRanges": [
+                  {
+                    "enabled": true,
+                    "end": 45,
+                    "layer": 3,
+                    "playback": null,
+                    "start": 15
+                  }
+                ],
+                "linkedSelection": true,
+                "loop": "loop",
+                "loopCount": null,
+                "mainTrackMagnet": false,
+                "markers": [],
+                "mode": "video",
+                "onionSkin": false,
+                "onionSkinSettings": {
+                  "blend": "normal",
+                  "framesAfter": 0,
+                  "framesBefore": 1,
+                  "maxOpacity": 0.30000001192092896,
+                  "minOpacity": 0.30000001192092896,
+                  "spacing": 1
+                },
+                "previewSkimming": false,
+                "snapping": true,
+                "time": 0.0,
+                "visualTracks": [],
+                "workEnd": 90,
+                "workStart": 0
+              }
+            }
+          }
+        ]
+      },
+      {
+        "commands": [
+          [
+            "layer.videoLayers.newVideoLayerFromFile",
+            {
+              "path": "/private/tmp/photostore-layered-boundaries/synthetic-av.mp4"
+            }
+          ],
+          [
+            "layer.videoLayers.newVideoLayerFromFile",
+            {
+              "path": "/private/tmp/photostore-layered-boundaries/synthetic-av.mp4"
+            }
+          ],
+          [
+            "document.inspect",
+            {}
+          ]
+        ],
+        "replies": [
+          {
+            "command": "layer.videoLayers.newVideoLayerFromFile",
+            "result": {
+              "frames": 60,
+              "layer": 3
+            }
+          },
+          {
+            "command": "layer.videoLayers.newVideoLayerFromFile",
+            "result": {
+              "frames": 60,
+              "layer": 5
+            }
+          },
+          {
+            "command": "document.inspect",
+            "result": {
+              "activeLayer": 5,
+              "audioLayers": [
+                {
+                  "clips": [
+                    {
+                      "durationSeconds": 2.0,
+                      "id": 1,
+                      "muted": false,
+                      "name": "Movie Audio",
+                      "startSeconds": 0.0,
+                      "volume": 1.0
+                    }
+                  ],
+                  "layer": 3,
+                  "muted": false,
+                  "name": "synthetic-av Audio",
+                  "track": 1
+                },
+                {
+                  "clips": [
+                    {
+                      "durationSeconds": 2.0,
+                      "id": 2,
+                      "muted": false,
+                      "name": "Movie Audio",
+                      "startSeconds": 0.0,
+                      "volume": 1.0
+                    }
+                  ],
+                  "layer": 5,
+                  "muted": false,
+                  "name": "synthetic-av Audio",
+                  "track": 2
+                }
+              ],
+              "canRedo": false,
+              "canUndo": true,
+              "channels": {
+                "alpha": [],
+                "colors": [
+                  {
+                    "name": "Red",
+                    "visible": true
+                  },
+                  {
+                    "name": "Green",
+                    "visible": true
+                  },
+                  {
+                    "name": "Blue",
+                    "visible": true
+                  }
+                ],
+                "composite": "RGB",
+                "compositeVisible": true,
+                "layerMaskView": null,
+                "quickMask": null,
+                "target": {
+                  "kind": "composite"
+                }
+              },
+              "depth": 8,
+              "hasSelection": false,
+              "height": 64,
+              "history": [
+                "Open",
+                "New Video Layer from Movie",
+                "New Video Layer from Movie"
+              ],
+              "id": 1,
+              "isolatedLayers": [],
+              "lastAppliedComp": null,
+              "layerComps": [],
+              "layerMaskView": null,
+              "layers": [
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    64,
+                    64
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 5,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "synthetic-av 2",
+                  "opacity": 1.0,
+                  "selected": true,
+                  "video": {
+                    "fps": 30.0,
+                    "frames": 60,
+                    "movieBacking": {
+                      "frame_count": 60,
+                      "source_fps": 30.0,
+                      "trim_in_frame": 0,
+                      "trim_out_frame": 59
+                    },
+                    "residentFrames": 1,
+                    "showAltered": true,
+                    "source": {
+                      "file": "/private/tmp/photostore-layered-boundaries/synthetic-av.mp4"
+                    }
+                  },
+                  "visible": true
+                },
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    64,
+                    64
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 3,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "synthetic-av 1",
+                  "opacity": 1.0,
+                  "selected": false,
+                  "video": {
+                    "fps": 30.0,
+                    "frames": 60,
+                    "movieBacking": {
+                      "frame_count": 60,
+                      "source_fps": 30.0,
+                      "trim_in_frame": 0,
+                      "trim_out_frame": 59
+                    },
+                    "residentFrames": 1,
+                    "showAltered": true,
+                    "source": {
+                      "file": "/private/tmp/photostore-layered-boundaries/synthetic-av.mp4"
+                    }
+                  },
+                  "visible": true
+                },
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    64,
+                    64
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 2,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "Background",
+                  "opacity": 1.0,
+                  "selected": false,
+                  "visible": true
+                }
+              ],
+              "measurement": {
+                "count": 0,
+                "countGroups": 0,
+                "ruler": null,
+                "scale": "1 pixels = 1.0000 pixels"
+              },
+              "mode": "Rgb",
+              "name": "Untitled",
+              "notes": [],
+              "quickMask": false,
+              "resolution": 72.0,
+              "revision": 3,
+              "selectedLayers": [
+                5
+              ],
+              "selectionBounds": null,
+              "symmetry": null,
+              "timeline": {
+                "current": 0,
+                "duration": 60,
+                "fps": 30.0
+              },
+              "variables": null,
+              "width": 64
+            }
+          }
+        ]
+      },
+      {
+        "commands": [
+          [
+            "layer.setProps",
+            {
+              "layer": 5,
+              "opacity": 0.5
+            }
+          ],
+          [
+            "timeline.presentFrame",
+            {
+              "frame": 1
+            }
+          ],
+          [
+            "document.inspect",
+            {}
+          ],
+          [
+            "timeline.presentFrame",
+            {
+              "frame": 20
+            }
+          ],
+          [
+            "document.inspect",
+            {}
+          ]
+        ],
+        "replies": [
+          {
+            "command": "layer.setProps",
+            "result": null
+          },
+          {
+            "command": "timeline.presentFrame",
+            "result": {
+              "frame": 1,
+              "ready": true
+            }
+          },
+          {
+            "command": "document.inspect",
+            "result": {
+              "activeLayer": 5,
+              "audioLayers": [
+                {
+                  "clips": [
+                    {
+                      "durationSeconds": 2.0,
+                      "id": 1,
+                      "muted": false,
+                      "name": "Movie Audio",
+                      "startSeconds": 0.0,
+                      "volume": 1.0
+                    }
+                  ],
+                  "layer": 3,
+                  "muted": false,
+                  "name": "synthetic-av Audio",
+                  "track": 1
+                },
+                {
+                  "clips": [
+                    {
+                      "durationSeconds": 2.0,
+                      "id": 2,
+                      "muted": false,
+                      "name": "Movie Audio",
+                      "startSeconds": 0.0,
+                      "volume": 1.0
+                    }
+                  ],
+                  "layer": 5,
+                  "muted": false,
+                  "name": "synthetic-av Audio",
+                  "track": 2
+                }
+              ],
+              "canRedo": false,
+              "canUndo": true,
+              "channels": {
+                "alpha": [],
+                "colors": [
+                  {
+                    "name": "Red",
+                    "visible": true
+                  },
+                  {
+                    "name": "Green",
+                    "visible": true
+                  },
+                  {
+                    "name": "Blue",
+                    "visible": true
+                  }
+                ],
+                "composite": "RGB",
+                "compositeVisible": true,
+                "layerMaskView": null,
+                "quickMask": null,
+                "target": {
+                  "kind": "composite"
+                }
+              },
+              "depth": 8,
+              "hasSelection": false,
+              "height": 64,
+              "history": [
+                "Open",
+                "Layer Properties"
+              ],
+              "id": 1,
+              "isolatedLayers": [],
+              "lastAppliedComp": null,
+              "layerComps": [],
+              "layerMaskView": null,
+              "layers": [
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    64,
+                    64
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 5,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "synthetic-av 2",
+                  "opacity": 0.5,
+                  "selected": true,
+                  "video": {
+                    "fps": 30.0,
+                    "frames": 60,
+                    "movieBacking": {
+                      "frame_count": 60,
+                      "source_fps": 30.0,
+                      "trim_in_frame": 0,
+                      "trim_out_frame": 59
+                    },
+                    "residentFrames": 1,
+                    "showAltered": true,
+                    "source": {
+                      "file": "/private/tmp/photostore-layered-boundaries/synthetic-av.mp4"
+                    }
+                  },
+                  "visible": true
+                },
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    64,
+                    64
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 3,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "synthetic-av 1",
+                  "opacity": 1.0,
+                  "selected": false,
+                  "video": {
+                    "fps": 30.0,
+                    "frames": 60,
+                    "movieBacking": {
+                      "frame_count": 60,
+                      "source_fps": 30.0,
+                      "trim_in_frame": 0,
+                      "trim_out_frame": 59
+                    },
+                    "residentFrames": 1,
+                    "showAltered": true,
+                    "source": {
+                      "file": "/private/tmp/photostore-layered-boundaries/synthetic-av.mp4"
+                    }
+                  },
+                  "visible": true
+                },
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    64,
+                    64
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 2,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "Background",
+                  "opacity": 1.0,
+                  "selected": false,
+                  "visible": true
+                }
+              ],
+              "measurement": {
+                "count": 0,
+                "countGroups": 0,
+                "ruler": null,
+                "scale": "1 pixels = 1.0000 pixels"
+              },
+              "mode": "Rgb",
+              "name": "Untitled",
+              "notes": [],
+              "quickMask": false,
+              "resolution": 72.0,
+              "revision": 3,
+              "selectedLayers": [
+                5
+              ],
+              "selectionBounds": null,
+              "symmetry": null,
+              "timeline": {
+                "current": 1,
+                "duration": 60,
+                "fps": 30.0
+              },
+              "variables": null,
+              "width": 64
+            }
+          },
+          {
+            "command": "timeline.presentFrame",
+            "result": {
+              "frame": 20,
+              "ready": true
+            }
+          },
+          {
+            "command": "document.inspect",
+            "result": {
+              "activeLayer": 5,
+              "audioLayers": [
+                {
+                  "clips": [
+                    {
+                      "durationSeconds": 2.0,
+                      "id": 1,
+                      "muted": false,
+                      "name": "Movie Audio",
+                      "startSeconds": 0.0,
+                      "volume": 1.0
+                    }
+                  ],
+                  "layer": 3,
+                  "muted": false,
+                  "name": "synthetic-av Audio",
+                  "track": 1
+                },
+                {
+                  "clips": [
+                    {
+                      "durationSeconds": 2.0,
+                      "id": 2,
+                      "muted": false,
+                      "name": "Movie Audio",
+                      "startSeconds": 0.0,
+                      "volume": 1.0
+                    }
+                  ],
+                  "layer": 5,
+                  "muted": false,
+                  "name": "synthetic-av Audio",
+                  "track": 2
+                }
+              ],
+              "canRedo": false,
+              "canUndo": true,
+              "channels": {
+                "alpha": [],
+                "colors": [
+                  {
+                    "name": "Red",
+                    "visible": true
+                  },
+                  {
+                    "name": "Green",
+                    "visible": true
+                  },
+                  {
+                    "name": "Blue",
+                    "visible": true
+                  }
+                ],
+                "composite": "RGB",
+                "compositeVisible": true,
+                "layerMaskView": null,
+                "quickMask": null,
+                "target": {
+                  "kind": "composite"
+                }
+              },
+              "depth": 8,
+              "hasSelection": false,
+              "height": 64,
+              "history": [
+                "Open",
+                "Layer Properties"
+              ],
+              "id": 1,
+              "isolatedLayers": [],
+              "lastAppliedComp": null,
+              "layerComps": [],
+              "layerMaskView": null,
+              "layers": [
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    64,
+                    64
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 5,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "synthetic-av 2",
+                  "opacity": 0.5,
+                  "selected": true,
+                  "video": {
+                    "fps": 30.0,
+                    "frames": 60,
+                    "movieBacking": {
+                      "frame_count": 60,
+                      "source_fps": 30.0,
+                      "trim_in_frame": 0,
+                      "trim_out_frame": 59
+                    },
+                    "residentFrames": 1,
+                    "showAltered": true,
+                    "source": {
+                      "file": "/private/tmp/photostore-layered-boundaries/synthetic-av.mp4"
+                    }
+                  },
+                  "visible": true
+                },
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    64,
+                    64
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 3,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "synthetic-av 1",
+                  "opacity": 1.0,
+                  "selected": false,
+                  "video": {
+                    "fps": 30.0,
+                    "frames": 60,
+                    "movieBacking": {
+                      "frame_count": 60,
+                      "source_fps": 30.0,
+                      "trim_in_frame": 0,
+                      "trim_out_frame": 59
+                    },
+                    "residentFrames": 1,
+                    "showAltered": true,
+                    "source": {
+                      "file": "/private/tmp/photostore-layered-boundaries/synthetic-av.mp4"
+                    }
+                  },
+                  "visible": true
+                },
+                {
+                  "blend": "Normal",
+                  "bounds": [
+                    0,
+                    0,
+                    64,
+                    64
+                  ],
+                  "clipped": false,
+                  "fill": 1.0,
+                  "hasMask": false,
+                  "id": 2,
+                  "kind": "Pixel",
+                  "labelColor": "none",
+                  "linkGroup": null,
+                  "name": "Background",
+                  "opacity": 1.0,
+                  "selected": false,
+                  "visible": true
+                }
+              ],
+              "measurement": {
+                "count": 0,
+                "countGroups": 0,
+                "ruler": null,
+                "scale": "1 pixels = 1.0000 pixels"
+              },
+              "mode": "Rgb",
+              "name": "Untitled",
+              "notes": [],
+              "quickMask": false,
+              "resolution": 72.0,
+              "revision": 4,
+              "selectedLayers": [
+                5
+              ],
+              "selectionBounds": null,
+              "symmetry": null,
+              "timeline": {
+                "current": 20,
+                "duration": 60,
+                "fps": 30.0
+              },
+              "variables": null,
+              "width": 64
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "production_measurements": {
+    "source_sha": "9fa1ffb6f38b70e4b3ec9ebdb5ba4203ef086cf5",
+    "binary_sha256": "ab63503af6af0b0f6bdf28042042eca7c40e2c722ee8923c4dee51966c55f647",
+    "binary": "/Users/computer/Desktop/dev/PhotoStore/target/macos-package/photostore-cli-0.20.4-macos-aarch64/photostore-cli",
+    "host": "Apple M1 Max / 32 GiB",
+    "fixture": "Synthetic testsrc2 3840x2160 30fps H264 SDR; six distinct source paths hardlink identical owned fixture bytes; no private media",
+    "scope": "Headless decode/cache/document preparation only; excludes GPU composition/display/input/audio output; not native playback FPS; memory excludes other process/document/GPU allocations",
+    "cases": [
+      {
+        "clean": true,
+        "codec": "h264",
+        "coldFirstFrameMs": 275.25341599999996,
+        "decodeProcessLaunches": 2,
+        "distinctHashesPerLayer": [
+          60,
+          60
+        ],
+        "distinctSampledPixelHashes": 60,
+        "elapsedSeconds": 1.350802458,
+        "frames": 60,
+        "height": 2160,
+        "historyUnchanged": true,
+        "layerCount": 2,
+        "layerPropertiesPreserved": true,
+        "maxEstimatedDecoderSessionBytes": 265420800,
+        "maxRetainedDerivedBytes": 2141061120,
+        "path": "/private/tmp/photostore-layered-fixtures/source-1.mp4",
+        "persistentDecoderLaunches": 2,
+        "polls": 768,
+        "preparationMs": 265.766625,
+        "requestWaitMs": [
+          275.25341599999996,
+          14.957833,
+          9.941625,
+          10.002832999999999,
+          8.381959,
+          10.056292,
+          11.122958,
+          11.456833,
+          14.085166,
+          15.033833,
+          12.536959,
+          14.031291,
+          12.462584,
+          9.974042,
+          8.575,
+          11.30525,
+          13.910791,
+          8.241541999999999,
+          12.523665999999999,
+          12.25775,
+          11.834083,
+          14.652750000000001,
+          15.600833999999999,
+          16.387708,
+          24.355209,
+          9.754667,
+          17.903375,
+          19.9085,
+          12.013291,
+          12.114042,
+          13.685708,
+          10.289875,
+          10.209917,
+          10.091790999999999,
+          11.336458,
+          9.938,
+          10.383916,
+          9.906333,
+          13.305375,
+          14.531749999999999,
+          12.567333999999999,
+          15.242583,
+          11.287040999999999,
+          11.632792,
+          9.875791999999999,
+          11.362208,
+          9.689290999999999,
+          12.887958,
+          8.631542000000001,
+          10.216167,
+          9.94425,
+          10.706167,
+          17.223834,
+          10.123541999999999,
+          12.833667,
+          13.254083999999999,
+          11.935958,
+          11.332167,
+          17.162208000000003,
+          14.117667
+        ],
+        "retainedBudgetBytes": 2147483648,
+        "scope": "Headless decode/cache/document presentation preparation, original geometry and exact timestamps. Excludes native GPU/paint/display/input/audio-device output; throughput is not native playback FPS.",
+        "sourceFps": {
+          "denominator": 1,
+          "numerator": 30
+        },
+        "sources": [
+          {
+            "codec": "h264",
+            "height": 2160,
+            "path": "/private/tmp/photostore-layered-fixtures/source-1.mp4",
+            "width": 3840
+          },
+          {
+            "codec": "h264",
+            "height": 2160,
+            "path": "/private/tmp/photostore-layered-fixtures/source-2.mp4",
+            "width": 3840
+          }
+        ],
+        "warmFramesPerSecond": 54.85570410651716,
+        "warmP50Ms": 11.834083,
+        "warmP95Ms": 17.223834,
+        "width": 3840
+      },
+      {
+        "clean": true,
+        "codec": "h264",
+        "coldFirstFrameMs": 1012.794958,
+        "decodeProcessLaunches": 6,
+        "distinctHashesPerLayer": [
+          60,
+          60,
+          60,
+          60,
+          60,
+          60
+        ],
+        "distinctSampledPixelHashes": 60,
+        "elapsedSeconds": 3.7377517080000002,
+        "frames": 60,
+        "height": 2160,
+        "historyUnchanged": true,
+        "layerCount": 6,
+        "layerPropertiesPreserved": true,
+        "maxEstimatedDecoderSessionBytes": 796262400,
+        "maxRetainedDerivedBytes": 2141061120,
+        "path": "/private/tmp/photostore-layered-fixtures/source-1.mp4",
+        "persistentDecoderLaunches": 6,
+        "polls": 1417,
+        "preparationMs": 656.269292,
+        "requestWaitMs": [
+          1012.794958,
+          84.340166,
+          29.120333000000002,
+          58.548042,
+          74.069042,
+          43.820834000000005,
+          36.457208,
+          33.086333,
+          69.02575,
+          47.584833,
+          51.120458,
+          43.346458,
+          63.37862499999999,
+          45.269541000000004,
+          39.884584000000004,
+          22.982374999999998,
+          0.672417,
+          24.211958,
+          10.087459,
+          35.716375,
+          8.534291,
+          0.5865,
+          7.572625,
+          25.13125,
+          18.689,
+          15.730874999999997,
+          17.325709000000003,
+          15.307667,
+          16.388458,
+          17.534750000000003,
+          20.647875,
+          17.624000000000002,
+          10.045833,
+          11.785916,
+          15.827708,
+          2.069667,
+          19.662375,
+          35.940791,
+          17.859875000000002,
+          3.9586250000000005,
+          16.754333,
+          12.422583,
+          0.728791,
+          0.5613750000000001,
+          0.796583,
+          2.469125,
+          32.142667,
+          26.118166000000002,
+          18.667375,
+          0.602375,
+          21.824832999999998,
+          1.824917,
+          18.510625,
+          0.821,
+          0.727958,
+          0.730208,
+          8.6715,
+          40.99925,
+          16.271875,
+          17.019667
+        ],
+        "retainedBudgetBytes": 2147483648,
+        "scope": "Headless decode/cache/document presentation preparation, original geometry and exact timestamps. Excludes native GPU/paint/display/input/audio-device output; throughput is not native playback FPS.",
+        "sourceFps": {
+          "denominator": 1,
+          "numerator": 30
+        },
+        "sources": [
+          {
+            "codec": "h264",
+            "height": 2160,
+            "path": "/private/tmp/photostore-layered-fixtures/source-1.mp4",
+            "width": 3840
+          },
+          {
+            "codec": "h264",
+            "height": 2160,
+            "path": "/private/tmp/photostore-layered-fixtures/source-2.mp4",
+            "width": 3840
+          },
+          {
+            "codec": "h264",
+            "height": 2160,
+            "path": "/private/tmp/photostore-layered-fixtures/source-3.mp4",
+            "width": 3840
+          },
+          {
+            "codec": "h264",
+            "height": 2160,
+            "path": "/private/tmp/photostore-layered-fixtures/source-4.mp4",
+            "width": 3840
+          },
+          {
+            "codec": "h264",
+            "height": 2160,
+            "path": "/private/tmp/photostore-layered-fixtures/source-5.mp4",
+            "width": 3840
+          },
+          {
+            "codec": "h264",
+            "height": 2160,
+            "path": "/private/tmp/photostore-layered-fixtures/source-6.mp4",
+            "width": 3840
+          }
+        ],
+        "warmFramesPerSecond": 21.651719793350846,
+        "warmP50Ms": 17.624000000000002,
+        "warmP95Ms": 63.37862499999999,
+        "width": 3840
+      }
+    ]
+  },
+  "release": {
+    "source_sha": "9fa1ffb6f38b70e4b3ec9ebdb5ba4203ef086cf5",
+    "tag": "refs/tags/v0.20.4",
+    "release_id": 430378501,
+    "url": "https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.4",
+    "published_at": "2026-11-01T05:17:01Z",
+    "latest": "v0.20.4",
+    "assets": {
+      "photostore-0.20.4-macos-aarch64.dmg": {
+        "id": 697404123,
+        "size": 45524249,
+        "digest": "sha256:ae8ff3ff4e57b87a9d3be46a490752c4d3360d84ed1591e7ab5b3ffdd5a14caa",
+        "browser_download_url": "https://github.com/akiyamasho/PhotoStore/releases/download/v0.20.4/photostore-0.20.4-macos-aarch64.dmg"
+      },
+      "photostore-cli-0.20.4-macos-aarch64.zip": {
+        "id": 697404124,
+        "size": 32556962,
+        "digest": "sha256:42c8d02c704ef050621d92e99d4ff3b42c316030389e56ef9ce45237650364ed",
+        "browser_download_url": "https://github.com/akiyamasho/PhotoStore/releases/download/v0.20.4/photostore-cli-0.20.4-macos-aarch64.zip"
+      },
+      "SHA256SUMS": {
+        "id": 697404126,
+        "size": 208,
+        "digest": "sha256:7182e88c17c482ffa0988d93323f35215f032034e5ef3d8df360425d2d37d796",
+        "browser_download_url": "https://github.com/akiyamasho/PhotoStore/releases/download/v0.20.4/SHA256SUMS"
+      }
+    }
+  },
+  "installed": true
+}
