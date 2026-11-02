@@ -1091,9 +1091,13 @@ fn set_props(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit("Timeline Settings", |doc, _| {
         crate::video_cmds::store(doc);
         if let Some(fps)=fps {retime_frame_cadence(doc,rate.map_or(f64::from(fps),|r|r.as_f64()),duration)?;}
+        let video = doc.timeline.as_ref().is_some_and(|timeline| timeline.mode == TimelineMode::Video);
+        if video && let Some(duration) = duration {
+            crate::timeline_editor_cmds::set_explicit_duration(doc, duration).map_err(|error| bad("timeline.setProps", error))?;
+        }
         let t = doc.timeline.as_mut().ok_or_else(|| bad("timeline.setProps", "no timeline (create one first)".into()))?;
         if let Some(fps) = fps { t.fps = fps; t.rational_rate=rate; }
-        if let Some(d) = duration { t.duration = d; }
+        if !video && let Some(d) = duration { t.duration = d; }
         if let Some(ws) = ws { t.work_start = ws; }
         if let Some(we) = we { t.work_end = we; }
         if t.work_start >= t.work_end { return Err(bad("timeline.setProps", "workStart must be less than workEnd".into())); }
@@ -1313,6 +1317,7 @@ fn set_video_clip(s: &mut Session, p: &Value) -> Result<Value> {
     let start = p.get("start").map(|v| v.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad("timeline.setVideoClip", "start must be a whole frame".into()))).transpose()?;
     let end = p.get("end").map(|v| v.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad("timeline.setVideoClip", "end must be a whole frame".into()))).transpose()?;
     s.edit("Set Video Clip", |doc, _| {
+        let duration_edit = crate::timeline_editor_cmds::prepare_duration_edit(doc);
         crate::video_cmds::store(doc);
         let v = doc.layer(id).ok_or(EngineError::NoLayer(id))?.video.as_ref().ok_or_else(|| bad("timeline.setVideoClip", "layer is not a video layer".into()))?.clone();
         let (old, timeline_fps, timeline_duration, authored_range) = {
@@ -1386,6 +1391,7 @@ fn set_video_clip(s: &mut Session, p: &Value) -> Result<Value> {
             });
         }
         crate::timeline_editor_cmds::repack_main_track(doc, "timeline.setVideoClip")?;
+        crate::timeline_editor_cmds::reconcile_duration(doc, duration_edit);
         crate::video_cmds::sync(doc); Ok(())
     })?;
     info(s)

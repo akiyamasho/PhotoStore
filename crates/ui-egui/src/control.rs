@@ -14,9 +14,9 @@
 //! - `ui.dialog.apply {dialog}`: commit Preferences changes without closing the dialog
 //! - `ui.window.open {document?}` / `ui.window.close {window}`: extra document windows
 //! - `ui.pointer {events: [{kind: down|move|up, x, y, pressure?, tiltX?, tiltY?, rotation?}], modifiers?, button?}`: drive the active tool in document coordinates (`button: "secondary"` opens the tool's canvas context menu or Brush Preset picker, or erases with Preferences › Tools › Right-click with painting tools = erase)
-//! - `ui.click {x, y, button?, count?}` / `ui.move {x, y}`: synthetic pointer input in screen points
+//! - `ui.click {x, y, button?, count?}` / `ui.move {x, y, button?, pressed?}`: synthetic pointer input in screen points
 //!   (`count` at most [`MAX_CLICKS`])
-//! - `ui.key {key, command?, shift?, alt?, ctrl?}` / `ui.type {text}`: synthetic keyboard input
+//! - `ui.key {key, pressed?, command?, shift?, alt?, ctrl?}` / `ui.type {text}`: synthetic keyboard input; omitted pressed taps the key
 //! - `ui.resize {width, height}`: resize the main window
 //! - `ui.gpu.simulateLoss {error?}`: act as if the wgpu device was lost (or, with `error: true`,
 //!   reported an error): the app switches to the CPU renderer for the rest of the session, as on a
@@ -297,6 +297,28 @@ fn dispatch(app: &mut PhotoStoreApp, ctx: &egui::Context, req: &ControlRequest) 
         }
         "ui.menu.list" => ok(serde_json::to_value(crate::menus::menu_items(app)).unwrap_or_default()),
         "ui.inspect" => ok(inspect(app, ctx)),
+        #[cfg(not(target_arch = "wasm32"))]
+        "ui.gpu.sample" => {
+            let Some(state) = app.session.active() else { return err("no document") };
+            let Some(gpu) = app.gpu.as_ref() else { return err("GPU canvas is unavailable") };
+            let Some(values) = p.get("points").and_then(Value::as_array).filter(|values| !values.is_empty() && values.len() <= 16) else {
+                return err("points must contain 1 to 16 [x,y] coordinates");
+            };
+            let mut points = Vec::with_capacity(values.len());
+            for value in values {
+                let Some(pair) = value.as_array().filter(|pair| pair.len() == 2) else { return err("each point must be [x,y]") };
+                let x = pair[0].as_u64().and_then(|value| u32::try_from(value).ok());
+                let y = pair[1].as_u64().and_then(|value| u32::try_from(value).ok());
+                let (Some(x), Some(y)) = (x, y) else { return err("coordinates must be nonnegative pixel integers") };
+                if x >= state.doc.size.width || y >= state.doc.size.height { return err("point is outside the document") }
+                points.push([x, y]);
+            }
+            let frame = gpu.playback_published_frame(state.doc.id.0);
+            match gpu.sample_texels(state.doc.id.0, &points) {
+                Some(rgba) => ok(json!({"document":state.doc.id.0,"frame":frame,"rgba":rgba})),
+                None => err("GPU canvas is not ready for sampling"),
+            }
+        }
         "ui.set" => {
             if let Some(field) = p.as_object().and_then(|o| o.keys().find(|k| !UI_SET_FIELDS.contains(&k.as_str()))) {
                 return err(format!("unknown field `{field}` (fields: {})", UI_SET_FIELDS.join(", ")));
@@ -845,7 +867,14 @@ fn dispatch(app: &mut PhotoStoreApp, ctx: &egui::Context, req: &ControlRequest) 
             if clicks > MAX_CLICKS {
                 return err(format!("`count` must be at most {MAX_CLICKS} (got {clicks})"));
             }
+            let pressed = match p.get("pressed") {
+                Some(value) => match value.as_bool() { Some(value) => Some(value), None => return err("pressed must be a boolean") },
+                None => None,
+            };
             app.synthetic.push(egui::Event::PointerMoved(pos));
+            if req.method == "ui.move" && let Some(pressed) = pressed {
+                app.synthetic.push(egui::Event::PointerButton { pos, button, pressed, modifiers: Default::default() });
+            }
             for _ in 0..clicks {
                 app.synthetic.push(egui::Event::PointerButton { pos, button, pressed: true, modifiers: Default::default() });
                 app.synthetic.push(egui::Event::PointerButton { pos, button, pressed: false, modifiers: Default::default() });
@@ -866,8 +895,12 @@ fn dispatch(app: &mut PhotoStoreApp, ctx: &egui::Context, req: &ControlRequest) 
                 alt: flag("alt"),
                 ctrl: flag("ctrl"),
             };
-            app.synthetic.push(egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers });
-            app.synthetic.push(egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers });
+            let pressed = match p.get("pressed") {
+                Some(value) => match value.as_bool() { Some(value) => Some(value), None => return err("pressed must be a boolean") },
+                None => None,
+            };
+            if pressed != Some(false) { app.synthetic.push(egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }); }
+            if pressed != Some(true) { app.synthetic.push(egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers }); }
             ctx.request_repaint();
             Outcome::AfterInput
         }
@@ -998,6 +1031,7 @@ pub fn inspect(app: &PhotoStoreApp, ctx: &egui::Context) -> Value {
     }
     json!({
         "window": {"width": screen.width(), "height": screen.height(), "pixelsPerPoint": ctx.pixels_per_point()},
+        "canvasRect": [app.last_canvas_rect.left(), app.last_canvas_rect.top(), app.last_canvas_rect.right(), app.last_canvas_rect.bottom()],
         "tool": app.ui.tool,
         "toolOptions": app.ui.tool_options,
         "strokeEditor": app.ui.stroke_editor,

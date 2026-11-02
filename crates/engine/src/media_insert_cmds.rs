@@ -101,7 +101,7 @@ fn audio_track(timeline: &mut Timeline) -> Result<usize> {
         .checked_add(1)
         .filter(|id| *id > 0)
         .ok_or_else(|| bad("audio track identity space is exhausted"))?;
-    timeline.audio_tracks.push(AudioTrack { id, name: "Audio".into(), owner_layer: None, muted: false, clips: Vec::new() });
+    timeline.audio_tracks.push(AudioTrack { id, name: "Audio".into(), owner_layer: None, muted: false, volume: 1.0, clips: Vec::new() });
     Ok(timeline.audio_tracks.len() - 1)
 }
 

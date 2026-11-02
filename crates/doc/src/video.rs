@@ -629,6 +629,9 @@ pub struct AudioTrack {
     pub owner_layer: Option<LayerId>,
     #[serde(default)]
     pub muted: bool,
+    /// Linear row gain applied in addition to each clip's own volume.
+    #[serde(default = "default_clip_volume")]
+    pub volume: f64,
     #[serde(default)]
     pub clips: Vec<AudioClip>,
 }
@@ -963,6 +966,11 @@ pub struct Timeline {
     pub rational_rate: Option<RationalRate>,
     /// Total number of frames (>= 1).
     pub duration: usize,
+    /// Deliberate blank tail after timed content in Video Timeline mode. `None` identifies a
+    /// legacy document whose prior duration must be preserved the first time an edit reconciles
+    /// its content extent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tail_padding_frames: Option<usize>,
     /// The playhead (0-based frame index).
     pub current: usize,
     /// Work-area start frame (inclusive).
@@ -1019,6 +1027,7 @@ impl Timeline {
             fps: valid_fps(fps),
             rational_rate: None,
             duration: d,
+            tail_padding_frames: Some(0),
             current: 0,
             work_start: 0,
             work_end: d,

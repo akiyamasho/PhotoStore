@@ -5,9 +5,9 @@
 //! with direct GPU rendering behind the same `CanvasCache` interface.
 
 use egui::{Color32, Mesh, PointerButton, Pos2, Rect, Sense, Stroke, TextureOptions, Vec2, pos2, vec2};
-use photostore_doc::{Document, LayerContent, OnionSkinBlend};
+use photostore_doc::{Document, LayerContent, LayerId, OnionSkinBlend};
 use photostore_geom::Rect as DRect;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::PhotoStoreApp;
 use crate::state::{Tool, View};
@@ -452,6 +452,9 @@ pub(crate) struct LiveStroke {
     stroke: EngineStroke,
     doc: photostore_doc::DocId,
     revision: u64,
+    content_revision: u64,
+    layer: Option<LayerId>,
+    target: Value,
     /// Preview key of the stroke; step `n` displays as `key + n`.
     key: u64,
     /// Damage of each step (step 0 = the document before the stroke).
@@ -475,7 +478,7 @@ impl LiveStroke {
 /// The live stroke on document `idx`, while it is current.
 fn live_stroke(app: &PhotoStoreApp, idx: usize) -> Option<&LiveStroke> {
     let st = app.session.documents().get(idx)?;
-    app.live_stroke.as_ref().filter(|l| app.drag.is_some() && l.doc == st.doc.id && l.revision == st.revision)
+    app.live_stroke.as_ref().filter(|l| app.drag.is_some() && l.doc == st.doc.id && l.content_revision == st.content_revision)
 }
 
 /// `paint.stroke` params for a Brush/Eraser drag (shared by the live preview and the commit). The
@@ -613,7 +616,7 @@ fn begin_live_stroke(app: &PhotoStoreApp) -> Option<LiveStroke> {
     };
     let n = STROKES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) & 0xff_ffff;
     let damage = vec![stroke.bounds()];
-    Some(LiveStroke { stroke, doc: st.doc.id, revision: st.revision, key: (1 << 44) | (n << 20), damage, fed: d.points.len() })
+    Some(LiveStroke { stroke, doc: st.doc.id, revision: st.revision, content_revision: st.content_revision, layer: st.active_layer, target: json!({"target":paint_target(app)}), key: (1 << 44) | (n << 20), damage, fed: d.points.len() })
 }
 
 /// Render the drag points the live stroke hasn't seen yet, with the pen pressure, tilt and
@@ -1244,7 +1247,7 @@ fn ensure_gpu(app: &mut PhotoStoreApp, ctx: &egui::Context, idx: usize, visible:
     }
     let preview_key = raw_key ^ display_key;
     let size = [doc.size.width, doc.size.height];
-    let cache = app.canvases.entry((id, GPU_OUTPUT)).or_insert(CanvasCache {
+    app.canvases.entry((id, GPU_OUTPUT)).or_insert(CanvasCache {
         revision: 0,
         texture: None,
         scale: 1.0,
@@ -1254,16 +1257,26 @@ fn ensure_gpu(app: &mut PhotoStoreApp, ctx: &egui::Context, idx: usize, visible:
         tex_preview_key: 0,
         grid: None,
     });
-    let present = cache.on_gpu && gpu.has(id.0, size);
     #[cfg(not(target_arch = "wasm32"))]
-    if raw_key == 0 && app.session.active_index() == Some(idx)
+    if app.session.active_index() == Some(idx)
         && doc.timeline.as_ref().is_some_and(|t| t.mode == photostore_doc::TimelineMode::Video)
     {
         let same_budget = app.perf.gpu_budget_content == Some((id.0, content_revision));
         gpu_budget(app, &gpu, idx, same_budget, visible);
-        let ready = gpu.refresh_playback(doc, revision, content_revision, preview_key, display, ctx);
+        let (render_doc, preview_family, overlay, render_damage) = if let Some(live) = live_stroke(app, idx) {
+            // Only the paint target comes from the stroke's snapshot. The worker merges it
+            // over the newest prepared movie frame; input never clones/composites the stack.
+            (app.session.documents()[idx].doc.clone(), live.key ^ display_key,
+                Some(crate::gpu_canvas::PlaybackOverlay {
+                    source: live.stroke.doc().clone(), layer: live.layer, target: live.target.clone(),
+                }), Some(live.stroke.bounds().inflate(effect_reach(&app.session.documents()[idx].doc.layers))))
+        } else { (doc, preview_key, None, None) };
+        let ready = gpu.refresh_playback(render_doc, revision, content_revision, preview_key, preview_family, overlay, render_damage, display, ctx);
         if let Some(cache) = app.canvases.get_mut(&(id, GPU_OUTPUT)) {
             if let Some((revision, preview)) = ready.published {
+                app.perf.native_publications = app.perf.native_publications.max(ready.publication_count);
+                app.perf.native_video_frames = app.perf.native_video_frames.max(ready.video_publication_count);
+                if let Some(frame) = ready.published_frame { app.perf.native_presented_frame = frame; }
                 cache.revision = revision;
                 cache.preview_key = preview;
             }
@@ -1276,13 +1289,16 @@ fn ensure_gpu(app: &mut PhotoStoreApp, ctx: &egui::Context, idx: usize, visible:
                 app.ui.status_error = true;
             }
         }
+        app.perf.native_pending = ready.pending;
         if ready.pending { app.perf.record("gpu-buffering", 0, 0.0, 0.0); }
         // With no completed texture yet, paint the empty GPU canvas/pasteboard rather than
         // falling through to a synchronous full CPU composite while the worker is loading.
         return ready.available || ready.pending;
     }
+    let present = app.canvases.get(&(id, GPU_OUTPUT)).is_some_and(|cache| cache.on_gpu) && gpu.has(id.0, size);
+    let current = app.canvases.get(&(id, GPU_OUTPUT)).is_some_and(|cache| cache.revision == revision && cache.preview_key == preview_key);
     if app.session.active_index() == Some(idx) { gpu.cancel_playback_refresh(); }
-    if present && cache.revision == revision && cache.preview_key == preview_key {
+    if present && current {
         // An adjustment preview composited where the view was: catch up where it moved to.
         if let Some(r) = crate::adjust_preview::uncovered(app, id, raw_key, visible) {
             let r = gpu.refresh(id.0, &doc, Some(r), display.as_deref());
@@ -1323,6 +1339,12 @@ fn ensure_gpu(app: &mut PhotoStoreApp, ctx: &egui::Context, idx: usize, visible:
 /// Usage, the document's pixels and History, and physical memory: on full refreshes (pixels
 /// counted once per structural change, not per brush dab) and whenever the preference changes.
 fn gpu_budget(app: &mut PhotoStoreApp, gpu: &crate::gpu_canvas::GpuCanvas, idx: usize, partial: bool, visible: DRect) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if app.session.active_index() == Some(idx) && app.session.documents().get(idx)
+        .is_some_and(|state| state.doc.timeline.as_ref().is_some_and(|timeline| timeline.mode == photostore_doc::TimelineMode::Video)) {
+        gpu.set_playback_focus(Some(visible));
+    } else { gpu.set_focus(Some(visible)); }
+    #[cfg(target_arch = "wasm32")]
     gpu.set_focus(Some(visible));
     let allowance = u64::from(app.session.prefs().performance.memory_usage_mb).saturating_mul(1 << 20);
     if partial && app.perf.gpu_budget_allowance == allowance && gpu.memory_budget().is_some() {
@@ -2642,7 +2664,7 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
             output: output.unwrap_or(0),
             hdr: hdr_preview(app, &doc),
         };
-        crate::gpu_canvas::GpuCanvas::paint(&painter, rect, params);
+        if let Some(gpu) = app.gpu.as_ref() { gpu.paint_streaming(&painter, rect, params); }
     } else if onion_texture.is_none() && gpu_ok && ensure_gpu(app, &ctx, idx, visible_doc_rect(&xf)) {
         on_gpu = true;
         on_gpu_document = true;
@@ -2664,7 +2686,7 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
             output: output.unwrap_or(0),
             hdr: hdr_preview(app, &doc),
         };
-        crate::gpu_canvas::GpuCanvas::paint(&painter, rect, params);
+        if let Some(gpu) = app.gpu.as_ref() { gpu.paint_streaming(&painter, rect, params); }
     } else {
         if !crate::theme::Tokens::get(&ctx).bevel && drop_shadow {
             painter.add(egui::Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(150) }.as_shape(img_rect, 0));
@@ -5850,7 +5872,7 @@ mod tests {
 #[cfg(test)]
 mod transform_controls_tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     #[test]
     fn move_transform_controls_start_free_transform_for_vector_shapes() {
@@ -5884,7 +5906,7 @@ mod transform_controls_tests {
 #[cfg(test)]
 mod rotation_preview_isolation_tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     /// A CPU-only app must be able to generate the actual rotation preview without a
     /// GPU adapter; checking the result also verifies Preview off and document integrity.

@@ -1310,8 +1310,8 @@ fn validate_audio_clips(clips: &[AudioMixClip]) -> Result<()> {
         if clip.limit_seconds.is_some_and(|value| !value.is_finite() || value <= 0.0) {
             return Err(MediaBackendError::InvalidInput("audio limit must be finite and positive".into()));
         }
-        if clip.volume > 4.0 {
-            return Err(MediaBackendError::InvalidInput("audio volume cannot exceed 4".into()));
+        if clip.volume > 16.0 {
+            return Err(MediaBackendError::InvalidInput("combined audio volume cannot exceed 16".into()));
         }
         if let Some(duration) = clip.duration_seconds {
             if clip.fade_in_seconds > duration || clip.fade_out_seconds > duration {

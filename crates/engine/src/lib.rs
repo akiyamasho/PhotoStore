@@ -115,7 +115,7 @@ pub mod symmetry_cmds;
 mod timeline_cmds;
 #[cfg(test)]
 mod timeline_completion_tests;
-mod timeline_editor_cmds;
+pub(crate) mod timeline_editor_cmds;
 pub mod transform_cmds;
 mod trap_cmds;
 pub mod type_caret_cmds;

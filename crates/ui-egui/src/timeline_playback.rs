@@ -167,6 +167,7 @@ impl Runtime {
         for track in &t.audio_tracks {
             x = x.wrapping_mul(1_099_511_628_211).wrapping_add(track.id);
             x = x.wrapping_mul(31).wrapping_add(track.muted as u64);
+            x = x.wrapping_mul(31).wrapping_add(track.volume.to_bits());
             for clip in &track.clips {
                 for b in clip.path.as_bytes() {
                     x = x.wrapping_mul(33).wrapping_add(u64::from(*b));

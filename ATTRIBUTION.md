@@ -103,3 +103,5 @@ Files copied into `corpus/` by hand (tiff, exr, raw) must be MIT, BSD or CC0.
 | `docs/design/2026-11-02/interaction-buffering/workflow.png` | OpenAI built-in GPT Image; original synthetic interaction/buffering design | No input images, private artwork or known characters. Exact prompt/inspection in adjacent `prompt.md`; not a product screenshot or responsiveness measurement. |
 
 | `docs/design/2026-11-02/smooth-preview/workflow.png` | Built-in GPT Image; original synthetic smooth preview/input design | No input images, private media or known characters. Exact prompt and inspection in adjacent `prompt.md`; design reference, not a product screenshot or measured performance. |
+
+| `docs/design/2026-11-02/native-playback-volume/{workflow,timeline-duration}.png` | OpenAI built-in GPT Image, original native playback/row gain and timeline duration concepts | No input images, private media or known characters. Exact prompts/inspection in adjacent Markdown records; designs, not product captures or performance proof. |

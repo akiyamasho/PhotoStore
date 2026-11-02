@@ -93,6 +93,7 @@ fn native_options(custom_titlebar: bool) -> eframe::NativeOptions {
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([760.0, 480.0])
             .with_drag_and_drop(true)
+            .with_active(std::env::var_os("PHOTOSTORE_BACKGROUND_START").is_none())
             .with_decorations(!custom_titlebar)
             .with_fullsize_content_view(true)
             .with_titlebar_shown(false)

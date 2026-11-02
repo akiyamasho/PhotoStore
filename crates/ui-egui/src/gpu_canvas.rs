@@ -102,6 +102,7 @@ enum HighPolicy {
 #[derive(Clone)]
 pub struct GpuCanvas {
     rs: RenderState,
+    tile_bgl: wgpu::BindGroupLayout,
     tile: u32,
     high: HighPolicy,
     health: photostore_gpu::DeviceHealth,
@@ -109,10 +110,13 @@ pub struct GpuCanvas {
     playback: std::sync::Arc<PlaybackController>,
 }
 
-/// A completed video canvas is published independently of document preparation. Pending work
-/// keeps the last complete texture visible; neither GPU waits nor CPU fallbacks run on egui.
+/// A completed native canvas revision is published independently of document preparation. Pending
+/// work keeps the last complete texture visible; composition and texture retirement stay off egui.
 pub(crate) struct PlaybackRefresh {
     pub published: Option<(u64, u64)>,
+    pub published_frame: Option<usize>,
+    pub publication_count: u64,
+    pub video_publication_count: u64,
     pub available: bool,
     pub pending: bool,
     pub fallback: Option<String>,
@@ -120,19 +124,40 @@ pub(crate) struct PlaybackRefresh {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct PlaybackToken { document: u64, content: u64, revision: u64, preview: u64, epoch: u64 }
+struct PlaybackToken { document: u64, content: u64, revision: u64, preview: u64, preview_family: u64, frame: Option<usize>, epoch: u64 }
 #[cfg(not(target_arch = "wasm32"))]
 struct PlaybackJob {
     token: PlaybackToken,
     doc: std::sync::Arc<photostore_doc::Document>,
+    overlay: Option<PlaybackOverlay>,
     display: Option<std::sync::Arc<photostore_engine::display_color::CanvasDisplay>>,
     format: wgpu::TextureFormat,
+    damage: Option<photostore_geom::Rect>,
     budget: Option<u64>,
     focus: Option<photostore_geom::Rect>,
     ctx: egui::Context,
 }
+/// A transient painting preview kept separate from the committed timeline document. The worker
+/// merges it for presentation, preserving the base document's current video frame.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct PlaybackOverlay {
+    pub source: std::sync::Arc<photostore_doc::Document>,
+    pub layer: Option<photostore_doc::LayerId>,
+    pub target: serde_json::Value,
+}
 #[cfg(not(target_arch = "wasm32"))]
 struct PlaybackResult { token: PlaybackToken, textures: Option<DocTextures>, fallback: Option<String> }
+#[cfg(not(target_arch = "wasm32"))]
+struct PlaybackRecycled { token: Option<PlaybackToken>, textures: DocTextures }
+#[cfg(not(target_arch = "wasm32"))]
+enum PlaybackRetired {
+    Job(PlaybackJob),
+    Result(PlaybackResult),
+    Textures(DocTextures),
+    Compositor(photostore_gpu::Compositor),
+}
+#[cfg(not(target_arch = "wasm32"))]
+const PLAYBACK_RETIRED_CAPACITY: usize = 4;
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
 struct PlaybackMailbox {
@@ -142,15 +167,25 @@ struct PlaybackMailbox {
     active: Option<PlaybackToken>,
     queued: Option<PlaybackJob>,
     completed: Option<PlaybackResult>,
-    recycled: Option<DocTextures>,
+    recycled: Option<PlaybackRecycled>,
+    retired: std::collections::VecDeque<PlaybackRetired>,
+    desired: Option<PlaybackToken>,
     published: Option<PlaybackToken>,
+    failed: Option<PlaybackToken>,
+    last_fallback: Option<String>,
+    publication_count: u64,
+    video_publication_count: u64,
 }
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
 struct PlaybackController {
     shared: std::sync::Arc<(std::sync::Mutex<PlaybackMailbox>, std::sync::Condvar)>,
+    settings: std::sync::Arc<std::sync::Mutex<PlaybackSettings>>,
     started: std::sync::OnceLock<Result<(), String>>,
 }
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
+struct PlaybackSettings { budget: Option<u64>, focus: Option<photostore_geom::Rect> }
 #[cfg(not(target_arch = "wasm32"))]
 impl Drop for PlaybackController {
     fn drop(&mut self) {
@@ -163,16 +198,16 @@ impl Drop for PlaybackController {
 #[cfg(not(target_arch = "wasm32"))]
 fn playback_worker(
     shared: std::sync::Arc<(std::sync::Mutex<PlaybackMailbox>, std::sync::Condvar)>,
-    device: wgpu::Device, queue: wgpu::Queue, adapter: wgpu::Adapter,
+    device: wgpu::Device, queue: wgpu::Queue, adapter: wgpu::Adapter, tile_bgl: wgpu::BindGroupLayout,
     health: DeviceHealth, tile: u32, target: wgpu::TextureFormat, high: bool,
 ) {
-    let mut resources = Resources::new(&device, &queue, target, high);
+    let mut resources = Resources::new(&device, &queue, target, high, Some(tile_bgl));
     resources.health = health.clone();
     resources.separate_mip_targets = adapter.get_info().backend == wgpu::Backend::Dx12;
     loop {
         let (job, recycled) = {
             let Ok(mut state) = shared.0.lock() else { return };
-            while !state.closed && !state.release && (state.queued.is_none() || state.completed.is_some()) {
+            while !state.closed && !state.release && state.retired.is_empty() && (state.queued.is_none() || state.completed.is_some()) {
                 state = match shared.1.wait(state) { Ok(state) => state, Err(_) => return };
             }
             if state.closed { return; }
@@ -180,11 +215,21 @@ fn playback_worker(
                 state.release = false;
                 let retired = state.completed.take();
                 let recycled = state.recycled.take();
+                let jobs = state.queued.take();
+                let deferred = std::mem::take(&mut state.retired);
                 drop(state);
                 drop(retired);
                 drop(recycled);
+                drop(jobs);
+                drop(deferred);
                 resources.docs.clear();
                 resources.compositor = None;
+                continue;
+            }
+            if !state.retired.is_empty() {
+                let retired = std::mem::take(&mut state.retired);
+                drop(state);
+                drop(retired);
                 continue;
             }
             let Some(job) = state.queued.take() else { continue };
@@ -192,26 +237,51 @@ fn playback_worker(
             (job, state.recycled.take())
         };
         resources.docs.clear();
-        if let Some(mut back) = recycled {
-            if back.size == [job.doc.size.width, job.doc.size.height] && back.format == job.format {
-                back.rebind(&device, &resources);
-                resources.docs.insert(job.token.document, back);
+        let mut damage = job.damage;
+        if let Some(back) = recycled {
+            let matching_base = back.token.is_some_and(|token| token.document == job.token.document
+                && token.content == job.token.content && token.preview_family == job.token.preview_family
+                && token.frame == job.token.frame);
+            if back.textures.size == [job.doc.size.width, job.doc.size.height] && back.textures.format == job.format {
+                if !matching_base { damage = None; }
+                resources.docs.insert(job.token.document, back.textures);
+            } else {
+                damage = None;
             }
+        } else {
+            damage = None;
         }
         resources.compositor_budget = job.budget;
         resources.compositor_focus = job.focus;
         let render = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if !health.is_ok() { return Some("GPU device is unavailable".to_string()); }
+            let overlay_doc = match job.overlay.as_ref() {
+                Some(overlay) => match photostore_engine::channel_cmds::overlay_presentation_preview(
+                    &job.doc, &overlay.source, overlay.layer, &overlay.target,
+                ) {
+                    Ok(doc) if doc.id == job.doc.id && doc.size == job.doc.size => Some(doc),
+                    Ok(_) => {
+                        resources.docs.remove(&job.token.document);
+                        return Some("painting preview changed the canvas identity or size".into());
+                    }
+                    Err(error) => {
+                        resources.docs.remove(&job.token.document);
+                        return Some(error.to_string());
+                    }
+                },
+                None => None,
+            };
+            let render_doc = overlay_doc.as_ref().unwrap_or(&job.doc);
             let result = if std::env::var_os("PHOTOSTORE_CPU_COMPOSE").is_some() {
                 Err(photostore_gpu::Unsupported("disabled by PHOTOSTORE_CPU_COMPOSE".into()))
             } else {
-                composite_resources(&device, &queue, &adapter, &health, tile, job.format, &job.doc,
-                    job.doc.bounds(), job.display.as_ref().is_some_and(|d| d.encode_srgb), &mut resources)
+                composite_resources(&device, &queue, &adapter, &health, tile, job.format, render_doc,
+                    damage.unwrap_or_else(|| render_doc.bounds()), job.display.as_ref().is_some_and(|d| d.encode_srgb), &mut resources)
             };
             if let Err(error) = result {
                 if health.is_ok() {
                     upload_composite_resources(&device, &queue, &health, tile, job.token.document,
-                        job.format, &job.doc, job.display.as_deref(), &mut resources);
+                        job.format, render_doc, job.display.as_deref(), &mut resources);
                 }
                 return Some(error.0);
             }
@@ -242,88 +312,96 @@ pub fn supports_f16_canvas(adapter: &wgpu::Adapter) -> bool {
 }
 
 impl GpuCanvas {
-    /// Enqueue/poll a complete video canvas without rendering or waiting on the UI thread.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn playback_in_use(&self) -> bool {
+        self.playback.shared.0.try_lock().map_or(true, |state| {
+            state.desired.is_some() || state.active.is_some() || state.queued.is_some()
+                || state.completed.is_some() || state.published.is_some()
+        })
+    }
+
+    /// Enqueue/poll a complete native canvas without rendering or waiting on the UI thread.
+    /// `damage`, when supplied, must cover every change since any older publication in this
+    /// preview family; an unknown or front-buffer-relative region should be `None`.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn refresh_playback(
         &self, doc: std::sync::Arc<photostore_doc::Document>, revision: u64,
-        content_revision: u64, preview_key: u64,
+        content_revision: u64, preview_key: u64, preview_family: u64,
+        overlay: Option<PlaybackOverlay>,
+        damage: Option<photostore_geom::Rect>,
         display: Option<std::sync::Arc<photostore_engine::display_color::CanvasDisplay>>,
         ctx: &egui::Context,
     ) -> PlaybackRefresh {
         let size = [doc.size.width, doc.size.height];
-        let available = self.has(doc.id.0, size);
         let controller = &self.playback;
         let started = controller.started.get_or_init(|| {
             let shared = controller.shared.clone();
             let (device, queue, adapter) = (self.rs.device.clone(), self.rs.queue.clone(), self.rs.adapter.clone());
+            let tile_bgl = self.tile_bgl.clone();
             let (health, tile, target, high) = (self.health.clone(), self.tile, self.rs.target_format, self.high != HighPolicy::Off);
             let failure = health.clone();
             let ctx = ctx.clone();
             std::thread::Builder::new().name("photostore-video-canvas".into()).spawn(move || {
-                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| playback_worker(shared, device, queue, adapter, health, tile, target, high))).is_err() {
+                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| playback_worker(shared, device, queue, adapter, tile_bgl, health, tile, target, high))).is_err() {
                     failure.mark(Fault::Lost("video canvas worker initialization failed".into()));
                     ctx.request_repaint();
                 }
             }).map(|_| ()).map_err(|error| format!("cannot start video canvas worker: {error}"))
         });
         if let Err(error) = started {
-            return PlaybackRefresh { published: None, available, pending: false, fallback: Some(error.clone()) };
+            return PlaybackRefresh { published: None, published_frame: None, publication_count: 0, video_publication_count: 0, available: false, pending: false, fallback: Some(error.clone()) };
         }
         let Ok(mut state) = controller.shared.0.try_lock() else {
             ctx.request_repaint_after(std::time::Duration::from_millis(6));
-            return PlaybackRefresh { published: None, available, pending: true, fallback: None };
+            return PlaybackRefresh { published: None, published_frame: None, publication_count: 0, video_publication_count: 0, available: false, pending: true, fallback: None };
         };
-        let token = PlaybackToken { document: doc.id.0, content: content_revision, revision, preview: preview_key, epoch: state.epoch };
-        let mut fallback = None;
-        if let Some(result) = state.completed.take() {
-            let compatible = result.token.document == token.document && result.token.content == token.content
-                && result.token.preview == token.preview && result.token.epoch == token.epoch;
-            if compatible {
-                fallback = result.fallback;
-                if let Some(mut textures) = result.textures {
-                    let mut renderer = self.rs.renderer.write();
-                    if let Some(resources) = renderer.callback_resources.get_mut::<Resources>() {
-                        textures.rebind(&self.rs.device, resources);
-                        state.recycled = resources.docs.insert(token.document, textures);
-                        state.published = Some(result.token);
-                    }
-                }
-            } else {
-                state.recycled = result.textures;
-            }
-            controller.shared.1.notify_one();
+        let token = PlaybackToken {
+            document: doc.id.0, content: content_revision, revision, preview: preview_key, preview_family,
+            frame: doc.timeline.as_ref().map(|timeline| timeline.current), epoch: state.epoch,
+        };
+        if state.desired != Some(token) {
+            state.last_fallback = None;
+            state.failed = None;
         }
+        state.desired = Some(token);
         let published = state.published.filter(|p| p.document == token.document && p.content == token.content
-            && p.preview == token.preview && p.epoch == token.epoch);
-        let pending = published != Some(token);
-        if pending && state.active != Some(token) && state.queued.as_ref().is_none_or(|job| job.token != token) {
-            let (budget, focus) = {
-                let mut renderer = self.rs.renderer.write();
-                match renderer.callback_resources.get_mut::<Resources>() {
-                    Some(resources) => {
-                        // The worker owns the video compositor; release any static-view cache
-                        // instead of retaining two independently budgeted layer-page caches.
-                        resources.compositor = None;
-                        (resources.compositor_budget, resources.compositor_focus)
-                    }
-                    None => (None, None),
+            && p.preview_family == token.preview_family && p.epoch == token.epoch);
+        let pending = published != Some(token) && state.failed != Some(token);
+        if pending && state.completed.is_none() && state.active != Some(token) && state.queued.as_ref().is_none_or(|job| job.token != token) {
+            if let Some(old) = state.queued.take() {
+                if state.retired.len() >= PLAYBACK_RETIRED_CAPACITY {
+                    state.queued = Some(old);
+                    ctx.request_repaint_after(std::time::Duration::from_millis(6));
+                    return PlaybackRefresh { published: published.map(|p| (p.revision, p.preview)), published_frame: published.and_then(|p| p.frame), publication_count: state.publication_count, video_publication_count: state.video_publication_count, available: published.is_some(), pending: true, fallback: state.last_fallback.clone() };
                 }
-            };
-            state.queued = Some(PlaybackJob { token, format: self.format_for(doc.depth, size), doc, display, budget, focus, ctx: ctx.clone() });
+                state.retired.push_back(PlaybackRetired::Job(old));
+            }
+            let (budget, focus) = controller.settings.try_lock().map_or((None, None), |settings| (settings.budget, settings.focus));
+            let format = self.format_for(doc.depth, size);
+            state.queued = Some(PlaybackJob { token, doc, overlay, display, format, damage, budget, focus, ctx: ctx.clone() });
             controller.shared.1.notify_one();
         }
         if pending { ctx.request_repaint_after(std::time::Duration::from_millis(6)); }
-        PlaybackRefresh { published: published.map(|p| (p.revision, p.preview)), available: available || published.is_some(), pending, fallback }
+        PlaybackRefresh {
+            published: published.map(|p| (p.revision, p.preview)),
+            published_frame: published.and_then(|p| p.frame),
+            publication_count: state.publication_count,
+            video_publication_count: state.video_publication_count,
+            available: published.is_some(), pending, fallback: state.last_fallback.clone(),
+        }
     }
 
     pub(crate) fn cancel_playback_refresh(&self) {
         #[cfg(not(target_arch = "wasm32"))]
         if let Ok(mut state) = self.playback.shared.0.try_lock() {
-            if state.active.is_some() || state.queued.is_some() || state.published.is_some() {
+            if state.active.is_some() || state.queued.is_some() || state.completed.is_some()
+                || state.recycled.is_some() || !state.retired.is_empty() || state.published.is_some()
+            {
                 state.epoch = state.epoch.wrapping_add(1);
                 state.release = true;
-                state.queued = None;
+                state.desired = None;
                 state.published = None;
+                state.failed = None;
                 self.playback.shared.1.notify_one();
             }
         }
@@ -337,6 +415,13 @@ impl GpuCanvas {
         }) }
         #[cfg(target_arch = "wasm32")]
         { let _ = (document, revision); true }
+    }
+
+    /// The movie frame in the most recently installed playback texture for `document`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn playback_published_frame(&self, document: u64) -> Option<usize> {
+        let state = self.playback.shared.0.try_lock().ok()?;
+        state.published.filter(|token| token.document == document && token.epoch == state.epoch).and_then(|token| token.frame)
     }
 
     /// Create pipelines and register resources with the egui renderer.
@@ -357,12 +442,13 @@ impl GpuCanvas {
         };
         // Device loss and uncaptured errors mark this flag instead of panicking (#243).
         let health = photostore_gpu::DeviceHealth::watch(&rs.device);
-        let mut res = Resources::new(&rs.device, &rs.queue, rs.target_format, high != HighPolicy::Off);
+        let mut res = Resources::new(&rs.device, &rs.queue, rs.target_format, high != HighPolicy::Off, None);
+        let tile_bgl = res.tile_bgl.clone();
         res.health = health.clone();
         res.separate_mip_targets = rs.adapter.get_info().backend == wgpu::Backend::Dx12;
         rs.renderer.write().callback_resources.insert(res);
         log::info!("gpu canvas: target {:?}, max texture {max}, tile {tile}, 16F canvas {high:?}", rs.target_format);
-        Self { rs: rs.clone(), tile, high, health,
+        Self { rs: rs.clone(), tile_bgl, tile, high, health,
             #[cfg(not(target_arch = "wasm32"))]
             playback: std::sync::Arc::new(PlaybackController::default()),
         }
@@ -445,6 +531,10 @@ impl GpuCanvas {
     /// Set the GPU memory the wgpu compositor may hold for layer pages and effect maps (see
     /// [`memory_budget`]); pages beyond it are evicted least recently used first.
     pub fn set_memory_budget(&self, bytes: u64) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Ok(mut settings) = self.playback.settings.try_lock() { settings.budget = Some(bytes); }
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.playback_in_use() { return; }
         let mut r = self.rs.renderer.write();
         if let Some(res) = r.callback_resources.get_mut::<Resources>() {
             res.compositor_budget = Some(bytes);
@@ -453,6 +543,10 @@ impl GpuCanvas {
 
     /// The compositor's memory budget (`None` until [`GpuCanvas::set_memory_budget`]).
     pub fn memory_budget(&self) -> Option<u64> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.playback_in_use() {
+            return self.playback.settings.try_lock().ok().and_then(|settings| settings.budget);
+        }
         let r = self.rs.renderer.read();
         r.callback_resources.get::<Resources>()?.compositor_budget
     }
@@ -460,10 +554,20 @@ impl GpuCanvas {
     /// The document area the view shows: full refreshes composite it last, so its layer pages
     /// are the ones still resident for the edits that follow.
     pub fn set_focus(&self, focus: Option<photostore_geom::Rect>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Ok(mut settings) = self.playback.settings.try_lock() { settings.focus = focus; }
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.playback_in_use() { return; }
         let mut r = self.rs.renderer.write();
         if let Some(res) = r.callback_resources.get_mut::<Resources>() {
             res.compositor_focus = focus;
         }
+    }
+
+    /// Update the streaming compositor's focus without touching egui renderer resources.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn set_playback_focus(&self, focus: Option<photostore_geom::Rect>) {
+        if let Ok(mut settings) = self.playback.settings.try_lock() { settings.focus = focus; }
     }
 
     /// GPU bytes the wgpu compositor holds: resident layer pages and cached effect maps.
@@ -796,9 +900,81 @@ impl GpuCanvas {
         Some((d.format, d.size, out))
     }
 
+    /// Explicitly sample up to 16 stored canvas texels. Each requested pixel uses one aligned
+    /// staging row, keeping transfer size bounded to 4096 bytes regardless of document dimensions.
+    /// This is intended for explicit diagnostics/control requests, never the normal frame path.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn sample_texels(&self, key: u64, points: &[[u32; 2]]) -> Option<Vec<[f32; 4]>> {
+        if points.len() > 16 || !self.health.is_ok() { return None; }
+        let (device, queue) = (&self.rs.device, &self.rs.queue);
+        let renderer = self.rs.renderer.read();
+        let d = renderer.callback_resources.get::<Resources>()?.docs.get(&key)?;
+        if points.iter().any(|[x, y]| *x >= d.size[0] || *y >= d.size[1]) { return None; }
+        if points.is_empty() { return Some(Vec::new()); }
+        let bpp = texel_bytes(d.format) as usize;
+        let row = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
+        let mut buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pc_canvas_sample_readback"),
+            size: (row * points.len()) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("pc_canvas_sample_readback") });
+        for (index, [x, y]) in points.iter().copied().enumerate() {
+            let tile = d.tiles.iter().find(|tile| {
+                x >= tile.rect[0] && x - tile.rect[0] < tile.rect[2]
+                    && y >= tile.rect[1] && y - tile.rect[1] < tile.rect[3]
+            })?;
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &tile.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: x - tile.rect[0], y: y - tile.rect[1], z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout { offset: (index * row) as u64, bytes_per_row: Some(row as u32), rows_per_image: Some(1) },
+                },
+                wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            );
+        }
+        let submission = queue.submit([encoder.finish()]);
+        let slice = buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        if !self.health.wait(device, Some(submission)) { return None; }
+        let data = slice.get_mapped_range().ok()?;
+        let mut values = Vec::with_capacity(points.len());
+        for index in 0..points.len() {
+            let start = index.checked_mul(row)?;
+            values.push(texel_to_f32(d.format, data.get(start..start.checked_add(bpp)?)?));
+        }
+        drop(data);
+        buffer.unmap();
+        Some(values)
+    }
+
     /// Add the paint callback drawing `params` into `rect` (clipped by the painter's clip rect).
     pub fn paint(painter: &egui::Painter, rect: egui::Rect, params: ViewParams) {
-        painter.add(egui_wgpu::Callback::new_paint_callback(rect, CanvasCallback { rect, params }));
+        painter.add(egui_wgpu::Callback::new_paint_callback(rect, CanvasCallback {
+            rect, params,
+            #[cfg(not(target_arch = "wasm32"))]
+            playback: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            playback_ctx: None,
+        }));
+    }
+
+    /// Draw the document through the native playback worker. Completed textures are installed by
+    /// the callback while it already owns `CallbackResources`; the app update never locks the
+    /// renderer to publish a frame.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn paint_streaming(&self, painter: &egui::Painter, rect: egui::Rect, params: ViewParams) {
+        painter.add(egui_wgpu::Callback::new_paint_callback(rect, CanvasCallback {
+            rect, params,
+            playback: Some(self.playback.clone()),
+            playback_ctx: Some(painter.ctx().clone()),
+        }));
     }
 }
 
@@ -882,6 +1058,18 @@ pub struct Perf {
     pub ui_ms: f64,
     /// Worst UI frame of the last ~second (ms).
     pub ui_max_ms: f64,
+    /// Most recent UI frame duration (ms), for separating frame construction from presentation.
+    pub ui_last_ms: f64,
+    /// Number of UI frames accumulated in this session.
+    pub ui_frame_count: u64,
+    /// Native canvas textures published by the asynchronous presenter.
+    pub native_publications: u64,
+    /// Distinct video frame indices installed by the native presenter.
+    pub native_video_frames: u64,
+    /// Timeline frame index in the most recently published native canvas texture.
+    pub native_presented_frame: usize,
+    /// Whether the native presenter still has a newer canvas revision to publish.
+    pub native_pending: bool,
     /// Last canvas refresh: CPU composite (ms).
     pub composite_ms: f64,
     /// Last canvas refresh: conversion + upload (ms).
@@ -1016,6 +1204,8 @@ impl Perf {
         self.spans.insert(name, (ms * 100.0).round() / 100.0);
     }
     pub fn frame(&mut self, ms: f64) {
+        self.ui_last_ms = ms;
+        self.ui_frame_count = self.ui_frame_count.wrapping_add(1);
         self.ui_ms = if self.ui_ms == 0.0 { ms } else { self.ui_ms * 0.9 + ms * 0.1 };
         self.max_decay += 1.0;
         if ms > self.ui_max_ms || self.max_decay > 60.0 {
@@ -1221,7 +1411,9 @@ fn composite_resources(
         // A full refresh whose layer pages don't fit the memory budget would re-upload the
         // evicted ones every time (no faster than the CPU, and more memory): the banded CPU
         // compositor does it, and edits in the view (damage rects) stay on the GPU.
-        if region == doc.bounds() && !comp.fits_budget(doc, region) {
+        if region == doc.bounds() && !comp.fits_budget(doc, region)
+            && !(format == FORMAT && comp.can_stream(doc, region))
+        {
             res.compositor = Some(comp);
             return Err(photostore_gpu::Unsupported(OVER_BUDGET.into()));
         }
@@ -1540,7 +1732,13 @@ fn pipeline(
 }
 
 impl Resources {
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue, target: wgpu::TextureFormat, high: bool) -> Self {
+    fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: wgpu::TextureFormat,
+        high: bool,
+        shared_tile_bgl: Option<wgpu::BindGroupLayout>,
+    ) -> Self {
         let module =
             device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("pc_canvas"), source: wgpu::ShaderSource::Wgsl(CANVAS_WGSL.into()) });
         let vis = wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT;
@@ -1548,10 +1746,10 @@ impl Resources {
             label: Some("pc_canvas_view"),
             entries: &[uniform_entry(0, VIEW_UNIFORM_SIZE, vis), sampler_entry(1)],
         });
-        let tile_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let tile_bgl = shared_tile_bgl.unwrap_or_else(|| device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("pc_canvas_tile"),
             entries: &[texture_entry(0), uniform_entry(1, TILE_UNIFORM_SIZE, vis)],
-        });
+        }));
         let lut_entry = wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -1732,23 +1930,6 @@ impl DocTextures {
         Self { size, format, tiles }
     }
 
-    /// Rebuild tile groups when textures move between independently created `Resources` sets.
-    /// Bind groups are tied to their originating layout even when the layouts are structurally
-    /// identical, so publication/recycling must rebind against the receiving canvas resources.
-    fn rebind(&mut self, device: &wgpu::Device, res: &Resources) {
-        for tile in &mut self.tiles {
-            let full = tile.texture.create_view(&wgpu::TextureViewDescriptor::default());
-            tile.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("pc_canvas_tile"),
-                layout: &res.tile_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&full) },
-                    wgpu::BindGroupEntry { binding: 1, resource: tile._uniform.as_entire_binding() },
-                ],
-            });
-        }
-    }
-
     /// Write `size` pixels at document `origin` from `texels` (in the texture format, row stride
     /// `stride` pixels) into every overlapping tile's level 0.
     fn write(&self, queue: &wgpu::Queue, origin: [u32; 2], size: [u32; 2], stride: u32, texels: &[u8]) {
@@ -1860,6 +2041,10 @@ impl DocTextures {
 struct CanvasCallback {
     rect: egui::Rect,
     params: ViewParams,
+    #[cfg(not(target_arch = "wasm32"))]
+    playback: Option<std::sync::Arc<PlaybackController>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    playback_ctx: Option<egui::Context>,
 }
 
 /// Sampling mode: 0 trilinear, 1 bilinear, 2 anti-aliased nearest.
@@ -1905,6 +2090,68 @@ fn tile_screen_aabb(origin: [f32; 2], scale: f32, center: [f32; 2], cos: f32, si
         y1 = y1.max(p[1]);
     }
     (x0, y0, x1, y1)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn publish_playback_callback(
+    controller: &PlaybackController,
+    callback_resources: &mut CallbackResources,
+) -> bool {
+    let Some(resources) = callback_resources.get_mut::<Resources>() else { return false };
+    let Ok(mut state) = controller.shared.0.try_lock() else { return false };
+    if state.retired.len() < PLAYBACK_RETIRED_CAPACITY
+        && let Some(compositor) = resources.compositor.take()
+    {
+        state.retired.push_back(PlaybackRetired::Compositor(compositor));
+        controller.shared.1.notify_one();
+    }
+    let Some(result) = state.completed.as_ref() else { return false };
+    let compatible = state.desired.is_some_and(|desired| {
+        desired.document == result.token.document
+            && desired.content == result.token.content
+            && desired.preview_family == result.token.preview_family
+            && desired.epoch == result.token.epoch
+    });
+    if !compatible {
+        if state.retired.len() >= PLAYBACK_RETIRED_CAPACITY { return false; }
+        let Some(result) = state.completed.take() else { return false };
+        state.retired.push_back(PlaybackRetired::Result(result));
+        controller.shared.1.notify_one();
+        return true;
+    }
+    if result.textures.is_none() {
+        let Some(result) = state.completed.take() else { return false };
+        state.failed = Some(result.token);
+        state.last_fallback = result.fallback;
+        controller.shared.1.notify_one();
+        return true;
+    }
+    if state.recycled.is_some() && state.retired.len() >= PLAYBACK_RETIRED_CAPACITY { return false; }
+    let Some(result) = state.completed.take() else { return false };
+    let Some(textures) = result.textures else {
+        state.failed = Some(result.token);
+        state.last_fallback = result.fallback;
+        controller.shared.1.notify_one();
+        return true;
+    };
+    // Worker and renderer share the exact tile bind-group layout, so publication is a map swap;
+    // it performs no GPU rebind and keeps displaced resources for worker-side retirement/reuse.
+    let prior_token = state.published;
+    if result.token.frame.is_some() && prior_token.and_then(|token| token.frame) != result.token.frame {
+        state.video_publication_count = state.video_publication_count.wrapping_add(1);
+    }
+    let old = resources.docs.insert(result.token.document, textures);
+    if let Some(old) = old {
+        if let Some(previous) = state.recycled.replace(PlaybackRecycled { token: prior_token, textures: old }) {
+            state.retired.push_back(PlaybackRetired::Textures(previous.textures));
+        }
+    }
+    state.published = Some(result.token);
+    state.failed = None;
+    state.last_fallback = result.fallback;
+    state.publication_count = state.publication_count.wrapping_add(1);
+    controller.shared.1.notify_one();
+    true
 }
 
 impl CanvasCallback {
@@ -1985,6 +2232,12 @@ impl CallbackTrait for CanvasCallback {
         _encoder: &mut wgpu::CommandEncoder,
         resources: &mut CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.playback.as_ref().is_some_and(|playback| publish_playback_callback(playback, resources))
+            && let Some(ctx) = &self.playback_ctx
+        {
+            ctx.request_repaint();
+        }
         let Some(res) = resources.get_mut::<Resources>() else { return Vec::new() };
         if !res.health.is_ok() {
             return Vec::new();

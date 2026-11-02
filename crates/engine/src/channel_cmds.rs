@@ -542,6 +542,31 @@ pub(crate) fn target_surface<'a>(doc: &'a mut Document, layer: Option<LayerId>, 
     }
 }
 
+/// Apply only the live paint target to a newer presentation snapshot. The caller runs this
+/// on its compositor worker: movie frames and sampled animation remain those of `base`, while
+/// the in-progress stroke keeps its original drawing/selection state until its normal commit.
+pub fn overlay_presentation_preview(base: &Document, preview: &Document, layer: Option<LayerId>, params: &Value) -> Result<Document> {
+    if base.id != preview.id || base.size != preview.size || base.pixel_format() != preview.pixel_format() {
+        return Err(EngineError::Other("live preview no longer matches the presentation document".into()));
+    }
+    let surface = match target_of(params) {
+        Target::Alpha(i) => preview.channels.get(i).map(|channel| &channel.surface),
+        Target::QuickMask => preview.quick_mask.as_ref().map(|mask| &mask.surface),
+        target => layer.and_then(|id| preview.layer(id)).and_then(|layer| match target {
+            Target::Pixels => layer.surface(),
+            Target::Mask => layer.mask.as_ref().map(|mask| &mask.surface),
+            Target::FilterMask => match &layer.content {
+                photostore_doc::LayerContent::Smart(smart) => smart.filter_mask.as_ref().map(|mask| &mask.surface),
+                _ => None,
+            },
+            _ => None,
+        }),
+    }.ok_or_else(|| EngineError::Other("live paint target is no longer available".into()))?;
+    let mut output = base.clone();
+    *target_surface(&mut output, layer, params)?.0 = surface.clone();
+    Ok(output)
+}
+
 /// The grayscale surface filters and adjustments edit instead of the layer's pixels (made explicit
 /// over the canvas), if the params target one: an alpha channel, the Quick Mask, or the mask of
 /// `layer`.

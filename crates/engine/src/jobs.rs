@@ -485,6 +485,7 @@ fn open_audio_document(name: &str, path: &str) -> Result<Document> {
         name: layer_name.clone(),
         owner_layer: Some(owner),
         muted: false,
+        volume: 1.0,
         clips: vec![AudioClip {
             asset_id: None,
             id: 1,

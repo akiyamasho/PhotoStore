@@ -66,6 +66,7 @@ const TIMELINE_GUTTER_WIDTH: f32 = 180.0;
 const VIDEO_TRACK_HEIGHT: f32 = 48.0;
 const STILL_TRACK_HEIGHT: f32 = 40.0;
 const TIMELINE_RULER_HEIGHT: f32 = 28.0;
+const MAX_TIMELINE_FRAMES: usize = 1_000_000;
 
 fn nice_tick_interval(target: f64) -> f64 {
     if !target.is_finite() || target <= 0.0 {
@@ -562,13 +563,93 @@ fn still_drag_range(state: StillDrag, pointer_x: f32, lane_width: f32) -> (usize
     let delta = ((pointer_x - state.x) / lane_width.max(1.0) * state.duration as f32).round() as i64;
     match state.edge {
         1 => ((state.start as i64 + delta).clamp(0, state.end.saturating_sub(1) as i64) as usize, state.end),
-        2 => (state.start, (state.end as i64 + delta).clamp((state.start + 1) as i64, state.duration as i64) as usize),
+        2 => (state.start, (state.end as i64 + delta).clamp((state.start + 1) as i64, MAX_TIMELINE_FRAMES as i64) as usize),
         _ => {
             let len = state.end.saturating_sub(state.start).max(1);
             let start = (state.start as i64 + delta).clamp(0, state.duration.saturating_sub(len) as i64) as usize;
             (start, start + len)
         }
     }
+}
+
+fn resize_edge_at(point: egui::Pos2, rect: Rect, slop: f32) -> Option<u8> {
+    if point.y < rect.top() || point.y > rect.bottom() { return None; }
+    let left = (point.x - rect.left()).abs();
+    let right = (point.x - rect.right()).abs();
+    match (left <= slop, right <= slop) {
+        (true, true) => Some(if left <= right { 1 } else { 2 }),
+        (true, false) => Some(1),
+        (false, true) => Some(2),
+        (false, false) => None,
+    }
+}
+
+fn paint_resize_handles(ui: &Ui, rect: Rect, show: bool) {
+    if !show { return; }
+    let painter = ui.painter();
+    for x in [rect.left(), rect.right()] {
+        let grip = Rect::from_center_size(pos2(x, rect.center().y), vec2(5.0, 15.0));
+        painter.rect_filled(grip, 2.0, egui::Color32::from_gray(242));
+        painter.line_segment([pos2(x, grip.top() + 4.0), pos2(x, grip.bottom() - 4.0)], egui::Stroke::new(1.0, egui::Color32::from_gray(75)));
+    }
+}
+
+fn still_resize_controls(
+    ui: &Ui,
+    doc: DocId,
+    layer: LayerId,
+    history: (usize, usize),
+    start: usize,
+    end: usize,
+    duration: usize,
+    lane_width: f32,
+    fps: f64,
+    rect: Rect,
+    editable: bool,
+) -> (Option<u8>, bool, bool) {
+    let press_origin = ui.input(|input| input.pointer.press_origin());
+    let press_edge = press_origin.and_then(|point| resize_edge_at(point, rect, 8.0));
+    let drag_id = Id::new(("still-clip-drag", doc.0, layer.0));
+    let mut stopped = false;
+    let mut hovered = false;
+    for (edge, x) in [(1, rect.left()), (2, rect.right())] {
+        let handle = Rect::from_min_max(pos2(x - 7.0, rect.top()), pos2(x + 7.0, rect.bottom()));
+        let response = ui.interact(handle, Id::new(("still-resize-handle", doc.0, layer.0, edge)), if editable { Sense::drag() } else { Sense::hover() });
+        hovered |= response.hovered();
+        let response = if editable {
+            response.on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+                .on_hover_text(format!("Resize clip edge · {} frames", end.saturating_sub(start)))
+        } else {
+            response
+        };
+        if editable && response.drag_started() {
+            if let Some(point) = press_origin.or_else(|| response.interact_pointer_pos()) {
+                ui.ctx().data_mut(|data| data.insert_temp(drag_id, StillDrag { doc, history, x: point.x, start, end, duration, edge }));
+            }
+        }
+        stopped |= response.drag_stopped();
+    }
+    if let Some(state) = ui.ctx().data(|data| data.get_temp::<StillDrag>(drag_id)).filter(|state| state.edge != 0) {
+        if let Some(pointer) = ui.input(|input| input.pointer.latest_pos()) {
+            let (preview_start, preview_end) = still_drag_range(state, pointer.x, lane_width);
+            show_trim_tooltip(ui.ctx(), doc, layer, pointer, preview_start, preview_end, fps);
+        }
+    }
+    (press_edge, stopped, hovered)
+}
+
+fn show_trim_tooltip(ctx: &egui::Context, doc: DocId, layer: LayerId, pointer: egui::Pos2, start: usize, end: usize, fps: f64) {
+    let frames = end.saturating_sub(start);
+    let seconds = frames as f64 / fps.max(0.001);
+    egui::Area::new(Id::new(("timeline-trim-tooltip", doc.0, layer.0)))
+        .order(egui::Order::Tooltip)
+        .interactable(false)
+        .fixed_pos(pointer + vec2(12.0, 12.0))
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.label(format!("Duration: {frames} frames · {seconds:.2} s"));
+            });
+        });
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -755,9 +836,9 @@ fn drag_values(state: DragState, pointer_x: f32, playback: &photostore_doc::Clip
             (start, state.end, state.source_in)
         }
         DragKind::Right => {
-            let start = state.start.min(timeline_end.saturating_sub(1));
+            let start = state.start.min(MAX_TIMELINE_FRAMES.saturating_sub(1));
             let available = (state.source_duration - state.source_in).max(0.0);
-            let upper = timeline_end.saturating_sub(start);
+            let upper = MAX_TIMELINE_FRAMES.saturating_sub(start);
             let mut lo = 1usize;
             let mut hi = upper.max(1);
             while lo < hi {
@@ -768,7 +849,7 @@ fn drag_values(state: DragState, pointer_x: f32, playback: &photostore_doc::Clip
                     hi = mid - 1;
                 }
             }
-            let max_end = start.saturating_add(lo).clamp(start.saturating_add(1), timeline_end);
+            let max_end = start.saturating_add(lo).clamp(start.saturating_add(1), MAX_TIMELINE_FRAMES);
             let end = add_signed(state.end, delta_frames).clamp(start.saturating_add(1), max_end);
             (start, end, state.source_in)
         }
@@ -1035,6 +1116,14 @@ fn draw_clip(
     let fill = if selected { t.accent } else { t.accent.gamma_multiply(0.72) };
     ui.painter_at(lane).rect_filled(rect.intersect(lane), 3.0, fill);
     response.context_menu(|ui| {
+        if ui.button("Extend to timeline end").clicked() {
+            let layers = delete_targets(app, doc, layer, timeline);
+            report_timeline_result(app, |app| {
+                app.with_document(doc, |app| app.run("timeline.editor.extendToTimelineEnd", json!({"document":doc.0,"layers":layers})))
+            });
+            ui.close();
+        }
+        ui.separator();
         if ui.button(tl!("Convert to Smart Object")).clicked() {
             select_layer(app, doc, layer);
             report_timeline_result(app, |app| app.with_document(doc, |app| app.run("layer.smartObjects.convertToSmartObject", json!({"layer":layer.0}))));
@@ -1082,8 +1171,10 @@ fn draw_clip(
         had_explicit_range: clip.had_explicit_range,
         kind,
     };
-    if editable && response.drag_started() {
-        if let Some(point) = response.interact_pointer_pos() {
+    let press_origin = ctx.input(|input| input.pointer.press_origin());
+    let press_edge = press_origin.and_then(|point| resize_edge_at(point, rect, 8.0));
+    if editable && response.drag_started() && press_edge.is_none() {
+        if let Some(point) = press_origin.or_else(|| response.interact_pointer_pos()) {
             ctx.data_mut(|data| data.insert_temp(key, capture(DragKind::Body, point.x)));
             let selected = app
                 .session
@@ -1113,7 +1204,7 @@ fn draw_clip(
                         MultiClipDrag {
                             doc,
                             source: layer,
-                            start_x: point.x,
+                            start_x: press_origin.map_or(point.x, |origin| origin.x),
                             lane_width: lane.width(),
                             duration: timeline.duration.max(1),
                             layers: selected,
@@ -1125,15 +1216,26 @@ fn draw_clip(
         }
     }
     let mut handle_stopped = false;
+    let mut hovered_handle = false;
     for (kind, x) in [(DragKind::Left, rect.left()), (DragKind::Right, rect.right())] {
-        let handle = Rect::from_min_max(pos2(x - 5.0, rect.top()), pos2(x + 5.0, rect.bottom()));
+        let handle = Rect::from_min_max(pos2(x - 7.0, rect.top()), pos2(x + 7.0, rect.bottom()));
         let handle_response = ui.interact(handle, Id::new(("video-handle", doc.0, layer.0, kind as u8)), if editable { Sense::drag() } else { Sense::hover() });
+        hovered_handle |= handle_response.hovered();
+        let handle_response = handle_response.on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+            .on_hover_text(format!("Resize clip edge · {} frames", end.saturating_sub(start)));
         if editable && handle_response.drag_started() {
-            if let Some(point) = handle_response.interact_pointer_pos() {
+            if let Some(point) = press_origin.or_else(|| handle_response.interact_pointer_pos()) {
                 ctx.data_mut(|data| data.insert_temp(key, capture(kind, point.x)));
             }
         }
         handle_stopped |= handle_response.drag_stopped();
+    }
+    paint_resize_handles(ui, rect, selected || response.hovered() || hovered_handle);
+    if let Some(state) = state.filter(|state| matches!(state.kind, DragKind::Left | DragKind::Right)) {
+        if let Some(pointer) = ctx.input(|input| input.pointer.latest_pos()) {
+            let (preview_start, preview_end, _) = drag_values(state, pointer.x, &playback);
+            show_trim_tooltip(&ctx, doc, layer, pointer, preview_start, preview_end, state.fps);
+        }
     }
     if response.drag_stopped() || handle_stopped {
         let state = ctx.data(|data| data.get_temp::<DragState>(key));
@@ -1812,6 +1914,14 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
                     crate::audio_ui::clear_selection(ui.ctx(), doc);
                 }
                 response.context_menu(|ui| {
+                    if ui.button("Extend to timeline end").clicked() {
+                        let targets = delete_targets(app, doc, layer, timeline);
+                        report_timeline_result(app, |app| {
+                            app.with_document(doc, |app| app.run("timeline.editor.extendToTimelineEnd", json!({"document":doc.0,"layers":targets})))
+                        });
+                        ui.close();
+                    }
+                    ui.separator();
                     if is_smart {
                         if ui.button(tl!("Edit Contents")).clicked() {
                             run_timeline_command(app, "layer.smartObjects.editContents", json!({"layer":layer.0}));
@@ -1826,22 +1936,20 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
                         ui.close();
                     }
                 });
+                let selected = app.session.active().and_then(|session| session.active_layer) == Some(layer);
+                let (press_edge, handle_stopped, hovered_handle) = still_resize_controls(
+                    ui, doc, layer, history, start, end, timeline.duration.max(1), lane.width(), timeline.project_rate().as_f64(), rect, editable,
+                );
                 if editable
                     && response.drag_started()
-                    && let Some(point) = response.interact_pointer_pos()
+                    && press_edge.is_none()
+                    && let Some(point) = ui.input(|input| input.pointer.press_origin()).or_else(|| response.interact_pointer_pos())
                 {
-                    let edge = if (point.x - rect.left()).abs() < 8.0 {
-                        1
-                    } else if (point.x - rect.right()).abs() < 8.0 {
-                        2
-                    } else {
-                        0
-                    };
                     ui.ctx().data_mut(|data| {
-                        data.insert_temp(drag_id, StillDrag { doc, history, x: point.x, start, end, duration: timeline.duration.max(1), edge })
+                        data.insert_temp(drag_id, StillDrag { doc, history, x: point.x, start, end, duration: timeline.duration.max(1), edge: 0 })
                     });
                 }
-                let finished_drag = if editable && response.drag_stopped() {
+                let finished_drag = if editable && (response.drag_stopped() || handle_stopped) {
                     let state = ui.ctx().data(|data| data.get_temp::<StillDrag>(drag_id));
                     ui.ctx().data_mut(|data| data.remove::<StillDrag>(drag_id));
                     state
@@ -1866,10 +1974,13 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
                         && (new_start, new_end) != (state.start, state.end)
                         && editable
                     {
-                        run_timeline_command(app, "timeline.setLayerRange", json!({"layer":layer.0,"start":new_start,"end":new_end}));
+                        match state.edge {
+                            1 => run_timeline_command(app, "timeline.editor.trimLeft", json!({"document":doc.0,"layers":[layer.0],"frame":new_start})),
+                            2 => run_timeline_command(app, "timeline.editor.trimRight", json!({"document":doc.0,"layers":[layer.0],"frame":new_end})),
+                            _ => run_timeline_command(app, "timeline.setLayerRange", json!({"layer":layer.0,"start":new_start,"end":new_end})),
+                        }
                     }
                 }
-                let selected = app.session.active().and_then(|s| s.active_layer) == Some(layer);
                 let clip_color = match kind.as_str() {
                     "Smart Object" => egui::Color32::from_rgb(132, 92, 190),
                     "Text" => egui::Color32::from_rgb(56, 142, 154),
@@ -1881,6 +1992,7 @@ pub fn show(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline, lane_widt
                 };
                 ui.painter_at(lane).rect_filled(lane, 2.0, tokens.field);
                 ui.painter_at(lane).rect_filled(rect.intersect(lane), 3.0, if selected { tokens.accent } else { clip_color });
+                paint_resize_handles(ui, rect, selected || response.hovered() || hovered_handle);
                 ui.painter_at(lane).text(
                     rect.left_center(),
                     egui::Align2::LEFT_CENTER,
@@ -2178,6 +2290,28 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                 });
             });
 
+            ui.horizontal_wrapped(|ui| {
+                let padding = timeline.tail_padding_frames.map_or_else(|| "legacy".to_string(), |frames| format!("{frames}f"));
+                ui.label(RichText::new(format!("Tail padding · {padding}")).small().color(tokens.text_dim));
+                if let Some(value) = number_field(
+                    ui,
+                    Id::new(("timeline-duration-frames", doc.0)),
+                    "Duration (frames)",
+                    duration as f64,
+                    1.0..=MAX_TIMELINE_FRAMES as f64,
+                ) {
+                    action = Some(("timeline.setProps", json!({"document":doc.0,"duration":value.round().clamp(1.0,MAX_TIMELINE_FRAMES as f64) as u64})));
+                }
+                let five_seconds = (timeline.project_rate().as_f64() * 5.0).round().max(1.0) as usize;
+                let extended = duration.saturating_add(five_seconds).min(MAX_TIMELINE_FRAMES);
+                if ui.add_enabled(extended > duration, egui::Button::new("Add 5 seconds")).clicked() {
+                    action = Some(("timeline.setProps", json!({"document":doc.0,"duration":extended})));
+                }
+                if ui.button("Fit timeline to content").clicked() {
+                    action = Some(("timeline.editor.fitDuration", json!({"document":doc.0})));
+                }
+            });
+
             // Fixed time ruler; lane widths use the same duration and zoom geometry below.
             let gutter = if app.ui.timeline.gutter_width.is_finite(){app.ui.timeline.gutter_width.clamp(100.0,320.0)}else{180.0};
             let lane_width = ((ui.available_width() - gutter).max(200.0) * zoom).max(240.0);
@@ -2316,8 +2450,11 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                                     }
                                 }
                             }
+                            for (owner, audio_track) in &owned_audio {
+                                crate::audio_ui::draw_track_volume_control(app, &mut gutter_ui, audio_track, Some(*owner));
+                            }
                         }
-                        let label_rect = Rect::from_min_max(pos2(g.left() + if owned_audio.is_empty() { 60.0 } else { 82.0 }, g.top()), g.right_bottom());
+                        let label_rect = Rect::from_min_max(pos2((gutter_ui.cursor().left() + 3.0).min(g.right()), g.top()), g.right_bottom());
                         gutter_ui.painter().with_clip_rect(label_rect).text(
                             label_rect.left_center() + egui::Vec2::new(3.0, 0.0),
                             egui::Align2::LEFT_CENTER,
@@ -2438,6 +2575,19 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                                             if editable { Sense::click_and_drag() } else { Sense::click() },
                                         );
                                         let selected = app.session.active().is_some_and(|s| s.selected_layers.contains(&layer_id));
+                                        let (press_edge, handle_stopped, hovered_handle) = still_resize_controls(
+                                            ui,
+                                            doc,
+                                            layer_id,
+                                            history,
+                                            start,
+                                            end,
+                                            duration,
+                                            lane.width(),
+                                            timeline.project_rate().as_f64(),
+                                            rect,
+                                            editable,
+                                        );
                                         let color = if matches!(layer.content, photostore_doc::LayerContent::Smart(_)) {
                                             egui::Color32::from_rgb(132, 92, 190)
                                         } else if matches!(layer.content, photostore_doc::LayerContent::Text(_)) {
@@ -2455,6 +2605,7 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                                             format!("▧ {}", layer.name)
                                         };
                                         paint_timeline_clip_label(ui, rect, &label, &tokens);
+                                        paint_resize_handles(ui, rect, selected || response.hovered() || hovered_handle);
                                         if response.clicked() {
                                             if razor_mode {
                                                 report_timeline_result(app, |app| app.with_document(doc, |app| {
@@ -2468,19 +2619,13 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                                         }
                                         if editable
                                             && response.drag_started()
-                                            && let Some(pos) = response.interact_pointer_pos()
+                                            && press_edge.is_none()
+                                            && let Some(pos) = ui.input(|input| input.pointer.press_origin()).or_else(|| response.interact_pointer_pos())
                                         {
-                                            let edge = if (pos.x - rect.left()).abs() < 8.0 {
-                                                1
-                                            } else if (pos.x - rect.right()).abs() < 8.0 {
-                                                2
-                                            } else {
-                                                0
-                                            };
                                             ui.ctx()
-                                                .data_mut(|data| data.insert_temp(drag_id, StillDrag { doc, history, x: pos.x, start, end, duration, edge }));
+                                                .data_mut(|data| data.insert_temp(drag_id, StillDrag { doc, history, x: pos.x, start, end, duration, edge: 0 }));
                                         }
-                                        if editable && response.drag_stopped() {
+                                        if editable && (response.drag_stopped() || handle_stopped) {
                                             let state = ui.ctx().data(|data| data.get_temp::<StillDrag>(drag_id));
                                             ui.ctx().data_mut(|data| data.remove::<StillDrag>(drag_id));
                                             if let Some(state) = state {
@@ -2528,6 +2673,16 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                                             }
                                         }
                                         response.context_menu(|ui| {
+                                            if ui.button("Extend to timeline end").clicked() {
+                                                let targets = delete_targets(app, doc, layer_id, timeline);
+                                                report_timeline_result(app, |app| {
+                                                    app.with_document(doc, |app| {
+                                                        app.run("timeline.editor.extendToTimelineEnd", json!({"document":doc.0,"layers":targets}))
+                                                    })
+                                                });
+                                                ui.close();
+                                            }
+                                            ui.separator();
                                             if matches!(layer.content, photostore_doc::LayerContent::Smart(_)) {
                                                 if ui.button("Edit Contents").clicked() {
                                                     let _ =

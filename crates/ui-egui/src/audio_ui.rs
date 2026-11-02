@@ -88,6 +88,46 @@ pub fn invoke(app: &mut PhotoStoreApp, _ctx: &egui::Context, id: &str, params: &
 fn dispatch(app: &mut PhotoStoreApp, id: &str, params: Value) {
     let _ = app.run(id, params);
 }
+
+/// Per-track output gain control. The slider edits dB but persists linear amplitude.
+pub(crate) fn draw_track_volume_control(app: &mut PhotoStoreApp, ui: &mut Ui, track: &AudioTrack, owner_layer: Option<photostore_doc::LayerId>) {
+    let doc_id = target_doc(app).map_or(0, |doc| doc.0);
+    let legacy_owner = owner_layer.filter(|_| track.owner_layer.is_none());
+    let state_owner = owner_layer.map_or(0, |owner| owner.0);
+    let value_id = Id::new(("audio-track-volume-db", doc_id, track.id, state_owner));
+    let initial = if track.volume > 0.0 { 20.0 * track.volume.log10() } else { -60.0 };
+    let saved = ui.ctx().data(|data| data.get_temp::<(u64, f64)>(value_id));
+    let pending = saved.filter(|(source, _)| *source == track.volume.to_bits()).map(|(_, value)| value);
+    if saved.is_some() && pending.is_none() { ui.ctx().data_mut(|data| data.remove::<(u64, f64)>(value_id)); }
+    let visible_db = pending.unwrap_or(initial);
+    let label = if track.volume == 0.0 && pending.is_none() { "Off".to_string() } else { format!("{visible_db:+.0}dB") };
+    let response = ui.add_sized([40.0, 17.0], egui::Button::new(label)).on_hover_text("Track volume");
+    let set_volume = |app: &mut PhotoStoreApp, value: f64| {
+        if let Some(owner) = legacy_owner {
+            dispatch(app, "timeline.setLayerAudio", json!({"layer":owner.0,"volume":value}));
+        } else {
+            dispatch(app, "timeline.setAudioTrack", json!({"track":track.id,"volume":value}));
+        }
+    };
+    egui::Popup::menu(&response).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        ui.label(format!("{} volume", track.name));
+        let mut off = track.volume == 0.0;
+        if ui.checkbox(&mut off, "Off").changed() {
+            set_volume(app, if off {0.0} else {1.0});
+            ui.ctx().data_mut(|data| data.remove::<(u64, f64)>(value_id));
+        }
+        if !off {
+            let mut db = pending.unwrap_or(initial).clamp(-60.0, 20.0 * 4.0_f64.log10());
+            let slider = ui.add(egui::Slider::new(&mut db, -60.0..=20.0 * 4.0_f64.log10()).suffix(" dB"));
+            if slider.changed() { ui.ctx().data_mut(|data| data.insert_temp(value_id, (track.volume.to_bits(), db))); }
+            let has_pending = ui.ctx().data(|data| data.get_temp::<(u64, f64)>(value_id)).is_some_and(|(source, _)| source == track.volume.to_bits());
+            if has_pending && (slider.drag_stopped() || slider.lost_focus() || ui.input(|input| input.key_pressed(egui::Key::Enter))) {
+                set_volume(app, 10.0_f64.powf(db / 20.0));
+                ui.ctx().data_mut(|data| data.remove::<(u64, f64)>(value_id));
+            }
+        }
+    });
+}
 fn drag_id(doc: DocId, clip: u64) -> Id {
     Id::new(("audio-drag", doc.0, clip))
 }
@@ -596,7 +636,8 @@ pub fn show_workspace(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Timeline,
                     dispatch(app, "timeline.setAudioTrack", json!({"document":doc.0,"track":track.id,"muted":!muted}));
                 }
             }
-            let label = Rect::from_min_max(pos2(gutter.left() + 24.0, gutter.top()), gutter.right_bottom());
+            draw_track_volume_control(app, &mut left, &track, None);
+            let label = Rect::from_min_max(pos2(left.cursor().left() + 3.0, gutter.top()), gutter.right_bottom());
             left.painter().with_clip_rect(label).text(
                 label.left_center(),
                 egui::Align2::LEFT_CENTER,
@@ -645,7 +686,8 @@ pub fn show_owned_workspace(app: &mut PhotoStoreApp, ui: &mut Ui, timeline: &Tim
             {
                 dispatch(app, "timeline.setLayerAudio", json!({"document":doc.0,"layer":owner.0,"muted":!muted}));
             }
-            let label = Rect::from_min_max(pos2(gutter.left() + 24.0, gutter.top()), gutter.right_bottom());
+            draw_track_volume_control(app, &mut left, track, owner);
+            let label = Rect::from_min_max(pos2(left.cursor().left() + 3.0, gutter.top()), gutter.right_bottom());
             left.painter().with_clip_rect(label).text(label.left_center(), egui::Align2::LEFT_CENTER, format!("♪ {}", track.name), egui::FontId::proportional(11.5), tokens.text_dim);
             egui::ScrollArea::horizontal().scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).scroll_source(egui::scroll_area::ScrollSource::NONE)
                 .id_salt(("timeline-audio-lane", doc.0, track.id, owner.map(|id| id.0).unwrap_or(0))).scroll_offset(egui::vec2(scroll_x, 0.0)).show(ui, |ui| {

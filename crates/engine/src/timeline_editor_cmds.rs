@@ -79,6 +79,99 @@ fn full_info(s: &Session, affected: Value) -> Result<Value> {
         json!({"timeline": {"fps":t.fps,"duration":t.duration,"current":t.current,"workStart":t.work_start,"workEnd":t.work_end,"mode":match t.mode { photostore_doc::TimelineMode::Video => "video", photostore_doc::TimelineMode::FrameAnimation => "frameAnimation" },"visualTracks":t.visual_tracks,"layerRanges":t.layer_ranges,"markers":t.markers,"mainTrackMagnet":t.main_track_magnet,"snapping":t.snapping,"linkedSelection":t.linked_selection,"previewSkimming":t.preview_skimming},"affected":affected}),
     )
 }
+
+const MAX_TIMELINE_FRAMES: usize = 1_000_000;
+
+/// State captured before a Video Timeline edit changes timed content. Duration/work-area policy
+/// must be based on the pre-edit state even when the command grows `duration` while applying the
+/// edit.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TimelineDurationEdit {
+    work_end_follows_duration: bool,
+    old_work_start: usize,
+    old_work_end: usize,
+    old_content_end: usize,
+}
+
+/// Establish a saved tail-padding value before a timing edit. Legacy documents have no way to
+/// distinguish deliberate blank tail from stale duration, so their current slack is preserved.
+pub(crate) fn prepare_duration_edit(doc: &mut photostore_doc::Document) -> Option<TimelineDurationEdit> {
+    let content_end = timeline_content_end(doc);
+    let timeline = doc.timeline.as_mut().filter(|timeline| timeline.mode == photostore_doc::TimelineMode::Video)?;
+    let old_duration = timeline.duration.max(1).min(MAX_TIMELINE_FRAMES);
+    let work_end_follows_duration = timeline.work_end == timeline.duration;
+    let old_work_start = timeline.work_start;
+    let old_work_end = timeline.work_end;
+    if timeline.tail_padding_frames.is_none() {
+        timeline.tail_padding_frames = Some(old_duration.saturating_sub(content_end));
+    }
+    Some(TimelineDurationEdit { work_end_follows_duration, old_work_start, old_work_end, old_content_end: content_end })
+}
+
+/// Recompute the Video Timeline span after content timing changes, preserving deliberate tail
+/// padding and keeping the work area valid.
+pub(crate) fn reconcile_duration(doc: &mut photostore_doc::Document, edit: Option<TimelineDurationEdit>) {
+    let Some(edit) = edit else { return };
+    let content_end = timeline_content_end(doc);
+    let Some(timeline) = doc.timeline.as_mut().filter(|timeline| timeline.mode == photostore_doc::TimelineMode::Video) else { return };
+    let mut padding = timeline.tail_padding_frames.unwrap_or(0).min(MAX_TIMELINE_FRAMES);
+    if content_end > edit.old_content_end {
+        padding = padding.saturating_sub(content_end - edit.old_content_end);
+        timeline.tail_padding_frames = Some(padding);
+    }
+    let duration = content_end.saturating_add(padding).clamp(1, MAX_TIMELINE_FRAMES);
+    timeline.duration = duration;
+    if edit.work_end_follows_duration {
+        timeline.work_end = duration;
+    } else {
+        timeline.work_start = edit.old_work_start.min(duration.saturating_sub(1));
+        timeline.work_end = edit.old_work_end.clamp(timeline.work_start.saturating_add(1), duration);
+    }
+    timeline.clamp();
+}
+
+/// Apply a user-authored Video Timeline duration. Content remains reachable if the request is
+/// shorter than an existing clip; a longer request is persisted as deliberate tail padding.
+pub(crate) fn set_explicit_duration(doc: &mut photostore_doc::Document, requested: usize) -> Result<usize, String> {
+    if requested == 0 || requested > MAX_TIMELINE_FRAMES {
+        return Err(format!("duration must be between 1 and {MAX_TIMELINE_FRAMES} frames"));
+    }
+    let content_end = timeline_content_end(doc);
+    let timeline = doc.timeline.as_mut().filter(|timeline| timeline.mode == photostore_doc::TimelineMode::Video)
+        .ok_or_else(|| "no Video Timeline".to_string())?;
+    let work_end_follows_duration = timeline.work_end == timeline.duration;
+    let old_work_start = timeline.work_start;
+    let old_work_end = timeline.work_end;
+    let duration = requested.max(content_end).min(MAX_TIMELINE_FRAMES);
+    timeline.tail_padding_frames = Some(duration.saturating_sub(content_end));
+    timeline.duration = duration;
+    if work_end_follows_duration {
+        timeline.work_end = duration;
+    } else {
+        timeline.work_start = old_work_start.min(duration.saturating_sub(1));
+        timeline.work_end = old_work_end.clamp(timeline.work_start.saturating_add(1), duration);
+    }
+    timeline.clamp();
+    Ok(duration)
+}
+
+fn timeline_content_end(doc: &photostore_doc::Document) -> usize {
+    let Some(timeline) = doc.timeline.as_ref().filter(|timeline| timeline.mode == photostore_doc::TimelineMode::Video) else { return 0 };
+    let mut end = timeline.layer_ranges.iter().filter(|range| doc.layer(range.layer).is_some())
+        .map(|range| range.end.min(MAX_TIMELINE_FRAMES)).max().unwrap_or(0);
+    let fps = timeline.project_rate().as_f64();
+    for clip in timeline.audio_tracks.iter().flat_map(|track| &track.clips) {
+        let seconds = clip.start_seconds + clip.duration_seconds;
+        if seconds.is_finite() && seconds > 0.0 && fps.is_finite() && fps > 0.0 {
+            let frames = (seconds * fps - 1e-7).max(0.0).ceil();
+            if frames.is_finite() && frames > 0.0 {
+                end = end.max((frames as usize).min(MAX_TIMELINE_FRAMES));
+            }
+        }
+    }
+    end
+}
+
 fn select(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "timeline.editor.select";
     let (selected_layers, frame, selected_audio, document_id) = {
@@ -1176,6 +1269,7 @@ fn move_clips(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit("Move Timeline Clips", |doc, _| {
         require_video_mode(doc, cmd)?;
         ensure_tracks(doc)?;
+        let duration_edit = prepare_duration_edit(doc);
         let delta = snapped_move_delta(doc, &selected, &selected_audio, delta);
         for id in &selected {
             check_unlocked(doc, *id, cmd)?;
@@ -1321,13 +1415,18 @@ fn move_clips(s: &mut Session, p: &Value) -> Result<Value> {
             timeline.work_end = required_duration;
             timeline.frame_delays_ms.resize(required_duration, 0);
         }
+        reconcile_duration(doc, duration_edit);
         crate::video_cmds::sync(doc);
         Ok(())
     })?;
     full_info(s, json!({"layers":selected,"audio":selected_audio}))
 }
 fn trim(s: &mut Session, p: &Value, left: bool) -> Result<Value> {
-    let cmd = if left { "timeline.editor.trimLeft" } else { "timeline.editor.trimRight" };
+    trim_with_tail_policy(s, p, left, false)
+}
+
+fn trim_with_tail_policy(s: &mut Session, p: &Value, left: bool, clear_tail_padding: bool) -> Result<Value> {
+    let cmd = if left { "timeline.editor.trimLeft" } else if clear_tail_padding { "timeline.editor.extendToTimelineEnd" } else { "timeline.editor.trimRight" };
     let selected = ids(s, p, cmd)?;
     let frame = p
         .get("frame")
@@ -1335,7 +1434,7 @@ fn trim(s: &mut Session, p: &Value, left: bool) -> Result<Value> {
         .map(|v| v as usize)
         .or_else(|| s.active().and_then(|x| x.doc.timeline.as_ref()).map(|t| t.current))
         .ok_or_else(|| bad(cmd, "`frame` must be an integer"))?;
-    s.edit(if left { "Trim Timeline Clips Left" } else { "Trim Timeline Clips Right" }, |doc, _| {
+    s.edit(if left { "Trim Timeline Clips Left" } else if clear_tail_padding { "Extend Clips to Timeline End" } else { "Trim Timeline Clips Right" }, |doc, _| {
         require_video_mode(doc, cmd)?;
         ensure_tracks(doc)?;
         for id in &selected {
@@ -1404,6 +1503,10 @@ fn trim(s: &mut Session, p: &Value, left: bool) -> Result<Value> {
             }
             (fps, t.linked_selection, ranges)
         };
+        let duration_edit = prepare_duration_edit(doc);
+        if clear_tail_padding {
+            if let Some(timeline) = doc.timeline.as_mut() { timeline.tail_padding_frames = Some(0); }
+        }
         let t = doc.timeline.as_mut().ok_or(EngineError::NoDocument)?;
         for (old, start, end, playback) in &ranges {
             let r = t.layer_ranges.iter_mut().find(|r| r.layer == old.layer).ok_or_else(|| bad(cmd, "clip range disappeared during trim"))?;
@@ -1468,10 +1571,37 @@ fn trim(s: &mut Session, p: &Value, left: bool) -> Result<Value> {
             }
         }
         repack_main_track(doc, cmd)?;
+        reconcile_duration(doc, duration_edit);
         crate::video_cmds::sync(doc);
         Ok(())
     })?;
     full_info(s, json!(selected))
+}
+
+fn extend_to_timeline_end(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "timeline.editor.extendToTimelineEnd";
+    let selected = ids(s, p, cmd)?;
+    let duration = s.active().and_then(|active| active.doc.timeline.as_ref()).ok_or(EngineError::NoDocument)?.duration;
+    let params = json!({"layers":selected.iter().map(|id| id.0).collect::<Vec<_>>(),"frame":duration});
+    trim_with_tail_policy(s, &params, false, true)
+}
+
+fn fit_duration(s: &mut Session, _p: &Value) -> Result<Value> {
+    let cmd = "timeline.editor.fitDuration";
+    s.edit("Fit Timeline to Content", |doc, _| {
+        require_video_mode(doc, cmd)?;
+        let content_end = timeline_content_end(doc);
+        let timeline = doc.timeline.as_mut().ok_or(EngineError::NoDocument)?;
+        timeline.tail_padding_frames = Some(0);
+        let duration = content_end.clamp(1, MAX_TIMELINE_FRAMES);
+        timeline.duration = duration;
+        timeline.work_start = timeline.work_start.min(duration.saturating_sub(1));
+        timeline.work_end = timeline.work_end.clamp(timeline.work_start.saturating_add(1), duration);
+        timeline.clamp();
+        crate::video_cmds::sync(doc);
+        Ok(())
+    })?;
+    full_info(s, json!({"fit":true}))
 }
 fn set_enabled(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "timeline.editor.enableClip";
@@ -1531,6 +1661,7 @@ fn set_speed_curve(s: &mut Session, p: &Value) -> Result<Value> {
         require_video_mode(doc, cmd)?;
         ensure_tracks(doc)?;
         check_unlocked(doc, id, cmd)?;
+        let duration_edit = prepare_duration_edit(doc);
         let video = doc.layer(id).and_then(|layer| layer.video.as_ref()).ok_or_else(|| bad(cmd, "speed curves require a video-backed clip"))?;
         let fallback = photostore_doc::ClipPlayback { source_in_seconds: video.playback.source_in_seconds, speed: video.playback.speed, ..Default::default() };
         let video_duration = if video.movie_backing.is_some() {
@@ -1635,6 +1766,7 @@ fn set_speed_curve(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
         repack_main_track(doc, cmd)?;
+        reconcile_duration(doc, duration_edit);
         Ok(())
     })?;
     crate::video_cmds::sync(s.active_mut().ok_or(EngineError::NoDocument).map(|st| std::sync::Arc::make_mut(&mut st.doc))?);
@@ -1722,6 +1854,7 @@ fn extract_audio(s: &mut Session, p: &Value) -> Result<Value> {
             name: "Extracted Audio".into(),
             owner_layer: Some(id),
             muted: false,
+            volume: 1.0,
             clips: vec![photostore_doc::AudioClip {
                 asset_id: None,
                 id: clip_id,
@@ -2242,6 +2375,7 @@ fn paste_attributes(s: &mut Session, p: &Value) -> Result<Value> {
 fn delete_clips(s: &mut Session, selected: &[LayerId], selected_audio: &[u64], ripple: bool, cmd: &str) -> Result<()> {
     s.edit("Delete Timeline Clips", |doc, _| {
         require_video_mode(doc, cmd)?;
+        let duration_edit = prepare_duration_edit(doc);
         for id in selected {
             check_unlocked(doc, *id, cmd)?;
         }
@@ -2299,6 +2433,7 @@ fn delete_clips(s: &mut Session, selected: &[LayerId], selected_audio: &[u64], r
             }
         }
         repack_main_track(doc, cmd)?;
+        reconcile_duration(doc, duration_edit);
         Ok(())
     })
 }
@@ -2528,6 +2663,7 @@ fn split(s: &mut Session, p: &Value, all: bool) -> Result<Value> {
     s.edit(if all { "Split All Timeline Clips" } else { "Split Timeline Clips" }, |doc, active| {
         require_video_mode(doc, cmd)?;
         ensure_tracks(doc)?;
+        let duration_edit = prepare_duration_edit(doc);
         for id in &selected {
             check_unlocked(doc, *id, cmd)?;
             let right = if doc.layer(*id).is_some_and(|l| l.video.is_some()) {
@@ -2540,6 +2676,7 @@ fn split(s: &mut Session, p: &Value, all: bool) -> Result<Value> {
             };
             pairs.push(json!({"left":id.0,"right":right.0}));
         }
+        reconcile_duration(doc, duration_edit);
         crate::video_cmds::sync(doc);
         Ok(())
     })?;
@@ -2577,6 +2714,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit("Paste Timeline Clips", |doc, _| {
         require_video_mode(doc, cmd)?;
         ensure_tracks(doc)?;
+        let duration_edit = prepare_duration_edit(doc);
         let timeline = doc.timeline.as_ref().ok_or(EngineError::NoDocument)?;
         if timeline.mode != photostore_doc::TimelineMode::Video {
             return Err(bad(cmd, "clip paste is available in Video Timeline mode"));
@@ -2783,6 +2921,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
                         name: source_track.name,
                         owner_layer: source_track.owner_layer,
                         muted: source_track.muted,
+                        volume: source_track.volume,
                         clips: Vec::new(),
                     });
                     audio_track_remap.insert(source_track.id, max_audio_track);
@@ -2806,6 +2945,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
                     name: item.track.name.clone(),
                     owner_layer: None,
                     muted: item.track.muted,
+                    volume: item.track.volume,
                     clips: Vec::new(),
                 });
                 audio_track_remap.insert(item.track.id, max_audio_track);
@@ -2814,6 +2954,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
             timeline.audio_tracks.iter_mut().find(|track| track.id == track_id).ok_or_else(|| bad(cmd, "pasted audio track was not created"))?.clips.push(clip);
         }
         repack_main_track(doc, cmd)?;
+        reconcile_duration(doc, duration_edit);
         crate::video_cmds::sync(doc);
         Ok(())
     })?;
@@ -3442,6 +3583,8 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("timeline.editor.move", "Move Timeline Clips", "{layers?:[id],audio?:[clipId],deltaFrames,ripple?:bool}", |s, p| move_clips(s, p)),
         spec!("timeline.editor.trimLeft", "Trim Clips Left", "{layers?:[id],frame?:playhead}", |s, p| trim(s, p, true)),
         spec!("timeline.editor.trimRight", "Trim Clips Right", "{layers?:[id],frame?:playhead}", |s, p| trim(s, p, false)),
+        spec!("timeline.editor.extendToTimelineEnd", "Extend Clips to Timeline End", "{layers?:[id]}", |s, p| extend_to_timeline_end(s, p)),
+        spec!("timeline.editor.fitDuration", "Fit Timeline to Content", "{}", |s, p| fit_duration(s, p)),
         spec!("timeline.editor.enableClip", "Enable or Disable Clips", "{layers?:[id],enabled}", |s, p| set_enabled(s, p)),
         spec!("timeline.editor.setSpeedCurve", "Set Clip Speed Curve", "{layer?:id,points:[{frame,speed}]}", |s, p| set_speed_curve(s, p)),
         spec!("timeline.editor.extractAudio", "Extract or Restore Video Audio", "{layer?:id}", |s, p| extract_audio(s, p)),
@@ -3515,6 +3658,7 @@ mod main_track_tests {
                 name: "Linked".into(),
             owner_layer: None,
                 muted: false,
+                volume: 1.0,
                 clips: vec![photostore_doc::AudioClip {
                     asset_id: None,
                     id: 1,
@@ -3591,6 +3735,7 @@ mod ripple_delete_tests {
                 name: "Overlay audio".into(),
             owner_layer: None,
                 muted: false,
+                volume: 1.0,
                 clips: vec![photostore_doc::AudioClip {
                     asset_id: None,
                     id: 1,
@@ -3698,6 +3843,7 @@ mod clipboard_roundtrip_tests {
                 name: "Linked source track".into(),
             owner_layer: None,
                 muted: false,
+                volume: 1.0,
                 clips: vec![photostore_doc::AudioClip {
                     asset_id: None,
                     id: 11,

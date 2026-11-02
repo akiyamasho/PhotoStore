@@ -410,8 +410,13 @@ pub struct Compositor {
     kit: Kit,
     normal_stack: Option<normal_stack::Pipelines>,
     normal_stack_disabled: bool,
+    normal_stream: Option<normal_stack::StreamPipelines>,
+    normal_stream_disabled: bool,
+    normal_stream_scratch: Option<(wgpu::Texture, wgpu::TextureView)>,
     buffer_stack: Option<buffer_stack::Pipelines>,
     buffer_stack_disabled: bool,
+    buffer_stream: Option<buffer_stack::StreamPipelines>,
+    buffer_stream_disabled: bool,
     buffer_sources: bool,
     upload_storage: bool,
     upload_belt: Option<wgpu::util::StagingBelt>,
@@ -626,8 +631,13 @@ impl Compositor {
             kit: Kit { pipelines, bgl0, bgl1, dummy },
             normal_stack: None,
             normal_stack_disabled: false,
+            normal_stream: None,
+            normal_stream_disabled: false,
+            normal_stream_scratch: None,
             buffer_stack: None,
             buffer_stack_disabled: false,
+            buffer_stream: None,
+            buffer_stream_disabled: false,
             buffer_sources: false,
             upload_storage: false,
             upload_belt: None,
@@ -731,6 +741,27 @@ impl Compositor {
     /// doesn't, each render re-uploads what was evicted.
     pub fn fits_budget(&self, doc: &Document, region: Rect) -> bool {
         self.working_set(doc, region) <= self.resident_budget
+    }
+
+    /// Whether this compositor can execute the recognized Normal RGBA8 stack on the GPU using
+    /// bounded page batches. This is an execution capability check, not a residency estimate:
+    /// a large total document working set can still stream one cell and one source batch at a time.
+    pub fn can_stream(&self, doc: &Document, region: Rect) -> bool {
+        if self.acc_format != wgpu::TextureFormat::Rgba32Float || self.normal_stream_disabled || self.normal_stack_disabled || region.intersect(&doc.bounds()).is_empty() { return false; }
+        let Ok(plan) = plan(doc) else { return false; };
+        let Some(stack) = normal_stack::recognize(&plan) else { return false; };
+        let mut regular_page = TILE_SIZE as u32;
+        while regular_page * 2 <= self.max_dim.min(PAGE) { regular_page *= 2; }
+        // `render` uses pooled uploads for this exact recognized stack on native platforms,
+        // which limits transfer cells to CHUNK. Predict that page before the first render too.
+        let page = if cfg!(not(target_arch = "wasm32")) { regular_page.min(CHUNK) } else { regular_page };
+        let page_bytes = u64::from(page).saturating_mul(u64::from(page)).saturating_mul(4);
+        let max_batch_bytes = page_bytes.saturating_mul(7);
+        let cell_upload_bytes = page_bytes.saturating_mul(stack.sources.len() as u64);
+        (2..=64).contains(&stack.sources.len())
+            && max_batch_bytes <= self.resident_budget
+            && cell_upload_bytes <= self.memory_budget() / 4
+            && cell_upload_bytes <= FLUSH_BYTES
     }
 
     /// The document area the view shows (`None`: unknown). Full refreshes draw its cells last.
@@ -921,11 +952,12 @@ impl Compositor {
             self.chunk = CHUNK.min(page);
             self.residents.clear();
             self.fx.clear();
+            self.normal_stream_scratch = None;
         }
         self.check_fx(doc, &plan)?;
         if self.pooled_uploads {
-            // Every pooled source belongs to a recognized stack of at most eight pages per
-            // cell. Wait for the preceding pooled frame before reusing its mapped arena.
+            // The fused stack paths upload at most one seven-source batch per cell. Wait for the
+            // preceding pooled frame before reusing its mapped arena.
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(index) = self.upload_submission.take() {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| device.poll(wgpu::PollType::Wait {
@@ -1213,6 +1245,10 @@ impl Compositor {
         }
 
         if self.buffer_sources && self.try_run_buffer_stack(device, queue, encoder, plan, fr, cell, chunks, stats, sink)? {
+            return Ok(());
+        }
+
+        if self.try_run_stream_stack(device, queue, encoder, doc, plan, fr, cell, chunks, stats, sink)? {
             return Ok(());
         }
 

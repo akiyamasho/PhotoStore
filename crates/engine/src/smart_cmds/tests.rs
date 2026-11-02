@@ -1214,6 +1214,7 @@ fn smart_clip_split_trim_and_move_keep_the_nested_source_clock() {
             name: "Linked audio".into(),
             owner_layer: None,
             muted: false,
+            volume: 1.0,
             clips: vec![photostore_doc::AudioClip {
                 asset_id: None,
                 id: 1,

@@ -225,6 +225,9 @@ fn validate_timeline(t: &photostore_doc::Timeline) -> Result<()> {
         if tr.id == 0 || !track_ids.insert(tr.id) {
             return Err(bad("timeline.audio", "duplicate audio track id"));
         }
+        if !tr.volume.is_finite() || !(0.0..=4.0).contains(&tr.volume) {
+            return Err(bad("timeline.audio", "track volume must be 0..=4"));
+        }
         for c in &tr.clips {
             clips += 1;
             if clips > MAX_CLIPS || c.id == 0 || !clip_ids.insert(c.id) {
@@ -245,8 +248,8 @@ pub fn specs() -> Vec<CommandSpec> {
     }
     c!("timeline.addAudioTrack", "Add Audio Track", add_track, "{name?:string}");
     c!("timeline.addAudioLayer", "Import Audio as Layer", add_audio_layer, "{path:string,startSeconds?,trimInSeconds?,durationSeconds?,speed?,volume?,fadeInSeconds?,fadeOutSeconds?,muted?,name?}");
-    c!("timeline.setAudioTrack", "Set Audio Track", set_track, "{track:u64,name?:string,muted?:bool}");
-    c!("timeline.setLayerAudio", "Set Layer Audio", set_layer_audio, "{layer:u64,muted:bool}");
+    c!("timeline.setAudioTrack", "Set Audio Track", set_track, "{track:u64,name?:string,muted?:bool,volume?:number}");
+    c!("timeline.setLayerAudio", "Set Layer Audio", set_layer_audio, "{layer:u64,muted?:bool,volume?:number}");
     c!("timeline.setAudioClips", "Set Audio Clips", set_audio_clips, "{clips:[u64],muted:bool}");
     c!("timeline.removeAudioTrack", "Remove Audio Track", remove_track, "{track:u64}");
     c!(
@@ -296,7 +299,7 @@ fn add_audio_layer(s: &mut Session, p: &Value) -> Result<Value> {
             layer: layer_id, start: range_start, end: range_end.max(range_start.saturating_add(1)).min(timeline.duration), enabled: true, playback: None,
         });
         timeline.audio_tracks.push(AudioTrack {
-            id: track_id, name, owner_layer: Some(layer_id), muted: false, clips: vec![clip],
+            id: track_id, name, owner_layer: Some(layer_id), muted: false, volume: 1.0, clips: vec![clip],
         });
         Ok((layer_id.0, track_id, clip_id))
     }, |(layer, track, clip)| json!({"layer":layer,"track":track,"clip":clip}))
@@ -312,7 +315,7 @@ fn add_track(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad("timeline.addAudioTrack", "maximum 64 tracks"));
         }
         let id = fresh_track_id(t)?;
-        t.audio_tracks.push(AudioTrack { id, name: name.clone(), owner_layer: None, muted: false, clips: Vec::new() });
+        t.audio_tracks.push(AudioTrack { id, name: name.clone(), owner_layer: None, muted: false, volume: 1.0, clips: Vec::new() });
         Ok(json!({"track":id}))
     })
 }
@@ -328,30 +331,48 @@ fn set_track(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(m) = p.get("muted") {
             tr.muted = m.as_bool().ok_or_else(|| bad("timeline.setAudioTrack", "muted must be bool"))?;
         }
+        if let Some(v) = p.get("volume") {
+            tr.volume = v.as_f64().filter(|x| x.is_finite() && (0.0..=4.0).contains(x)).ok_or_else(|| bad("timeline.setAudioTrack", "volume must be 0..=4"))?;
+        }
         Ok(json!({"track":tid}))
     })
 }
 fn set_layer_audio(s: &mut Session, p: &Value) -> Result<Value> {
     let layer = LayerId(id(p, "layer")?);
-    let muted = p.get("muted").and_then(Value::as_bool).ok_or_else(|| bad("timeline.setLayerAudio", "`muted` must be a boolean"))?;
+    let muted = p.get("muted").map(|v| v.as_bool().ok_or_else(|| bad("timeline.setLayerAudio", "`muted` must be a boolean"))).transpose()?;
+    let volume = p.get("volume").map(|v| v.as_f64().filter(|x| x.is_finite() && (0.0..=4.0).contains(x)).ok_or_else(|| bad("timeline.setLayerAudio", "`volume` must be 0..=4"))).transpose()?;
+    if muted.is_none() && volume.is_none() { return Err(bad("timeline.setLayerAudio", "provide `muted` or `volume`")); }
     s.edit("Set Layer Audio", |d, _| {
         let timeline = timeline_mut(d)?;
-        if timeline.audio_tracks.iter().any(|track| track.owner_layer == Some(layer)) {
-            for track in timeline.audio_tracks.iter_mut().filter(|track| track.owner_layer == Some(layer)) { track.muted = muted; }
-        } else {
-            let mut found = false;
-            for track in &mut timeline.audio_tracks {
-                if !track.clips.iter().any(|clip| clip.linked_video == Some(layer)) { continue; }
-                found = true;
-                if track.muted {
-                    for clip in &mut track.clips { clip.muted = true; }
-                    track.muted = false;
-                }
-                for clip in track.clips.iter_mut().filter(|clip| clip.linked_video == Some(layer)) { clip.muted = muted; }
-            }
-            if !found { return Err(bad("timeline.setLayerAudio", "layer has no audio")); }
+        let mut found = false;
+        for track in timeline.audio_tracks.iter_mut().filter(|track| track.owner_layer == Some(layer)) {
+            found = true;
+            if let Some(muted) = muted { track.muted = muted; }
+            if let Some(volume) = volume { track.volume = volume; }
         }
-        Ok(json!({"layer":layer.0,"muted":muted}))
+        let legacy_indices = timeline.audio_tracks.iter().enumerate().filter_map(|(index, track)| {
+            (track.owner_layer.is_none() && track.clips.iter().any(|clip| clip.linked_video == Some(layer))).then_some(index)
+        }).collect::<Vec<_>>();
+        for index in legacy_indices {
+            if timeline.audio_tracks.len() >= MAX_TRACKS { return Err(bad("timeline.setLayerAudio", "maximum 64 tracks; cannot separate legacy linked audio")); }
+            let (name, was_muted, was_volume, clips) = {
+                let source = &mut timeline.audio_tracks[index];
+                let mut clips = Vec::new();
+                source.clips.retain(|clip| {
+                    if clip.linked_video == Some(layer) { clips.push(clip.clone()); false } else { true }
+                });
+                (source.name.clone(), source.muted, source.volume, clips)
+            };
+            if clips.is_empty() { continue; }
+            found = true;
+            let new_muted = muted.unwrap_or(was_muted);
+            let id = fresh_track_id(timeline)?;
+            timeline.audio_tracks.push(AudioTrack {
+                id, name, owner_layer: Some(layer), muted: new_muted, volume: volume.unwrap_or(was_volume), clips,
+            });
+        }
+        if !found { return Err(bad("timeline.setLayerAudio", "layer has no audio")); }
+        Ok(json!({"layer":layer.0,"muted":muted,"volume":volume}))
     })
 }
 fn set_audio_clips(s: &mut Session, p: &Value) -> Result<Value> {
@@ -404,7 +425,7 @@ fn add_clip(s: &mut Session, p: &Value) -> Result<Value> {
                         index
                     } else {
                         let id = fresh_track_id(t)?;
-                        t.audio_tracks.push(AudioTrack { id, name: "Audio Track".into(), owner_layer: None, muted: false, clips: Vec::new() });
+                        t.audio_tracks.push(AudioTrack { id, name: "Audio Track".into(), owner_layer: None, muted: false, volume: 1.0, clips: Vec::new() });
                         t.audio_tracks.len() - 1
                     }
                 }
@@ -774,7 +795,7 @@ fn audio_mix_for_range_with_owner_visibility(
                     start_seconds: segment_start - start,
                     trim_in_seconds: original_trim,
                     duration_seconds: Some(env),
-                    volume: c.volume,
+                    volume: c.volume * tr.volume,
                     fade_in_seconds: c.fade_in_seconds,
                     fade_out_seconds: c.fade_out_seconds,
                     mute: false,
@@ -833,7 +854,7 @@ pub(crate) fn add_linked_movie_audio(
         i
     } else {
         let id = fresh_track_id(t)?;
-        t.audio_tracks.push(AudioTrack { id, name: format!("{} Audio", Path::new(&path).file_stem().and_then(|name| name.to_str()).unwrap_or("Movie")), owner_layer: Some(layer), muted: false, clips: Vec::new() });
+        t.audio_tracks.push(AudioTrack { id, name: format!("{} Audio", Path::new(&path).file_stem().and_then(|name| name.to_str()).unwrap_or("Movie")), owner_layer: Some(layer), muted: false, volume: 1.0, clips: Vec::new() });
         t.audio_tracks.len() - 1
     };
     let cid = fresh_clip_id(t)?;
