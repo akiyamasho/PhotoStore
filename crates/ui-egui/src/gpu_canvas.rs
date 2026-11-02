@@ -2214,8 +2214,9 @@ fn publish_playback_callback(
         state.video_publication_count = state.video_publication_count.wrapping_add(1);
         if let Some(frame) = result.token.frame {
             if state.video_publications.len() == 180 { state.video_publications.pop_front(); }
+            let sequence = state.video_publication_count;
             state.video_publications.push_back(NativeVideoPublication {
-                sequence: state.video_publication_count,
+                sequence,
                 at_ms: now_ms(),
                 frame,
             });
