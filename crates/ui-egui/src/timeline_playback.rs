@@ -113,6 +113,7 @@ impl Runtime {
     }
 
     pub(crate) fn stop(&mut self) {
+        photostore_engine::movie_cache::set_transport_active(false);
         self.playing = false;
         self.direction = 0;
         if let Some(mut audio) = self.audio.take() {
@@ -363,6 +364,7 @@ impl Runtime {
         } else {
             &[]
         };
+        photostore_engine::movie_cache::set_transport_active(true);
         self.playing = true;
         self.direction = 1;
         self.origin_doc = Some(doc);

@@ -1,0 +1,121 @@
+{
+  "source_sha": "c150e6434cc7043276403f12f9b95189a4fdf400",
+  "binary_sha256": "d91b41fd1eb90d7f08f8af9e8607b6a3fac8f46cdf127e268635ce4b49ba6494",
+  "cold_preroll_seconds": 3.6434918340528384,
+  "window_seconds_measured": 4.54459774994757,
+  "native_video_frame_delta_total": 6,
+  "phase_summary": {
+    "idle_before": {
+      "samples": 7,
+      "native_video_frame_delta": 1,
+      "native_video_fps_observed": 1.025830452835915,
+      "ui_last_ms_p50": 0.6392079999995985,
+      "ui_last_ms_p95": 0.8259579999994457,
+      "inspect_rpc_ms_p50": 47.79041704023257,
+      "inspect_rpc_ms_p95": 110.65729096299037,
+      "ui_frame_count_start": 255,
+      "ui_frame_count_end": 321
+    },
+    "brush": {
+      "samples": 8,
+      "native_video_frame_delta": 2,
+      "native_video_fps_observed": 1.605935107083289,
+      "ui_last_ms_p50": 0.9449169999998048,
+      "ui_last_ms_p95": 1.0781250000009095,
+      "inspect_rpc_ms_p50": 46.8644590000622,
+      "inspect_rpc_ms_p95": 60.51958299940452,
+      "ui_frame_count_start": 328,
+      "ui_frame_count_end": 405
+    },
+    "space_pan": {
+      "samples": 6,
+      "native_video_frame_delta": 1,
+      "native_video_fps_observed": 1.1677621735708215,
+      "ui_last_ms_p50": 0.6567500000001019,
+      "ui_last_ms_p95": 0.8474999999998545,
+      "inspect_rpc_ms_p50": 44.565083051566035,
+      "inspect_rpc_ms_p95": 47.23512497730553,
+      "ui_frame_count_start": 426,
+      "ui_frame_count_end": 481
+    },
+    "idle_after": {
+      "samples": 6,
+      "native_video_frame_delta": 0,
+      "native_video_fps_observed": 0.0,
+      "ui_last_ms_p50": 0.6619580000005953,
+      "ui_last_ms_p95": 0.7561670000004597,
+      "inspect_rpc_ms_p50": 39.56970799481496,
+      "inspect_rpc_ms_p95": 46.39204201521352,
+      "ui_frame_count_start": 494,
+      "ui_frame_count_end": 542
+    }
+  },
+  "limitations": [
+    "Control-channel input creates synthetic egui events, not physical OS events.",
+    "The supplied fixture must have a six-second Video timeline and include the eight listed sources; source media metadata is not independently rewritten or verified by this driver.",
+    "ui.inspect request/reply overhead is included in phase timing; polling cadence is approximately 10 Hz.",
+    "Screenshots and video capture are intentionally absent."
+  ],
+  "status": "unpublished candidate; responsive input, native cadence failed",
+  "native_fps": 1.3202488603241553,
+  "adapter": {
+    "adapter": "Apple M1 Max",
+    "backend": "metal",
+    "canvas": "gpu",
+    "deviceType": "integratedGpu",
+    "driver": "",
+    "fallback": null,
+    "lost": null,
+    "preference": "auto",
+    "selected": "auto"
+  },
+  "publication_trace": [
+    {
+      "atMs": 140.018542,
+      "frame": 0
+    },
+    {
+      "atMs": 3667.926709,
+      "frame": 1
+    },
+    {
+      "atMs": 3734.9302500000003,
+      "frame": 2
+    },
+    {
+      "atMs": 3852.418959,
+      "frame": 3
+    },
+    {
+      "atMs": 3965.843667,
+      "frame": 4
+    },
+    {
+      "atMs": 3998.6162919999997,
+      "frame": 6
+    },
+    {
+      "atMs": 4590.7916669999995,
+      "frame": 13
+    },
+    {
+      "atMs": 5290.075709,
+      "frame": 31
+    },
+    {
+      "atMs": 6049.347417,
+      "frame": 51
+    },
+    {
+      "atMs": 6788.687666999999,
+      "frame": 73
+    },
+    {
+      "atMs": 7633.009292,
+      "frame": 96
+    }
+  ],
+  "composition_wall_ms": 26.779,
+  "upload_pack_ms": 17.430209,
+  "root_cause_followup": "Foreground consumer-affine workers can pop thumbnail jobs and wait behind serialized background decoder admission. A separate bounded thumbnail worker and active-transport gate are required; memory/decoder caps stay unchanged."
+}

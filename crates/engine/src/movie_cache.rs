@@ -31,6 +31,7 @@ const MAX_SEQUENTIAL_STREAMS: usize = 8;
 static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
 static WORKER: OnceLock<Option<WorkerChannels>> = OnceLock::new();
 static COMPLETION_GENERATION: AtomicU64 = AtomicU64::new(0);
+static TRANSPORT_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 thread_local! { static NONBLOCKING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 thread_local! { static CONSUMER_NAMESPACE:std::cell::Cell<u64>=const{std::cell::Cell::new(0)}; }
 thread_local! { static LAST_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) }; }
@@ -121,6 +122,7 @@ impl Job {
 }
 struct WorkerChannels {
     queue: std::sync::Arc<WorkerQueue>,
+    thumbnail_error: Option<String>,
 }
 #[derive(Default)]
 struct Queues {
@@ -213,10 +215,19 @@ impl WorkerQueue {
                 if job.consumer.is_some(){queues.active_owners.insert(job.consumer_key());}
                 return Ok(Some(job));
             }
-            if let Some(job)=queues.thumbnails.pop_front(){return Ok(Some(job));}
             let (next,timeout)=self.ready.wait_timeout(queues,std::time::Duration::from_secs(2)).map_err(|_|())?;
             queues=next;
             if timeout.timed_out(){return Ok(None);}
+        }
+    }
+
+    fn pop_thumbnail(&self)->Result<Job,()> {
+        let mut queues=self.queues.lock().map_err(|_|())?;
+        loop {
+            if !TRANSPORT_ACTIVE.load(Ordering::Acquire) {
+                if let Some(job)=queues.thumbnails.pop_front(){return Ok(job);}
+            }
+            queues=self.ready.wait(queues).map_err(|_|())?;
         }
     }
 
@@ -256,6 +267,19 @@ impl WorkerQueue {
         queues.current.push_back(Job { key: key.clone(), path: path.to_owned(), consumer: Some(consumer), thumbnail: false, urgent: true, source_generation, window: None });
         self.ready.notify_all();
         Ok(replaced)
+    }
+}
+
+/// Tell the bounded thumbnail worker to stop taking queued jobs while real-time transport is
+/// active. A thumbnail already decoding is allowed to finish on its isolated worker.
+pub fn set_transport_active(active:bool) {
+    TRANSPORT_ACTIVE.store(active,Ordering::Release);
+    if let Some(worker)=WORKER.get().and_then(Option::as_ref) {
+        if let Ok(_queues)=worker.queue.queues.lock() {
+            worker.queue.ready.notify_all();
+        } else {
+            worker.queue.ready.notify_all();
+        }
     }
 }
 
@@ -854,7 +878,18 @@ fn worker() -> Option<&'static WorkerChannels> {
             }
             if started > 0 {
                 queue.workers.store(started,Ordering::Relaxed);
-                Some(WorkerChannels { queue })
+                let thumbnail_queue=queue.clone();
+                let thumbnail_error=std::thread::Builder::new()
+                    .name("photostore-movie-thumbnail".into())
+                    .spawn(move||{
+                        let mut streams=Vec::new();
+                        while let Ok(job)=thumbnail_queue.pop_thumbnail() {
+                            process_job(job,&mut streams,usize::MAX);
+                        }
+                    })
+                    .err()
+                    .map(|error|format!("could not start the isolated thumbnail decoder worker: {error}"));
+                Some(WorkerChannels { queue, thumbnail_error })
             } else {
                 None
             }
@@ -1273,6 +1308,11 @@ fn frame_with_position(path: &str, position: Position, fmt: PixelFormat, thumbna
                 insert_error(&mut state, key, error.clone());
                 return Err(error);
             };
+            if thumbnail {
+                if let Some(reason)=&worker.thumbnail_error {
+                    return Err(reason.clone());
+                }
+            }
             if !thumbnail && consumer.is_some() {
                 state.latest_current.insert(owner.clone(), key.clone());
                 state.pending_current.entry(owner.clone()).or_default().insert(key.clone());
