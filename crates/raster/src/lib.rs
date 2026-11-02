@@ -425,9 +425,9 @@ impl Surface {
     pub fn read_rgba_into(&self, r: Rect, out: &mut [[f32; 4]]) {
         if self.nv12.is_some() {
             for (i, p) in out.iter_mut().enumerate() {
-                let x = r.x0 + (i as i32 % r.width().max(1));
-                let y = r.y0 + (i as i32 / r.width().max(1));
-                let q = self.nv12.as_ref().map(|f| f.rgba8(u32::try_from(x).unwrap_or(u32::MAX), u32::try_from(y).unwrap_or(u32::MAX))).unwrap_or([0; 4]);
+                let x = r.x0.saturating_add((i % r.width().max(1) as usize) as i32);
+                let y = r.y0.saturating_add((i / r.width().max(1) as usize) as i32);
+                let q = self.nv12.as_ref().map(|f| f.rgba8(u32::try_from(x.saturating_sub(self.nv12_origin[0])).unwrap_or(u32::MAX), u32::try_from(y.saturating_sub(self.nv12_origin[1])).unwrap_or(u32::MAX))).unwrap_or([0; 4]);
                 *p = q.map(|v| v as f32 / 255.0);
             }
             return;
@@ -481,8 +481,8 @@ impl Surface {
     pub fn read_rgba8_into(&self, r: Rect, out: &mut [[u8; 4]]) {
         if let Some(f) = &self.nv12 {
             for (i, p) in out.iter_mut().enumerate() {
-                let x = r.x0 + (i as i32 % r.width().max(1));
-                let y = r.y0 + (i as i32 / r.width().max(1));
+                let x = r.x0.saturating_add((i % r.width().max(1) as usize) as i32);
+                let y = r.y0.saturating_add((i / r.width().max(1) as usize) as i32);
                 *p = f.rgba8(
                     u32::try_from(x.saturating_sub(self.nv12_origin[0])).unwrap_or(u32::MAX),
                     u32::try_from(y.saturating_sub(self.nv12_origin[1])).unwrap_or(u32::MAX),
