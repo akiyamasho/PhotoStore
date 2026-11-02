@@ -160,6 +160,7 @@ fn insert(s: &mut Session, params: &Value) -> Result<Value> {
         s,
         "Insert Media Source",
         move |doc, active, ctx| {
+            let duration_edit = crate::timeline_editor_cmds::prepare_duration_edit(doc);
             let asset = doc.media_assets.iter().find(|asset| asset.id == asset_id).ok_or_else(|| bad("media source disappeared before insertion"))?;
             if asset.path != saved_path {
                 return Err(bad("media source changed before insertion; retry the operation"));
@@ -300,6 +301,7 @@ fn insert(s: &mut Session, params: &Value) -> Result<Value> {
                 inserted_visual = Some(inserted);
             }
 
+            crate::timeline_editor_cmds::reconcile_duration(doc, duration_edit);
             Ok((inserted_visual, end_frame, result_kind))
         },
         move |(layer, end_frame, kind)| json!({"assetId":asset_id.0,"layer":layer.map(|layer|layer.0),"kind":kind,"frame":frame,"end":end_frame}),

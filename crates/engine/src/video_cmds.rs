@@ -1676,6 +1676,7 @@ fn new_from_file(s: &mut Session, p: &Value) -> Result<Value> {
             s,
             "New Video Layer from Movie",
             move |doc, active, ctx| {
+                let duration_edit = crate::timeline_editor_cmds::prepare_duration_edit(doc);
                 let (preview, backing, source_fps) = open_linked_movie(&path, fmt, start, end, override_fps, ctx)?;
                 let preview=movie_surface_for_document(doc,preview)?;
                 let n = backing.trim_out_frame.saturating_sub(backing.trim_in_frame).saturating_add(1);
@@ -1745,6 +1746,7 @@ fn new_from_file(s: &mut Session, p: &Value) -> Result<Value> {
                         }
                     }
                 }
+                crate::timeline_editor_cmds::reconcile_duration(doc, duration_edit);
                 sync(doc);
                 crate::media_asset_cmds::initialize_sources(doc)?;
                 Ok((id, n))
@@ -1755,6 +1757,7 @@ fn new_from_file(s: &mut Session, p: &Value) -> Result<Value> {
     let frames = load_frames(&path, fmt)?;
     let n = frames.len();
     let id = s.edit("New Video Layer from File", |doc, active| {
+        let duration_edit = crate::timeline_editor_cmds::prepare_duration_edit(doc);
         store(doc);
         if doc.timeline.is_none() {
             doc.timeline = Some(Timeline::new(n, fps));
@@ -1769,6 +1772,7 @@ fn new_from_file(s: &mut Session, p: &Value) -> Result<Value> {
         l.video = Some(v);
         let id = doc.insert_above(*active, l);
         *active = Some(id);
+        crate::timeline_editor_cmds::reconcile_duration(doc, duration_edit);
         sync(doc);
         Ok(id)
     })?;

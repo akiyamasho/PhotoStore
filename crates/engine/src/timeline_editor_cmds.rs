@@ -76,7 +76,7 @@ fn ids(s: &Session, p: &Value, cmd: &str) -> Result<Vec<LayerId>> {
 fn full_info(s: &Session, affected: Value) -> Result<Value> {
     let t = s.active().and_then(|d| d.doc.timeline.as_ref()).ok_or(EngineError::NoDocument)?;
     Ok(
-        json!({"timeline": {"fps":t.fps,"duration":t.duration,"current":t.current,"workStart":t.work_start,"workEnd":t.work_end,"mode":match t.mode { photostore_doc::TimelineMode::Video => "video", photostore_doc::TimelineMode::FrameAnimation => "frameAnimation" },"visualTracks":t.visual_tracks,"layerRanges":t.layer_ranges,"markers":t.markers,"mainTrackMagnet":t.main_track_magnet,"snapping":t.snapping,"linkedSelection":t.linked_selection,"previewSkimming":t.preview_skimming},"affected":affected}),
+        json!({"timeline": {"fps":t.fps,"duration":t.duration,"tailPaddingFrames":t.tail_padding_frames,"current":t.current,"workStart":t.work_start,"workEnd":t.work_end,"mode":match t.mode { photostore_doc::TimelineMode::Video => "video", photostore_doc::TimelineMode::FrameAnimation => "frameAnimation" },"visualTracks":t.visual_tracks,"layerRanges":t.layer_ranges,"markers":t.markers,"mainTrackMagnet":t.main_track_magnet,"snapping":t.snapping,"linkedSelection":t.linked_selection,"previewSkimming":t.preview_skimming},"affected":affected}),
     )
 }
 
@@ -160,6 +160,24 @@ fn timeline_content_end(doc: &photostore_doc::Document) -> usize {
     let mut end = timeline.layer_ranges.iter().filter(|range| doc.layer(range.layer).is_some())
         .map(|range| range.end.min(MAX_TIMELINE_FRAMES)).max().unwrap_or(0);
     let fps = timeline.project_rate().as_f64();
+    // File > Open and legacy movie documents may not have materialized clip ranges yet.
+    // Their source-backed span is content too; fitting must not collapse a movie to one frame.
+    for (_, _, layer) in doc.walk() {
+        if timeline.layer_ranges.iter().any(|range| range.layer == layer.id) { continue; }
+        let Some(video) = layer.video.as_ref() else { continue };
+        let source_fps = f64::from(video.fps.max(0.001));
+        let seconds = if video.movie_backing.is_some() {
+            video.len() as f64 / source_fps
+        } else {
+            (0..video.len()).map(|frame| match video.frame_delays_ms.get(frame).copied().unwrap_or(0) {
+                0 => 1.0 / source_fps,
+                delay => f64::from(delay) / 1000.0,
+            }).sum::<f64>()
+        };
+        let frames = ((seconds - video.playback.source_in_seconds).max(0.0)
+            / video.playback.speed.max(0.01) * fps - 1e-7).ceil();
+        if frames.is_finite() && frames > 0.0 { end = end.max((frames as usize).min(MAX_TIMELINE_FRAMES)); }
+    }
     for clip in timeline.audio_tracks.iter().flat_map(|track| &track.clips) {
         let seconds = clip.start_seconds + clip.duration_seconds;
         if seconds.is_finite() && seconds > 0.0 && fps.is_finite() && fps > 0.0 {

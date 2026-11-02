@@ -43,6 +43,40 @@ fn id(p: &Value, key: &str) -> Result<u64> {
 fn timeline_mut(doc: &mut photostore_doc::Document) -> Result<&mut photostore_doc::Timeline> {
     doc.timeline.as_mut().ok_or_else(|| EngineError::Other("document has no timeline".into()))
 }
+fn refresh_audio_only_owner_range(doc: &mut photostore_doc::Document, owner: LayerId) -> Result<()> {
+    let is_audio_placeholder = doc.layer(owner).is_some_and(|layer| {
+        layer.video.is_none() && matches!(&layer.content, LayerContent::Raster(surface) if surface.tile_count() == 0 && surface.default_bytes().iter().all(|byte| *byte == 0))
+    });
+    if !is_audio_placeholder { return Ok(()); }
+    let Some(timeline) = doc.timeline.as_mut().filter(|timeline| timeline.mode == photostore_doc::TimelineMode::Video) else { return Ok(()) };
+    let fps = timeline.project_rate().as_f64();
+    if !fps.is_finite() || fps <= 0.0 { return Err(bad("timeline.audio", "project frame rate is invalid")); }
+    let mut start = usize::MAX;
+    let mut end = 0usize;
+    for track in &timeline.audio_tracks {
+        for clip in &track.clips {
+            let is_owned = track.owner_layer == Some(owner) || (track.owner_layer.is_none() && clip.linked_video == Some(owner));
+            if !is_owned { continue; }
+            validate_clip(clip)?;
+            let start_frames = clip.start_seconds * fps;
+            let end_frames = (clip.start_seconds + clip.duration_seconds) * fps;
+            if !start_frames.is_finite() || !end_frames.is_finite() || end_frames <= 0.0 || end_frames > MAX_TIMELINE_FRAMES as f64 {
+                return Err(bad("timeline.audio", "audio clip range exceeds the timeline frame limit"));
+            }
+            start = start.min(start_frames.floor().max(0.0) as usize);
+            end = end.max(end_frames.ceil().max(1.0) as usize);
+        }
+    }
+    if start == usize::MAX {
+        timeline.layer_ranges.retain(|range| range.layer != owner);
+    } else if let Some(range) = timeline.layer_ranges.iter_mut().find(|range| range.layer == owner) {
+        range.start = start;
+        range.end = end;
+    } else {
+        timeline.layer_ranges.push(photostore_doc::LayerTimelineRange { layer: owner, start, end, enabled: true, playback: None });
+    }
+    Ok(())
+}
 fn fresh_track_id(t: &photostore_doc::Timeline) -> Result<u64> {
     let mut n = 1;
     for x in &t.audio_tracks {
@@ -267,6 +301,7 @@ pub fn specs() -> Vec<CommandSpec> {
 fn add_audio_layer(s: &mut Session, p: &Value) -> Result<Value> {
     let params = p.clone();
     crate::jobs::edit_job(s, "Import Audio as Layer", move |d, active, _| {
+        let duration_edit = crate::timeline_editor_cmds::prepare_duration_edit(d);
         let (path, source_duration) = path_and_probe(&params)?;
         let format = d.pixel_format();
         let timeline = d.timeline.as_ref().ok_or_else(|| EngineError::Other("document has no timeline".into()))?;
@@ -301,6 +336,8 @@ fn add_audio_layer(s: &mut Session, p: &Value) -> Result<Value> {
         timeline.audio_tracks.push(AudioTrack {
             id: track_id, name, owner_layer: Some(layer_id), muted: false, volume: 1.0, clips: vec![clip],
         });
+        refresh_audio_only_owner_range(d, layer_id)?;
+        crate::timeline_editor_cmds::reconcile_duration(d, duration_edit);
         Ok((layer_id.0, track_id, clip_id))
     }, |(layer, track, clip)| json!({"layer":layer,"track":track,"clip":clip}))
 }
@@ -396,9 +433,15 @@ fn set_audio_clips(s: &mut Session, p: &Value) -> Result<Value> {
 fn remove_track(s: &mut Session, p: &Value) -> Result<Value> {
     let tid = id(p, "track")?;
     s.edit("Remove Audio Track", |d, _| {
+        let duration_edit = crate::timeline_editor_cmds::prepare_duration_edit(d);
         let t = timeline_mut(d)?;
         let i = track_index(t, tid)?;
-        t.audio_tracks.remove(i);
+        let removed = t.audio_tracks.remove(i);
+        let mut owners = std::collections::HashSet::new();
+        if let Some(owner) = removed.owner_layer { owners.insert(owner); }
+        owners.extend(removed.clips.iter().filter_map(|clip| clip.linked_video));
+        for owner in owners { refresh_audio_only_owner_range(d, owner)?; }
+        crate::timeline_editor_cmds::reconcile_duration(d, duration_edit);
         Ok(json!({"track":tid}))
     })
 }
@@ -412,6 +455,7 @@ fn add_clip(s: &mut Session, p: &Value) -> Result<Value> {
         s,
         "Add Audio Clip",
         move |d, _, _| {
+            let duration_edit = crate::timeline_editor_cmds::prepare_duration_edit(d);
             let (path, sd) = path_and_probe(&params)?;
             let t = timeline_mut(d)?;
             validate_timeline(t)?;
@@ -437,8 +481,12 @@ fn add_clip(s: &mut Session, p: &Value) -> Result<Value> {
             }
             let c = clip_from(&params, cid, path, sd)?;
             extend_timeline(t, c.start_seconds + c.duration_seconds)?;
+            let owner = t.audio_tracks[ti].owner_layer.or(c.linked_video);
             t.audio_tracks[ti].clips.push(c);
-            Ok((t.audio_tracks[ti].id, cid))
+            let result = (t.audio_tracks[ti].id, cid);
+            if let Some(owner) = owner { refresh_audio_only_owner_range(d, owner)?; }
+            crate::timeline_editor_cmds::reconcile_duration(d, duration_edit);
+            Ok(result)
         },
         |(track, clip)| json!({"track":track,"clip":clip}),
     )
@@ -446,10 +494,14 @@ fn add_clip(s: &mut Session, p: &Value) -> Result<Value> {
 fn set_clip(s: &mut Session, p: &Value) -> Result<Value> {
     let cid = id(p, "clip")?;
     s.edit("Set Audio Clip", |d, _| {
+        let duration_edit = if ["startSeconds", "trimInSeconds", "durationSeconds", "speed"].iter().any(|field| p.get(field).is_some()) {
+            crate::timeline_editor_cmds::prepare_duration_edit(d)
+        } else { None };
         let t = timeline_mut(d)?;
         validate_timeline(t)?;
         let (ti, ci) = clip_pos(t, cid)?;
         let old = t.audio_tracks[ti].clips[ci].clone();
+        let owner_before = t.audio_tracks[ti].owner_layer.or(old.linked_video);
         let mut c = old.clone();
         if let Some(v) = p.get("name") {
             c.name = valid_name(v.as_str().ok_or_else(|| bad("timeline.setAudioClip", "name must be string"))?, "name")?;
@@ -514,16 +566,24 @@ fn set_clip(s: &mut Session, p: &Value) -> Result<Value> {
         }
         validate_clip(&c)?;
         extend_timeline(t, c.start_seconds + c.duration_seconds)?;
+        let owner_after = t.audio_tracks[ti].owner_layer.or(c.linked_video);
         t.audio_tracks[ti].clips[ci] = c;
+        if let Some(owner) = owner_before { refresh_audio_only_owner_range(d, owner)?; }
+        if let Some(owner) = owner_after.filter(|owner| Some(*owner) != owner_before) { refresh_audio_only_owner_range(d, owner)?; }
+        crate::timeline_editor_cmds::reconcile_duration(d, duration_edit);
         Ok(json!({"clip":cid}))
     })
 }
 fn remove_clip(s: &mut Session, p: &Value) -> Result<Value> {
     let cid = id(p, "clip")?;
     s.edit("Remove Audio Clip", |d, _| {
+        let duration_edit = crate::timeline_editor_cmds::prepare_duration_edit(d);
         let t = timeline_mut(d)?;
         let (ti, ci) = clip_pos(t, cid)?;
+        let owner = t.audio_tracks[ti].owner_layer.or(t.audio_tracks[ti].clips[ci].linked_video);
         t.audio_tracks[ti].clips.remove(ci);
+        if let Some(owner) = owner { refresh_audio_only_owner_range(d, owner)?; }
+        crate::timeline_editor_cmds::reconcile_duration(d, duration_edit);
         Ok(json!({"clip":cid}))
     })
 }

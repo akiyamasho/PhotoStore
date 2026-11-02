@@ -1179,10 +1179,13 @@ fn set_layer_range(s: &mut Session, p: &Value) -> Result<Value> {
         return set_video_clip(s, &json!({"layer": layer.0, "start": start, "end": end}));
     }
     s.edit("Trim Layer Track", |doc, _| {
+        let duration_edit = crate::timeline_editor_cmds::prepare_duration_edit(doc);
         crate::video_cmds::store(doc);
         let is_smart = doc.layer(layer).map(|layer| matches!(layer.content, photostore_doc::LayerContent::Smart(_))).ok_or(EngineError::NoLayer(layer))?;
         let t = doc.timeline.as_mut().ok_or_else(|| bad("timeline.setLayerRange", "no timeline (create one first)".into()))?;
-        if start >= end || end > t.duration { return Err(bad("timeline.setLayerRange", "range must satisfy 0 <= start < end <= duration".into())); }
+        let max_end = if t.mode == TimelineMode::Video { 1_000_000 } else { t.duration };
+        if start >= end || end > max_end { return Err(bad("timeline.setLayerRange", format!("range must satisfy 0 <= start < end <= {max_end}"))); }
+        if t.mode == TimelineMode::Video { t.duration = t.duration.max(end); }
         let old = t.layer_ranges.iter().find(|range| range.layer == layer).cloned();
         let playback = if is_smart {
             let fps = t.project_rate().as_f64();
@@ -1199,6 +1202,7 @@ fn set_layer_range(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(actual) = t.layer_ranges.iter().find(|range| range.layer == layer).cloned() {
             sync_owned_audio_range(t, layer, old.as_ref(), actual.start, actual.end)?;
         }
+        crate::timeline_editor_cmds::reconcile_duration(doc, duration_edit);
         crate::video_cmds::sync(doc);
         Ok(())
     })?;
@@ -1601,7 +1605,7 @@ fn info(s: &mut Session) -> Result<Value> {
 fn timeline_info_value(timeline: Option<&Timeline>) -> Value {
     match timeline {
         Some(t) => {
-            json!({"timeline": {"fps": t.project_rate().as_f64(), "fpsNumerator":t.project_rate().numerator,"fpsDenominator":t.project_rate().denominator, "duration": t.duration, "current": t.current, "workStart": t.work_start, "workEnd": t.work_end, "time": t.time(), "mode": match t.mode { TimelineMode::Video => "video", TimelineMode::FrameAnimation => "frameAnimation" }, "loop": match t.loop_mode { TimelineLoop::Once => "once", TimelineLoop::Loop => "loop", TimelineLoop::PingPong => "pingPong" }, "loopCount": t.loop_count, "onionSkin": t.onion_skin, "onionSkinSettings": t.onion_settings,"visualTracks":t.visual_tracks,"layerRanges":t.layer_ranges,"markers":t.markers,"mainTrackMagnet":t.main_track_magnet,"snapping":t.snapping,"linkedSelection":t.linked_selection,"previewSkimming":t.preview_skimming}})
+            json!({"timeline": {"fps": t.project_rate().as_f64(), "fpsNumerator":t.project_rate().numerator,"fpsDenominator":t.project_rate().denominator, "duration": t.duration, "tailPaddingFrames":t.tail_padding_frames, "current": t.current, "workStart": t.work_start, "workEnd": t.work_end, "time": t.time(), "mode": match t.mode { TimelineMode::Video => "video", TimelineMode::FrameAnimation => "frameAnimation" }, "loop": match t.loop_mode { TimelineLoop::Once => "once", TimelineLoop::Loop => "loop", TimelineLoop::PingPong => "pingPong" }, "loopCount": t.loop_count, "onionSkin": t.onion_skin, "onionSkinSettings": t.onion_settings,"visualTracks":t.visual_tracks,"layerRanges":t.layer_ranges,"markers":t.markers,"mainTrackMagnet":t.main_track_magnet,"snapping":t.snapping,"linkedSelection":t.linked_selection,"previewSkimming":t.preview_skimming}})
         }
         None => json!({"timeline": null}),
     }
