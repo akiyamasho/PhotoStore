@@ -194,7 +194,7 @@ impl crate::Compositor {
                 let size=data.len(); let belt=self.upload_belt.as_mut().ok_or_else(||Unsupported("mapped source upload belt is unavailable".into()))?;
                 let slice=belt.allocate(wgpu::BufferSize::new(size as u64).ok_or_else(||Unsupported("mapped source allocation is empty".into()))?,wgpu::BufferSize::new(256).ok_or_else(||Unsupported("mapped source alignment is invalid".into()))?);
                 let buffer=slice.buffer().clone(); let offset=slice.offset();
-                { let mut mapped=slice.get_mapped_range_mut().ok_or_else(||Unsupported("mapped stream allocation could not be mapped".into()))?; mapped[..size].copy_from_slice(&data); }
+                { let mut mapped=slice.get_mapped_range_mut().map_err(|error|Unsupported(format!("mapped stream allocation could not be mapped: {error}")))?; mapped[..size].copy_from_slice(&data); }
                 drop(slice); self.staged=self.staged.saturating_add(size as u64); stats.bytes_uploaded+=length;
                 if kind==2 {stats.dense_page_uploads+=1;} else {stats.tiles_uploaded+=region.tiles().count();stats.dense_page_uploads+=1;}
                 stats.pooled_upload_pages+=1;
