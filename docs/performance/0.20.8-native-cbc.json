@@ -1,0 +1,113 @@
+{
+  "source_sha": "cbc3145cecc17d18a91f4805b096df2518b6ebd6",
+  "binary_sha256": "cba6afd9d6d89284d4abc2dbe554e31c2d27a87601c143d20c5c8088293b650c",
+  "cold_preroll_seconds": 3.7156702089705504,
+  "window_seconds_measured": 4.547869042027742,
+  "native_video_frame_delta_total": 6,
+  "phase_summary": {
+    "idle_before": {
+      "samples": 7,
+      "native_video_frame_delta": 2,
+      "native_video_fps_observed": 2.262598181196023,
+      "ui_last_ms_p50": 0.7014170000002196,
+      "ui_last_ms_p95": 0.8036249999995562,
+      "inspect_rpc_ms_p50": 40.21362500498071,
+      "inspect_rpc_ms_p95": 71.51329197222367,
+      "ui_frame_count_start": 251,
+      "ui_frame_count_end": 309
+    },
+    "brush": {
+      "samples": 8,
+      "native_video_frame_delta": 1,
+      "native_video_fps_observed": 0.8124087580257883,
+      "ui_last_ms_p50": 0.9578750000000582,
+      "ui_last_ms_p95": 1.1339170000001104,
+      "inspect_rpc_ms_p50": 45.366042002569884,
+      "inspect_rpc_ms_p95": 53.31991700222716,
+      "ui_frame_count_start": 320,
+      "ui_frame_count_end": 396
+    },
+    "space_pan": {
+      "samples": 6,
+      "native_video_frame_delta": 1,
+      "native_video_fps_observed": 1.108409567285616,
+      "ui_last_ms_p50": 0.6204999999999927,
+      "ui_last_ms_p95": 0.7053329999998823,
+      "inspect_rpc_ms_p50": 45.396249974146485,
+      "inspect_rpc_ms_p95": 56.67391698807478,
+      "ui_frame_count_start": 415,
+      "ui_frame_count_end": 469
+    },
+    "idle_after": {
+      "samples": 6,
+      "native_video_frame_delta": 1,
+      "native_video_fps_observed": 1.385286902449843,
+      "ui_last_ms_p50": 0.581042000000707,
+      "ui_last_ms_p95": 0.7160409999996773,
+      "inspect_rpc_ms_p50": 41.530707967467606,
+      "inspect_rpc_ms_p95": 50.99008302204311,
+      "ui_frame_count_start": 482,
+      "ui_frame_count_end": 527
+    }
+  },
+  "limitations": [
+    "Control-channel input creates synthetic egui events, not physical OS events.",
+    "The supplied fixture must have a six-second Video timeline and include the eight listed sources; source media metadata is not independently rewritten or verified by this driver.",
+    "ui.inspect request/reply overhead is included in phase timing; polling cadence is approximately 10 Hz.",
+    "Screenshots and video capture are intentionally absent."
+  ],
+  "status": "unpublished candidate; native cadence failed despite thumbnail isolation",
+  "native_fps": 1.3192992024512653,
+  "adapter": {
+    "adapter": "Apple M1 Max",
+    "backend": "metal",
+    "canvas": "gpu",
+    "deviceType": "integratedGpu",
+    "driver": "",
+    "fallback": null,
+    "lost": null,
+    "preference": "auto",
+    "selected": "auto"
+  },
+  "publication_trace": [
+    {
+      "atMs": 145.588458,
+      "frame": 0
+    },
+    {
+      "atMs": 3933.588625,
+      "frame": 1
+    },
+    {
+      "atMs": 4035.0803749999995,
+      "frame": 2
+    },
+    {
+      "atMs": 4138.690333,
+      "frame": 3
+    },
+    {
+      "atMs": 4409.798624999999,
+      "frame": 7
+    },
+    {
+      "atMs": 4918.543125,
+      "frame": 16
+    },
+    {
+      "atMs": 5675.43775,
+      "frame": 32
+    },
+    {
+      "atMs": 6838.9205,
+      "frame": 52
+    },
+    {
+      "atMs": 8080.372042000001,
+      "frame": 87
+    }
+  ],
+  "composition_wall_ms": 55.277542,
+  "upload_pack_ms": 41.482376,
+  "followup": "Native transport must stage the next snapshot before the clock deadline so decode/evaluation overlaps the current canvas composition; staging may not publish early or change history/revision."
+}

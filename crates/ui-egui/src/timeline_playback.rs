@@ -672,6 +672,25 @@ impl Runtime {
         if completed && self.pending_frame.is_none() && app.session.active().and_then(|st| st.doc.timeline.as_ref()).is_some_and(|t| t.current == frame) {
             self.stop();
         }
+        // Decode/evaluate the next snapshot while the canvas composes the current one. Staging
+        // never changes the visible document; presentFrame commits it only once its clock is due.
+        // Waiting for that deadline before starting preparation serialized decode and composition,
+        // then made each late clock jump copy still more skipped raw movie frames.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.playing && self.mode == TimelineMode::Video && self.direction >= 0
+            && !reverse && self.pending_frame.is_none()
+        {
+            let next = app.session.active().and_then(|state| state.doc.timeline.as_ref())
+                .and_then(|timeline| timeline.current.checked_add(1).filter(|next| *next < timeline.work_end));
+            if let Some(next) = next
+                && let Err(error) = app.run("timeline.prepareFrame", json!({"frame": next}))
+            {
+                self.stop();
+                app.ui.status = format!("Video preview: {error}");
+                app.ui.status_error = true;
+                return;
+            }
+        }
         let ceiling = Duration::from_millis(if self.pending_frame.is_some() { 6 } else { 16 });
         let next_tick = if matches!(self.mode, TimelineMode::Video) {
             // Wake at the next project-frame boundary. A fixed 16 ms poll can arrive just

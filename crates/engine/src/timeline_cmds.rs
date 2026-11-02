@@ -824,6 +824,16 @@ impl PresentationWorker {
             mailbox.completed.take()
         } else {None}
     }
+
+    fn try_ready(&self,generation:u64,document:DocId,content_revision:u64,base_frame:usize,frame:usize)->bool {
+        let mailbox=match self.state.mailbox.try_lock() {
+            Ok(mailbox)=>mailbox,
+            Err(TryLockError::Poisoned(error))=>error.into_inner(),
+            Err(TryLockError::WouldBlock)=>return false,
+        };
+        mailbox.completed.as_ref().is_some_and(|result|result.generation==generation && result.document==document
+            && result.content_revision==content_revision && result.base_frame==base_frame && result.frame==frame && result.result.is_ok())
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -950,15 +960,33 @@ fn preview_window_ready(s:&Session,p:&Value)->Result<Value> {
 }
 
 fn present_frame(s: &mut Session, p: &Value) -> Result<Value> {
-    check_document(s,p,"timeline.presentFrame")?;
-    let frame=p.get("frame").and_then(Value::as_u64).and_then(|value|usize::try_from(value).ok()).ok_or_else(||bad("timeline.presentFrame","frame must be a whole nonnegative frame".into()))?;
+    present_frame_mode(s,p,false)
+}
+
+fn prepare_frame(s:&mut Session,p:&Value)->Result<Value> {
+    present_frame_mode(s,p,true)
+}
+
+fn present_frame_mode(s: &mut Session, p: &Value, prepare_only:bool) -> Result<Value> {
+    let command=if prepare_only {"timeline.prepareFrame"} else {"timeline.presentFrame"};
+    check_document(s,p,command)?;
+    let frame=p.get("frame").and_then(Value::as_u64).and_then(|value|usize::try_from(value).ok()).ok_or_else(||bad(command,"frame must be a whole nonnegative frame".into()))?;
     let st=s.active().ok_or(EngineError::NoDocument)?;
     let base=st.doc.clone();
-    let timeline=base.timeline.as_ref().ok_or_else(||bad("timeline.presentFrame","no timeline".into()))?;
-    if frame>=timeline.duration{return Err(bad("timeline.presentFrame","frame is outside the timeline".into()));}
+    let timeline=base.timeline.as_ref().ok_or_else(||bad(command,"no timeline".into()))?;
+    if frame>=timeline.duration{return Err(bad(command,"frame is outside the timeline".into()));}
+    if prepare_only&&timeline.mode!=TimelineMode::Video {
+        return Err(bad(command,"only a video timeline can stage a future frame".into()));
+    }
+    if prepare_only&&frame!=timeline.current.saturating_add(1) {
+        return Err(bad(command,"only the immediately following frame can be staged".into()));
+    }
     let content_revision=st.content_revision;
     let base_frame=timeline.current;
     let asynchronous=native_preview_scope();
+    if prepare_only&&!asynchronous {
+        return Err(bad(command,"frame staging is available only during native nonblocking preview".into()));
+    }
     if s.active_job().is_some() {
         if asynchronous {
             #[cfg(not(target_arch = "wasm32"))]
@@ -972,7 +1000,7 @@ fn present_frame(s: &mut Session, p: &Value) -> Result<Value> {
             }
             return Ok(json!({"ready":false,"busy":true,"requestedFrame":frame}));
         }
-        return Err(bad("timeline.presentFrame","a document edit is still running".into()));
+        return Err(bad(command,"a document edit is still running".into()));
     }
 
     let mut pending=s.pending_presentation.take().filter(|pending|pending.document==base.id).unwrap_or(PendingPresentation{document:base.id,content_revision,base_frame,frame,generation:0,submitted:false,presented:false,candidate:None,#[cfg(not(target_arch = "wasm32"))] worker:None});
@@ -992,7 +1020,11 @@ fn present_frame(s: &mut Session, p: &Value) -> Result<Value> {
     if asynchronous {
         if pending.worker.is_none(){pending.worker=Some(PresentationWorker::new(s.preview_waker.clone())?);pending.generation=pending.worker.as_ref().map_or(1,PresentationWorker::next_generation);}
         let worker=pending.worker.as_ref().ok_or_else(||EngineError::Other("background presentation worker is unavailable".into()))?;
-        if let Some(completed)=worker.try_take(pending.generation,pending.document,pending.content_revision,pending.base_frame,pending.frame) {
+        if prepare_only&&pending.submitted&&worker.try_ready(pending.generation,pending.document,pending.content_revision,pending.base_frame,pending.frame) {
+            s.pending_presentation=Some(pending);
+            return Ok(json!({"ready":true,"preparedFrame":frame}));
+        }
+        if !prepare_only && let Some(completed)=worker.try_take(pending.generation,pending.document,pending.content_revision,pending.base_frame,pending.frame) {
             pending.submitted=false;
             match completed.result {
                 Ok(doc) => {
@@ -1018,6 +1050,11 @@ fn present_frame(s: &mut Session, p: &Value) -> Result<Value> {
         let result=json!({"ready":false,"requestedFrame":frame});
         s.pending_presentation=Some(pending);
         return Ok(result);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    if prepare_only {
+        return Err(bad(command,"frame staging requires the native presentation worker".into()));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1624,6 +1661,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("timeline.delete", "Delete Timeline", "{} → {timeline:null}", has_timeline, |s, _| delete(s)),
         spec!("timeline.setFrame", "Go to Frame", r#"{frame} → {timeline}"#, has_timeline, |s, p| set_frame(s, p)),
         spec!("timeline.presentFrame", "Present Decoded Frame", r#"{frame,document?} → {ready,frame?,requestedFrame?}"#, has_timeline, |s, p| present_frame(s, p)),
+        spec!("timeline.prepareFrame", "Prepare Next Frame", r#"{frame,document?} → {ready,preparedFrame?,requestedFrame?}"#, has_timeline, |s, p| prepare_frame(s, p)),
         spec!("timeline.previewWindowReady", "Check Preview Window", r#"{frame,document?} → {ready}"#, has_timeline, |s, p| preview_window_ready(s, p)),
         spec!("timeline.nextFrame", "Next Frame", "{} → {timeline}", has_timeline, |s, _| step(s, 1)),
         spec!("timeline.previousFrame", "Previous Frame", "{} → {timeline}", has_timeline, |s, _| step(s, -1)),
