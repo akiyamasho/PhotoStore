@@ -1,0 +1,97 @@
+{
+  "source_sha": "19618f8f3f7a5af8f985b1d2a617ed0e0c82491a",
+  "binary_sha256": "c4395bbfe23cbb60bcbdd5c0de58751632b78c38327445a7365fed14950d3e42",
+  "cold_preroll_seconds": 3.7496837920043617,
+  "window_seconds_measured": 4.544318333035335,
+  "native_video_frame_delta_total": 2,
+  "phase_summary": {
+    "idle_before": {
+      "samples": 8,
+      "native_video_frame_delta": 0,
+      "native_video_fps_observed": 0.0,
+      "ui_last_ms_p50": 0.6554169999999431,
+      "ui_last_ms_p95": 1.1562919999996666,
+      "inspect_rpc_ms_p50": 35.964249982498586,
+      "inspect_rpc_ms_p95": 42.52725001424551,
+      "ui_frame_count_start": 282,
+      "ui_frame_count_end": 382
+    },
+    "brush": {
+      "samples": 8,
+      "native_video_frame_delta": 1,
+      "native_video_fps_observed": 0.8327918735853064,
+      "ui_last_ms_p50": 0.91466599999967,
+      "ui_last_ms_p95": 1.1225000000004002,
+      "inspect_rpc_ms_p50": 44.062834000214934,
+      "inspect_rpc_ms_p95": 51.81425000773743,
+      "ui_frame_count_start": 390,
+      "ui_frame_count_end": 496
+    },
+    "space_pan": {
+      "samples": 6,
+      "native_video_frame_delta": 1,
+      "native_video_fps_observed": 1.069262693869468,
+      "ui_last_ms_p50": 0.5467499999995198,
+      "ui_last_ms_p95": 0.6666249999998399,
+      "inspect_rpc_ms_p50": 48.95420797402039,
+      "inspect_rpc_ms_p95": 101.58575000241399,
+      "ui_frame_count_start": 517,
+      "ui_frame_count_end": 589
+    },
+    "idle_after": {
+      "samples": 5,
+      "native_video_frame_delta": 0,
+      "native_video_fps_observed": 0.0,
+      "ui_last_ms_p50": 0.6525830000000497,
+      "ui_last_ms_p95": 0.6991249999991851,
+      "inspect_rpc_ms_p50": 37.4430829542689,
+      "inspect_rpc_ms_p95": 113.06641699047759,
+      "ui_frame_count_start": 607,
+      "ui_frame_count_end": 653
+    }
+  },
+  "limitations": [
+    "Control-channel input creates synthetic egui events, not physical OS events.",
+    "The supplied fixture must have a six-second Video timeline and include the eight listed sources; source media metadata is not independently rewritten or verified by this driver.",
+    "ui.inspect request/reply overhead is included in phase timing; polling cadence is approximately 10 Hz.",
+    "Screenshots and video capture are intentionally absent."
+  ],
+  "status": "unpublished candidate; native cadence failed",
+  "native_fps": 0.4401100128617351,
+  "adapter": {
+    "adapter": "Apple M1 Max",
+    "backend": "metal",
+    "canvas": "gpu",
+    "deviceType": "integratedGpu",
+    "driver": "",
+    "fallback": null,
+    "lost": null,
+    "preference": "auto",
+    "selected": "auto"
+  },
+  "publication_trace": [
+    {
+      "atMs": 136.549792,
+      "frame": 0
+    },
+    {
+      "atMs": 3988.0025840000003,
+      "frame": 1
+    },
+    {
+      "atMs": 5787.731875,
+      "frame": 3
+    },
+    {
+      "atMs": 7551.4863749999995,
+      "frame": 50
+    }
+  ],
+  "composition_wall_ms": 151.593917,
+  "upload_pack_ms": 135.16116899999997,
+  "fused_chunks": 12,
+  "buffer_source_chunks": 12,
+  "brush_commit": true,
+  "pan": true,
+  "workload": "Eight distinct owned FFmpeg testsrc2 3840x2160 H264 SDR 30fps sources, 6 seconds; seven upper movie opacities .5 plus drawing layer; background native window, synthetic egui input; no capture."
+}

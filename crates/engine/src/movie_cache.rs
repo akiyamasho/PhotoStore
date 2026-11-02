@@ -48,6 +48,7 @@ struct Key {
     position: Position,
     format: PixelFormat,
     output_size: Option<(u32, u32)>,
+    thumbnail: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Position {
@@ -512,12 +513,61 @@ struct SequentialStream {
 }
 impl SequentialStream {
     fn next_time(&self)->f64 {self.start+self.next_index as f64*self.step}
-    fn compatible(&self,job:&Job,window:&FrameWindow,size:(u32,u32))->bool {
+    fn incompatibility(&self,job:&Job,window:&FrameWindow,size:(u32,u32))->Option<&'static str> {
         let gap=(window.times[0]-self.next_time())/self.step;
-        self.source==job.key.source && self.generation==job.source_generation && self.format==job.key.format
-            && self.output_size==size && (self.step-window.step_seconds).abs()<1e-9
-            && gap>=-1e-6 && gap<=32.0 && (gap-gap.round()).abs()<1e-6
+        if self.source!=job.key.source {Some("source")}
+        else if self.generation!=job.source_generation {Some("generation")}
+        else if self.format!=job.key.format {Some("format")}
+        else if self.output_size!=size {Some("size")}
+        else if (self.step-window.step_seconds).abs()>=1e-9 {Some("step")}
+        else if gap < -1e-6 || gap > 32.0 {Some("gap")}
+        else if (gap-gap.round()).abs()>=1e-6 {Some("fractional-gap")}
+        else {None}
     }
+}
+static MEDIA_TRACE_ENABLED:OnceLock<bool>=OnceLock::new();
+fn media_trace_enabled()->bool {
+    *MEDIA_TRACE_ENABLED.get_or_init(||std::env::var("PHOTOSTORE_MEDIA_TRACE").is_ok_and(|value|!value.is_empty()&&value!="0"))
+}
+fn trace_consumer(owner:&ConsumerKey)->u64 {
+    use std::hash::{Hash,Hasher};
+    let mut hash=std::collections::hash_map::DefaultHasher::new();
+    owner.hash(&mut hash);
+    hash.finish()
+}
+fn trace_budget()->(usize,usize) {
+    let budget=crate::media_budget::status();
+    (budget.total_used_bytes,budget.decoder_session_used_bytes)
+}
+/// Retain a decoder while either it was used recently or its consumer has recently polled the
+/// protected playback window. Cache-hit polls count as activity even when they queue no job.
+fn retire_idle_streams(streams:&mut Vec<SequentialStream>,worker_index:usize) {
+    let now=std::time::Instant::now();
+    let (valid_generations,recent_requests)=if let Ok(mut state)=cache().lock() {
+        prune_protected_current(&mut state,now);
+        let mut valid_generations=HashSet::new();
+        let mut recent_requests=HashSet::new();
+        for stream in streams.iter() {
+            if state.source_generation.get(&stream.source.path).copied().unwrap_or(0)!=stream.generation {continue;}
+            valid_generations.insert(stream.owner.clone());
+            if state.protected_current.get(&stream.owner).is_some_and(|(_,recorded)|now.duration_since(*recorded)<PROTECTED_CURRENT_TTL) {
+                recent_requests.insert(stream.owner.clone());
+            }
+        }
+        (valid_generations,recent_requests)
+    } else {
+        (HashSet::new(),HashSet::new())
+    };
+    streams.retain(|stream| {
+        let recent_job=now.duration_since(stream.last_used)<std::time::Duration::from_secs(2);
+        let generation_valid=valid_generations.contains(&stream.owner);
+        let recent_request=recent_requests.contains(&stream.owner);
+        let keep=generation_valid&&(recent_job||recent_request);
+        if !keep && media_trace_enabled() {
+            eprintln!("photostore-media-trace event=idle-retire worker={worker_index} consumer={:016x} generation={} last_job_ms={} protected_request={recent_request}",trace_consumer(&stream.owner),stream.generation,now.duration_since(stream.last_used).as_millis());
+        }
+        keep
+    });
 }
 fn job_current(state:&Cache,job:&Job)->bool {
     state.source_generation.get(&job.key.source.path).copied().unwrap_or(0)==job.source_generation
@@ -534,17 +584,41 @@ fn job_current(state:&Cache,job:&Job)->bool {
 }
 /// Publish frames one at a time. Waiting for a whole multi-frame batch is visible latency.
 fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<SequentialStream>,worker_index:usize) {
-    streams.retain(|active|active.last_used.elapsed()<std::time::Duration::from_secs(2));
+    retire_idle_streams(streams,worker_index);
     let mut stream=streams.iter().position(|active|active.owner==job.consumer_key()).map(|index|streams.remove(index));
+    let trace=media_trace_enabled();
+    let trace_started=trace.then(std::time::Instant::now);
+    let owner_hash=if trace {trace_consumer(&job.consumer_key())}else{0};
+    let requested_time=window.times.first().copied().unwrap_or(0.0);
+    let previous_next=stream.as_ref().map(SequentialStream::next_time);
+    let mut decoded_frames=0usize;
+    let mut decode_wait=std::time::Duration::ZERO;
+    let mut stream_action="new";
+    let mut incompatible_reason="none";
+    if trace {
+        eprintln!("photostore-media-trace event=job-start worker={} consumer={owner_hash:016x} requested_time={requested_time:.9} previous_next={} action=pending",worker_index,previous_next.map_or_else(||"none".to_owned(),|time|format!("{time:.9}")));
+    }
     let mut ended=false;
     let result=(||->Result<(),String>{
+        let wait_started=trace.then(std::time::Instant::now);
         let _permit=crate::media_budget::acquire_decoder(crate::media_budget::DecodePriority::Foreground).ok_or("preview decoder capacity unavailable")?;
+        if let Some(started)=wait_started {decode_wait+=started.elapsed();}
         let info=media_info_for(&job.key.source)?;
         let size=job.key.output_size.unwrap_or((info.width,info.height));
         let bytes=estimated_frame_bytes(size.0,size.1,job.key.format).ok_or("preview geometry overflow")?;
         if bytes>frame_budget_bytes(){return Err("preview frame exceeds configured retained-media allowance".into());}
-        if stream.as_ref().is_none_or(|active|!active.compatible(job,window,size)) {
-            stream=None;
+        if let Some(active)=stream.as_ref() {
+            if let Some(reason)=active.incompatibility(job,window,size) {
+                incompatible_reason=reason;
+                stream=None;
+            } else {
+                stream_action="reuse";
+            }
+        }
+        if trace {
+            eprintln!("photostore-media-trace event=stream-decision worker={} consumer={owner_hash:016x} requested_time={requested_time:.9} action={stream_action} incompatible={incompatible_reason}",worker_index);
+        }
+        if stream.is_none() {
             let decoder=crate::media_backend::PreviewDecoder::start(Path::new(&job.path),&info,window.times[0],window.step_seconds,job.key.format,size.0,size.1).map_err(|e|e.to_string())?;
             stream=Some(SequentialStream{source:job.key.source.clone(),owner:job.consumer_key(),last_used:std::time::Instant::now(),generation:job.source_generation,format:job.key.format,output_size:size,start:window.times[0],step:window.step_seconds,next_index:0,decoder,_memory:None});
         }
@@ -569,7 +643,9 @@ fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<Sequentia
                     return Err(error);
                 }
             };
+            let decode_started=trace.then(std::time::Instant::now);
             let next=if ended {None}else{active.decoder.next_frame().map_err(|e|e.to_string())?};
+            if let Some(started)=decode_started {decode_wait+=started.elapsed();}
             let surface=match next {
                 Some(surface)=>surface,
                 None=>{
@@ -579,6 +655,7 @@ fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<Sequentia
                 }
             };
             active.next_index+=1;
+            decoded_frames+=1;
             let mut state=cache().lock().map_err(|_|"preview cache unavailable")?;
             if !job_current(&state,job){break;}
             insert_frame(&mut state,key.clone(),surface,reservation)?;
@@ -588,6 +665,7 @@ fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<Sequentia
         }
         Ok(())
     })();
+    let failed=result.is_err();
     if let Ok(mut state)=cache().lock() {
         if let Err(error)=result {
             if job_current(&state,job) {
@@ -620,7 +698,15 @@ fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<Sequentia
             streams.push(active);
         }
     }}
+    if trace {
+        let (used,session)=trace_budget();
+        eprintln!("photostore-media-trace event=job-end worker={} consumer={owner_hash:016x} requested_time={requested_time:.9} next_time={} action={stream_action} incompatible={incompatible_reason} elapsed_ms={} decode_wait_ms={} decoded_frames={} ended={} error={} media_used_bytes={used} decoder_session_bytes={session}",worker_index,owner_hash_next_time(streams,&job.consumer_key()),trace_started.map_or(0,|started|started.elapsed().as_millis()),decode_wait.as_millis(),decoded_frames,ended,failed);
+    }
     COMPLETION_GENERATION.fetch_add(1,Ordering::AcqRel);
+}
+
+fn owner_hash_next_time(streams:&[SequentialStream],owner:&ConsumerKey)->String {
+    streams.iter().find(|active|active.owner==*owner).map_or_else(||"none".to_owned(),|active|format!("{:.9}",active.next_time()))
 }
 
 /// Reserve four RGBA8 pipe-buffer equivalents for each paused stream (two queued packets, one
@@ -757,7 +843,7 @@ fn worker() -> Option<&'static WorkerChannels> {
                         let mut stream=Vec::new();
                         loop {match thread_queue.pop(worker_index){
                             Ok(Some(job))=>{process_job(job,&mut stream,worker_index);thread_queue.reconcile_owners(worker_index,&stream);},
-                            Ok(None)=>{stream.clear();thread_queue.reconcile_owners(worker_index,&stream);}, // Retire an idle owned decoder after two seconds.
+                            Ok(None)=>{retire_idle_streams(&mut stream,worker_index);thread_queue.reconcile_owners(worker_index,&stream);},
                             Err(())=>break,
                         }}
                     })
@@ -864,6 +950,14 @@ fn reserve_frame_bytes(bytes: usize, thumbnail: bool) -> Result<crate::media_bud
     }
 }
 
+fn thumbnail_output_size(width:u32,height:u32)->(u32,u32) {
+    const MAX_SIDE:u32=128;
+    let longest=width.max(height).max(1);
+    if longest<=MAX_SIDE {return (width.max(1),height.max(1));}
+    let scale=MAX_SIDE as f64/longest as f64;
+    (((width as f64*scale).floor() as u32).max(1),((height as f64*scale).floor() as u32).max(1))
+}
+
 fn decode(key: &Key, format: PixelFormat, thumbnail: bool) -> Result<(Surface, crate::media_budget::Reservation), String> {
     let _permit = crate::media_budget::acquire_decoder(if thumbnail {
         crate::media_budget::DecodePriority::Background
@@ -877,7 +971,10 @@ fn decode(key: &Key, format: PixelFormat, thumbnail: bool) -> Result<(Surface, c
         Position::Frame(index) => format!("frame {index}"),
         Position::TimestampNanos(nanos) => format!("timestamp {:.9}s", *nanos as f64 / 1_000_000_000.0),
     };
-    let output_size = key.output_size.unwrap_or((info.width, info.height));
+    // Resolve thumbnail geometry on this worker, never by running ffprobe in a UI request.
+    // The thumbnail bit isolates this derived geometry from exact canvas-size cache entries.
+    let output_size = if key.thumbnail { thumbnail_output_size(info.width,info.height) }
+        else { key.output_size.unwrap_or((info.width, info.height)) };
     let bytes = estimated_frame_bytes(output_size.0, output_size.1, format)
         .ok_or_else(|| format!("movie source `{path}` {label} size overflows addressable memory"))?;
     if bytes > frame_budget_bytes() {
@@ -889,12 +986,20 @@ fn decode(key: &Key, format: PixelFormat, thumbnail: bool) -> Result<(Surface, c
     let reservation = reserve_frame_bytes(bytes, thumbnail)?;
     let decoded = match position {
         Position::Frame(index) => {
-            if key.output_size.is_some() {
+            if key.thumbnail {
+                if !info.fps.valid() {
+                    return Err(format!("movie source `{path}` has no valid frame rate for a scaled frame-index thumbnail"));
+                }
+                let seconds=*index as f64/info.fps.as_f64();
+                crate::media_backend::decode_single_frame_at_with_info_scaled(Path::new(path),&info,seconds,format,output_size.0,output_size.1)
+                    .map_err(|e|format!("movie source `{path}` frame {index} thumbnail failed: {e}"))
+            } else if key.output_size.is_some() {
                 return Err("frame-index proxy decoding is unavailable; use a source-time preview request".into());
+            } else {
+                let mut frames = crate::media_backend::decode_sequence_range(path, *index as u64, *index as u64, format, frame_budget_bytes() as u64, |_, _| true)
+                    .map_err(|e| format!("movie source `{path}` frame {index} failed: {e}"))?;
+                frames.pop().ok_or_else(|| format!("movie source `{path}` did not contain frame {index}"))
             }
-            let mut frames = crate::media_backend::decode_sequence_range(path, *index as u64, *index as u64, format, frame_budget_bytes() as u64, |_, _| true)
-                .map_err(|e| format!("movie source `{path}` frame {index} failed: {e}"))?;
-            frames.pop().ok_or_else(|| format!("movie source `{path}` did not contain frame {index}"))
         }
         Position::TimestampNanos(nanos) => crate::media_backend::decode_single_frame_at_with_info_scaled(
             Path::new(path), &info, *nanos as f64 / 1_000_000_000.0, format, output_size.0, output_size.1,
@@ -999,7 +1104,7 @@ pub fn frame_at_times_for_consumer_scaled(
     let active_times = &times[..times.len().min(3)];
     let mut keys = Vec::with_capacity(times.len());
     for seconds in times {
-        keys.push(Key { source: source.clone(), position: timestamp_position(*seconds)?, format: fmt, output_size });
+        keys.push(Key { source: source.clone(), position: timestamp_position(*seconds)?, format: fmt, output_size, thumbnail:false });
     }
     keys.truncate(active_times.len());
     let step = if active_times.len() > 1 { active_times[1] - active_times[0] } else { 0.0 };
@@ -1122,7 +1227,7 @@ fn frame_with_position(path: &str, position: Position, fmt: PixelFormat, thumbna
             return Err(error);
         }
     };
-    let key = Key { source, position, format: fmt, output_size };
+    let key = Key { source, position, format: fmt, output_size, thumbnail };
     let owner = key.consumer(consumer);
     if let Ok(mut state) = cache().lock() {
         if !thumbnail && consumer.is_some() {

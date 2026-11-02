@@ -1359,7 +1359,7 @@ fn paint_clip_thumbnails(
                 let cached = app.ui.timeline.frame_thumbs.iter().find(|(k, _)| k == &key).map(|(_, tex)| tex.id());
                 let texture = cached.or_else(|| if !allow_cold_thumbnails { None } else { match photostore_engine::movie_cache::frame_thumbnail_at_seconds(path, source_seconds, document.pixel_format()) {
                     Ok(Some(surface)) => {
-                        let image = crate::timeline_ui::linked_movie_thumbnail(&surface, document.bounds());
+                        let image = crate::timeline_ui::linked_movie_thumbnail(&surface, surface.content_bounds());
                         let tex = crate::timeline_ui::load_thumbnail(ui.ctx(),key.clone(),image)?;
                         let id = tex.id();
                         app.ui.timeline.frame_thumbs.push((key, tex));

@@ -376,7 +376,7 @@ fn frame_thumbnails(app: &mut PhotoStoreApp, ctx: &egui::Context, tl: &photostor
                 }
                 _ => None,
             };
-            surface.map(|surface| linked_movie_thumbnail(&surface, st.doc.bounds()))
+            surface.map(|surface| linked_movie_thumbnail(&surface, surface.content_bounds()))
         } else if let Some(surface) = video.and_then(|v| v.frames.get(frame)) {
             Some(crate::transform_tex::read_surface(surface, None, st.doc.bounds(), 64).0)
         } else {
