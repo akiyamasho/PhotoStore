@@ -26,6 +26,7 @@ pub(crate) struct Runtime {
     /// committed to the document while an exact preview request is waiting for decode.
     clock_frame: Option<usize>,
     origin_history: (usize, usize),
+    expected_content_revision: u64,
     timing_signature: u64,
     fps: f64,
     duration: usize,
@@ -40,7 +41,7 @@ pub(crate) struct Runtime {
     fallback_delays: Vec<u32>,
     audio: Option<photostore_engine::media_backend::AudioPreviewHandle>,
     audio_worker: photostore_engine::media_backend::AudioPreviewWorker,
-    audio_signature: u64,
+    audio_signature: Option<u64>,
     audio_doc: Option<photostore_doc::DocId>,
     audio_start: f64,
     audio_clock_base: f64,
@@ -69,6 +70,7 @@ impl Default for Runtime {
             last_tick: 0.0,
             clock_frame: None,
             origin_history: (0, 0),
+            expected_content_revision: 0,
             timing_signature: 0,
             fps: 30.0,
             duration: 1,
@@ -83,7 +85,7 @@ impl Default for Runtime {
             fallback_delays: Vec::new(),
             audio: None,
             audio_worker: Default::default(),
-            audio_signature: 0,
+            audio_signature: None,
             audio_doc: None,
             audio_start: 0.0,
             audio_clock_base: 0.0,
@@ -162,34 +164,87 @@ impl Runtime {
         x
     }
 
-    fn audio_signature(t: &Timeline) -> u64 {
-        let mut x = 0u64;
-        for track in &t.audio_tracks {
-            x = x.wrapping_mul(1_099_511_628_211).wrapping_add(track.id);
-            x = x.wrapping_mul(31).wrapping_add(track.muted as u64);
-            x = x.wrapping_mul(31).wrapping_add(track.volume.to_bits());
-            for clip in &track.clips {
-                for b in clip.path.as_bytes() {
-                    x = x.wrapping_mul(33).wrapping_add(u64::from(*b));
-                }
-                for v in [
-                    clip.start_seconds,
-                    clip.duration_seconds,
-                    clip.trim_in_seconds,
-                    clip.source_duration_seconds,
-                    clip.volume,
-                    clip.speed,
-                    clip.fade_in_seconds,
-                    clip.fade_out_seconds,
-                    clip.envelope_offset_seconds,
-                    clip.envelope_duration_seconds.unwrap_or(0.0),
-                ] {
-                    x = x.wrapping_mul(33).wrapping_add(v.to_bits());
-                }
-                x = x.wrapping_mul(31).wrapping_add(clip.muted as u64);
+    fn audio_signature(doc: &photostore_doc::Document, t: &Timeline) -> Option<u64> {
+        if t.audio_tracks.is_empty() { return None; }
+        fn add(hash: &mut u64, value: u64) {
+            *hash = hash.wrapping_mul(1_099_511_628_211).wrapping_add(value);
+        }
+        fn add_text(hash: &mut u64, value: &str) {
+            for byte in value.bytes() { add(hash, u64::from(byte)); }
+            add(hash, value.len() as u64);
+        }
+        fn add_speed_curve(hash: &mut u64, points: &[photostore_doc::SpeedCurvePoint], offset: usize) {
+            add(hash, offset as u64);
+            add(hash, points.len() as u64);
+            for point in points {
+                add(hash, point.frame as u64);
+                add(hash, point.speed.to_bits());
             }
         }
-        x
+        fn add_layers(hash: &mut u64, layers: &[photostore_doc::Layer], depth: usize) {
+            for layer in layers {
+                add(hash, layer.id.0);
+                add(hash, depth as u64);
+                add(hash, layer.visible as u64);
+                if let Some(video) = &layer.video {
+                    add(hash, video.asset_id.map_or(0, |id| id.0));
+                    add(hash, video.playback.awaiting_video_timeline as u64);
+                    add(hash, video.playback.source_in_seconds.to_bits());
+                    add(hash, video.playback.speed.to_bits());
+                }
+                if let Some(children) = layer.children() { add_layers(hash, children, depth.saturating_add(1)); }
+            }
+        }
+
+        let mut hash = 0x4155_4449_4f5f_5052u64;
+        let rate = t.project_rate();
+        add(&mut hash, rate.numerator as u64);
+        add(&mut hash, rate.denominator as u64);
+        add(&mut hash, t.mode as u64);
+        add(&mut hash, t.frame_states.allocation_key() as u64);
+        add(&mut hash, t.property_frames.allocation_key() as u64);
+
+        for track in &t.audio_tracks {
+            add(&mut hash, track.id);
+            add(&mut hash, track.owner_layer.map_or(0, |id| id.0));
+            add(&mut hash, track.muted as u64);
+            add(&mut hash, track.volume.to_bits());
+            for clip in &track.clips {
+                add(&mut hash, clip.id);
+                add_text(&mut hash, &clip.path);
+                add(&mut hash, clip.asset_id.map_or(0, |id| id.0));
+                add(&mut hash, clip.linked_video.map_or(0, |id| id.0));
+                for value in [
+                    clip.start_seconds, clip.trim_in_seconds, clip.duration_seconds,
+                    clip.source_duration_seconds, clip.speed, clip.volume,
+                    clip.fade_in_seconds, clip.fade_out_seconds,
+                    clip.envelope_offset_seconds, clip.envelope_duration_seconds.unwrap_or(0.0),
+                ] { add(&mut hash, value.to_bits()); }
+                add(&mut hash, clip.muted as u64);
+                add_speed_curve(&mut hash, &clip.speed_curve, clip.speed_curve_offset_frames);
+            }
+        }
+        for track in &t.visual_tracks {
+            add(&mut hash, track.id);
+            add(&mut hash, track.order as u64);
+            add(&mut hash, track.muted as u64);
+            for layer in &track.layers { add(&mut hash, layer.0); }
+            add(&mut hash, track.layers.len() as u64);
+        }
+        for range in &t.layer_ranges {
+            add(&mut hash, range.layer.0);
+            add(&mut hash, range.start as u64);
+            add(&mut hash, range.end as u64);
+            add(&mut hash, range.enabled as u64);
+            if let Some(playback) = &range.playback {
+                add(&mut hash, 1);
+                add(&mut hash, playback.source_in_seconds.to_bits());
+                add(&mut hash, playback.speed.to_bits());
+                add_speed_curve(&mut hash, &playback.speed_curve, playback.speed_curve_offset_frames);
+            } else { add(&mut hash, 0); }
+        }
+        add_layers(&mut hash, &doc.layers, 0);
+        Some(hash)
     }
 
     fn rebuild_boundaries(&mut self, t: &Timeline, fallback: &[u32]) {
@@ -279,13 +334,13 @@ impl Runtime {
 
     fn start_audio(&mut self, t: &Timeline, document: &Arc<photostore_doc::Document>, doc: photostore_doc::DocId, frame: usize) -> Result<(), String> {
         self.stop_audio();
+        self.audio_signature = Self::audio_signature(document, t);
         let start = self.frame_start(t, frame.clamp(t.work_start, t.work_end.saturating_sub(1)));
         let end = self.frame_start(t, t.work_end);
         let span = self.frame_start(t, t.work_end) - self.frame_start(t, t.work_start);
         let cycle_span = if matches!(t.loop_mode,TimelineLoop::PingPong) { span * 2.0 } else { span };
         self.audio_clock_base = (self.loop_cycle as f64 * cycle_span + start - self.frame_start(t,t.work_start) - self.start_offset).max(0.0);
         self.audio = Some(self.audio_worker.start_document_range(document.clone(), start, end).map_err(|e| e.to_string())?);
-        self.audio_signature = Self::audio_signature(t);
         self.audio_doc = Some(doc);
         self.audio_start = start;
         self.audio_end = end;
@@ -293,8 +348,8 @@ impl Runtime {
     }
 
     pub(crate) fn play(&mut self, app: &mut PhotoStoreApp, now: f64) {
-        let Some((doc, revision, history, active_layer, doc_arc)) =
-            app.session.active().map(|st| (st.doc.id, st.revision, (st.history.past_len(), st.history.future_len()), st.active_layer, st.doc.clone()))
+        let Some((doc, revision, content_revision, history, active_layer, doc_arc)) =
+            app.session.active().map(|st| (st.doc.id, st.revision, st.content_revision, (st.history.past_len(), st.history.future_len()), st.active_layer, st.doc.clone()))
         else {
             self.stop();
             return;
@@ -312,11 +367,13 @@ impl Runtime {
         self.direction = 1;
         self.origin_doc = Some(doc);
         self.expected_revision = revision;
+        self.expected_content_revision = content_revision;
         self.expected_frame = t.current;
         self.pending_frame = None;
         self.clock_frame = Some(t.current);
         self.origin_history = history;
         self.timing_signature = Self::signature(t, fallback);
+        self.audio_signature = Self::audio_signature(&doc_arc, t);
         self.fps = t.project_rate().as_f64();
         self.duration = t.duration;
         self.mode = t.mode;
@@ -362,8 +419,8 @@ impl Runtime {
         }
         let now = ctx.input(|i| i.time);
         self.last_tick = now;
-        let Some((doc, revision, history, active_layer, doc_arc)) =
-            app.session.active().map(|st| (st.doc.id, st.revision, (st.history.past_len(), st.history.future_len()), st.active_layer, st.doc.clone()))
+        let Some((doc, revision, content_revision, history, active_layer, doc_arc)) =
+            app.session.active().map(|st| (st.doc.id, st.revision, st.content_revision, (st.history.past_len(), st.history.future_len()), st.active_layer, st.doc.clone()))
         else {
             self.stop();
             return;
@@ -381,42 +438,56 @@ impl Runtime {
             self.stop();
             return;
         }
-        if revision != self.expected_revision || history != self.origin_history {
-            let signature = Self::signature(t, fallback);
-            let timing_changed = signature != self.timing_signature;
-            if timing_changed {
-                self.timing_signature = signature;
-                self.rebuild_boundaries(t, fallback);
-            }
-            // A decoded preview changes the render revision, but is not a seek or edit.
-            // Rebasing for every completion repeatedly restarts both the clock and audio.
-            let rebase = timing_changed || history != self.origin_history || t.current != self.expected_frame;
+        let authored_change = content_revision != self.expected_content_revision || history != self.origin_history;
+        let seek = t.current != self.expected_frame;
+        if revision != self.expected_revision || authored_change || seek {
+            // Presentation commits advance `revision` for every decoded frame. Only authored
+            // changes can alter transport/audio metadata, so keep large timeline signatures off
+            // the per-frame path.
+            let timing_changed = if authored_change {
+                let signature = Self::signature(t, fallback);
+                let changed = signature != self.timing_signature;
+                if changed {
+                    self.timing_signature = signature;
+                    self.rebuild_boundaries(t, fallback);
+                }
+                changed
+            } else { false };
+            let audio_signature = authored_change.then(|| Self::audio_signature(&doc_arc, t)).unwrap_or(self.audio_signature);
+            let audio_changed = authored_change && audio_signature != self.audio_signature;
+            if authored_change { self.audio_signature = audio_signature; }
+            let frame_animation_edit = authored_change && t.mode == TimelineMode::FrameAnimation;
+            // Video edits that leave timing and audio metadata unchanged keep the wall clock
+            // and pending frame intact. Timing, seek, audio, and frame-animation
+            // history changes retain the synchronized rebase path.
+            let rebase = timing_changed || audio_changed || seek || frame_animation_edit;
             if rebase {
-            self.fps=t.project_rate().as_f64();self.duration=t.duration;self.work_start=t.work_start;self.work_end=t.work_end;self.mode=t.mode;
-            self.started_at = now;
-            self.start_frame = t.current.clamp(t.work_start, t.work_end.saturating_sub(1));
-            self.start_offset = self.frame_start(t, self.start_frame) - self.frame_start(t, t.work_start);
-            self.loop_cycle = 0;
-            self.pending_frame = None;
-            self.preroll = false;
-            if matches!(t.mode, TimelineMode::Video) {
-                self.stop_audio();
-                self.clock_frame = Some(self.start_frame);
-                self.preroll = true;
-                self.preroll_decoded = false;
-                self.preroll_submitted = false;
-                self.preroll_audio_started = false;
-                self.preroll_window_started = None;
-                self.visual_ready = Arc::new(AtomicBool::new(false));
-                self.pending_frame = Some(self.start_frame);
-            } else if self.direction >= 0
-                && let Err(error) = self.start_audio(t, &doc_arc, doc, self.start_frame)
-            {
-                app.ui.status = format!("Audio preview: {error}");
-                app.ui.status_error = true;
-            }
+                self.fps=t.project_rate().as_f64();self.duration=t.duration;self.work_start=t.work_start;self.work_end=t.work_end;self.mode=t.mode;
+                self.started_at = now;
+                self.start_frame = t.current.clamp(t.work_start, t.work_end.saturating_sub(1));
+                self.start_offset = self.frame_start(t, self.start_frame) - self.frame_start(t, t.work_start);
+                self.loop_cycle = 0;
+                self.pending_frame = None;
+                self.preroll = false;
+                if matches!(t.mode, TimelineMode::Video) {
+                    self.stop_audio();
+                    self.clock_frame = Some(self.start_frame);
+                    self.preroll = true;
+                    self.preroll_decoded = false;
+                    self.preroll_submitted = false;
+                    self.preroll_audio_started = false;
+                    self.preroll_window_started = None;
+                    self.visual_ready = Arc::new(AtomicBool::new(false));
+                    self.pending_frame = Some(self.start_frame);
+                } else if self.direction >= 0
+                    && let Err(error) = self.start_audio(t, &doc_arc, doc, self.start_frame)
+                {
+                    app.ui.status = format!("Audio preview: {error}");
+                    app.ui.status_error = true;
+                }
             }
             self.expected_revision = revision;
+            self.expected_content_revision = content_revision;
             self.expected_frame = t.current;
             self.origin_history = history;
         }

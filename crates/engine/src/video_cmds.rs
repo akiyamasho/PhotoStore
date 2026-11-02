@@ -1174,42 +1174,46 @@ fn canonicalize_states(before: &Document, after: &mut Document, current: usize) 
     }
     let frame_animation = matches!(at.mode, photostore_doc::TimelineMode::FrameAnimation);
     let video_mode = matches!(at.mode, photostore_doc::TimelineMode::Video);
+    // Decide on one small row before asking for mutable snapshot-bank access. Plain pixel
+    // edits do not alter these properties; detaching the entire bank for them both copies
+    // long timelines and falsely invalidates authored audio/visibility metadata.
     let after_layers = &after.layers;
-    let Some(at) = after.timeline.as_mut() else { return };
-    let states = if frame_animation { at.frame_states.get_mut(current) } else { at.property_frames.get_mut(current) };
-    if let Some(states) = states {
-        for state in states {
-            let Some(old) = find_layer(&before.layers, state.layer) else { continue };
-            let Some(new) = find_layer(after_layers, state.layer) else { continue };
-            if old.visible != new.visible {
-                state.visible = new.visible;
-            }
-            if old.opacity != new.opacity {
-                state.opacity = new.opacity;
-            }
-            let old_pos = photostore_doc::comps::layer_position(old);
-            let new_pos = photostore_doc::comps::layer_position(new);
-            if new.video.is_some() {
-                state.video_position = new.video.as_ref().map(|v| v.applied_translation);
-                state.position = None;
-            } else if old_pos != new_pos && !(video_mode && new.position_animation.is_some()) {
-                state.position = new_pos;
-            }
-            if old.blend != new.blend {
-                state.blend = Some(new.blend);
-            }
-            if old.fill_opacity != new.fill_opacity {
-                state.fill_opacity = Some(new.fill_opacity);
-            }
-            if old.effects != new.effects {
-                state.effects = Some(photostore_doc::FrameEffectsState {
-                    enabled: new.effects.enabled,
-                    items: new.effects.items.clone(),
-                    reference: new.effects.reference,
-                });
-            }
+    let mut states = after_states.clone();
+    for state in &mut states {
+        let Some(old) = find_layer(&before.layers, state.layer) else { continue };
+        let Some(new) = find_layer(after_layers, state.layer) else { continue };
+        if old.visible != new.visible {
+            state.visible = new.visible;
+        }
+        if old.opacity != new.opacity {
+            state.opacity = new.opacity;
+        }
+        let old_pos = photostore_doc::comps::layer_position(old);
+        let new_pos = photostore_doc::comps::layer_position(new);
+        if new.video.is_some() {
+            state.video_position = new.video.as_ref().map(|v| v.applied_translation);
+            state.position = None;
+        } else if old_pos != new_pos && !(video_mode && new.position_animation.is_some()) {
+            state.position = new_pos;
+        }
+        if old.blend != new.blend {
+            state.blend = Some(new.blend);
+        }
+        if old.fill_opacity != new.fill_opacity {
+            state.fill_opacity = Some(new.fill_opacity);
+        }
+        if old.effects != new.effects {
+            state.effects = Some(photostore_doc::FrameEffectsState {
+                enabled: new.effects.enabled,
+                items: new.effects.items.clone(),
+                reference: new.effects.reference,
+            });
         }
     }
+    if states == *after_states { return; }
+    let Some(at) = after.timeline.as_mut() else { return };
+    let target = if frame_animation { at.frame_states.get_mut(current) } else { at.property_frames.get_mut(current) };
+    if let Some(target) = target { *target = states; }
 }
 
 fn find_layer<'a>(layers: &'a [Layer], id: LayerId) -> Option<&'a Layer> {
