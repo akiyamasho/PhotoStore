@@ -23,6 +23,22 @@ pub(super) struct Job {
     pub unmap_after: bool,
 }
 
+/// A compact NV12 crop destined for one allocated mapped range.
+pub(super) struct Nv12Job {
+    pub buffer: wgpu::Buffer,
+    pub offset: u64,
+    pub length: usize,
+    pub roi: Rect,
+    pub frame: Arc<photostore_raster::Nv12Frame>,
+    pub lut_offset: Option<usize>,
+    pub payload_length: usize,
+}
+
+enum Work {
+    Raster(Job),
+    Nv12(Nv12Job),
+}
+
 pub(super) fn pack(jobs: Vec<Job>) -> Result<(), Unsupported> {
     if jobs.is_empty() {
         return Ok(());
@@ -30,7 +46,7 @@ pub(super) fn pack(jobs: Vec<Job>) -> Result<(), Unsupported> {
     if jobs.iter().all(|job| job.tile_major) {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(pool) = assist_pool() {
-            return pool.pack(jobs);
+            return pool.pack(jobs.into_iter().map(Work::Raster).collect());
         }
         return jobs.into_iter().try_for_each(pack_one);
     }
@@ -40,6 +56,16 @@ pub(super) fn pack(jobs: Vec<Job>) -> Result<(), Unsupported> {
     }
 
     jobs.into_iter().map(pack_one).collect::<Result<Vec<()>, Unsupported>>().map(|_| ())
+}
+
+/// Pack allocated NV12 ranges using the existing cooperative caller-plus-helpers pool.
+pub(super) fn pack_nv12(jobs: Vec<Nv12Job>) -> Result<(), Unsupported> {
+    if jobs.is_empty() { return Ok(()); }
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(pool) = assist_pool() {
+        return pool.pack(jobs.into_iter().map(Work::Nv12).collect());
+    }
+    jobs.into_iter().map(pack_nv12_one).collect::<Result<Vec<()>, Unsupported>>().map(|_| ())
 }
 
 fn pack_one(mut job: Job) -> Result<(), Unsupported> {
@@ -66,7 +92,7 @@ struct AssistShared {
 
 #[cfg(not(target_arch = "wasm32"))]
 struct AssistBatch {
-    jobs: std::sync::Mutex<Vec<Job>>,
+    jobs: std::sync::Mutex<Vec<Work>>,
     done: std::sync::Mutex<AssistCompletion>,
     finished: std::sync::Condvar,
 }
@@ -103,7 +129,7 @@ impl AssistPool {
         (started != 0).then_some(Self { shared })
     }
 
-    fn pack(&self, jobs: Vec<Job>) -> Result<(), Unsupported> {
+    fn pack(&self, jobs: Vec<Work>) -> Result<(), Unsupported> {
         let count = jobs.len();
         let batch = Arc::new(AssistBatch {
             jobs: std::sync::Mutex::new(jobs),
@@ -154,7 +180,7 @@ fn drain_assist_batch(batch: &AssistBatch) {
     loop {
         let job = lock_unpoisoned(&batch.jobs).pop();
         let Some(job) = job else { break };
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pack_one(job)))
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pack_work(job)))
             .unwrap_or_else(|_| Err(Unsupported("page upload worker panicked".into())));
         let mut completion = lock_unpoisoned(&batch.done);
         if let Err(error) = result {
@@ -167,6 +193,58 @@ fn drain_assist_batch(batch: &AssistBatch) {
             batch.finished.notify_all();
         }
     }
+}
+
+fn pack_work(work: Work) -> Result<(), Unsupported> {
+    match work {
+        Work::Raster(job) => pack_one(job),
+        Work::Nv12(job) => pack_nv12_one(job),
+    }
+}
+
+fn pack_nv12_one(job: Nv12Job) -> Result<(), Unsupported> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pack_nv12_inner(&job)))
+        .unwrap_or_else(|_| Err(Unsupported("NV12 page upload packing panicked".into())))
+}
+
+fn pack_nv12_inner(job: &Nv12Job) -> Result<(), Unsupported> {
+    let end=job.offset.checked_add(u64::try_from(job.length).map_err(|_|Unsupported("NV12 page upload length is too large".into()))?)
+        .ok_or_else(||Unsupported("NV12 page upload range overflows".into()))?;
+    let frame_width=job.frame.width() as usize; let frame_height=job.frame.height() as usize;
+    if job.roi.is_empty() || job.roi.x0<0 || job.roi.y0<0 || job.roi.x1>job.frame.width() as i32 || job.roi.y1>job.frame.height() as i32
+        || job.roi.x0%2!=0 || job.roi.y0%2!=0 || job.roi.width()%2!=0 || job.roi.height()%2!=0 {
+        return Err(Unsupported("NV12 upload region must be an even crop within its frame".into()));
+    }
+    let width=usize::try_from(job.roi.width()).map_err(|_|Unsupported("NV12 crop width is too large".into()))?;
+    let height=usize::try_from(job.roi.height()).map_err(|_|Unsupported("NV12 crop height is too large".into()))?;
+    let y_len=width.checked_mul(height).ok_or_else(||Unsupported("NV12 crop size overflows".into()))?;
+    let uv_len=width.checked_mul(height/2).ok_or_else(||Unsupported("NV12 chroma crop size overflows".into()))?;
+    let plane_len=y_len.checked_add(uv_len).ok_or_else(||Unsupported("NV12 plane size overflows".into()))?;
+    let expected_lut=job.frame.ramps().map(|_|plane_len.checked_add(3).map(|n|n&!3).ok_or_else(||Unsupported("NV12 LUT offset overflows".into()))).transpose()?;
+    if job.lut_offset!=expected_lut { return Err(Unsupported("NV12 LUT offset does not match the crop payload".into())); }
+    let expected_payload=if let Some(start)=expected_lut {start.checked_add(768).ok_or_else(||Unsupported("NV12 payload size overflows".into()))?} else {plane_len};
+    let expected_length=expected_payload.checked_add(3).map(|n|n&!3).ok_or_else(||Unsupported("NV12 mapped allocation size overflows".into()))?;
+    if job.payload_length!=expected_payload || job.length!=expected_length { return Err(Unsupported("NV12 allocation length does not match its planes and LUT".into())); }
+    let frame_len=frame_width.checked_mul(frame_height).and_then(|n|n.checked_mul(3)).map(|n|n/2).ok_or_else(||Unsupported("NV12 frame size overflows".into()))?;
+    if job.frame.bytes().len()!=frame_len { return Err(Unsupported("NV12 frame storage does not match its dimensions".into())); }
+    let mut mapped=job.buffer.slice(job.offset..end).get_mapped_range_mut().map_err(|error|Unsupported(format!("mapped NV12 allocation could not be mapped: {error}")))?;
+    let crop_x=job.roi.x0 as usize; let crop_y=job.roi.y0 as usize;
+    for row in 0..height {
+        let source=(crop_y+row)*frame_width+crop_x; let destination=row*width;
+        mapped.slice(destination..destination+width).copy_from_slice(&job.frame.bytes()[source..source+width]);
+    }
+    let uv_base=frame_width*frame_height;
+    for row in 0..height/2 {
+        let source=uv_base+(crop_y/2+row)*frame_width+crop_x; let destination=y_len+row*width;
+        mapped.slice(destination..destination+width).copy_from_slice(&job.frame.bytes()[source..source+width]);
+    }
+    if let (Some(start),Some(ramps))=(expected_lut,job.frame.ramps()) {
+        if start>plane_len { mapped.slice(plane_len..start).copy_from_slice(&[0;3][..start-plane_len]); }
+        for (channel,ramp) in ramps.iter().enumerate() { let offset=start+channel*256; mapped.slice(offset..offset+256).copy_from_slice(ramp); }
+    }
+    if expected_length>expected_payload { mapped.slice(expected_payload..expected_length).copy_from_slice(&[0;3][..expected_length-expected_payload]); }
+    drop(mapped);
+    Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]

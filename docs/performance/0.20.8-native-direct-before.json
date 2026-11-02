@@ -1,0 +1,130 @@
+{
+  "passed": false,
+  "source_sha": "7f32ae83b8ebcfc32fca775785434143eb1889c4",
+  "binary_sha256": "0f6c5b21e8f39482b354911da0721d4eac49504649494f519b488a218f766d23",
+  "evidence": "Owned isolated normal active-window workload, run-20261102-160734-79472",
+  "hardware": {
+    "adapter": "Apple M1 Max",
+    "backend": "metal",
+    "canvas": "gpu",
+    "deviceType": "integratedGpu",
+    "driver": "",
+    "fallback": null,
+    "lost": null,
+    "preference": "auto",
+    "selected": "auto"
+  },
+  "display_measurement": "Normal active-window startup requested; physical scanout and other applications are not controlled",
+  "sources": {
+    "count": 8,
+    "width": 3840,
+    "height": 2160,
+    "fps": 30,
+    "codec": "H.264 SDR",
+    "durationSeconds": 6,
+    "rasterDrawingLayer": true
+  },
+  "cold_preroll_seconds": 1.1345389999914914,
+  "window_seconds": 4.548286624951288,
+  "native_video_publications": 121,
+  "native_fps": 26.603424537101574,
+  "callback_interval_ms": {
+    "p50": 33.349666999999954,
+    "p95": 67.87024999999994,
+    "max": 117.41920800000025
+  },
+  "sampled_ui_construction_ms": {
+    "p50": 0.5826250000009168,
+    "p95": 1.5261669999999867,
+    "max": 2.6422079999999823
+  },
+  "inspect_rpc_ms": {
+    "p50": 28.24337501078844,
+    "p95": 37.67491702456027,
+    "max": 90.3312920127064
+  },
+  "phase_summary": {
+    "idle_before": {
+      "samples": 8,
+      "native_video_frame_delta": 27,
+      "native_video_fps_observed": 30.84387410413226,
+      "ui_last_ms_p50": 0.5630830000004607,
+      "ui_last_ms_p95": 2.6422079999999823,
+      "inspect_rpc_ms_p50": 22.844917024485767,
+      "inspect_rpc_ms_p95": 26.324332982767373,
+      "ui_frame_count_start": 140,
+      "ui_frame_count_end": 244
+    },
+    "brush": {
+      "samples": 9,
+      "native_video_frame_delta": 31,
+      "native_video_fps_observed": 26.309345203551096,
+      "ui_last_ms_p50": 0.9173329999998714,
+      "ui_last_ms_p95": 1.5261669999999867,
+      "inspect_rpc_ms_p50": 26.595459028612822,
+      "inspect_rpc_ms_p95": 37.67491702456027,
+      "ui_frame_count_start": 264,
+      "ui_frame_count_end": 403
+    },
+    "space_pan": {
+      "samples": 7,
+      "native_video_frame_delta": 26,
+      "native_video_fps_observed": 28.810593411866993,
+      "ui_last_ms_p50": 0.5049169999992955,
+      "ui_last_ms_p95": 0.5826250000009168,
+      "inspect_rpc_ms_p50": 29.70133296912536,
+      "inspect_rpc_ms_p95": 31.583791016601026,
+      "ui_frame_count_start": 431,
+      "ui_frame_count_end": 538
+    },
+    "idle_after": {
+      "samples": 7,
+      "native_video_frame_delta": 19,
+      "native_video_fps_observed": 21.361531561991523,
+      "ui_last_ms_p50": 0.6018749999993815,
+      "ui_last_ms_p95": 0.679374999999709,
+      "inspect_rpc_ms_p50": 33.500832971185446,
+      "inspect_rpc_ms_p95": 90.3312920127064,
+      "ui_frame_count_start": 558,
+      "ui_frame_count_end": 648
+    }
+  },
+  "synthetic_brush_committed": true,
+  "synthetic_space_pan_applied": true,
+  "final_gpu_info": {
+    "adapter": "Apple M1 Max",
+    "backend": "metal",
+    "canvas": "gpu",
+    "deviceType": "integratedGpu",
+    "driver": "",
+    "fallback": null,
+    "lost": null,
+    "preference": "auto",
+    "selected": "auto"
+  },
+  "final_composition_wall_ms": 59.268875,
+  "final_upload_pack_ms": 43.253375,
+  "final_fused_chunks": 12,
+  "final_buffer_source_chunks": 24,
+  "failures": [
+    "Native changed-frame cadence below 28 fps for 30 fps sources",
+    "Native callback interval p95 exceeds 50 ms",
+    "Native callback interval max exceeds 100 ms"
+  ],
+  "limitations": [
+    "Actual window renderer callback publication is measured; physical display scanout and OS device input are not.",
+    "Synthetic egui brush and held-Space primary drag exercise native canvas input handlers.",
+    "Eight distinct owned SDR H264 sources are a bounded workload, not arbitrary-codec or universal CapCut parity.",
+    "Audio-device output and subjective UI/Cintiq acceptance remain manual."
+  ],
+  "prior_background_run": {
+    "source_sha": "7f32ae83b8ebcfc32fca775785434143eb1889c4",
+    "native_fps": 28.432846518566652,
+    "callback_p95_ms": 51.595666999999594,
+    "callback_max_ms": 90.12845799999923,
+    "ui_p95_ms": 2.29424999999992,
+    "brush_committed_and_saved": true,
+    "pan_applied": true,
+    "status": "Fails the unchanged 50 ms p95 callback target"
+  }
+}

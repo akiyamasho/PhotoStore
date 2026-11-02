@@ -153,6 +153,7 @@ impl crate::Compositor {
         let dummy = self.buffer_stream.as_ref().ok_or_else(|| Unsupported("mapped stream pipeline initialization failed".into()))?.dummy.clone();
         let cell_region = super::cell_rect(cell, self.page);
         let mut sources = Vec::with_capacity(7);
+        let mut nv12_jobs = Vec::new();
         let started = Instant::now();
         for source in batch {
             let pass = &plan.passes[source.pass];
@@ -168,7 +169,7 @@ impl crate::Compositor {
                     None => { sources.push(StreamSource { buffer:dummy.clone(),offset:0,size:4,region:[0;4],color:fallback,opacity:source.opacity,kind:0,matrix:0,lut_offset:0,clip }); continue; }
                 };
                 if let Some(view) = surface.nv12_view() {
-                    let frame = view.frame;
+                    let frame = std::sync::Arc::clone(view.frame);
                     let bounds = Rect::new(0,0,frame.width() as i32,frame.height() as i32);
                     let source_roi = Rect::new(region.x0.saturating_sub(view.origin[0]),region.y0.saturating_sub(view.origin[1]),region.x1.saturating_sub(view.origin[0]),region.y1.saturating_sub(view.origin[1])).intersect(&bounds);
                     if source_roi.is_empty() { region=Rect::EMPTY; upload_region=Rect::EMPTY; }
@@ -178,7 +179,8 @@ impl crate::Compositor {
                         let roi=Rect::new(x0,y0,x1,y1);
                         upload_region=roi.translate(view.origin[0],view.origin[1]);
                         matrix=match frame.matrix(){photostore_raster::Nv12Matrix::Bt601=>0,photostore_raster::Nv12Matrix::Bt709=>1}; kind=2;
-                        let (buffer,offset,size,lut)=self.upload_nv12_region(frame,roi,stats)?;
+                        let (buffer,offset,size,lut,job)=self.allocate_nv12_region(frame,roi,stats)?;
+                        nv12_jobs.push(job);
                         lut_offset=lut;
                         sources.push(StreamSource {buffer,offset,size,region:[upload_region.x0,upload_region.y0,upload_region.width() as i32,upload_region.height() as i32],color:fallback,opacity:source.opacity,kind,matrix,lut_offset,clip});
                         continue;
@@ -201,14 +203,15 @@ impl crate::Compositor {
             sources.push(StreamSource {buffer,offset,size,region:[upload_region.x0,upload_region.y0,upload_region.width() as i32,upload_region.height() as i32],color:fallback,opacity:source.opacity,kind,matrix,lut_offset,clip});
         }
         while sources.len()<7 {sources.push(StreamSource{buffer:dummy.clone(),offset:0,size:4,region:[0;4],color:[0.0;4],opacity:0.0,kind:0,matrix:0,lut_offset:0,clip:[0;4]});}
+        page_upload::pack_nv12(nv12_jobs)?;
         stats.upload_pack_ms+=started.elapsed().as_secs_f64()*1000.0;
         Ok(Some(PreparedStreamBatch{sources}))
     }
 
-    fn upload_nv12_region(
-        &mut self, frame: &photostore_raster::Nv12Frame, roi: Rect,
+    fn allocate_nv12_region(
+        &mut self, frame: std::sync::Arc<photostore_raster::Nv12Frame>, roi: Rect,
         stats: &mut crate::Stats,
-    ) -> Result<(wgpu::Buffer, u64, u64, u32), Unsupported> {
+    ) -> Result<(wgpu::Buffer, u64, u64, u32, page_upload::Nv12Job), Unsupported> {
         if roi.is_empty() || roi.x0 < 0 || roi.y0 < 0 || roi.x1 > frame.width() as i32 || roi.y1 > frame.height() as i32
             || roi.x0 % 2 != 0 || roi.y0 % 2 != 0 || roi.width() % 2 != 0 || roi.height() % 2 != 0 {
             return Err(Unsupported("NV12 upload region must be a non-empty even crop within its frame".into()));
@@ -228,34 +231,14 @@ impl crate::Compositor {
         let alignment=wgpu::BufferSize::new(256).ok_or_else(||Unsupported("mapped source alignment is invalid".into()))?;
         let slice=belt.allocate(allocation,alignment);
         let buffer=slice.buffer().clone(); let offset=slice.offset();
-        let mut mapped=slice.get_mapped_range_mut().map_err(|error|Unsupported(format!("mapped NV12 allocation could not be mapped: {error}")))?;
-        let frame_width=frame.width() as usize;
-        let crop_x=roi.x0 as usize; let crop_y=roi.y0 as usize;
-        for row in 0..height {
-            let source=(crop_y+row)*frame_width+crop_x;
-            let destination=row*width;
-            mapped.slice(destination..destination+width).copy_from_slice(&frame.bytes()[source..source+width]);
-        }
-        let uv_base=frame_width*frame.height() as usize;
-        for row in 0..height/2 {
-            let source=uv_base+(crop_y/2+row)*frame_width+crop_x;
-            let destination=y_len+row*width;
-            mapped.slice(destination..destination+width).copy_from_slice(&frame.bytes()[source..source+width]);
-        }
-        if let Some(ramps)=ramps {
-            if lut_start>plane_len { mapped.slice(plane_len..lut_start).copy_from_slice(&[0;3][..lut_start-plane_len]); }
-            for (channel,ramp) in ramps.iter().enumerate() {
-                let start=lut_start+channel*256;
-                mapped.slice(start..start+256).copy_from_slice(ramp);
-            }
-        }
-        if allocation_len>content_len { mapped.slice(content_len..allocation_len).copy_from_slice(&[0;3][..allocation_len-content_len]); }
-        drop(mapped); drop(slice);
+        drop(slice);
         self.staged=self.staged.saturating_add(allocation_len as u64);
         stats.bytes_uploaded=stats.bytes_uploaded.saturating_add(content_len);
         stats.dense_page_uploads=stats.dense_page_uploads.saturating_add(1);
         stats.pooled_upload_pages=stats.pooled_upload_pages.saturating_add(1);
-        Ok((buffer,offset,allocation_len as u64,lut_offset))
+        let job_lut_offset=ramps.map(|_|lut_start);
+        let job=page_upload::Nv12Job {buffer:buffer.clone(),offset,length:allocation_len,roi,frame,lut_offset:job_lut_offset,payload_length:content_len};
+        Ok((buffer,offset,allocation_len as u64,lut_offset,job))
     }
 
     #[allow(clippy::too_many_arguments)]
