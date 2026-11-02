@@ -132,7 +132,7 @@ pub(crate) fn reconcile_duration(doc: &mut photostore_doc::Document, edit: Optio
 
 /// Apply a user-authored Video Timeline duration. Content remains reachable if the request is
 /// shorter than an existing clip; a longer request is persisted as deliberate tail padding.
-pub(crate) fn set_explicit_duration(doc: &mut photostore_doc::Document, requested: usize) -> Result<usize, String> {
+pub(crate) fn set_explicit_duration(doc: &mut photostore_doc::Document, requested: usize) -> std::result::Result<usize, String> {
     if requested == 0 || requested > MAX_TIMELINE_FRAMES {
         return Err(format!("duration must be between 1 and {MAX_TIMELINE_FRAMES} frames"));
     }
