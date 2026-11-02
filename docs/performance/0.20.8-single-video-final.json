@@ -1,0 +1,11 @@
+{
+  "source_sha": "575913fc4de5bb27d5b7234629d7ed7ad90034f1",
+  "binary_sha256": "68623b4deab32a11937a79af5ce789d59e163a3e290377263f59414dd5e77034",
+  "passed": true,
+  "checks": [
+    "one linked video stays on compact fused GPU path before and during a drawing gesture",
+    "stroke commits and retains raster tiles in saved native document",
+    "future staging preserves paused current/history"
+  ],
+  "foreground_acceptance": "not claimed; displays asleep"
+}

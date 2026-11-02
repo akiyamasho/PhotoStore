@@ -1,0 +1,13 @@
+{
+  "passed": true,
+  "source_sha": "575913fc4de5bb27d5b7234629d7ed7ad90034f1",
+  "cli_sha256": "342cefb79b65d0d2ad5900f391ba9720922c0f4ccfd682f86d003efc81286d3d",
+  "checks": [
+    "zero-to-positive row gain preserves relative clip gains",
+    "legacy linked row isolation preserves other owner gain/mute and clip identities",
+    "row mute does not rewrite individual clip mute",
+    "missing serialized row volume defaults to 1.0 after reopen"
+  ],
+  "fixture": "owned silent PCM WAV, 16x16 native document",
+  "limitations": "No audio-device output or subjective UI acceptance check."
+}

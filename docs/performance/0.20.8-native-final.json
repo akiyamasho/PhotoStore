@@ -1,0 +1,126 @@
+{
+  "passed": false,
+  "source_sha": "575913fc4de5bb27d5b7234629d7ed7ad90034f1",
+  "binary_sha256": "68623b4deab32a11937a79af5ce789d59e163a3e290377263f59414dd5e77034",
+  "evidence": "Owned isolated native-window workload, run-20261102-165654-5816",
+  "hardware": {
+    "adapter": "Apple M1 Max",
+    "backend": "metal",
+    "canvas": "gpu",
+    "deviceType": "integratedGpu",
+    "driver": "",
+    "fallback": null,
+    "lost": null,
+    "preference": "auto",
+    "selected": "auto"
+  },
+  "display_measurement": "Background owned window; physical scanout and other applications are not controlled",
+  "sources": {
+    "count": 8,
+    "width": 3840,
+    "height": 2160,
+    "fps": 30,
+    "codec": "H.264 SDR",
+    "durationSeconds": 6,
+    "rasterDrawingLayer": true
+  },
+  "cold_preroll_seconds": 0.9856954170390964,
+  "window_seconds": 4.529961457999889,
+  "native_video_publications": 110,
+  "native_fps": 24.28276730826055,
+  "callback_interval_ms": {
+    "p50": 33.2652079999998,
+    "p95": 38.53758400000015,
+    "max": 364.5872909999998
+  },
+  "sampled_ui_construction_ms": {
+    "p50": 0.28758300000026793,
+    "p95": 0.9203330000002552,
+    "max": 0.9481660000001284
+  },
+  "inspect_rpc_ms": {
+    "p50": 20.064333046320826,
+    "p95": 25.031916971784085,
+    "max": 27.102582971565425
+  },
+  "phase_summary": {
+    "idle_before": {
+      "samples": 8,
+      "native_video_frame_delta": 27,
+      "native_video_fps_observed": 30.18128752399037,
+      "ui_last_ms_p50": 0.28587500000003274,
+      "ui_last_ms_p95": 0.9203330000002552,
+      "inspect_rpc_ms_p50": 18.674457969609648,
+      "inspect_rpc_ms_p95": 21.942958002910018,
+      "ui_frame_count_start": 1563,
+      "ui_frame_count_end": 2960
+    },
+    "brush": {
+      "samples": 10,
+      "native_video_frame_delta": 11,
+      "native_video_fps_observed": 9.316612040534872,
+      "ui_last_ms_p50": 0.29616699999996854,
+      "ui_last_ms_p95": 0.9481660000001284,
+      "inspect_rpc_ms_p50": 19.27945902571082,
+      "inspect_rpc_ms_p95": 20.153374993242323,
+      "ui_frame_count_start": 3140,
+      "ui_frame_count_end": 5133
+    },
+    "space_pan": {
+      "samples": 9,
+      "native_video_frame_delta": 33,
+      "native_video_fps_observed": 31.011089537816805,
+      "ui_last_ms_p50": 0.2848329999997077,
+      "ui_last_ms_p95": 0.8089170000002923,
+      "inspect_rpc_ms_p50": 20.739833009429276,
+      "inspect_rpc_ms_p95": 27.102582971565425,
+      "ui_frame_count_start": 5369,
+      "ui_frame_count_end": 7046
+    },
+    "idle_after": {
+      "samples": 8,
+      "native_video_frame_delta": 28,
+      "native_video_fps_observed": 29.98084035962271,
+      "ui_last_ms_p50": 0.28758300000026793,
+      "ui_last_ms_p95": 0.5699170000007143,
+      "inspect_rpc_ms_p50": 23.13770801993087,
+      "inspect_rpc_ms_p95": 25.031916971784085,
+      "ui_frame_count_start": 7267,
+      "ui_frame_count_end": 8736
+    }
+  },
+  "synthetic_brush_committed": true,
+  "synthetic_space_pan_applied": true,
+  "final_gpu_info": {
+    "adapter": "Apple M1 Max",
+    "backend": "metal",
+    "canvas": "gpu",
+    "deviceType": "integratedGpu",
+    "driver": "",
+    "fallback": null,
+    "lost": null,
+    "preference": "auto",
+    "selected": "auto"
+  },
+  "final_composition_wall_ms": 12.382417,
+  "final_upload_pack_ms": 8.693666,
+  "final_fused_chunks": 12,
+  "final_buffer_source_chunks": 24,
+  "failures": [
+    "Native changed-frame cadence below 28 fps for 30 fps sources",
+    "Native callback interval max exceeds 100 ms"
+  ],
+  "limitations": [
+    "Actual window renderer callback publication is measured; physical display scanout and OS device input are not.",
+    "Synthetic egui brush and held-Space primary drag exercise native canvas input handlers.",
+    "Eight distinct owned SDR H264 sources are a bounded workload, not arbitrary-codec or universal CapCut parity.",
+    "Audio-device output and subjective UI/Cintiq acceptance remain manual."
+  ],
+  "foreground_acceptance_pending": true,
+  "display_state": {
+    "both_online_displays_asleep": true,
+    "owned_pid_activation_requested": true,
+    "owned_pid_application_became_active": false
+  },
+  "issue_remaining_open": 23
+}

@@ -1,0 +1,31 @@
+{
+  "version": "0.20.8",
+  "source_sha": "575913fc4de5bb27d5b7234629d7ed7ad90034f1",
+  "release": "https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.8",
+  "architecture": "arm64",
+  "completed_final_source_build_seconds": 563.569,
+  "verified": true,
+  "installed": true,
+  "installed_app": "/Applications/PhotoStore.app",
+  "installed_cli": "/Users/computer/tools_bin/photostore-cli",
+  "app_sha256": "68623b4deab32a11937a79af5ce789d59e163a3e290377263f59414dd5e77034",
+  "cli_sha256": "342cefb79b65d0d2ad5900f391ba9720922c0f4ccfd682f86d003efc81286d3d",
+  "assets": {
+    "photostore-0.20.8-macos-aarch64.dmg": {
+      "size": 45752125,
+      "sha256": "e0293a2bddb6c1080cab111cf8541d37e36ea3f5b69fdb94ea6de1f2c1970c84"
+    },
+    "photostore-cli-0.20.8-macos-aarch64.zip": {
+      "size": 34586881,
+      "sha256": "df5b85601c027f8304be2ee0faf0c65772cfe9a7fe910adf907db8c3217e2c07"
+    }
+  },
+  "signing": "persistent local certificate; not Developer ID; not notarized",
+  "app_rollback_retained": true,
+  "cli_rollback_retained": true,
+  "normal_production_identity": true,
+  "running_session_preserved": true,
+  "scheduler_suppression_continues": true,
+  "foreground_performance_accepted": false,
+  "open_issue": 23
+}

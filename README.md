@@ -36,6 +36,7 @@ PhotoStore 0.20.8 targets the native editor path: background live previews, call
 publication, bounded larger Normal RGBA8 stacks, per-row gain through preview/export, clip-edge
 resizing, automatic content duration and explicit extra time. Original media and clip gains remain
 editable. [Download 0.20.8](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.8).
+Eligible opaque SDR H.264 previews now keep full-resolution NV12 planes through the bounded cache and GPU stack. **Performance acceptance remains open in [#23](https://github.com/akiyamasho/PhotoStore/issues/23):** the final inactive-window run still has live-brush publication gaps; both online displays were asleep and macOS did not activate the owned test app. The release is installed, but foreground CapCut-like smoothness is not claimed.
 See [delivery, measurements and limits](docs/releases/0.20.8.md). Prior
 [0.20.7 CLI evidence](docs/releases/0.20.7.md) remains historical and does not establish native
 window performance. Native evidence uses disposable fixtures and is distinct from OS pen input

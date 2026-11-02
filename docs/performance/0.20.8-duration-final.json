@@ -1,0 +1,175 @@
+{
+  "audio_clip_relative_level": "excluded: source media audio stream is not guaranteed; row gain/mute persistence is covered",
+  "cli": "/Users/computer/Desktop/dev/PhotoStore/target/macos-package/photostore-cli-0.20.8-macos-aarch64/photostore-cli",
+  "cli_sha256": "342cefb79b65d0d2ad5900f391ba9720922c0f4ccfd682f86d003efc81286d3d",
+  "passed": true,
+  "passes": {
+    "audio_row_gain_and_mute_persistence": {
+      "muted": true,
+      "status": "pass",
+      "track": 1,
+      "volume": 0.5
+    },
+    "explicit_tail_and_growth_consumption": {
+      "after_growth_duration": 130,
+      "after_shrink_duration": 120,
+      "explicit_duration": 130,
+      "initial_padding": 110,
+      "padding_after_growth": 100,
+      "padding_after_shrink": 100,
+      "status": "pass"
+    },
+    "native_save_reopen": {
+      "duration": 120,
+      "offclip_key": {
+        "frame": 80,
+        "interpolation": "linear",
+        "x": 12,
+        "y": 13
+      },
+      "status": "pass"
+    },
+    "smart_object_extend_trim_undo_and_offclip_key": {
+      "after_trim_duration": 39,
+      "after_undo_duration": 120,
+      "key_copy_after_undo": {
+        "affected": {
+          "count": 1
+        },
+        "timeline": {
+          "current": 0,
+          "duration": 120,
+          "fps": 30.0,
+          "layerRanges": [
+            {
+              "enabled": true,
+              "end": 20,
+              "layer": 3,
+              "playback": null,
+              "start": 0
+            },
+            {
+              "enabled": true,
+              "end": 120,
+              "layer": 7,
+              "playback": {
+                "source_in_seconds": 0.0,
+                "speed": 1.0,
+                "speed_curve": [],
+                "speed_curve_offset_frames": 0
+              },
+              "start": 0
+            }
+          ],
+          "linkedSelection": true,
+          "mainTrackMagnet": false,
+          "markers": [],
+          "mode": "video",
+          "previewSkimming": false,
+          "snapping": true,
+          "tailPaddingFrames": 0,
+          "visualTracks": [
+            {
+              "id": 1,
+              "kind": "main",
+              "layers": [
+                3
+              ],
+              "locked": false,
+              "muted": false,
+              "name": "Still range",
+              "order": 0
+            },
+            {
+              "id": 2,
+              "kind": "video",
+              "layers": [
+                7
+              ],
+              "locked": false,
+              "muted": false,
+              "name": "Smart range",
+              "order": 1
+            }
+          ],
+          "workEnd": 120,
+          "workStart": 0
+        }
+      },
+      "key_copy_during_trim": {
+        "affected": {
+          "count": 1
+        },
+        "timeline": {
+          "current": 0,
+          "duration": 39,
+          "fps": 30.0,
+          "layerRanges": [
+            {
+              "enabled": true,
+              "end": 20,
+              "layer": 3,
+              "playback": null,
+              "start": 0
+            },
+            {
+              "enabled": true,
+              "end": 39,
+              "layer": 7,
+              "playback": {
+                "source_in_seconds": 0.0,
+                "speed": 1.0,
+                "speed_curve": [],
+                "speed_curve_offset_frames": 0
+              },
+              "start": 0
+            }
+          ],
+          "linkedSelection": true,
+          "mainTrackMagnet": false,
+          "markers": [],
+          "mode": "video",
+          "previewSkimming": false,
+          "snapping": true,
+          "tailPaddingFrames": 0,
+          "visualTracks": [
+            {
+              "id": 1,
+              "kind": "main",
+              "layers": [
+                3
+              ],
+              "locked": false,
+              "muted": false,
+              "name": "Still range",
+              "order": 0
+            },
+            {
+              "id": 2,
+              "kind": "video",
+              "layers": [
+                7
+              ],
+              "locked": false,
+              "muted": false,
+              "name": "Smart range",
+              "order": 1
+            }
+          ],
+          "workEnd": 39,
+          "workStart": 0
+        }
+      },
+      "status": "pass"
+    },
+    "source_bound_video_trim": {
+      "rejected_target_frame": 210,
+      "source_range_end": 180,
+      "status": "pass"
+    }
+  },
+  "script": "/private/tmp/photostore-0208-duration-boundary.py",
+  "source_sha": "575913fc4de5bb27d5b7234629d7ed7ad90034f1",
+  "video": "/private/tmp/photostore-distinct-4k/source-1.mp4",
+  "video_sha256": "1fa2e9a361b9935aa83527d9e5b785dd1c0dee297eb7af345e6191d4cc69bae3"
+}
