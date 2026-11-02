@@ -104,7 +104,8 @@ pub(crate) fn recognize(plan: &Plan<'_>) -> Option<Stack> {
         values.insert(p.dst, out);
     }
     let SlotValue::Stack(sources) = values.get(&plan.root)? else { return None; };
-    if !(2..=64).contains(&sources.len()) { return None; }
+    if sources.is_empty() || sources.len() > 64 { return None; }
+    if sources.len() == 1 && !plan.passes[sources[0].pass].tex.as_ref().is_some_and(|texture|texture.surface.get().nv12_view().is_some()) { return None; }
     Some(Stack { sources: sources.clone() })
 }
 

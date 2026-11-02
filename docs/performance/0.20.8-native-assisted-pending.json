@@ -1,0 +1,76 @@
+{
+  "source_sha": "30472a60b7a9b26aa716d718183ef3a35b7d01d1",
+  "binary_sha256": "cb06b01bb9a12facd17c61bf9ff8b31766126ad950ce6a066f86b7be9855c844",
+  "status": "Foreground performance acceptance pending; not a passing cadence claim",
+  "native_window_publications": 116,
+  "seconds": 4.549799499975052,
+  "native_fps": 25.49562898335104,
+  "ui_phase_summary": {
+    "idle_before": {
+      "samples": 8,
+      "native_video_frame_delta": 29,
+      "native_video_fps_observed": 31.054236436024574,
+      "ui_last_ms_p50": 0.676290999999992,
+      "ui_last_ms_p95": 2.5817500000000564,
+      "inspect_rpc_ms_p50": 29.21449998393655,
+      "inspect_rpc_ms_p95": 37.62170800473541,
+      "ui_frame_count_start": 151,
+      "ui_frame_count_end": 264
+    },
+    "brush": {
+      "samples": 9,
+      "native_video_frame_delta": 14,
+      "native_video_fps_observed": 11.790905561416276,
+      "ui_last_ms_p50": 0.8586670000004233,
+      "ui_last_ms_p95": 1.5406660000003285,
+      "inspect_rpc_ms_p50": 26.208915980532765,
+      "inspect_rpc_ms_p95": 30.734749976545572,
+      "ui_frame_count_start": 277,
+      "ui_frame_count_end": 417
+    },
+    "space_pan": {
+      "samples": 7,
+      "native_video_frame_delta": 28,
+      "native_video_fps_observed": 30.488499268732525,
+      "ui_last_ms_p50": 0.7972090000002936,
+      "ui_last_ms_p95": 1.3025410000000193,
+      "inspect_rpc_ms_p50": 29.796832997817546,
+      "inspect_rpc_ms_p95": 40.9429999999702,
+      "ui_frame_count_start": 445,
+      "ui_frame_count_end": 552
+    },
+    "idle_after": {
+      "samples": 8,
+      "native_video_frame_delta": 29,
+      "native_video_fps_observed": 30.639531535552177,
+      "ui_last_ms_p50": 0.6715000000003783,
+      "ui_last_ms_p95": 1.2895420000004378,
+      "inspect_rpc_ms_p50": 29.164916020818055,
+      "inspect_rpc_ms_p95": 36.886207992210984,
+      "ui_frame_count_start": 570,
+      "ui_frame_count_end": 684
+    }
+  },
+  "final_composition_ms": 10.857708,
+  "final_upload_pack_ms": 8.031209,
+  "brush_committed": true,
+  "saved_drawing_tiles": 3,
+  "space_pan_applied": true,
+  "staging_boundary": {
+    "before_current": 142,
+    "after_current": 142,
+    "history_preserved": true,
+    "result": {
+      "preparedFrame": 143,
+      "ready": true
+    },
+    "passed": true
+  },
+  "limitations": [
+    "Both attached online displays report asleep. An owned-process AppKit activation request returned requested=true, active=false.",
+    "Native callback cadence is about 30 fps in idle/pan phases, with two approximately 400 ms gaps during live brush preview in this inactive-window run.",
+    "A one-second owned worker stack sample and a worker-side GPU completion diagnostic did not establish a safe mailbox change; no speculative queue rewrite was made.",
+    "Physical scanout, actual OS/Cintiq input, audio-device output and foreground CapCut-like acceptance require the active display/user session.",
+    "No screenshots or private artwork were captured."
+  ]
+}
