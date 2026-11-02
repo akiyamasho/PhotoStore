@@ -9,12 +9,15 @@
 
 mod interrupt;
 pub use interrupt::{Cancelled, Interrupt};
+mod nv12;
+pub use nv12::{Nv12Frame, Nv12Matrix, Nv12View};
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
-use photostore_color::{ColorMode, PixelFormat, SampleType, read_sample, write_sample};
-use photostore_geom::{Rect, TILE_SIZE, TileCoord};
+use photostore_color::{read_sample, write_sample, ColorMode, PixelFormat, SampleType};
+use photostore_geom::{Rect, TileCoord, TILE_SIZE};
 
 /// Pixel storage for one tile: `TILE_SIZE² × bytes_per_pixel`, row-major, interleaved channels.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,23 +44,52 @@ impl Tile {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Surface {
     format: PixelFormat,
     default_pixel: Box<[u8]>,
     tiles: BTreeMap<TileCoord, Arc<Tile>>,
+    nv12: Option<Arc<Nv12Frame>>,
+    nv12_origin: [i32; 2],
+    projection: OnceLock<BTreeMap<TileCoord, Arc<Tile>>>,
+}
+
+impl Clone for Surface {
+    fn clone(&self) -> Self {
+        Self {
+            format: self.format,
+            default_pixel: self.default_pixel.clone(),
+            tiles: self.tiles.clone(),
+            nv12: self.nv12.clone(),
+            nv12_origin: self.nv12_origin,
+            projection: OnceLock::new(),
+        }
+    }
 }
 
 impl PartialEq for Surface {
     fn eq(&self, other: &Self) -> bool {
-        self.format == other.format && self.default_pixel == other.default_pixel && self.tiles == other.tiles
+        if self.format != other.format || self.default_pixel != other.default_pixel { return false; }
+        match (&self.nv12, &other.nv12) {
+            (None, None) => self.tiles == other.tiles,
+            (Some(a), Some(b)) if self.nv12_origin == other.nv12_origin && Arc::ptr_eq(a,b) => true,
+            // Equality remains pixel based across lazy and serialized/materialized surfaces.
+            _ => self.backing_tiles() == other.backing_tiles(),
+        }
     }
 }
 
 impl Surface {
     /// Transparent/zero surface.
     pub fn new(format: PixelFormat) -> Self {
-        Self { format, default_pixel: vec![0u8; format.bytes_per_pixel()].into_boxed_slice(), tiles: BTreeMap::new() }
+        Self {
+            format,
+            default_pixel: vec![0u8; format.bytes_per_pixel()].into_boxed_slice(),
+            tiles: BTreeMap::new(),
+            nv12: None,
+            nv12_origin: [0, 0],
+            projection: OnceLock::new(),
+        }
     }
 
     /// Surface whose untouched pixels read as `pixel` (normalised channel values).
@@ -74,13 +106,83 @@ impl Surface {
         self.format.channels()
     }
     pub fn tile_count(&self) -> usize {
-        self.tiles.len()
+        self.nv12.as_ref().map_or(self.tiles.len(), |f| {
+            Rect::new(
+                self.nv12_origin[0],
+                self.nv12_origin[1],
+                self.nv12_origin[0].saturating_add(f.width() as i32),
+                self.nv12_origin[1].saturating_add(f.height() as i32),
+            )
+            .tiles()
+            .count()
+        })
     }
     pub fn tiles(&self) -> impl Iterator<Item = (&TileCoord, &Arc<Tile>)> {
-        self.tiles.iter()
+        self.backing_tiles().iter()
     }
     pub fn tile(&self, c: TileCoord) -> Option<&Arc<Tile>> {
-        self.tiles.get(&c)
+        self.backing_tiles().get(&c)
+    }
+    fn backing_tiles(&self) -> &BTreeMap<TileCoord, Arc<Tile>> {
+        if self.nv12.is_none() {
+            return &self.tiles;
+        }
+        self.projection.get_or_init(|| {
+            let Some(frame) = self.nv12.as_ref() else { return BTreeMap::new() };
+            let mut map = BTreeMap::new();
+            let bounds = Rect::new(
+                self.nv12_origin[0],
+                self.nv12_origin[1],
+                self.nv12_origin[0].saturating_add(frame.width() as i32),
+                self.nv12_origin[1].saturating_add(frame.height() as i32),
+            );
+            for c in bounds.tiles() {
+                let part = c.rect().intersect(&bounds);
+                let mut t = Tile::filled(&PixelFormat::RGBA8, &[0, 0, 0, 0]);
+                for y in part.y0..part.y1 {
+                    for x in part.x0..part.x1 {
+                        let p =
+                            frame.rgba8(u32::try_from(x - self.nv12_origin[0]).unwrap_or(u32::MAX), u32::try_from(y - self.nv12_origin[1]).unwrap_or(u32::MAX));
+                        let o = (((y - c.ty * TILE_SIZE) as usize * TILE_SIZE as usize) + (x - c.tx * TILE_SIZE) as usize) * 4;
+                        t.data[o..o + 4].copy_from_slice(&p);
+                    }
+                }
+                map.insert(c, Arc::new(t));
+            }
+            map
+        })
+    }
+    fn materialize(&mut self) {
+        if self.nv12.is_some() {
+            let projected = self.backing_tiles().clone();
+            self.tiles = projected;
+            self.nv12 = None;
+            self.projection = OnceLock::new();
+        }
+    }
+    pub fn from_nv12(frame: Arc<Nv12Frame>) -> Self {
+        Self {
+            format: PixelFormat::RGBA8,
+            default_pixel: vec![0; 4].into_boxed_slice(),
+            tiles: BTreeMap::new(),
+            nv12: Some(frame),
+            nv12_origin: [0, 0],
+            projection: OnceLock::new(),
+        }
+    }
+    pub fn nv12_view(&self) -> Option<Nv12View<'_>> {
+        self.nv12.as_ref().map(|frame| Nv12View { frame, origin: self.nv12_origin })
+    }
+    pub fn resident_allocations(&self) -> Vec<(usize, usize)> {
+        if let Some(frame) = &self.nv12 {
+            let mut out = vec![(Arc::as_ptr(frame) as usize, frame.bytes().len())];
+            if let Some(m) = self.projection.get() {
+                out.extend(m.values().map(|t| (Arc::as_ptr(t) as usize, t.bytes().len())));
+            }
+            out
+        } else {
+            self.tiles.values().map(|t| (Arc::as_ptr(t) as usize, t.bytes().len())).collect()
+        }
     }
     pub fn default_pixel(&self) -> Vec<f32> {
         decode_pixel(&self.format, &self.default_pixel)
@@ -88,6 +190,7 @@ impl Surface {
 
     /// Mutable access to a tile, allocating it (filled with the default pixel) or un-sharing it.
     pub fn tile_mut(&mut self, c: TileCoord) -> &mut Tile {
+        self.materialize();
         let fmt = self.format;
         let dp = self.default_pixel.clone();
         let arc = self.tiles.entry(c).or_insert_with(|| Arc::new(Tile::filled(&fmt, &dp)));
@@ -96,11 +199,27 @@ impl Surface {
 
     /// Coarse bounds: union of allocated tile rects.
     pub fn tile_bounds(&self) -> Rect {
+        if let Some(f) = &self.nv12 {
+            return Rect::new(
+                self.nv12_origin[0],
+                self.nv12_origin[1],
+                self.nv12_origin[0].saturating_add(f.width() as i32),
+                self.nv12_origin[1].saturating_add(f.height() as i32),
+            );
+        }
         self.tiles.keys().fold(Rect::EMPTY, |r, c| r.union(&c.rect()))
     }
 
     /// Exact bounds of pixels that differ from the default pixel.
     pub fn content_bounds(&self) -> Rect {
+        if let Some(f) = &self.nv12 {
+            return Rect::new(
+                self.nv12_origin[0],
+                self.nv12_origin[1],
+                self.nv12_origin[0].saturating_add(f.width() as i32),
+                self.nv12_origin[1].saturating_add(f.height() as i32),
+            );
+        }
         let bpp = self.format.bytes_per_pixel();
         if self.tiles.is_empty() {
             return Rect::EMPTY;
@@ -140,6 +259,9 @@ impl Surface {
 
     /// Drop tiles that are entirely the default pixel.
     pub fn prune(&mut self) {
+        if self.nv12.is_some() {
+            return;
+        }
         let dp = self.default_pixel.clone();
         let bpp = dp.len();
         self.tiles.retain(|_, t| t.data.chunks_exact(bpp).any(|px| px != &*dp));
@@ -161,9 +283,19 @@ impl Surface {
     }
 
     pub fn read_pixel(&self, x: i32, y: i32, out: &mut [f32]) {
+        if let Some(f) = &self.nv12 {
+            let p = f.rgba8(
+                u32::try_from(x.saturating_sub(self.nv12_origin[0])).unwrap_or(u32::MAX),
+                u32::try_from(y.saturating_sub(self.nv12_origin[1])).unwrap_or(u32::MAX),
+            );
+            for (d, v) in out.iter_mut().zip(p) {
+                *d = v as f32 / 255.0;
+            }
+            return;
+        }
         let (c, base) = self.locate(x, y);
         let n = self.channels();
-        match self.tiles.get(&c) {
+        match self.backing_tiles().get(&c) {
             Some(t) => {
                 for (i, o) in out.iter_mut().enumerate().take(n) {
                     *o = read_sample(&t.data, self.format.sample, base + i);
@@ -178,6 +310,7 @@ impl Surface {
     }
 
     pub fn write_pixel(&mut self, x: i32, y: i32, px: &[f32]) {
+        self.materialize();
         let (c, base) = self.locate(x, y);
         let n = self.channels();
         let sample = self.format.sample;
@@ -190,8 +323,15 @@ impl Surface {
     /// One channel of one pixel, without allocating.
     #[inline]
     pub fn sample_channel(&self, x: i32, y: i32, c: usize) -> f32 {
+        if let Some(f) = &self.nv12 {
+            let p = f.rgba8(
+                u32::try_from(x.saturating_sub(self.nv12_origin[0])).unwrap_or(u32::MAX),
+                u32::try_from(y.saturating_sub(self.nv12_origin[1])).unwrap_or(u32::MAX),
+            );
+            return p.get(c).copied().unwrap_or(0) as f32 / 255.0;
+        }
         let (tc, base) = self.locate(x, y);
-        match self.tiles.get(&tc) {
+        match self.backing_tiles().get(&tc) {
             Some(t) => read_sample(&t.data, self.format.sample, base + c),
             None => read_sample(&self.default_pixel, self.format.sample, c),
         }
@@ -200,6 +340,13 @@ impl Surface {
     /// Channel `c` at `(x0 + i·step, y)` for `i in 0..out.len()`, looking each tile up once per run
     /// (much faster than per-sample [`Surface::sample_channel`] for strided scans).
     pub fn sample_row_strided(&self, y: i32, x0: i32, step: i32, c: usize, out: &mut [f32]) {
+        if self.nv12.is_some() {
+            let step = step.max(1);
+            for (i, v) in out.iter_mut().enumerate() {
+                *v = self.sample_channel(x0.saturating_add((i as i32).saturating_mul(step)), y, c);
+            }
+            return;
+        }
         let step = step.max(1);
         let dp = read_sample(&self.default_pixel, self.format.sample, c);
         let n = self.format.channels();
@@ -213,7 +360,7 @@ impl Surface {
             let tile_end = (tx + 1) * TILE_SIZE;
             let count = (((tile_end - x) + step - 1) / step).max(1) as usize;
             let end = (i + count).min(out.len());
-            match self.tiles.get(&TileCoord { tx, ty }) {
+            match self.backing_tiles().get(&TileCoord { tx, ty }) {
                 None => out[i..end].fill(dp),
                 Some(t) => {
                     for (k, o) in out[i..end].iter_mut().enumerate() {
@@ -228,6 +375,20 @@ impl Surface {
 
     /// [`Surface::read_region`] into a reusable buffer (resized to fit).
     pub fn read_region_into(&self, r: Rect, out: &mut Vec<f32>) {
+        if self.nv12.is_some() {
+            let n = self.channels();
+            out.clear();
+            out.resize(r.width() as usize * r.height() as usize * n, 0.0);
+            for y in r.y0..r.y1 {
+                for x in r.x0..r.x1 {
+                    let mut p = [0.0; 4];
+                    self.read_pixel(x, y, &mut p);
+                    let o = (((y - r.y0) as usize * r.width() as usize) + (x - r.x0) as usize) * n;
+                    out[o..o + n].copy_from_slice(&p[..n]);
+                }
+            }
+            return;
+        }
         let n = self.channels();
         let w = r.width() as usize;
         out.clear();
@@ -235,7 +396,7 @@ impl Surface {
         let dp = self.default_pixel();
         for tc in r.tiles() {
             let tr = tc.rect().intersect(&r);
-            let tile = self.tiles.get(&tc);
+            let tile = self.backing_tiles().get(&tc);
             for y in tr.y0..tr.y1 {
                 let o = (((y - r.y0) as usize) * w + (tr.x0 - r.x0) as usize) * n;
                 let span = tr.width() as usize * n;
@@ -262,6 +423,15 @@ impl Surface {
     /// Fast paths for RGB(A) and gray(A) at 8/16/32 bits read tile bytes
     /// directly; missing tiles are filled with the default pixel.
     pub fn read_rgba_into(&self, r: Rect, out: &mut [[f32; 4]]) {
+        if self.nv12.is_some() {
+            for (i, p) in out.iter_mut().enumerate() {
+                let x = r.x0 + (i as i32 % r.width().max(1));
+                let y = r.y0 + (i as i32 / r.width().max(1));
+                let q = self.nv12.as_ref().map(|f| f.rgba8(u32::try_from(x).unwrap_or(u32::MAX), u32::try_from(y).unwrap_or(u32::MAX))).unwrap_or([0; 4]);
+                *p = q.map(|v| v as f32 / 255.0);
+            }
+            return;
+        }
         let w = r.width() as usize;
         debug_assert_eq!(out.len(), w * r.height() as usize);
         let fmt = self.format;
@@ -269,7 +439,7 @@ impl Surface {
         let dp = to_rgba(&fmt, &self.default_pixel());
         for tc in r.tiles() {
             let tr = tc.rect().intersect(&r);
-            let tile = self.tiles.get(&tc);
+            let tile = self.backing_tiles().get(&tc);
             for y in tr.y0..tr.y1 {
                 let o = ((y - r.y0) as usize) * w + (tr.x0 - r.x0) as usize;
                 let dst = &mut out[o..o + tr.width() as usize];
@@ -309,6 +479,17 @@ impl Surface {
     /// Reads `r` as straight 8-bit RGBA into `out` (`w*h` entries). RGBA8 surfaces copy tile bytes
     /// directly; other formats convert through [`Surface::read_rgba_into`] one tile row at a time.
     pub fn read_rgba8_into(&self, r: Rect, out: &mut [[u8; 4]]) {
+        if let Some(f) = &self.nv12 {
+            for (i, p) in out.iter_mut().enumerate() {
+                let x = r.x0 + (i as i32 % r.width().max(1));
+                let y = r.y0 + (i as i32 / r.width().max(1));
+                *p = f.rgba8(
+                    u32::try_from(x.saturating_sub(self.nv12_origin[0])).unwrap_or(u32::MAX),
+                    u32::try_from(y.saturating_sub(self.nv12_origin[1])).unwrap_or(u32::MAX),
+                );
+            }
+            return;
+        }
         let w = r.width() as usize;
         debug_assert_eq!(out.len(), w * r.height() as usize);
         let fmt = self.format;
@@ -319,7 +500,7 @@ impl Surface {
         let mut row = Vec::new();
         for tc in r.tiles() {
             let tr = tc.rect().intersect(&r);
-            let tile = self.tiles.get(&tc);
+            let tile = self.backing_tiles().get(&tc);
             for y in tr.y0..tr.y1 {
                 let o = ((y - r.y0) as usize) * w + (tr.x0 - r.x0) as usize;
                 let dst = &mut out[o..o + tr.width() as usize];
@@ -347,18 +528,26 @@ impl Surface {
     /// `true` if any allocated tile intersects `r` (else `r` reads as the
     /// default pixel everywhere).
     pub fn has_tiles_in(&self, r: Rect) -> bool {
-        r.tiles().any(|tc| self.tiles.contains_key(&tc))
+        if self.nv12.is_some() {
+            return !r.intersect(&self.content_bounds()).is_empty();
+        }
+        r.tiles().any(|tc| self.backing_tiles().contains_key(&tc))
     }
 
     /// Read a rectangle as interleaved normalised floats (`w*h*channels`).
     pub fn read_region(&self, r: Rect) -> Vec<f32> {
+        if self.nv12.is_some() {
+            let mut out = Vec::new();
+            self.read_region_into(r, &mut out);
+            return out;
+        }
         let n = self.channels();
         let w = r.width() as usize;
         let mut out = vec![0.0f32; w * r.height() as usize * n];
         let dp = self.default_pixel();
         for tc in r.tiles() {
             let tr = tc.rect().intersect(&r);
-            let tile = self.tiles.get(&tc);
+            let tile = self.backing_tiles().get(&tc);
             for y in tr.y0..tr.y1 {
                 for x in tr.x0..tr.x1 {
                     let o = (((y - r.y0) as usize) * w + (x - r.x0) as usize) * n;
@@ -379,6 +568,7 @@ impl Surface {
 
     /// Write interleaved normalised floats into a rectangle.
     pub fn write_region(&mut self, r: Rect, data: &[f32]) {
+        self.materialize();
         let n = self.channels();
         let w = r.width() as usize;
         assert_eq!(data.len(), w * r.height() as usize * n, "region data length mismatch");
@@ -402,6 +592,7 @@ impl Surface {
     /// pixel), so they can be edited elsewhere, e.g. in parallel: `Arc::unwrap_or_clone` copies a
     /// tile only if an undo snapshot still shares it. Give them back with [`Surface::put_tiles`].
     pub fn take_tiles(&mut self, r: Rect) -> Vec<(TileCoord, Arc<Tile>)> {
+        self.materialize();
         let fmt = self.format;
         let mut blank: Option<Arc<Tile>> = None;
         r.tiles()
@@ -414,6 +605,7 @@ impl Surface {
 
     /// Put tiles back (see [`Surface::take_tiles`]); each replaces the tile at its coordinate.
     pub fn put_tiles(&mut self, tiles: impl IntoIterator<Item = (TileCoord, Arc<Tile>)>) {
+        self.materialize();
         for (c, t) in tiles {
             self.tiles.insert(c, t);
         }
@@ -434,6 +626,7 @@ impl Surface {
 
     /// Fill a rectangle with one pixel value.
     pub fn fill_rect(&mut self, r: Rect, px: &[f32]) {
+        self.materialize();
         let n = self.channels();
         let mut enc = vec![0u8; self.format.bytes_per_pixel()];
         encode_pixel(&self.format, &px[..n], &mut enc);
@@ -481,8 +674,7 @@ impl Surface {
             let tile = out.tile_mut(coordinate);
             for y in tile_rect.y0..tile_rect.y1 {
                 let source = (((y - r.y0) as usize) * width + (tile_rect.x0 - r.x0) as usize) * 4;
-                let destination = (((y - coordinate.ty * TILE_SIZE) as usize * TILE_SIZE as usize)
-                    + (tile_rect.x0 - coordinate.tx * TILE_SIZE) as usize) * 4;
+                let destination = (((y - coordinate.ty * TILE_SIZE) as usize * TILE_SIZE as usize) + (tile_rect.x0 - coordinate.tx * TILE_SIZE) as usize) * 4;
                 let source_row = &bytes[source..source + span * 4];
                 let target_row = &mut tile.data[destination..destination + span * 4];
                 // Fixed-size chunks let LLVM eliminate per-channel frame/tile bounds checks.
@@ -500,12 +692,18 @@ impl Surface {
     /// Build an opaque RGBA8 surface directly from tightly packed RGB24 bytes.
     /// Returns `None` when geometry or the exact source byte count is invalid.
     pub fn try_from_interleaved_rgb24(r: Rect, bytes: &[u8], ramps: Option<&[[u8; 256]; 3]>) -> Option<Self> {
-        if r.x0 < 0 || r.y0 < 0 || r.x1 <= r.x0 || r.y1 <= r.y0 { return None; }
+        if r.x0 < 0 || r.y0 < 0 || r.x1 <= r.x0 || r.y1 <= r.y0 {
+            return None;
+        }
         let width = usize::try_from(r.width()).ok()?;
         let height = usize::try_from(r.height()).ok()?;
-        if width == 0 || height == 0 { return None; }
+        if width == 0 || height == 0 {
+            return None;
+        }
         let expected = width.checked_mul(height)?.checked_mul(3)?;
-        if bytes.len() != expected { return None; }
+        if bytes.len() != expected {
+            return None;
+        }
         let mut out = Self::new(PixelFormat::RGBA8);
         for coordinate in r.tiles() {
             let tile_rect = coordinate.rect().intersect(&r);
@@ -513,13 +711,14 @@ impl Surface {
             let tile = out.tile_mut(coordinate);
             for y in tile_rect.y0..tile_rect.y1 {
                 let source = (((y - r.y0) as usize) * width + (tile_rect.x0 - r.x0) as usize) * 3;
-                let destination = (((y - coordinate.ty * TILE_SIZE) as usize * TILE_SIZE as usize)
-                    + (tile_rect.x0 - coordinate.tx * TILE_SIZE) as usize) * 4;
+                let destination = (((y - coordinate.ty * TILE_SIZE) as usize * TILE_SIZE as usize) + (tile_rect.x0 - coordinate.tx * TILE_SIZE) as usize) * 4;
                 let source_row = &bytes[source..source + span * 3];
                 let target_row = &mut tile.data[destination..destination + span * 4];
                 if let Some(lut) = ramps {
                     for (src, dst) in source_row.chunks_exact(3).zip(target_row.chunks_exact_mut(4)) {
-                        dst[0] = lut[0][src[0] as usize]; dst[1] = lut[1][src[1] as usize]; dst[2] = lut[2][src[2] as usize];
+                        dst[0] = lut[0][src[0] as usize];
+                        dst[1] = lut[1][src[1] as usize];
+                        dst[2] = lut[2][src[2] as usize];
                         dst[3] = 255;
                     }
                 } else {
@@ -576,7 +775,7 @@ impl Surface {
             let span = tr.width() as usize * bpp;
             for y in tr.y0..tr.y1 {
                 let dst = (((y - r.y0) as usize) * w + (tr.x0 - r.x0) as usize) * bpp;
-                match self.tiles.get(&tc) {
+                match self.backing_tiles().get(&tc) {
                     Some(t) => {
                         let src = (((y - tc.ty * TILE_SIZE) as usize) * TILE_SIZE as usize + (tr.x0 - tc.tx * TILE_SIZE) as usize) * bpp;
                         out[dst..dst + span].copy_from_slice(&t.data[src..src + span]);
@@ -597,7 +796,30 @@ impl Surface {
     /// `content` must hold every pixel that isn't the default one (`content_bounds`, say): only
     /// tiles it reaches are kept.
     pub fn translated(&self, dx: i32, dy: i32, content: Rect) -> Surface {
-        let mut out = Surface { format: self.format, default_pixel: self.default_pixel.clone(), tiles: BTreeMap::new() };
+        if let Some(frame) = &self.nv12 {
+            let bounds = Rect::new(
+                self.nv12_origin[0],
+                self.nv12_origin[1],
+                self.nv12_origin[0].saturating_add(frame.width() as i32),
+                self.nv12_origin[1].saturating_add(frame.height() as i32),
+            );
+            if content.contains_rect(&bounds) {
+                let mut out = Surface::from_nv12(frame.clone());
+                out.nv12_origin = [self.nv12_origin[0].saturating_add(dx), self.nv12_origin[1].saturating_add(dy)];
+                return out;
+            }
+            let mut expanded = self.clone();
+            expanded.materialize();
+            return expanded.translated(dx, dy, content);
+        }
+        let mut out = Surface {
+            format: self.format,
+            default_pixel: self.default_pixel.clone(),
+            tiles: BTreeMap::new(),
+            nv12: None,
+            nv12_origin: [0, 0],
+            projection: OnceLock::new(),
+        };
         let sources = || self.tiles.iter().filter(move |(c, _)| !c.rect().intersect(&content).is_empty());
         if dx % TILE_SIZE == 0 && dy % TILE_SIZE == 0 {
             let (tx, ty) = (dx / TILE_SIZE, dy / TILE_SIZE);
@@ -637,15 +859,17 @@ impl Surface {
         // Format identity is a copy-on-write tile share, not a colour transform. Apart from
         // avoiding millions of temporary vectors per movie frame, this preserves exact encoded
         // samples (including high-bit/HDR data) rather than round-tripping them through floats.
-        if self.format == to { return self.clone(); }
+        if self.format == to {
+            return self.clone();
+        }
         if self.format.mode == to.mode && self.format.alpha == to.alpha {
-            let mut out=Surface::with_default(to,&self.default_pixel());
-            let channels=to.channels();
-            let samples=(TILE_SIZE*TILE_SIZE) as usize*channels;
-            for (coordinate,tile) in &self.tiles {
-                let destination=out.tile_mut(*coordinate);
+            let mut out = Surface::with_default(to, &self.default_pixel());
+            let channels = to.channels();
+            let samples = (TILE_SIZE * TILE_SIZE) as usize * channels;
+            for (coordinate, tile) in self.backing_tiles() {
+                let destination = out.tile_mut(*coordinate);
                 for index in 0..samples {
-                    write_sample(&mut destination.data,to.sample,index,read_sample(&tile.data,self.format.sample,index));
+                    write_sample(&mut destination.data, to.sample, index, read_sample(&tile.data, self.format.sample, index));
                 }
             }
             return out;
@@ -653,7 +877,7 @@ impl Surface {
         let mut out = Surface::with_default(to, &convert_pixel(&self.format, &to, &self.default_pixel()));
         let from_n = self.channels();
         let mut src = vec![0.0f32; from_n];
-        for (c, t) in &self.tiles {
+        for (c, t) in self.backing_tiles() {
             let dst = out.tile_mut(*c);
             let px_count = (TILE_SIZE * TILE_SIZE) as usize;
             for i in 0..px_count {
@@ -673,6 +897,15 @@ impl Surface {
     pub fn rgba(&self, x: i32, y: i32) -> [f32; 4] {
         let p = self.pixel(x, y);
         to_rgba(&self.format, &p)
+    }
+    pub fn rgba8(&self, x: u32, y: u32) -> [u8; 4] {
+        self.nv12.as_ref().map_or_else(
+            || {
+                let p = self.rgba(x as i32, y as i32);
+                p.map(|v| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
+            },
+            |f| f.rgba8(u32::try_from(i64::from(x)-i64::from(self.nv12_origin[0])).unwrap_or(u32::MAX), u32::try_from(i64::from(y)-i64::from(self.nv12_origin[1])).unwrap_or(u32::MAX)),
+        )
     }
 }
 
@@ -787,19 +1020,19 @@ mod tests {
 
     #[test]
     fn scalable_playback_identity_preserves_encoded_samples_and_cow() {
-        for depth in [photostore_color::SampleType::U8,photostore_color::SampleType::U16,photostore_color::SampleType::F32] {
-            let format=photostore_color::PixelFormat::new(photostore_color::ColorMode::Rgb,depth,true);
-            let mut source=super::Surface::new(format);
-            source.write_pixel(3,4,&[0.2,0.4,1.25,0.8]);
-            let rect=photostore_geom::Rect::from_xywh(0,0,8,8);
-            let before=source.to_interleaved(rect);
-            let mut converted=source.convert(format);
-            assert_eq!(converted.to_interleaved(rect),before);
-            let tile=source.tiles().next().unwrap().1;
-            assert!(std::sync::Arc::ptr_eq(tile,converted.tiles().next().unwrap().1));
-            converted.write_pixel(3,4,&[0.9,0.1,0.2,1.0]);
-            assert_eq!(source.to_interleaved(rect),before,"mutating the result must not alter source/undo tiles");
-            assert_ne!(converted.to_interleaved(rect),before);
+        for depth in [photostore_color::SampleType::U8, photostore_color::SampleType::U16, photostore_color::SampleType::F32] {
+            let format = photostore_color::PixelFormat::new(photostore_color::ColorMode::Rgb, depth, true);
+            let mut source = super::Surface::new(format);
+            source.write_pixel(3, 4, &[0.2, 0.4, 1.25, 0.8]);
+            let rect = photostore_geom::Rect::from_xywh(0, 0, 8, 8);
+            let before = source.to_interleaved(rect);
+            let mut converted = source.convert(format);
+            assert_eq!(converted.to_interleaved(rect), before);
+            let tile = source.tiles().next().unwrap().1;
+            assert!(std::sync::Arc::ptr_eq(tile, converted.tiles().next().unwrap().1));
+            converted.write_pixel(3, 4, &[0.9, 0.1, 0.2, 1.0]);
+            assert_eq!(source.to_interleaved(rect), before, "mutating the result must not alter source/undo tiles");
+            assert_ne!(converted.to_interleaved(rect), before);
         }
     }
     use super::*;

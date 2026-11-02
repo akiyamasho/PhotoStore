@@ -206,7 +206,7 @@ impl History {
     /// Pixel bytes of `current` plus the tiles only history holds (what [`History::trim`]
     /// bounds by [`History::max_bytes`]).
     pub fn pixel_bytes(&self, current: &Document) -> usize {
-        if let Some(tiles) = &self.tiles {
+        if let Some(tiles) = &self.tiles && !self.has_lazy_video(current) {
             return usize::try_from(tiles.bytes_with(current)).unwrap_or(usize::MAX);
         }
         let mut seen = HashSet::new();
@@ -222,15 +222,18 @@ impl History {
         if self.max_bytes == 0 || self.undo.len() <= 1 {
             return 0;
         }
-        let tiles = self.tiles.get_or_insert_with(|| {
-            let mut tiles = tiles::Tiles::default();
-            for state in self.undo.iter().chain(&self.redo) {
-                tiles.add(&state.doc);
-            }
-            tiles
-        });
-        if tiles.fits(current, self.max_bytes) {
-            return 0;
+        if self.has_lazy_video(current) {
+            // Immutable lazy surfaces can acquire a raster projection after a snapshot entered
+            // history. Recount actual resident allocations rather than trusting old tile refs.
+            self.tiles = None;
+            if self.pixel_bytes(current) <= self.max_bytes { return 0; }
+        } else {
+            let tiles = self.tiles.get_or_insert_with(|| {
+                let mut tiles = tiles::Tiles::default();
+                for state in self.undo.iter().chain(&self.redo) { tiles.add(&state.doc); }
+                tiles
+            });
+            if tiles.fits(current, self.max_bytes) { return 0; }
         }
         let mut seen = HashSet::new();
         let mut total = tile_bytes(current, &mut seen);
@@ -247,9 +250,18 @@ impl History {
         }
         let drop = self.undo.len() - keep;
         for state in self.undo.drain(..drop) {
-            tiles.remove(&state.doc);
+            if let Some(tiles) = self.tiles.as_mut() { tiles.remove(&state.doc); }
         }
         drop
+    }
+
+    fn has_lazy_video(&self, current: &Document) -> bool {
+        let has = |doc: &Document| {
+            let mut found = false;
+            tiles::surfaces(doc, |surface| { found |= surface.nv12_view().is_some(); });
+            found
+        };
+        has(current) || self.undo.iter().chain(&self.redo).any(|state| has(&state.doc))
     }
 }
 

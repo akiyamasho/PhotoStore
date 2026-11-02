@@ -79,6 +79,10 @@ pub struct MediaInfo {
     pub color_primaries: Option<String>,
     #[serde(default)]
     pub color_space: Option<String>,
+    #[serde(default)]
+    pub color_range: Option<String>,
+    #[serde(default)]
+    pub chroma_location: Option<String>,
 }
 pub(crate) fn ensure_sdr(info:&MediaInfo)->Result<()> {
     if matches!(info.color_transfer.as_deref(),Some("smpte2084"|"arib-std-b67")) {
@@ -109,8 +113,22 @@ fn decoded_surface_rgb24(info:&MediaInfo,bytes:&[u8],format:PixelFormat,width:u3
     decoded_surface_from_rgba(info,None,Some(bytes),format,width,height)
 }
 
-fn decoded_surface_from_rgba(info:&MediaInfo,rgba_bytes:Option<&[u8]>,rgb24_bytes:Option<&[u8]>,format:PixelFormat,width:u32,height:u32)->Result<Surface> {
+fn video_srgb_transform(primaries:usize,transfer:usize)->Result<std::sync::Arc<photostore_cms::Transform>> {
     use photostore_cms::{Curve,Transform,Intent,builtin::Builtin};
+    type Entry=std::sync::OnceLock<std::result::Result<std::sync::Arc<Transform>,String>>;
+    static COLOR:[Entry;15]=[const{std::sync::OnceLock::new()};15];
+    COLOR[primaries.min(2)*5+transfer.min(4)].get_or_init(|| {
+        let mut profile=match primaries {1=>Builtin::Rec2020,2=>Builtin::DisplayP3,_=>Builtin::Srgb}.profile().clone();
+        profile.trc=match transfer {
+            0=>Builtin::Srgb.profile().trc.clone(),
+            1=>{let a=1.099;let curve=Curve::Parametric{kind:3,p:[1.0/0.45,1.0/a,(a-1.0)/a,1.0/4.5,0.081,0.0,0.0]};Some([curve.clone(),curve.clone(),curve])},
+            gamma=>{let curve=Curve::Gamma(match gamma{2=>1.0,3=>2.2,_=>2.8});Some([curve.clone(),curve.clone(),curve])}
+        };
+        Transform::new(&profile,Builtin::Srgb.profile(),Intent::RelativeColorimetric,true).map(std::sync::Arc::new).map_err(|e|e.to_string())
+    }).as_ref().map(std::sync::Arc::clone).map_err(|e|MediaBackendError::InvalidInput(format!("source video color transform failed: {e}")))
+}
+
+fn decoded_surface_from_rgba(info:&MediaInfo,rgba_bytes:Option<&[u8]>,rgb24_bytes:Option<&[u8]>,format:PixelFormat,width:u32,height:u32)->Result<Surface> {
     ensure_sdr(info)?;
     let primaries=match info.color_primaries.as_deref() {
         None|Some("unknown"|"unspecified"|"bt709")=>0,
@@ -137,36 +155,56 @@ fn decoded_surface_from_rgba(info:&MediaInfo,rgba_bytes:Option<&[u8]>,rgb24_byte
         // tile map through the identity `Surface::convert` on the common preview format.
         return if format==PixelFormat::RGBA8 {Ok(decoded)} else {Ok(decoded.convert(format))};
     }
-    type Entry=std::sync::OnceLock<std::result::Result<std::sync::Arc<Transform>,String>>;
-    static COLOR:[Entry;15]=[const{std::sync::OnceLock::new()};15];
-    let transform=COLOR[primaries*5+transfer].get_or_init(|| {
-        let mut profile=match primaries {1=>Builtin::Rec2020,2=>Builtin::DisplayP3,_=>Builtin::Srgb}.profile().clone();
-        profile.trc=match transfer {
-            0=>Builtin::Srgb.profile().trc.clone(),
-            1=>{let a=1.099;let curve=Curve::Parametric{kind:3,p:[1.0/0.45,1.0/a,(a-1.0)/a,1.0/4.5,0.081,0.0,0.0]};Some([curve.clone(),curve.clone(),curve])},
-            gamma=>{let curve=Curve::Gamma(match gamma{2=>1.0,3=>2.2,_=>2.8});Some([curve.clone(),curve.clone(),curve])}
-        };
-        Transform::new(&profile,Builtin::Srgb.profile(),Intent::RelativeColorimetric,true).map(std::sync::Arc::new).map_err(|e|e.to_string())
-    }).as_ref().map_err(|e|MediaBackendError::InvalidInput(format!("source video color transform failed: {e}")))?;
+    let transform=video_srgb_transform(primaries,transfer)?;
     // Same RGB primaries: the transfer is separable. Build the exact CMS byte ramp once,
     // then apply it directly to incoming RGBA8 instead of allocating/converting tiled float
     // buffers for every frame. Other primaries/depths retain the full working-space transform.
     if primaries==0 && format==PixelFormat::RGBA8 {
-        static RAMPS:[std::sync::OnceLock<[[u8;256];3]>;4]=[const{std::sync::OnceLock::new()};4];
-        let ramps=RAMPS[transfer-1].get_or_init(|| {
-            let input:Vec<u8>=(0..=255u8).flat_map(|v|[v;3]).collect();
-            let mut output=vec![0u8;input.len()];
-            transform.convert_bytes_many(photostore_cms::SampleKind::U8,vec![(&input,&mut output)],3,3,false);
-            let mut ramps=[[0u8;256];3];
-            for i in 0..256 {for channel in 0..3 {ramps[channel][i]=output[i*3+channel];}}
-            ramps
-        });
+        let ramps=rgb8_transfer_ramps(transfer,&transform);
         if let Some(bytes)=rgba_bytes {return Ok(Surface::from_interleaved_rgba8_lut(Rect::from_xywh(0,0,width,height),bytes,ramps));}
         if let Some(bytes)=rgb24_bytes {return Surface::try_from_interleaved_rgb24(Rect::from_xywh(0,0,width,height), bytes, Some(ramps)).ok_or_else(||MediaBackendError::InvalidInput("invalid RGB24 frame for LUT conversion".into()));}
     }
     let rgb_format=PixelFormat{mode:photostore_color::ColorMode::Rgb,sample:format.sample,alpha:true};
     let surface=source()?.convert(rgb_format);
-    Ok(crate::color_cmds::convert_surface(&surface,photostore_color::ColorMode::Rgb,rgb_format,transform).convert(format))
+    Ok(crate::color_cmds::convert_surface(&surface,photostore_color::ColorMode::Rgb,rgb_format,&transform).convert(format))
+}
+
+fn rgb8_transfer_ramps(transfer:usize,transform:&photostore_cms::Transform)->&'static [[u8;256];3] {
+    static RAMPS:[std::sync::OnceLock<[[u8;256];3]>;4]=[const{std::sync::OnceLock::new()};4];
+    RAMPS[transfer.saturating_sub(1).min(3)].get_or_init(|| {
+        let input:Vec<u8>=(0..=255u8).flat_map(|v|[v;3]).collect();
+        let mut output=vec![0u8;input.len()];
+            transform.convert_bytes_many(photostore_cms::SampleKind::U8,vec![(&input,&mut output)],3,3,false);
+        let mut ramps=[[0u8;256];3];
+        for i in 0..256 {for channel in 0..3 {ramps[channel][i]=output[i*3+channel];}}
+        ramps
+    })
+}
+
+/// Select the compact native-preview representation only when metadata proves that an
+/// opaque, limited-range 8-bit 4:2:0 frame can be represented without a lossy color guess.
+pub(crate) fn compact_preview_matrix(info:&MediaInfo,format:PixelFormat,width:u32,height:u32)->Option<photostore_raster::Nv12Matrix> {
+    if format!=PixelFormat::RGBA8 || width!=info.width || height!=info.height || width==0 || height==0 || width%2!=0 || height%2!=0
+        || info.codec_name.as_deref()!=Some("h264") || info.pixel_format.as_deref()!=Some("yuv420p")
+        || !matches!(info.color_range.as_deref(),None|Some("unknown"|"unspecified"|"tv"))
+        || info.color_primaries.as_deref().is_some_and(|v|!matches!(v,"unknown"|"unspecified"|"bt709"))
+        || !matches!(info.color_transfer.as_deref(),None|Some("unknown"|"unspecified"|"iec61966-2-1"|"bt709"|"smpte170m"|"bt2020-10"|"bt2020-12"))
+        || !matches!(info.chroma_location.as_deref(),None|Some("left"|"unspecified"|"unknown")) {return None;}
+    match info.color_space.as_deref() {
+        None|Some("unknown"|"unspecified"|"smpte170m"|"bt470bg")=>Some(photostore_raster::Nv12Matrix::Bt601),
+        Some("bt709")=>Some(photostore_raster::Nv12Matrix::Bt709),
+        _=>None,
+    }
+}
+
+fn compact_transfer_ramps(info:&MediaInfo)->Result<Option<[[u8;256];3]>> {
+    let transfer=match info.color_transfer.as_deref() {
+        None|Some("unknown"|"unspecified"|"iec61966-2-1")=>return Ok(None),
+        Some("bt709"|"smpte170m"|"bt2020-10"|"bt2020-12")=>1,
+        _=>return Err(MediaBackendError::InvalidInput("unsupported compact-preview transfer metadata".into())),
+    };
+    let transform=video_srgb_transform(0,transfer)?;
+    Ok(Some(*rgb8_transfer_ramps(transfer,&transform)))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -394,7 +432,7 @@ pub fn probe(path: impl AsRef<Path>) -> Result<MediaInfo> {
             "-protocol_whitelist",
             "file,pipe",
             "-show_entries",
-            "stream=codec_type,codec_name,width,height,pix_fmt,avg_frame_rate,r_frame_rate,time_base,color_transfer,color_primaries,color_space,duration,nb_frames:format=duration",
+            "stream=codec_type,codec_name,width,height,pix_fmt,avg_frame_rate,r_frame_rate,time_base,color_transfer,color_primaries,color_space,color_range,chroma_location,duration,nb_frames:format=duration",
             "-of",
             "json",
         ])
@@ -475,6 +513,8 @@ pub fn probe(path: impl AsRef<Path>) -> Result<MediaInfo> {
         color_transfer: video.get("color_transfer").and_then(Value::as_str).map(str::to_owned),
         color_primaries: video.get("color_primaries").and_then(Value::as_str).map(str::to_owned),
         color_space: video.get("color_space").and_then(Value::as_str).map(str::to_owned),
+        color_range: video.get("color_range").and_then(Value::as_str).map(str::to_owned),
+        chroma_location: video.get("chroma_location").and_then(Value::as_str).map(str::to_owned),
     })
 }
 
@@ -1471,6 +1511,9 @@ pub(crate) struct PreviewDecoder {
     width:u32,
     height:u32,
     rgb24:bool,
+    compact_preview:bool,
+    compact_matrix:Option<photostore_raster::Nv12Matrix>,
+    compact_ramps:Option<[[u8;256];3]>,
     path:PathBuf,
     origin_seconds:f64,
     step:f64,
@@ -1491,25 +1534,28 @@ fn preview_sampling_filter(seconds: f64, step: f64) -> String {
     format!("settb=1/1000000000,setpts=PTS-{seconds:.9}/TB-1,fps=fps={:.12}:start_time=0:round=up:eof_action=pass", 1.0 / step)
 }
 impl PreviewDecoder {
-    pub(crate) fn start(path:&Path,info:&MediaInfo,seconds:f64,step:f64,format:PixelFormat,width:u32,height:u32)->Result<Self> {
+    pub(crate) fn start(path:&Path,info:&MediaInfo,seconds:f64,step:f64,format:PixelFormat,width:u32,height:u32,native_preview:bool)->Result<Self> {
+        let compact_matrix=if native_preview {compact_preview_matrix(info,format,width,height)}else{None};
+        let compact_ramps=if compact_matrix.is_some(){compact_transfer_ramps(info)?}else{None};
         let hardware=videotoolbox_preview_eligible(info);
-        if !hardware {return Self::start_with_backend(path,info,seconds,step,format,width,height,false);}
-        match Self::start_with_backend(path,info,seconds,step,format,width,height,true) {
+        if !hardware {return Self::start_with_backend(path,info,seconds,step,format,width,height,false,compact_matrix,compact_ramps);}
+        match Self::start_with_backend(path,info,seconds,step,format,width,height,true,compact_matrix,compact_ramps) {
             Ok(decoder)=>Ok(decoder),
             Err(original)=>{
                 HARDWARE_PREVIEW_FALLBACKS.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-                Self::start_with_backend(path,info,seconds,step,format,width,height,false).map_err(|fallback|MediaBackendError::Process(format!("hardware preview failed to start ({original}); software fallback could not start: {fallback}")))
+                Self::start_with_backend(path,info,seconds,step,format,width,height,false,compact_matrix,compact_ramps).map_err(|fallback|MediaBackendError::Process(format!("hardware preview failed to start ({original}); software fallback could not start: {fallback}")))
             }
         }
     }
-    fn start_with_backend(path:&Path,info:&MediaInfo,seconds:f64,step:f64,format:PixelFormat,width:u32,height:u32,hardware:bool)->Result<Self> {
+    fn start_with_backend(path:&Path,info:&MediaInfo,seconds:f64,step:f64,format:PixelFormat,width:u32,height:u32,hardware:bool,compact_matrix:Option<photostore_raster::Nv12Matrix>,compact_ramps:Option<[[u8;256];3]>)->Result<Self> {
         ensure_sdr(info)?;
         if !seconds.is_finite() || seconds<0.0 || seconds>=info.duration_seconds || !step.is_finite() || !(0.001..=10.0).contains(&step)
             || width==0 || height==0 || width>MAX_DIMENSION || height>MAX_DIMENSION {return Err(MediaBackendError::InvalidInput("invalid sequential preview geometry/time".into()));}
-        let rgb24=opaque_8bit_source(info);
-        if u64::from(width)*u64::from(height)>MAX_FRAME_BYTES/4 {return Err(MediaBackendError::InvalidInput("sequential RGBA surface exceeds the decode allocation bound".into()));}
-        let channels=if rgb24 {3usize}else{4usize};
-        let per=(width as usize).checked_mul(height as usize).and_then(|n|n.checked_mul(channels)).filter(|n|*n<=MAX_FRAME_BYTES as usize)
+        let compact_preview=compact_matrix.is_some();
+        let rgb24=!compact_preview&&opaque_8bit_source(info);
+        if u64::from(width)*u64::from(height)>MAX_FRAME_BYTES/4 {return Err(MediaBackendError::InvalidInput("sequential RGBA projection exceeds the decode allocation bound".into()));}
+        let channels=if compact_preview {3usize}else if rgb24 {3usize}else{4usize};
+        let per=(width as usize).checked_mul(height as usize).and_then(|n|n.checked_mul(channels)).and_then(|n|if compact_preview {n.checked_div(2)}else{Some(n)}).filter(|n|*n<=MAX_FRAME_BYTES as usize)
             .ok_or_else(||MediaBackendError::InvalidInput("sequential frame dimensions exceed the decode allocation bound".into()))?;
         let exe=resolve_binary("PHOTOSTORE_FFMPEG","ffmpeg").ok_or(MediaBackendError::Unsupported)?;
         let mut command=Command::new(exe);
@@ -1519,7 +1565,7 @@ impl PreviewDecoder {
         command.args(["-ss",&format!("{:.6}",(seconds*1_000_000.0).floor()/1_000_000.0),"-i"]).arg(path);
         let mut filter=preview_sampling_filter(seconds, step);
         if (width,height)!=(info.width,info.height) {filter.push_str(&format!(",scale={width}:{height}:flags=bilinear"));}
-        let pixel_format=if rgb24 {"rgb24"}else{"rgba"};
+        let pixel_format=if compact_preview {"nv12"}else if rgb24 {"rgb24"}else{"rgba"};
         let mut child=command.args(["-map","0:v:0","-an","-sn","-dn","-vf",&filter,"-f","rawvideo","-pix_fmt",pixel_format,"pipe:1"])
             .stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     DECODE_PROCESS_LAUNCHES.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
@@ -1552,7 +1598,7 @@ impl PreviewDecoder {
             }
         }) {Ok(reader)=>reader,Err(error)=>{let _=child.kill();let _=child.wait();return Err(error.into());}};
         PREVIEW_STREAM_LAUNCHES.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-        Ok(Self{child,receiver:Some(receiver),recycle:Some(recycle),reader:Some(reader),stderr,info:info.clone(),format,width,height,rgb24,path:path.to_path_buf(),origin_seconds:seconds,step,raw_frames:0,hardware,hardware_fallback_used:false})
+        Ok(Self{child,receiver:Some(receiver),recycle:Some(recycle),reader:Some(reader),stderr,info:info.clone(),format,width,height,rgb24,compact_preview,compact_matrix,compact_ramps,path:path.to_path_buf(),origin_seconds:seconds,step,raw_frames:0,hardware,hardware_fallback_used:false})
     }
     fn read_raw_packet(&mut self)->Result<Option<Vec<u8>>> {
         let packet=self.receiver.as_ref().ok_or_else(||MediaBackendError::Process("preview stream retired".into()))?
@@ -1594,7 +1640,7 @@ impl PreviewDecoder {
         self.retire_owned();
         self.hardware=false;self.hardware_fallback_used=true;
         HARDWARE_PREVIEW_FALLBACKS.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-        match Self::start_with_backend(&self.path,&self.info,seconds,self.step,self.format,self.width,self.height,false) {
+        match Self::start_with_backend(&self.path,&self.info,seconds,self.step,self.format,self.width,self.height,false,self.compact_matrix,self.compact_ramps) {
             Ok(mut replacement)=>{
                 // Transfer process ownership only after the old hardware pipe has been fully retired.
                 std::mem::swap(&mut self.child,&mut replacement.child);
@@ -1613,10 +1659,14 @@ impl PreviewDecoder {
     }
     pub(crate) fn next_frame(&mut self)->Result<Option<Surface>> {
         let Some(bytes)=self.read_raw()? else{return Ok(None)};
-        let surface=if self.rgb24 {decoded_surface_rgb24(&self.info,&bytes,self.format,self.width,self.height)}else{decoded_surface(&self.info,&bytes,self.format,self.width,self.height)};
+        let surface=if let Some(matrix)=self.compact_matrix {
+            let compact=bytes.clone();
+            photostore_raster::Nv12Frame::new(self.width,self.height,compact,matrix,self.compact_ramps).map(|frame|Surface::from_nv12(Arc::new(frame))).map_err(|error|MediaBackendError::InvalidInput(error.into()))
+        } else if self.rgb24 {decoded_surface_rgb24(&self.info,&bytes,self.format,self.width,self.height)}else{decoded_surface(&self.info,&bytes,self.format,self.width,self.height)};
         if let Some(recycle)=&self.recycle {let _=recycle.try_send(bytes);}
         surface.map(Some)
     }
+    pub(crate) fn raw_frame_bytes(&self)->usize { (self.width as usize).saturating_mul(self.height as usize).saturating_mul(if self.compact_preview {3}else{4}).checked_div(if self.compact_preview {2}else{1}).unwrap_or(usize::MAX) }
     pub(crate) fn skip_frame(&mut self)->Result<bool> {
         let Some(bytes)=self.read_raw()? else{return Ok(false)};
         if let Some(recycle)=&self.recycle {let _=recycle.try_send(bytes);}
@@ -2231,7 +2281,7 @@ fn append_audio_args(cmd: &mut Command, clips: &[AudioMixClip], output_duration:
 
 #[cfg(test)]mod scalable_color_boundary {
     #[test]fn scalable_playback_transfer_lut_matches_full_cms_and_alpha(){
-        let info=super::MediaInfo{width:4,height:1,fps:super::Rational::new(30,1),duration_seconds:1.0,frame_count:Some(30),has_audio:false,codec_name:None,pixel_format:None,time_base:None,color_transfer:Some("bt709".into()),color_primaries:Some("bt709".into()),color_space:Some("bt709".into())};
+        let info=super::MediaInfo{width:4,height:1,fps:super::Rational::new(30,1),duration_seconds:1.0,frame_count:Some(30),has_audio:false,codec_name:None,pixel_format:None,time_base:None,color_transfer:Some("bt709".into()),color_primaries:Some("bt709".into()),color_space:Some("bt709".into()),color_range:None,chroma_location:None};
         let bytes=[24,80,210,127,129,42,0,255,255,1,200,200,18,230,111,0];
         let region=photostore_geom::Rect::from_xywh(0,0,4,1);
         let fast=super::decoded_surface(&info,&bytes,photostore_color::PixelFormat::RGBA8,4,1).unwrap().to_interleaved(region);
@@ -2266,7 +2316,7 @@ mod preview_cadence_boundary {
             assert_eq!(reference.len(), 30);
             assert_eq!(reference.iter().take(15).collect::<std::collections::HashSet<_>>().len(), 15);
             for start in [0usize, 7, 24] {
-                let mut decoder = PreviewDecoder::start(&path, &info, start as f64 * step, step, format, 32, 32).unwrap();
+                let mut decoder = PreviewDecoder::start(&path, &info, start as f64 * step, step, format, 32, 32, false).unwrap();
                 for frame in start..(start + 6) {
                     let actual = decoder.next_frame().unwrap().unwrap().to_interleaved(rect);
                     assert_eq!(actual, reference[frame], "{rate}: source frame {frame} after seek {start} must not repeat its predecessor");
@@ -2275,13 +2325,13 @@ mod preview_cadence_boundary {
             let batch = decode_preview_window(&path, &info, 0.0, step, 8, format, 32, 32).unwrap();
             for (frame, surface) in batch.iter().enumerate() { assert_eq!(surface.to_interleaved(rect), reference[frame]); }
             let info = probe(&vfr).unwrap();
-            let mut decoder = PreviewDecoder::start(&vfr, &info, 0.0, step, format, 32, 32).unwrap();
+            let mut decoder = PreviewDecoder::start(&vfr, &info, 0.0, step, format, 32, 32, false).unwrap();
             for frame in 0..15 {
                 let held = if frame % 3 == 2 { frame - 1 } else { frame };
                 assert_eq!(decoder.next_frame().unwrap().unwrap().to_interleaved(rect), reference[held], "{rate}: VFR held frame at output {frame}");
             }
             // A genuinely earlier target must retain the previous source, not use nearest-frame selection.
-            let mut decoder = PreviewDecoder::start(&path, &probe(&path).unwrap(), step - 0.000001, step, format, 32, 32).unwrap();
+            let mut decoder = PreviewDecoder::start(&path, &probe(&path).unwrap(), step - 0.000001, step, format, 32, 32, false).unwrap();
             assert_eq!(decoder.next_frame().unwrap().unwrap().to_interleaved(rect), reference[0]);
             std::fs::remove_file(path).unwrap();
             std::fs::remove_file(vfr).unwrap();

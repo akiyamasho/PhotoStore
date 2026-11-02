@@ -3,7 +3,6 @@
 //! within one document), so removing a state releases a tile only after its last reference.
 use photostore_doc::{Document, Surface};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Tiles {
@@ -27,7 +26,9 @@ pub(crate) fn surfaces(doc: &Document, mut visit: impl FnMut(&Surface)) {
 
 /// Stable live allocation identities for pixels and shared authored frame metadata.
 pub(crate) fn allocations(doc:&Document,mut visit:impl FnMut(usize,usize)) {
-    surfaces(doc,|surface|{for (_,tile) in surface.tiles(){visit(Arc::as_ptr(tile) as usize,tile.bytes().len());}});
+    // Compact movie planes and any already-created raster projections count as pixels too.
+    // Accounting must not materialize every video layer merely to measure its memory.
+    surfaces(doc,|surface|{for (key,bytes) in surface.resident_allocations(){visit(key,bytes);}});
     if let Some(timeline)=&doc.timeline {for bank in [&timeline.frame_states,&timeline.property_frames] {
         if !bank.is_empty(){visit(bank.allocation_key(),bank.retained_bytes());}
     }}

@@ -55,7 +55,7 @@ impl StreamPipelines {
             entries.push(wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: NonZeroU64::new(4) }, count: None });
         }
         entries.push(wgpu::BindGroupLayoutEntry { binding: 7, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None });
-        entries.push(wgpu::BindGroupLayoutEntry { binding: 8, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: NonZeroU64::new(416) }, count: None });
+        entries.push(wgpu::BindGroupLayoutEntry { binding: 8, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: NonZeroU64::new(480) }, count: None });
         let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("photostore_buffer_stream_bindings"), entries: &entries });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("photostore_buffer_stream"), bind_group_layouts: &[Some(&bind_layout)], immediate_size: 0 });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -71,7 +71,7 @@ impl StreamPipelines {
 }
 
 #[derive(Clone)]
-pub(crate) struct StreamSource { buffer: wgpu::Buffer, offset: u64, size: u64, region: [i32; 4], color: [f32; 4], opacity: f32 }
+pub(crate) struct StreamSource { buffer: wgpu::Buffer, offset: u64, size: u64, region: [i32; 4], color: [f32; 4], opacity: f32, kind: u32, matrix: u32, lut_offset: u32, clip: [i32;4] }
 
 pub(crate) struct PreparedStreamBatch { pub sources: Vec<StreamSource> }
 
@@ -84,6 +84,9 @@ impl crate::Compositor {
         &mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, plan: &Plan<'_>, fr: &FrameRes,
         cell: Cell, batch: &[normal_stack::Source], stats: &mut crate::Stats,
     ) -> Result<Option<PreparedStreamBatch>, Unsupported> {
+        if batch.iter().any(|source| source.clip.is_some() || plan.passes[source.pass].tex.as_ref().is_some_and(|t| t.surface.get().nv12_view().is_some())) {
+            return self.prepare_compact_stream_batch(device, plan, fr, cell, batch, stats);
+        }
         if !self.buffer_sources || self.buffer_stream_disabled || self.acc_format != wgpu::TextureFormat::Rgba32Float || photostore_geom::TILE_SIZE != 256 || batch.iter().any(|source| source.clip.is_some()) { return Ok(None); }
         if self.buffer_stream.is_none() {
             let (pipelines, error) = crate::first_error(device, || StreamPipelines::new(device));
@@ -127,14 +130,81 @@ impl crate::Compositor {
                 self.staged = self.staged.saturating_add(size);
                 stats.bytes_uploaded += length; stats.tiles_uploaded += region.tiles().count(); stats.dense_page_uploads += 1; stats.pooled_upload_pages += 1;
             }
-            sources.push(StreamSource { buffer, offset, size, region: [region.x0, region.y0, region.width() as i32, region.height() as i32], color, opacity });
+            sources.push(StreamSource { buffer, offset, size, region: [region.x0, region.y0, region.width() as i32, region.height() as i32], color, opacity, kind: 0, matrix: 0, lut_offset: 0, clip: [0;4] });
         }
         if !jobs.is_empty() {
             page_upload::pack(jobs)?;
             stats.upload_pack_ms += started.elapsed().as_secs_f64() * 1000.0;
         }
-        while sources.len() < 7 { sources.push(StreamSource { buffer: dummy.clone(), offset: 0, size: 4, region: [0;4], color: [0.0;4], opacity: 0.0 }); }
+        while sources.len() < 7 { sources.push(StreamSource { buffer: dummy.clone(), offset: 0, size: 4, region: [0;4], color: [0.0;4], opacity: 0.0, kind: 0, matrix: 0, lut_offset: 0, clip: [0;4] }); }
         Ok(Some(PreparedStreamBatch { sources }))
+    }
+
+    fn prepare_compact_stream_batch(
+        &mut self, device: &wgpu::Device, plan: &Plan<'_>, fr: &FrameRes, cell: Cell,
+        batch: &[normal_stack::Source], stats: &mut crate::Stats,
+    ) -> Result<Option<PreparedStreamBatch>, Unsupported> {
+        if !self.buffer_sources || self.buffer_stream_disabled || self.acc_format != wgpu::TextureFormat::Rgba32Float || photostore_geom::TILE_SIZE != 256 { return Ok(None); }
+        if self.buffer_stream.is_none() {
+            let (pipelines, error) = crate::first_error(device, || StreamPipelines::new(device));
+            if let Some(error) = error { log::warn!("PhotoStore mapped stream compositor unavailable; using texture batch: {error}"); self.buffer_stream_disabled = true; return Ok(None); }
+            self.buffer_stream = Some(pipelines);
+        }
+        let dummy = self.buffer_stream.as_ref().ok_or_else(|| Unsupported("mapped stream pipeline initialization failed".into()))?.dummy.clone();
+        let cell_region = super::cell_rect(cell, self.page);
+        let mut sources = Vec::with_capacity(7);
+        let started = Instant::now();
+        for source in batch {
+            let pass = &plan.passes[source.pass];
+            let mut region = fr.areas[source.pass].0.intersect(&cell_region);
+            let clip = source.clip.map_or([0;4], |r| [r.x0,r.y0,r.width() as i32,r.height() as i32]);
+            if let Some(c) = source.clip { region = region.intersect(&c); }
+            let (mut data, mut kind, mut matrix, mut lut_offset, mut upload_region) = (Vec::new(), 1u32, 0u32, 0u32, region);
+            let fallback = pass.color;
+            if !region.is_empty() {
+                let surface = match pass.tex.as_ref().map(|t| &t.surface) {
+                    Some(SurfaceRef::Doc(s)) => *s,
+                    Some(SurfaceRef::Derived(s)) => s.as_ref(),
+                    None => { sources.push(StreamSource { buffer:dummy.clone(),offset:0,size:4,region:[0;4],color:fallback,opacity:source.opacity,kind:0,matrix:0,lut_offset:0,clip }); continue; }
+                };
+                if let Some(view) = surface.nv12_view() {
+                    let frame = view.frame;
+                    let bounds = Rect::new(0,0,frame.width() as i32,frame.height() as i32);
+                    let source_roi = Rect::new(region.x0.saturating_sub(view.origin[0]),region.y0.saturating_sub(view.origin[1]),region.x1.saturating_sub(view.origin[0]),region.y1.saturating_sub(view.origin[1])).intersect(&bounds);
+                    if source_roi.is_empty() { region=Rect::EMPTY; upload_region=Rect::EMPTY; }
+                    else {
+                        let x0=source_roi.x0.div_euclid(2)*2; let y0=source_roi.y0.div_euclid(2)*2;
+                        let x1=((source_roi.x1+1).div_euclid(2)*2).min(frame.width() as i32); let y1=((source_roi.y1+1).div_euclid(2)*2).min(frame.height() as i32);
+                        let roi=Rect::new(x0,y0,x1,y1);
+                        upload_region=roi.translate(view.origin[0],view.origin[1]);
+                        let fw=frame.width() as usize; let rw=roi.width() as usize; let rh=roi.height() as usize;
+                        let yplane=frame.bytes(); let uvbase=fw*frame.height() as usize;
+                        data.reserve(rw*rh+rw*(rh/2)+frame.ramps().map_or(0, |_|768));
+                        for y in roi.y0 as usize..roi.y1 as usize { data.extend_from_slice(&yplane[y*fw+roi.x0 as usize..y*fw+roi.x1 as usize]); }
+                        for y in (roi.y0 as usize/2)..(roi.y1 as usize/2) { let at=uvbase+y*fw+roi.x0 as usize; data.extend_from_slice(&frame.bytes()[at..at+rw]); }
+                        if let Some(ramps)=frame.ramps() { while data.len()%4!=0 {data.push(0);} lut_offset=data.len() as u32; for ramp in ramps {data.extend_from_slice(ramp);} }
+                        matrix=match frame.matrix(){photostore_raster::Nv12Matrix::Bt601=>0,photostore_raster::Nv12Matrix::Bt709=>1}; kind=2;
+                    }
+                } else {
+                    data=surface.to_interleaved(region);
+                }
+            }
+            let (buffer,offset,size)=if data.is_empty(){(dummy.clone(),0,4)} else {
+                let length=data.len(); while data.len()%4!=0 {data.push(0);}
+                let size=data.len(); let belt=self.upload_belt.as_mut().ok_or_else(||Unsupported("mapped source upload belt is unavailable".into()))?;
+                let slice=belt.allocate(wgpu::BufferSize::new(size as u64).ok_or_else(||Unsupported("mapped source allocation is empty".into()))?,wgpu::BufferSize::new(256).ok_or_else(||Unsupported("mapped source alignment is invalid".into()))?);
+                let buffer=slice.buffer().clone(); let offset=slice.offset();
+                { let mut mapped=slice.get_mapped_range_mut().ok_or_else(||Unsupported("mapped stream allocation could not be mapped".into()))?; mapped[..size].copy_from_slice(&data); }
+                drop(slice); self.staged=self.staged.saturating_add(size as u64); stats.bytes_uploaded+=length;
+                if kind==2 {stats.dense_page_uploads+=1;} else {stats.tiles_uploaded+=region.tiles().count();stats.dense_page_uploads+=1;}
+                stats.pooled_upload_pages+=1;
+                (buffer,offset,size as u64)
+            };
+            sources.push(StreamSource {buffer,offset,size,region:[upload_region.x0,upload_region.y0,upload_region.width() as i32,upload_region.height() as i32],color:fallback,opacity:source.opacity,kind,matrix,lut_offset,clip});
+        }
+        while sources.len()<7 {sources.push(StreamSource{buffer:dummy.clone(),offset:0,size:4,region:[0;4],color:[0.0;4],opacity:0.0,kind:0,matrix:0,lut_offset:0,clip:[0;4]});}
+        stats.upload_pack_ms+=started.elapsed().as_secs_f64()*1000.0;
+        Ok(Some(PreparedStreamBatch{sources}))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -144,16 +214,20 @@ impl crate::Compositor {
         previous: &wgpu::TextureView, output: &wgpu::TextureView,
     ) {
         let Some(pipelines) = self.buffer_stream.as_ref() else { return; };
-        let mut data = vec![0_u8; 416];
+        let mut data = vec![0_u8; 480];
         for (i, value) in [chunk.x0, chunk.y0, chunk.width() as i32, chunk.height() as i32].into_iter().enumerate() { data[i*4..i*4+4].copy_from_slice(&value.to_le_bytes()); }
         data[16..20].copy_from_slice(&(count as u32).to_le_bytes()); data[20..24].copy_from_slice(&(u32::from(has_previous)).to_le_bytes());
         for (i, src) in batch.sources.iter().enumerate() {
-            let offset=32+i*48;
+            let offset=32+i*64;
             for (j,value) in src.region.iter().enumerate() { data[offset+j*4..offset+j*4+4].copy_from_slice(&value.to_le_bytes()); }
             for (j,value) in src.color.iter().enumerate() { data[offset+16+j*4..offset+20+j*4].copy_from_slice(&value.to_le_bytes()); }
             data[offset+32..offset+36].copy_from_slice(&src.opacity.to_le_bytes());
+            data[offset+36..offset+40].copy_from_slice(&src.kind.to_le_bytes());
+            data[offset+40..offset+44].copy_from_slice(&src.matrix.to_le_bytes());
+            data[offset+44..offset+48].copy_from_slice(&src.lut_offset.to_le_bytes());
+            for (j,value) in src.clip.iter().enumerate() { data[offset+48+j*4..offset+52+j*4].copy_from_slice(&value.to_le_bytes()); }
         }
-        let uniform=device.create_buffer(&wgpu::BufferDescriptor { label:Some("photostore_buffer_stream_uniform"),size:416,usage:wgpu::BufferUsages::UNIFORM|wgpu::BufferUsages::COPY_DST,mapped_at_creation:false });
+        let uniform=device.create_buffer(&wgpu::BufferDescriptor { label:Some("photostore_buffer_stream_uniform"),size:480,usage:wgpu::BufferUsages::UNIFORM|wgpu::BufferUsages::COPY_DST,mapped_at_creation:false });
         queue.write_buffer(&uniform,0,&data);
         let mut entries=Vec::with_capacity(9);
         for (i,src) in batch.sources.iter().enumerate() { entries.push(wgpu::BindGroupEntry { binding:i as u32,resource:wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer:&src.buffer,offset:src.offset,size:NonZeroU64::new(src.size) }) }); }
@@ -174,6 +248,7 @@ impl crate::Compositor {
         if photostore_geom::TILE_SIZE != 256 { return Ok(false); }
         let Some(stack) = normal_stack::recognize(plan) else { return Ok(false); };
         if stack.sources.len() > 8 || stack.sources.iter().any(|source| source.clip.is_some()) { return Ok(false); }
+        if stack.sources.iter().any(|source| plan.passes[source.pass].tex.as_ref().is_some_and(|t| t.surface.get().nv12_view().is_some())) { return Ok(false); }
         if self.buffer_stack.is_none() {
             let (pipelines, error) = crate::first_error(device, || Pipelines::new(device));
             if let Some(error) = error {

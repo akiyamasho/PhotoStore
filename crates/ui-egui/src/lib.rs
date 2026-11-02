@@ -1721,6 +1721,11 @@ impl PhotoStoreApp {
 /// `Arc` pointers. The default pixel matters: inverting or filling a tile-less mask only changes
 /// it (#2117).
 pub fn surface_fingerprint(s: &photostore_raster::Surface) -> u64 {
+    if let Some(view) = s.nv12_view() {
+        return (std::sync::Arc::as_ptr(view.frame) as usize as u64)
+            ^ (view.origin[0] as u32 as u64).rotate_left(23)
+            ^ (view.origin[1] as u32 as u64).rotate_left(41);
+    }
     let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ s.tile_count() as u64;
     for &b in s.default_bytes() {
         h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);

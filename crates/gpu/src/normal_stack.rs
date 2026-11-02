@@ -219,11 +219,16 @@ impl crate::Compositor {
     ) -> Result<bool, crate::Unsupported> {
         if self.acc_format != wgpu::TextureFormat::Rgba32Float { return Ok(false); }
         let Some(stack) = recognize(plan) else { return Ok(false); };
+        let has_nv12 = stack.sources.iter().any(|source| plan.passes[source.pass].tex.as_ref().is_some_and(|t| t.surface.get().nv12_view().is_some()));
         let has_clipped_source = stack.sources.iter().any(|source| source.clip.is_some());
-        if stack.sources.len() < 2 || (stack.sources.len() <= 8 && !has_clipped_source) { return Ok(false); }
-        let max_batch_bytes = u64::from(self.page).saturating_mul(u64::from(self.page)).saturating_mul(4 * 7);
-        let full_cell_upload = u64::from(self.page).saturating_mul(u64::from(self.page))
-            .saturating_mul(4).saturating_mul(stack.sources.len() as u64);
+        if stack.sources.len() < 2 && !has_nv12 || (!has_nv12 && stack.sources.len() <= 8 && !has_clipped_source) { return Ok(false); }
+        let page_pixels=u64::from(self.page).saturating_mul(u64::from(self.page));
+        let source_upload=|source:&Source| {
+            let nv12=plan.passes[source.pass].tex.as_ref().is_some_and(|t|t.surface.get().nv12_view().is_some());
+            page_pixels.saturating_mul(if nv12 { 2 } else { 4 })
+        };
+        let max_batch_bytes=stack.sources.chunks(7).map(|sources|sources.iter().fold(0u64,|n,s|n.saturating_add(source_upload(s)))).max().unwrap_or(0);
+        let full_cell_upload=stack.sources.iter().fold(0u64,|n,s|n.saturating_add(source_upload(s)));
         if max_batch_bytes > self.resident_budget || full_cell_upload > self.memory_budget() / 4 || full_cell_upload > crate::FLUSH_BYTES {
             return Err(crate::Unsupported("bounded Normal stack cell uploads exceed the streaming allowance".into()));
         }

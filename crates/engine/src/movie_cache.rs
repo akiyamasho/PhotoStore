@@ -50,6 +50,7 @@ struct Key {
     format: PixelFormat,
     output_size: Option<(u32, u32)>,
     thumbnail: bool,
+    native_preview: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Position {
@@ -61,10 +62,11 @@ struct ConsumerKey {
     source: SourceIdentity,
     format: PixelFormat,
     consumer: Option<u64>,
+    native_preview: bool,
 }
 impl Key {
     fn consumer(&self, consumer: Option<u64>) -> ConsumerKey {
-        ConsumerKey { source: self.source.clone(), format: self.format, consumer }
+        ConsumerKey { source: self.source.clone(), format: self.format, consumer, native_preview:self.native_preview }
     }
 }
 
@@ -459,6 +461,7 @@ fn source_identity(path: &str) -> Result<SourceIdentity, String> {
 }
 
 fn cache_bytes(surface: &Surface) -> usize {
+    if let Some(view)=surface.nv12_view(){return view.frame.bytes().len();}
     // Decoded movie frames are dense RGBA/sample tiles. Using allocated tile count bounds retained
     // memory without scanning or materializing pixels on the UI thread.
     surface.tile_count().saturating_mul((photostore_geom::TILE_SIZE as usize).saturating_pow(2)).saturating_mul(surface.format().bytes_per_pixel())
@@ -528,6 +531,7 @@ struct SequentialStream {
     last_used:std::time::Instant,
     generation:u64,
     format:PixelFormat,
+    native_preview:bool,
     output_size:(u32,u32),
     start:f64,
     step:f64,
@@ -542,6 +546,7 @@ impl SequentialStream {
         if self.source!=job.key.source {Some("source")}
         else if self.generation!=job.source_generation {Some("generation")}
         else if self.format!=job.key.format {Some("format")}
+        else if self.native_preview!=job.key.native_preview {Some("preview-mode")}
         else if self.output_size!=size {Some("size")}
         else if (self.step-window.step_seconds).abs()>=1e-9 {Some("step")}
         else if gap < -1e-6 || gap > 32.0 {Some("gap")}
@@ -629,7 +634,8 @@ fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<Sequentia
         if let Some(started)=wait_started {decode_wait+=started.elapsed();}
         let info=media_info_for(&job.key.source)?;
         let size=job.key.output_size.unwrap_or((info.width,info.height));
-        let bytes=estimated_frame_bytes(size.0,size.1,job.key.format).ok_or("preview geometry overflow")?;
+        let compact=job.key.native_preview&&crate::media_backend::compact_preview_matrix(&info,job.key.format,size.0,size.1).is_some();
+        let bytes=if compact {(size.0 as usize).checked_mul(size.1 as usize).and_then(|n|n.checked_mul(3)).map(|n|n/2)}else{estimated_frame_bytes(size.0,size.1,job.key.format)}.ok_or("preview geometry overflow")?;
         if bytes>frame_budget_bytes(){return Err("preview frame exceeds configured retained-media allowance".into());}
         if let Some(active)=stream.as_ref() {
             if let Some(reason)=active.incompatibility(job,window,size) {
@@ -643,8 +649,8 @@ fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<Sequentia
             eprintln!("photostore-media-trace event=stream-decision worker={} consumer={owner_hash:016x} requested_time={requested_time:.9} action={stream_action} incompatible={incompatible_reason}",worker_index);
         }
         if stream.is_none() {
-            let decoder=crate::media_backend::PreviewDecoder::start(Path::new(&job.path),&info,window.times[0],window.step_seconds,job.key.format,size.0,size.1).map_err(|e|e.to_string())?;
-            stream=Some(SequentialStream{source:job.key.source.clone(),owner:job.consumer_key(),last_used:std::time::Instant::now(),generation:job.source_generation,format:job.key.format,output_size:size,start:window.times[0],step:window.step_seconds,next_index:0,decoder,_memory:None});
+            let decoder=crate::media_backend::PreviewDecoder::start(Path::new(&job.path),&info,window.times[0],window.step_seconds,job.key.format,size.0,size.1,job.key.native_preview).map_err(|e|e.to_string())?;
+            stream=Some(SequentialStream{source:job.key.source.clone(),owner:job.consumer_key(),last_used:std::time::Instant::now(),generation:job.source_generation,format:job.key.format,native_preview:job.key.native_preview,output_size:size,start:window.times[0],step:window.step_seconds,next_index:0,decoder,_memory:None});
         }
         let active=stream.as_mut().ok_or("preview decoder unavailable")?;
         let skip=((window.times[0]-active.next_time())/active.step).round().max(0.0) as usize;
@@ -705,12 +711,12 @@ fn process_stream_window(job:&Job,window:&FrameWindow,streams:&mut Vec<Sequentia
     if !ended {if let Some(mut active)=stream {
         active.last_used=std::time::Instant::now();
         if active._memory.is_none() {
-            active._memory=reserve_stream_memory(active.output_size).ok();
+            active._memory=reserve_stream_memory(active.decoder.raw_frame_bytes()).ok();
             // Make the local stream set adaptive to the shared allowance. Retire the least
             // recently used paused process and retry until this stream fits or none remain.
             while active._memory.is_none() && !streams.is_empty() {
                 streams.remove(0);
-                active._memory=reserve_stream_memory(active.output_size).ok();
+                active._memory=reserve_stream_memory(active.decoder.raw_frame_bytes()).ok();
             }
         }
         // If memory is tight, finish this frame request but retire its decoder process rather
@@ -733,11 +739,12 @@ fn owner_hash_next_time(streams:&[SequentialStream],owner:&ConsumerKey)->String 
     streams.iter().find(|active|active.owner==*owner).map_or_else(||"none".to_owned(),|active|format!("{:.9}",active.next_time()))
 }
 
-/// Reserve four RGBA8 pipe-buffer equivalents for each paused stream (two queued packets, one
-/// frame being read, and one conversion/work buffer). FFmpeg codec-internal memory and transient
-/// process overhead are outside this estimate; active decoder count remains separately capped.
-fn reserve_stream_memory(size:(u32,u32))->Result<crate::media_budget::Reservation,String> {
-    let bytes=(size.0 as usize).checked_mul(size.1 as usize).and_then(|pixels|pixels.checked_mul(4*4))
+/// Reserve four raw pipe-frame equivalents for each paused stream (two queued packets, one frame
+/// being read, and one conversion/work buffer). Compact NV12 previews therefore account for
+/// their 1.5-byte-per-pixel planes; legacy RGBA sessions keep the prior four-byte estimate.
+/// FFmpeg codec-internal memory and transient process overhead are outside this estimate.
+fn reserve_stream_memory(raw_frame_bytes:usize)->Result<crate::media_budget::Reservation,String> {
+    let bytes=raw_frame_bytes.checked_mul(4)
         .ok_or_else(||"preview decoder memory estimate overflows addressable memory".to_owned())?;
     loop {
         if let Some(reservation)=crate::media_budget::reserve(crate::media_budget::MediaKind::DecoderSession,bytes) {
@@ -770,12 +777,13 @@ fn prune_protected_current(state:&mut Cache,now:std::time::Instant) {
 fn record_protected_current(state:&mut Cache,owner:&ConsumerKey,keys:&[Key]) {
     let now=std::time::Instant::now();
     prune_protected_current(state,now);
+    let limit=if owner.native_preview {8}else{3};
     let protected_keys=if keys.len()==1 {
         state.protected_current.get(owner).and_then(|(existing,_)| {
-            existing.iter().position(|key|key==&keys[0]).map(|at|existing[at..].iter().take(3).cloned().collect())
+            existing.iter().position(|key|key==&keys[0]).map(|at|existing[at..].iter().take(limit).cloned().collect())
         }).unwrap_or_else(||keys.to_vec())
     } else {
-        keys.iter().take(3).cloned().collect()
+        keys.iter().take(limit).cloned().collect()
     };
     state.protected_current.remove(owner);
     state.protected_current_order.retain(|existing|existing!=owner);
@@ -1136,10 +1144,14 @@ pub fn frame_at_times_for_consumer_scaled(
     // Keep the per-consumer sequential decode window deliberately small. Longer windows
     // repeatedly queued distant frames while playback lagged, which pushed each worker's
     // decoder cursor far ahead of the current request and forced a process restart next poll.
-    let active_times = &times[..times.len().min(3)];
+    let native_preview=NONBLOCKING.with(std::cell::Cell::get);
+    let compact_known=native_preview&&cache().lock().ok().and_then(|state|state.media_info.get(&source).cloned()).is_some_and(|info| {
+        crate::media_backend::compact_preview_matrix(&info,fmt,output_size.unwrap_or((info.width,info.height)).0,output_size.unwrap_or((info.width,info.height)).1).is_some()
+    });
+    let active_times = &times[..times.len().min(if compact_known {8}else{3})];
     let mut keys = Vec::with_capacity(times.len());
     for seconds in times {
-        keys.push(Key { source: source.clone(), position: timestamp_position(*seconds)?, format: fmt, output_size, thumbnail:false });
+        keys.push(Key { source: source.clone(), position: timestamp_position(*seconds)?, format: fmt, output_size, thumbnail:false, native_preview });
     }
     keys.truncate(active_times.len());
     let step = if active_times.len() > 1 { active_times[1] - active_times[0] } else { 0.0 };
@@ -1262,7 +1274,8 @@ fn frame_with_position(path: &str, position: Position, fmt: PixelFormat, thumbna
             return Err(error);
         }
     };
-    let key = Key { source, position, format: fmt, output_size, thumbnail };
+    let native_preview=NONBLOCKING.with(std::cell::Cell::get)&&!thumbnail;
+    let key = Key { source, position, format: fmt, output_size, thumbnail, native_preview };
     let owner = key.consumer(consumer);
     if let Ok(mut state) = cache().lock() {
         if !thumbnail && consumer.is_some() {

@@ -750,15 +750,22 @@ impl Compositor {
         if self.acc_format != wgpu::TextureFormat::Rgba32Float || self.normal_stream_disabled || self.normal_stack_disabled || region.intersect(&doc.bounds()).is_empty() { return false; }
         let Ok(plan) = plan(doc) else { return false; };
         let Some(stack) = normal_stack::recognize(&plan) else { return false; };
+        let has_nv12 = stack.sources.iter().any(|source| plan.passes[source.pass].tex.as_ref().is_some_and(|t| t.surface.get().nv12_view().is_some()));
         let mut regular_page = TILE_SIZE as u32;
         while regular_page * 2 <= self.max_dim.min(PAGE) { regular_page *= 2; }
         // `render` uses pooled uploads for this exact recognized stack on native platforms,
         // which limits transfer cells to CHUNK. Predict that page before the first render too.
         let page = if cfg!(not(target_arch = "wasm32")) { regular_page.min(CHUNK) } else { regular_page };
-        let page_bytes = u64::from(page).saturating_mul(u64::from(page)).saturating_mul(4);
-        let max_batch_bytes = page_bytes.saturating_mul(7);
-        let cell_upload_bytes = page_bytes.saturating_mul(stack.sources.len() as u64);
-        (2..=64).contains(&stack.sources.len())
+        let page_pixels=u64::from(page).saturating_mul(u64::from(page));
+        let max_batch_bytes = stack.sources.chunks(7).map(|sources|sources.iter().fold(0u64,|sum,source| {
+            let is_nv12=plan.passes[source.pass].tex.as_ref().is_some_and(|t|t.surface.get().nv12_view().is_some());
+            sum.saturating_add(page_pixels.saturating_mul(if is_nv12 { 2 } else { 4 }))
+        })).max().unwrap_or(0);
+        let cell_upload_bytes = stack.sources.iter().fold(0u64,|sum,source| {
+            let is_nv12=plan.passes[source.pass].tex.as_ref().is_some_and(|t|t.surface.get().nv12_view().is_some());
+            sum.saturating_add(page_pixels.saturating_mul(if is_nv12 { 2 } else { 4 }))
+        });
+        (if has_nv12 { (1..=64).contains(&stack.sources.len()) } else { (2..=64).contains(&stack.sources.len()) })
             && max_batch_bytes <= self.resident_budget
             && cell_upload_bytes <= self.memory_budget() / 4
             && cell_upload_bytes <= FLUSH_BYTES

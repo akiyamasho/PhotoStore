@@ -1,0 +1,44 @@
+{
+  "metadata": {
+    "pix_fmt": "yuv420p",
+    "color_space": "bt709",
+    "color_range": "tv",
+    "color_transfer": null,
+    "color_primaries": null,
+    "chroma_location": "left"
+  },
+  "results": [
+    {
+      "matrix": "601",
+      "limited": true,
+      "max": 26,
+      "over2": 4090,
+      "p95": 21
+    },
+    {
+      "matrix": "601",
+      "limited": false,
+      "max": 35,
+      "over2": 4096,
+      "p95": 34
+    },
+    {
+      "matrix": "709",
+      "limited": true,
+      "max": 1,
+      "over2": 0,
+      "p95": 1
+    },
+    {
+      "matrix": "709",
+      "limited": false,
+      "max": 20,
+      "over2": 4094,
+      "p95": 19
+    }
+  ],
+  "status": "preliminary math feasibility only; not native application verification",
+  "fixture": "Owned generated 3840x2160 H.264 testsrc2, frame zero",
+  "sample_count": 4096,
+  "reference": "FFmpeg RGB24 versus original limited-range matrix equations with nearest chroma"
+}
