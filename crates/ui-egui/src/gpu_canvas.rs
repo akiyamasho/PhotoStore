@@ -2166,6 +2166,12 @@ fn tile_screen_aabb(origin: [f32; 2], scale: f32, center: [f32; 2], cos: f32, si
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn native_timing_trace_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("PHOTOSTORE_NATIVE_TIMING_TRACE").is_ok_and(|value| value == "1"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn publish_playback_callback(
     controller: &PlaybackController,
     callback_resources: &mut CallbackResources,
@@ -2212,7 +2218,7 @@ fn publish_playback_callback(
     let prior_token = state.published;
     if result.token.frame.is_some() && prior_token.and_then(|token| token.frame) != result.token.frame {
         state.video_publication_count = state.video_publication_count.wrapping_add(1);
-        if let Some(frame) = result.token.frame {
+        if native_timing_trace_enabled() && let Some(frame) = result.token.frame {
             if state.video_publications.len() == 180 { state.video_publications.pop_front(); }
             let sequence = state.video_publication_count;
             state.video_publications.push_back(NativeVideoPublication {
