@@ -1101,10 +1101,7 @@ pub fn canonicalize_authored_opacity(before: &Document, after: &mut Document, ed
 }
 
 fn shallow_surface_eq(a: &Surface, b: &Surface) -> bool {
-    a.format() == b.format()
-        && a.default_pixel() == b.default_pixel()
-        && a.tile_count() == b.tile_count()
-        && a.tiles().zip(b.tiles()).all(|((ac, at), (bc, bt))| ac == bc && std::sync::Arc::ptr_eq(at, bt))
+    a.shares_pixel_storage(b)
 }
 
 fn canonicalize_layers(before: &[Layer], after: &mut Document, current: usize, fps: f64, ranges: &[photostore_doc::LayerTimelineRange]) {

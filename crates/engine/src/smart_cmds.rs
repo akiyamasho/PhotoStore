@@ -799,10 +799,7 @@ fn white_mask(doc: &Document) -> LayerMask {
 }
 
 fn surfaces_same(a: &Surface, b: &Surface) -> bool {
-    a.format() == b.format()
-        && a.default_pixel() == b.default_pixel()
-        && a.tile_count() == b.tile_count()
-        && a.tiles().zip(b.tiles()).all(|((ca, ta), (cb, tb))| ca == cb && std::sync::Arc::ptr_eq(ta, tb))
+    a.shares_pixel_storage(b)
 }
 
 fn masks_same(a: &Option<LayerMask>, b: &Option<LayerMask>) -> bool {

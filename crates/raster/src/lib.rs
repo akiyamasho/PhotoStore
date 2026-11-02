@@ -173,6 +173,17 @@ impl Surface {
     pub fn nv12_view(&self) -> Option<Nv12View<'_>> {
         self.nv12.as_ref().map(|frame| Nv12View { frame, origin: self.nv12_origin })
     }
+    /// Whether immutable pixel storage is shared, without realizing a lazy raster projection.
+    /// Materialized edits detach from compact storage and therefore compare unequal here.
+    pub fn shares_pixel_storage(&self, other: &Self) -> bool {
+        if self.format != other.format || self.default_pixel != other.default_pixel { return false; }
+        match (&self.nv12, &other.nv12) {
+            (Some(a), Some(b)) => self.nv12_origin == other.nv12_origin && Arc::ptr_eq(a,b),
+            (None, None) => self.tiles.len() == other.tiles.len() && self.tiles.iter().zip(&other.tiles)
+                .all(|((a,at),(b,bt))| a == b && Arc::ptr_eq(at,bt)),
+            _ => false,
+        }
+    }
     pub fn resident_allocations(&self) -> Vec<(usize, usize)> {
         if let Some(frame) = &self.nv12 {
             let mut out = vec![(Arc::as_ptr(frame) as usize, frame.bytes().len())];

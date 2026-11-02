@@ -177,13 +177,11 @@ impl crate::Compositor {
                         let x1=((source_roi.x1+1).div_euclid(2)*2).min(frame.width() as i32); let y1=((source_roi.y1+1).div_euclid(2)*2).min(frame.height() as i32);
                         let roi=Rect::new(x0,y0,x1,y1);
                         upload_region=roi.translate(view.origin[0],view.origin[1]);
-                        let fw=frame.width() as usize; let rw=roi.width() as usize; let rh=roi.height() as usize;
-                        let yplane=frame.bytes(); let uvbase=fw*frame.height() as usize;
-                        data.reserve(rw*rh+rw*(rh/2)+frame.ramps().map_or(0, |_|768));
-                        for y in roi.y0 as usize..roi.y1 as usize { data.extend_from_slice(&yplane[y*fw+roi.x0 as usize..y*fw+roi.x1 as usize]); }
-                        for y in (roi.y0 as usize/2)..(roi.y1 as usize/2) { let at=uvbase+y*fw+roi.x0 as usize; data.extend_from_slice(&frame.bytes()[at..at+rw]); }
-                        if let Some(ramps)=frame.ramps() { while data.len()%4!=0 {data.push(0);} lut_offset=data.len() as u32; for ramp in ramps {data.extend_from_slice(ramp);} }
                         matrix=match frame.matrix(){photostore_raster::Nv12Matrix::Bt601=>0,photostore_raster::Nv12Matrix::Bt709=>1}; kind=2;
+                        let (buffer,offset,size,lut)=self.upload_nv12_region(frame,roi,stats)?;
+                        lut_offset=lut;
+                        sources.push(StreamSource {buffer,offset,size,region:[upload_region.x0,upload_region.y0,upload_region.width() as i32,upload_region.height() as i32],color:fallback,opacity:source.opacity,kind,matrix,lut_offset,clip});
+                        continue;
                     }
                 } else {
                     data=surface.to_interleaved(region);
@@ -205,6 +203,59 @@ impl crate::Compositor {
         while sources.len()<7 {sources.push(StreamSource{buffer:dummy.clone(),offset:0,size:4,region:[0;4],color:[0.0;4],opacity:0.0,kind:0,matrix:0,lut_offset:0,clip:[0;4]});}
         stats.upload_pack_ms+=started.elapsed().as_secs_f64()*1000.0;
         Ok(Some(PreparedStreamBatch{sources}))
+    }
+
+    fn upload_nv12_region(
+        &mut self, frame: &photostore_raster::Nv12Frame, roi: Rect,
+        stats: &mut crate::Stats,
+    ) -> Result<(wgpu::Buffer, u64, u64, u32), Unsupported> {
+        if roi.is_empty() || roi.x0 < 0 || roi.y0 < 0 || roi.x1 > frame.width() as i32 || roi.y1 > frame.height() as i32
+            || roi.x0 % 2 != 0 || roi.y0 % 2 != 0 || roi.width() % 2 != 0 || roi.height() % 2 != 0 {
+            return Err(Unsupported("NV12 upload region must be a non-empty even crop within its frame".into()));
+        }
+        let width=usize::try_from(roi.width()).map_err(|_|Unsupported("NV12 crop width is too large".into()))?;
+        let height=usize::try_from(roi.height()).map_err(|_|Unsupported("NV12 crop height is too large".into()))?;
+        let y_len=width.checked_mul(height).ok_or_else(||Unsupported("NV12 crop size overflows".into()))?;
+        let uv_len=width.checked_mul(height/2).ok_or_else(||Unsupported("NV12 chroma crop size overflows".into()))?;
+        let plane_len=y_len.checked_add(uv_len).ok_or_else(||Unsupported("NV12 plane size overflows".into()))?;
+        let ramps=frame.ramps();
+        let lut_start=if ramps.is_some(){plane_len.checked_add(3).map(|n|n&!3).ok_or_else(||Unsupported("NV12 LUT offset overflows".into()))?}else{0};
+        let content_len=if ramps.is_some(){lut_start.checked_add(768).ok_or_else(||Unsupported("NV12 payload size overflows".into()))?}else{plane_len};
+        let allocation_len=content_len.checked_add(3).map(|n|n&!3).ok_or_else(||Unsupported("NV12 mapped allocation size overflows".into()))?;
+        let lut_offset=if ramps.is_some(){u32::try_from(lut_start).map_err(|_|Unsupported("NV12 LUT offset exceeds shader address range".into()))?}else{0};
+        let belt=self.upload_belt.as_mut().ok_or_else(||Unsupported("mapped source upload belt is unavailable".into()))?;
+        let allocation=wgpu::BufferSize::new(u64::try_from(allocation_len).map_err(|_|Unsupported("NV12 mapped allocation is too large".into()))?).ok_or_else(||Unsupported("NV12 mapped allocation is empty".into()))?;
+        let alignment=wgpu::BufferSize::new(256).ok_or_else(||Unsupported("mapped source alignment is invalid".into()))?;
+        let slice=belt.allocate(allocation,alignment);
+        let buffer=slice.buffer().clone(); let offset=slice.offset();
+        let mut mapped=slice.get_mapped_range_mut().map_err(|error|Unsupported(format!("mapped NV12 allocation could not be mapped: {error}")))?;
+        let frame_width=frame.width() as usize;
+        let crop_x=roi.x0 as usize; let crop_y=roi.y0 as usize;
+        for row in 0..height {
+            let source=(crop_y+row)*frame_width+crop_x;
+            let destination=row*width;
+            mapped.slice(destination..destination+width).copy_from_slice(&frame.bytes()[source..source+width]);
+        }
+        let uv_base=frame_width*frame.height() as usize;
+        for row in 0..height/2 {
+            let source=uv_base+(crop_y/2+row)*frame_width+crop_x;
+            let destination=y_len+row*width;
+            mapped.slice(destination..destination+width).copy_from_slice(&frame.bytes()[source..source+width]);
+        }
+        if let Some(ramps)=ramps {
+            if lut_start>plane_len { mapped.slice(plane_len..lut_start).copy_from_slice(&[0;3][..lut_start-plane_len]); }
+            for (channel,ramp) in ramps.iter().enumerate() {
+                let start=lut_start+channel*256;
+                mapped.slice(start..start+256).copy_from_slice(ramp);
+            }
+        }
+        if allocation_len>content_len { mapped.slice(content_len..allocation_len).copy_from_slice(&[0;3][..allocation_len-content_len]); }
+        drop(mapped); drop(slice);
+        self.staged=self.staged.saturating_add(allocation_len as u64);
+        stats.bytes_uploaded=stats.bytes_uploaded.saturating_add(content_len);
+        stats.dense_page_uploads=stats.dense_page_uploads.saturating_add(1);
+        stats.pooled_upload_pages=stats.pooled_upload_pages.saturating_add(1);
+        Ok((buffer,offset,allocation_len as u64,lut_offset))
     }
 
     #[allow(clippy::too_many_arguments)]

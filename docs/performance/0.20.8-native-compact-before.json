@@ -1,0 +1,202 @@
+{
+  "passed": false,
+  "source_sha": "8e2eb2eea2029835210d4fe34bbd41d410d10623",
+  "binary_sha256": "ce26f8f8d587cc00953dfdc66068150ad2217e95529e0659ed2e8d22143ec904",
+  "evidence": "Owned isolated native workload, run-20261102-154552-45954",
+  "hardware": {
+    "adapter": "Apple M1 Max",
+    "backend": "metal",
+    "canvas": "gpu",
+    "deviceType": "integratedGpu",
+    "driver": "",
+    "fallback": null,
+    "lost": null,
+    "preference": "auto",
+    "selected": "auto"
+  },
+  "display_measurement": "Background owned window; physical scanout and other applications are not controlled",
+  "sources": {
+    "count": 8,
+    "width": 3840,
+    "height": 2160,
+    "fps": 30,
+    "codec": "H.264 SDR",
+    "durationSeconds": 6,
+    "rasterDrawingLayer": true
+  },
+  "cold_preroll_seconds": 2.2865137920016423,
+  "window_seconds": 4.551498375018127,
+  "native_video_publications": 100,
+  "native_fps": 21.970786708146793,
+  "callback_interval_ms": {
+    "p50": 33.560584000000745,
+    "p95": 96.82287500000075,
+    "max": 171.33591699999943
+  },
+  "sampled_ui_construction_ms": {
+    "p50": 1.2172499999996944,
+    "p95": 2.7880420000001322,
+    "max": 6.827249999999822
+  },
+  "inspect_rpc_ms": {
+    "p50": 29.378291976172477,
+    "p95": 112.83970798831433,
+    "max": 118.9548330148682
+  },
+  "phase_summary": {
+    "idle_before": {
+      "samples": 8,
+      "native_video_frame_delta": 21,
+      "native_video_fps_observed": 21.547739044268944,
+      "ui_last_ms_p50": 1.1233750000001237,
+      "ui_last_ms_p95": 2.7880420000001322,
+      "inspect_rpc_ms_p50": 26.940708979964256,
+      "inspect_rpc_ms_p95": 69.55770804779604,
+      "ui_frame_count_start": 230,
+      "ui_frame_count_end": 328
+    },
+    "brush": {
+      "samples": 7,
+      "native_video_frame_delta": 14,
+      "native_video_fps_observed": 12.333765346035234,
+      "ui_last_ms_p50": 1.287083000000166,
+      "ui_last_ms_p95": 6.827249999999822,
+      "inspect_rpc_ms_p50": 46.6152909793891,
+      "inspect_rpc_ms_p95": 118.9548330148682,
+      "ui_frame_count_start": 336,
+      "ui_frame_count_end": 455
+    },
+    "space_pan": {
+      "samples": 7,
+      "native_video_frame_delta": 26,
+      "native_video_fps_observed": 28.41856557493366,
+      "ui_last_ms_p50": 1.2172499999996944,
+      "ui_last_ms_p95": 1.4196670000001177,
+      "inspect_rpc_ms_p50": 29.973624972626567,
+      "inspect_rpc_ms_p95": 41.71579203102738,
+      "ui_frame_count_start": 479,
+      "ui_frame_count_end": 585
+    },
+    "idle_after": {
+      "samples": 8,
+      "native_video_frame_delta": 27,
+      "native_video_fps_observed": 29.19899057974736,
+      "ui_last_ms_p50": 1.2947500000000218,
+      "ui_last_ms_p95": 1.3488330000000133,
+      "inspect_rpc_ms_p50": 28.398207970894873,
+      "inspect_rpc_ms_p95": 36.96587501326576,
+      "ui_frame_count_start": 606,
+      "ui_frame_count_end": 716
+    }
+  },
+  "synthetic_brush_committed": false,
+  "synthetic_space_pan_applied": true,
+  "final_gpu_info": {
+    "adapter": "Apple M1 Max",
+    "backend": "metal",
+    "canvas": "gpu",
+    "deviceType": "integratedGpu",
+    "driver": "",
+    "fallback": null,
+    "lost": null,
+    "preference": "auto",
+    "selected": "auto"
+  },
+  "final_composition_wall_ms": 24.398042,
+  "final_upload_pack_ms": 21.587622999999997,
+  "final_fused_chunks": 12,
+  "final_buffer_source_chunks": 24,
+  "failures": [
+    "Native changed-frame cadence below 28 fps for 30 fps sources",
+    "Native callback interval p95 exceeds 50 ms",
+    "Native callback interval max exceeds 100 ms",
+    "Synthetic brush did not commit"
+  ],
+  "limitations": [
+    "Actual window renderer callback publication is measured; physical display scanout and OS device input are not.",
+    "Synthetic egui brush and held-Space primary drag exercise native canvas input handlers.",
+    "Eight distinct owned SDR H264 sources are a bounded workload, not arbitrary-codec or universal CapCut parity.",
+    "Audio-device output and subjective UI/Cintiq acceptance remain manual."
+  ],
+  "pixel_boundary": {
+    "source_sha": "8e2eb2eea2029835210d4fe34bbd41d410d10623",
+    "binary_sha256": "ce26f8f8d587cc00953dfdc66068150ad2217e95529e0659ed2e8d22143ec904",
+    "cli_sha256": "64ede76a7d6d311dc64ebd564dc9ad5b626b833620ae650b93b8551c2d98c1de",
+    "passed": true,
+    "frame": 141,
+    "points": [
+      [
+        0,
+        0
+      ],
+      [
+        64,
+        64
+      ],
+      [
+        1920,
+        1080
+      ],
+      [
+        2047,
+        2047
+      ]
+    ],
+    "gpu_rgba": [
+      [
+        0.5647059082984924,
+        0.0941176488995552,
+        0.7137255072593689,
+        1.0
+      ],
+      [
+        0.5568627715110779,
+        0.0941176488995552,
+        0.7529411911964417,
+        1.0
+      ],
+      [
+        0.0470588244497776,
+        0.21568627655506134,
+        0.3490196168422699,
+        1.0
+      ],
+      [
+        0.0470588244497776,
+        0.21568627655506134,
+        0.3450980484485626,
+        1.0
+      ]
+    ],
+    "cpu_rgba8": [
+      [
+        144,
+        24,
+        182,
+        255
+      ],
+      [
+        142,
+        24,
+        192,
+        255
+      ],
+      [
+        12,
+        55,
+        89,
+        255
+      ],
+      [
+        12,
+        54,
+        88,
+        255
+      ]
+    ],
+    "max_channel_error": 0.003921570672708402,
+    "tolerance": 0.00784313725490196,
+    "scope": "Four native canvas GPU texels against full-resolution CPU document render at the saved paused frame; outside timed playback, no screenshot."
+  },
+  "diagnosed_brush_failure": "Cloned compact frames realized separate RGBA tile projections; pointer-only linked-source guard falsely rejected unchanged movie pixels during a drawing-layer stroke."
+}

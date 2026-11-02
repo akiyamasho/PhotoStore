@@ -401,10 +401,7 @@ pub(crate) fn note_damage(s: &mut Session, before: &Document, ids: &[LayerId]) {
 /// copy-on-write tile pointers at the same coordinates. Both documents stay alive during the
 /// comparison, so tile addresses cannot be reused under it.
 fn surfaces_equal(a: &photostore_raster::Surface, b: &photostore_raster::Surface) -> bool {
-    a.format() == b.format()
-        && a.default_pixel() == b.default_pixel()
-        && a.tile_count() == b.tile_count()
-        && a.tiles().zip(b.tiles()).all(|((ca, ta), (cb, tb))| ca == cb && std::sync::Arc::ptr_eq(ta, tb))
+    a.shares_pixel_storage(b)
 }
 
 /// Byte blobs kept in `Arc`s (PSD raw blocks, embedded smart-object sources): pointer-identical
