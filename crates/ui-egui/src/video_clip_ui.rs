@@ -2095,7 +2095,11 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                 // change this row's minimum width and shift the ruler/gutter on every cache miss.
                 let (status_rect, status_response) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
                 if app.timeline_playback.loading() {
-                    egui::Spinner::new().paint_at(ui, status_rect.shrink(3.0));
+                    // Spinner::paint_at requests an immediate repaint. Without display vsync
+                    // (occluded/asleep windows), that floods the shared GPU queue and delays
+                    // the video work this indicator is waiting for. Transport already schedules
+                    // bounded retries; a quiet clock needs no independent animation loop.
+                    crate::icons::paint(ui, status_rect, "clock", 14.0, tokens.text_dim);
                     status_response.on_hover_text("Preparing preview · the last complete frame remains visible");
                 }
                 if !very_narrow_toolbar && crate::icons::button(ui, "chevrons-left", 20.0, false, "Previous frame (←)").clicked() {

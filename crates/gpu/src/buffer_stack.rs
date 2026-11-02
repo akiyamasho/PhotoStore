@@ -84,7 +84,7 @@ impl crate::Compositor {
         &mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, plan: &Plan<'_>, fr: &FrameRes,
         cell: Cell, batch: &[normal_stack::Source], stats: &mut crate::Stats,
     ) -> Result<Option<PreparedStreamBatch>, Unsupported> {
-        if !self.buffer_sources || self.buffer_stream_disabled || self.acc_format != wgpu::TextureFormat::Rgba32Float || photostore_geom::TILE_SIZE != 256 { return Ok(None); }
+        if !self.buffer_sources || self.buffer_stream_disabled || self.acc_format != wgpu::TextureFormat::Rgba32Float || photostore_geom::TILE_SIZE != 256 || batch.iter().any(|source| source.clip.is_some()) { return Ok(None); }
         if self.buffer_stream.is_none() {
             let (pipelines, error) = crate::first_error(device, || StreamPipelines::new(device));
             if let Some(error) = error { log::warn!("PhotoStore mapped stream compositor unavailable; using texture batch: {error}"); self.buffer_stream_disabled = true; return Ok(None); }
@@ -173,7 +173,7 @@ impl crate::Compositor {
         if self.acc_format != wgpu::TextureFormat::Rgba32Float || self.buffer_stack_disabled { return Ok(false); }
         if photostore_geom::TILE_SIZE != 256 { return Ok(false); }
         let Some(stack) = normal_stack::recognize(plan) else { return Ok(false); };
-        if stack.sources.len() > 8 { return Ok(false); }
+        if stack.sources.len() > 8 || stack.sources.iter().any(|source| source.clip.is_some()) { return Ok(false); }
         if self.buffer_stack.is_none() {
             let (pipelines, error) = crate::first_error(device, || Pipelines::new(device));
             if let Some(error) = error {

@@ -1,0 +1,14 @@
+{
+  "source_sha": "bf42924dd8d5b312e9d9aafe003098843be9d56d",
+  "published": false,
+  "boundary": "Timed-layer conversion to an editable Smart Object",
+  "steps": [
+    "Create two still layers and a Video Timeline",
+    "Give both layers a 0..20 frame range",
+    "Convert one layer to Smart Object"
+  ],
+  "result": "failed",
+  "error": "layer.smartObjects.convertToSmartObject: can't encode smart object contents: corrupt .pcraft bundle: visual track membership must reference a unique timeline clip layer",
+  "cause": "Child timeline filtered layer ranges but retained sibling IDs in visual-track memberships",
+  "correction": "Filter child memberships to retained range IDs and remove empty child tracks; preserve retained metadata/order and parent-side timing"
+}

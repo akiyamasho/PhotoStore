@@ -1,0 +1,58 @@
+{
+  "source_sha": "bf42924dd8d5b312e9d9aafe003098843be9d56d",
+  "binary_sha256": "a6429e2f4d3ec37f2305a9aafc6ecb4c84581d60051d19a7cb2c198186c6e2c7",
+  "published": false,
+  "scope": "Actual background native window, 8 distinct 3840x2160 H264 SDR 30fps movies plus small raster drawing; all monitors asleep",
+  "measured_seconds": 4.563623750000261,
+  "native_video_publications": 3,
+  "phase_summary": {
+    "idle_before": {
+      "samples": 8,
+      "native_video_frame_delta": 0,
+      "native_video_fps_observed": 0.0,
+      "ui_last_ms_p50": 0.27866599999993014,
+      "ui_last_ms_p95": 0.4594999999999345,
+      "inspect_rpc_ms_p50": 27.93820801889524,
+      "inspect_rpc_ms_p95": 31.9803329766728,
+      "ui_frame_count_start": 1718,
+      "ui_frame_count_end": 3132
+    },
+    "brush": {
+      "samples": 10,
+      "native_video_frame_delta": 0,
+      "native_video_fps_observed": 0.0,
+      "ui_last_ms_p50": 0.2908750000001419,
+      "ui_last_ms_p95": 3.685291999999663,
+      "inspect_rpc_ms_p50": 28.216416016221046,
+      "inspect_rpc_ms_p95": 30.969917017500848,
+      "ui_frame_count_start": 3197,
+      "ui_frame_count_end": 4832
+    },
+    "space_pan": {
+      "samples": 8,
+      "native_video_frame_delta": 2,
+      "native_video_fps_observed": 1.9770772718735612,
+      "ui_last_ms_p50": 0.27537500000016735,
+      "ui_last_ms_p95": 0.5574169999999867,
+      "inspect_rpc_ms_p50": 31.846416008193046,
+      "inspect_rpc_ms_p95": 59.8235409706831,
+      "ui_frame_count_start": 5070,
+      "ui_frame_count_end": 6335
+    },
+    "idle_after": {
+      "samples": 7,
+      "native_video_frame_delta": 1,
+      "native_video_fps_observed": 1.2144224808431967,
+      "ui_last_ms_p50": 0.4151659999997719,
+      "ui_last_ms_p95": 0.5768330000000788,
+      "inspect_rpc_ms_p50": 30.691459018271416,
+      "inspect_rpc_ms_p95": 39.90825003711507,
+      "ui_frame_count_start": 6361,
+      "ui_frame_count_end": 7315
+    }
+  },
+  "synthetic_brush_committed": true,
+  "synthetic_pan_applied": true,
+  "limitation": "Initial 0.8-second delay did not wait for real native preroll. This window includes startup and is not a valid warm throughput result. It exposed unbounded spinner repaint feedback and the small-raster CopyRect recognition gap. No display scanout or physical OS input measured.",
+  "result": "failed native acceptance; retained for corrections, no publication"
+}

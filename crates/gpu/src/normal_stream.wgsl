@@ -1,7 +1,7 @@
 // Bounded source-over batches: binding 0 is the previous batch result, bindings 1..7
 // are the next source layers. The first batch ignores binding 0.
 struct Chunk { origin_size: vec4<i32>, count: vec4<u32>, };
-struct Source { region: vec4<i32>, fallback: vec4<f32>, opacity: f32, };
+struct Source { region: vec4<i32>, fallback: vec4<f32>, opacity: f32, clip: vec4<i32>, };
 struct Params { chunk: Chunk, sources: array<Source, 8>, };
 @group(0) @binding(0) var previous: texture_2d<f32>;
 @group(0) @binding(1) var tex0: texture_2d<f32>;
@@ -21,6 +21,7 @@ struct VOut { @builtin(position) pos: vec4<f32> };
 }
 fn read_source(i: u32, pos: vec2<i32>, doc: vec2<i32>) -> vec4<f32> {
     let s = params.sources[i];
+    if (s.clip.z > 0 && (doc.x < s.clip.x || doc.y < s.clip.y || doc.x >= s.clip.x+s.clip.z || doc.y >= s.clip.y+s.clip.w)) { return vec4<f32>(0.0); }
     if (doc.x < s.region.x || doc.y < s.region.y || doc.x >= s.region.x+s.region.z || doc.y >= s.region.y+s.region.w) { return s.fallback; }
     let p = doc - s.region.xy;
     switch i {

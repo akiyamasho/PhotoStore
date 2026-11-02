@@ -1271,7 +1271,30 @@ fn ensure_gpu(app: &mut PhotoStoreApp, ctx: &egui::Context, idx: usize, visible:
                     source: live.stroke.doc().clone(), layer: live.layer, target: live.target.clone(),
                 }), Some(live.stroke.bounds().inflate(effect_reach(&app.session.documents()[idx].doc.layers))))
         } else { (doc, preview_key, None, None) };
-        let ready = gpu.refresh_playback(render_doc, revision, content_revision, preview_key, preview_family, overlay, render_damage, display, ctx);
+        let trace_cursor = app.perf.native_video_trace_cursor;
+        let ready = gpu.refresh_playback(render_doc, revision, content_revision, preview_key, preview_family, overlay, render_damage, display, trace_cursor, ctx);
+        if ready.publication_count > 0 {
+            app.perf.native_composition_wall_ms = ready.stats.composition_wall_ms;
+            app.perf.native_upload_pack_ms = ready.stats.upload_pack_ms;
+            app.perf.native_render_passes = ready.stats.render_passes;
+            app.perf.native_fused_chunks = ready.stats.fused_chunks;
+            app.perf.native_buffer_source_chunks = ready.stats.buffer_source_chunks;
+            app.perf.native_composition_fallback = ready.fallback.clone();
+        }
+        if ready.video_trace_reset {
+            app.perf.native_video_publications.clear();
+            app.perf.native_video_trace_cursor = 0;
+        }
+        for publication in &ready.video_publications {
+            if app.perf.native_video_trace_cursor < publication.sequence {
+                app.perf.native_video_publications.push(publication.clone());
+                app.perf.native_video_trace_cursor = publication.sequence;
+            }
+        }
+        if app.perf.native_video_publications.len() > 180 {
+            let excess = app.perf.native_video_publications.len() - 180;
+            app.perf.native_video_publications.drain(..excess);
+        }
         if let Some(cache) = app.canvases.get_mut(&(id, GPU_OUTPUT)) {
             if let Some((revision, preview)) = ready.published {
                 app.perf.native_publications = app.perf.native_publications.max(ready.publication_count);

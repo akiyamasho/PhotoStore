@@ -1048,6 +1048,15 @@ fn layer_to_smart_with_options(doc: &Document, l: &Layer, single_existing_root: 
         timeline.frame_states.iter_mut().for_each(|states| states.retain(|s| selected_ids.contains(&s.layer) || any_layer(l, &|x| x.id == s.layer)));
         timeline.property_frames.iter_mut().for_each(|states| states.retain(|s| selected_ids.contains(&s.layer) || any_layer(l, &|x| x.id == s.layer)));
         timeline.layer_ranges.retain(|r| selected_ids.contains(&r.layer) || any_layer(l, &|x| x.id == r.layer));
+        // The embedded document contains only this layer subtree. Keep the matching subset of
+        // the source visual tracks too; otherwise their memberships still reference sibling
+        // clips removed above and native encoding rejects the Smart Object bundle. Preserve
+        // original track metadata/order for retained members, and drop tracks with no child clips.
+        let child_clip_layers: std::collections::HashSet<_> = timeline.layer_ranges.iter().map(|r| r.layer).collect();
+        for track in &mut timeline.visual_tracks {
+            track.layers.retain(|id| child_clip_layers.contains(id));
+        }
+        timeline.visual_tracks.retain(|track| !track.layers.is_empty());
         if single_existing_root {
             for states in &mut timeline.frame_states {
                 if let Some(state) = states.iter_mut().find(|s| s.layer == l.id) {

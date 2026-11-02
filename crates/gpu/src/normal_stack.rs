@@ -6,14 +6,16 @@
 use photostore_color::BlendMode;
 use photostore_geom::Rect;
 
-use crate::{plan::{Kernel, Plan}, Bound, Cell, FrameRes};
+use crate::{plan::{Kernel, Plan, SurfaceRef}, Bound, Cell, FrameRes};
 
 /// An input selected from the plan. `pass` indexes the matching Content pass.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Source {
     pub pass: usize,
     /// Opacity from the Normal Blend pass that introduced this layer.
     pub opacity: f32,
+    /// Optional planner-local clip, e.g. a small raster painting layer copied back into backdrop.
+    pub clip: Option<Rect>,
 }
 
 /// A recognized output stack in bottom-to-top order, with at most 64 source passes.
@@ -45,7 +47,7 @@ pub(crate) fn recognize(plan: &Plan<'_>) -> Option<Stack> {
             }
             Kernel::Content => {
                 if p.a.is_some() || p.b.is_some() || p.c.is_some() || p.d.is_some()
-                    || p.mask.is_some() || p.clip.is_some() || p.flags != 0 || p.gradient
+                    || p.mask.is_some() || p.flags != 0 || p.gradient
                     || p.lut.is_some() || p.map.is_some() || p.pattern.is_some()
                     || !p.opacity.is_finite() || p.opacity != 1.0
                     || p.mode != BlendMode::Normal || p.adjust_kind != 0
@@ -58,12 +60,14 @@ pub(crate) fn recognize(plan: &Plan<'_>) -> Option<Stack> {
                 if let Some(t) = &p.tex {
                     if t.surface.get().format() != photostore_color::PixelFormat::RGBA8 { return None; }
                 }
-                SlotValue::Content(Source { pass: i, opacity: 1.0 })
+                if p.clip.is_some_and(|clip| clip.is_empty())
+                    || (p.clip.is_some() && !matches!(p.tex.as_ref().map(|t| &t.surface), Some(SurfaceRef::Doc(_)))) { return None; }
+                SlotValue::Content(Source { pass: i, opacity: 1.0, clip: p.clip })
             }
             Kernel::Blend => {
                 if p.mode != BlendMode::Normal || p.flags != 0 || !p.opacity.is_finite()
                     || !(0.0..=1.0).contains(&p.opacity) || p.c.is_some() || p.d.is_some()
-                    || p.tex.is_some() || p.mask.is_some() || p.clip.is_some() || p.lut.is_some()
+                    || p.tex.is_some() || p.mask.is_some() || p.lut.is_some()
                     || p.gradient || p.map.is_some() || p.pattern.is_some() || p.adjust_kind != 0
                     || p.color != [0.0; 4] || p.params.iter().flatten().any(|v| *v != 0.0)
                     || p.extra[..3].iter().any(|v| *v != 0.0)
@@ -73,6 +77,7 @@ pub(crate) fn recognize(plan: &Plan<'_>) -> Option<Stack> {
                 let (Some(a), Some(b)) = (p.a, p.b) else { return None; };
                 let SlotValue::Stack(mut stack) = values.get(&a)?.clone() else { return None; };
                 let SlotValue::Content(mut layer) = values.get(&b)?.clone() else { return None; };
+                if p.clip != layer.clip { return None; }
                 layer.opacity = p.opacity;
                 stack.push(layer);
                 if stack.len() > 64 { return None; }
@@ -84,7 +89,16 @@ pub(crate) fn recognize(plan: &Plan<'_>) -> Option<Stack> {
                 }
                 values.get(&p.a?)?.clone()
             }
-            // This also rejects all group/effect/adjustment/clipping composites and future kernels.
+            Kernel::CopyRect => {
+                if p.b.is_some() || p.c.is_some() || p.d.is_some() || p.tex.is_some() || p.mask.is_some() { return None; }
+                let Some(clip) = p.clip else { return None; };
+                let SlotValue::Stack(composed) = values.get(&p.a?)?.clone() else { return None; };
+                let SlotValue::Stack(backdrop) = values.get(&p.dst)?.clone() else { return None; };
+                if composed.len() != backdrop.len() + 1 || composed[..backdrop.len()] != backdrop[..]
+                    || composed.last().is_none_or(|s| s.clip != Some(clip)) { return None; }
+                SlotValue::Stack(composed)
+            }
+            // This rejects groups, effects, adjustments, unrecognized clipping/copy flows, and future kernels.
             _ => return None,
         };
         values.insert(p.dst, out);
@@ -176,7 +190,7 @@ impl StreamPipelines {
         }
         entries.push(wgpu::BindGroupLayoutEntry {
             binding: 8, visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: std::num::NonZeroU64::new(416) },
+            ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: std::num::NonZeroU64::new(544) },
             count: None,
         });
         let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("photostore_normal_stream_bindings"), entries: &entries });
@@ -193,7 +207,7 @@ impl StreamPipelines {
 }
 
 impl crate::Compositor {
-    /// Execute a recognized stack larger than the single-pass binding limit. Only one batch of
+    /// Execute a recognized large or clipped stack in bounded batches. Only one batch of
     /// seven source pages is resident at a time; the previous result is carried in a ping-pong
     /// accumulator texture.
     #[allow(clippy::too_many_arguments)]
@@ -205,7 +219,8 @@ impl crate::Compositor {
     ) -> Result<bool, crate::Unsupported> {
         if self.acc_format != wgpu::TextureFormat::Rgba32Float { return Ok(false); }
         let Some(stack) = recognize(plan) else { return Ok(false); };
-        if !(9..=64).contains(&stack.sources.len()) { return Ok(false); }
+        let has_clipped_source = stack.sources.iter().any(|source| source.clip.is_some());
+        if stack.sources.len() < 2 || (stack.sources.len() <= 8 && !has_clipped_source) { return Ok(false); }
         let max_batch_bytes = u64::from(self.page).saturating_mul(u64::from(self.page)).saturating_mul(4 * 7);
         let full_cell_upload = u64::from(self.page).saturating_mul(u64::from(self.page))
             .saturating_mul(4).saturating_mul(stack.sources.len() as u64);
@@ -282,17 +297,22 @@ impl crate::Compositor {
                 let previous_view = if has_previous {
                     if output_is_root { scratch_view } else { &self.pool[plan.root as usize].1 }
                 } else { &dummy };
-                let mut data = vec![0_u8; 416];
+                let mut data = vec![0_u8; 544];
                 for (i, value) in [chunk.x0, chunk.y0, chunk.width() as i32, chunk.height() as i32].into_iter().enumerate() { data[i*4..i*4+4].copy_from_slice(&value.to_le_bytes()); }
                 data[16..20].copy_from_slice(&((end-start) as u32).to_le_bytes());
                 data[20..24].copy_from_slice(&(u32::from(has_previous)).to_le_bytes());
                 for (i, (region, fallback, opacity)) in metadata.iter().enumerate() {
-                    let offset = 32 + i * 48;
+                    let offset = 32 + i * 64;
                     for (j, value) in region.iter().enumerate() { data[offset+j*4..offset+j*4+4].copy_from_slice(&value.to_le_bytes()); }
                     for (j, value) in fallback.iter().enumerate() { data[offset+16+j*4..offset+20+j*4].copy_from_slice(&value.to_le_bytes()); }
                     data[offset+32..offset+36].copy_from_slice(&opacity.to_le_bytes());
+                    if let Some(clip) = stack.sources.get(start+i).and_then(|source| source.clip) {
+                        for (j, value) in [clip.x0, clip.y0, clip.width() as i32, clip.height() as i32].into_iter().enumerate() {
+                            data[offset+48+j*4..offset+52+j*4].copy_from_slice(&value.to_le_bytes());
+                        }
+                    }
                 }
-                let uniform = device.create_buffer(&wgpu::BufferDescriptor { label: Some("photostore_normal_stream_uniform"), size: 416, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+                let uniform = device.create_buffer(&wgpu::BufferDescriptor { label: Some("photostore_normal_stream_uniform"), size: 544, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
                 queue.write_buffer(&uniform, 0, &data);
                 let mut entries = Vec::with_capacity(9);
                 entries.push(wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(previous_view) });
@@ -340,7 +360,7 @@ impl crate::Compositor {
         let Some(stack) = recognize(plan) else { return false; };
         // The legacy fused shader binds eight source textures. Larger stacks are handled by the
         // streaming path before the generic all-sources-bound compositor.
-        if stack.sources.len() > 8 { return false; }
+        if stack.sources.len() > 8 || stack.sources.iter().any(|source| source.clip.is_some()) { return false; }
         if self.normal_stack.is_none() {
             let (pipelines, error) = crate::first_error(device, || Pipelines::new(device));
             if error.is_some() {

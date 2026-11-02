@@ -117,9 +117,33 @@ pub(crate) struct PlaybackRefresh {
     pub published_frame: Option<usize>,
     pub publication_count: u64,
     pub video_publication_count: u64,
+    pub stats: NativePlaybackStats,
+    pub video_publications: Vec<NativeVideoPublication>,
+    pub video_trace_reset: bool,
     pub available: bool,
     pub pending: bool,
     pub fallback: Option<String>,
+}
+
+/// Scalar diagnostics for the most recently installed native playback composition.
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativePlaybackStats {
+    pub composition_wall_ms: f64,
+    pub upload_pack_ms: f64,
+    pub render_passes: usize,
+    pub fused_chunks: usize,
+    pub buffer_source_chunks: usize,
+}
+
+/// A changed movie-frame publication, timestamped at the native callback install boundary.
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeVideoPublication {
+    #[serde(skip)]
+    pub(crate) sequence: u64,
+    pub at_ms: f64,
+    pub frame: usize,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -146,7 +170,7 @@ pub(crate) struct PlaybackOverlay {
     pub target: serde_json::Value,
 }
 #[cfg(not(target_arch = "wasm32"))]
-struct PlaybackResult { token: PlaybackToken, textures: Option<DocTextures>, fallback: Option<String> }
+struct PlaybackResult { token: PlaybackToken, textures: Option<DocTextures>, fallback: Option<String>, stats: NativePlaybackStats }
 #[cfg(not(target_arch = "wasm32"))]
 struct PlaybackRecycled { token: Option<PlaybackToken>, textures: DocTextures }
 #[cfg(not(target_arch = "wasm32"))]
@@ -175,6 +199,8 @@ struct PlaybackMailbox {
     last_fallback: Option<String>,
     publication_count: u64,
     video_publication_count: u64,
+    published_stats: NativePlaybackStats,
+    video_publications: std::collections::VecDeque<NativeVideoPublication>,
 }
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
@@ -253,6 +279,8 @@ fn playback_worker(
         }
         resources.compositor_budget = job.budget;
         resources.compositor_focus = job.focus;
+        let compose_started = std::time::Instant::now();
+        let mut compose_stats = photostore_gpu::Stats::default();
         let render = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if !health.is_ok() { return Some("GPU device is unavailable".to_string()); }
             let overlay_doc = match job.overlay.as_ref() {
@@ -278,15 +306,26 @@ fn playback_worker(
                 composite_resources(&device, &queue, &adapter, &health, tile, job.format, render_doc,
                     damage.unwrap_or_else(|| render_doc.bounds()), job.display.as_ref().is_some_and(|d| d.encode_srgb), &mut resources)
             };
-            if let Err(error) = result {
-                if health.is_ok() {
-                    upload_composite_resources(&device, &queue, &health, tile, job.token.document,
-                        job.format, render_doc, job.display.as_deref(), &mut resources);
+            match result {
+                Ok(stats) => compose_stats = stats,
+                Err(error) => {
+                    if health.is_ok() {
+                        upload_composite_resources(&device, &queue, &health, tile, job.token.document,
+                            job.format, render_doc, job.display.as_deref(), &mut resources);
+                    }
+                    return Some(error.0);
                 }
-                return Some(error.0);
             }
             None
         }));
+        let compose_wall_ms = compose_started.elapsed().as_secs_f64() * 1000.0;
+        let stats = NativePlaybackStats {
+            composition_wall_ms: compose_wall_ms,
+            upload_pack_ms: compose_stats.upload_pack_ms,
+            render_passes: compose_stats.passes,
+            fused_chunks: compose_stats.fused_chunks,
+            buffer_source_chunks: compose_stats.buffer_source_chunks,
+        };
         let fallback = render.unwrap_or_else(|_| {
             health.mark(Fault::Lost("video canvas worker stopped after a GPU error".into()));
             Some("video canvas worker stopped after a GPU error".into())
@@ -296,7 +335,7 @@ fn playback_worker(
             state.active = None;
             if state.closed { return; }
             if state.epoch == job.token.epoch {
-                state.completed = Some(PlaybackResult { token: job.token, textures, fallback });
+                state.completed = Some(PlaybackResult { token: job.token, textures, fallback, stats });
             }
         } else { return; }
         job.ctx.request_repaint();
@@ -330,7 +369,7 @@ impl GpuCanvas {
         overlay: Option<PlaybackOverlay>,
         damage: Option<photostore_geom::Rect>,
         display: Option<std::sync::Arc<photostore_engine::display_color::CanvasDisplay>>,
-        ctx: &egui::Context,
+        after_video_sequence: u64, ctx: &egui::Context,
     ) -> PlaybackRefresh {
         let size = [doc.size.width, doc.size.height];
         let controller = &self.playback;
@@ -349,11 +388,11 @@ impl GpuCanvas {
             }).map(|_| ()).map_err(|error| format!("cannot start video canvas worker: {error}"))
         });
         if let Err(error) = started {
-            return PlaybackRefresh { published: None, published_frame: None, publication_count: 0, video_publication_count: 0, available: false, pending: false, fallback: Some(error.clone()) };
+            return PlaybackRefresh { published: None, published_frame: None, publication_count: 0, video_publication_count: 0, stats: NativePlaybackStats::default(), video_publications: Vec::new(), video_trace_reset: false, available: false, pending: false, fallback: Some(error.clone()) };
         }
         let Ok(mut state) = controller.shared.0.try_lock() else {
             ctx.request_repaint_after(std::time::Duration::from_millis(6));
-            return PlaybackRefresh { published: None, published_frame: None, publication_count: 0, video_publication_count: 0, available: false, pending: true, fallback: None };
+            return PlaybackRefresh { published: None, published_frame: None, publication_count: 0, video_publication_count: 0, stats: NativePlaybackStats::default(), video_publications: Vec::new(), video_trace_reset: false, available: false, pending: true, fallback: None };
         };
         let token = PlaybackToken {
             document: doc.id.0, content: content_revision, revision, preview: preview_key, preview_family,
@@ -372,7 +411,7 @@ impl GpuCanvas {
                 if state.retired.len() >= PLAYBACK_RETIRED_CAPACITY {
                     state.queued = Some(old);
                     ctx.request_repaint_after(std::time::Duration::from_millis(6));
-                    return PlaybackRefresh { published: published.map(|p| (p.revision, p.preview)), published_frame: published.and_then(|p| p.frame), publication_count: state.publication_count, video_publication_count: state.video_publication_count, available: published.is_some(), pending: true, fallback: state.last_fallback.clone() };
+                    return playback_refresh_snapshot(&state, published, after_video_sequence, true);
                 }
                 state.retired.push_back(PlaybackRetired::Job(old));
             }
@@ -382,13 +421,7 @@ impl GpuCanvas {
             controller.shared.1.notify_one();
         }
         if pending { ctx.request_repaint_after(std::time::Duration::from_millis(6)); }
-        PlaybackRefresh {
-            published: published.map(|p| (p.revision, p.preview)),
-            published_frame: published.and_then(|p| p.frame),
-            publication_count: state.publication_count,
-            video_publication_count: state.video_publication_count,
-            available: published.is_some(), pending, fallback: state.last_fallback.clone(),
-        }
+        playback_refresh_snapshot(&state, published, after_video_sequence, pending)
     }
 
     pub(crate) fn cancel_playback_refresh(&self) {
@@ -978,6 +1011,34 @@ impl GpuCanvas {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn playback_refresh_snapshot(
+    state: &PlaybackMailbox,
+    published: Option<PlaybackToken>,
+    after_video_sequence: u64,
+    pending: bool,
+) -> PlaybackRefresh {
+    let sequence_reset = after_video_sequence > state.video_publication_count;
+    let after = if sequence_reset { 0 } else { after_video_sequence };
+    let oldest = state.video_publications.front().map_or(state.video_publication_count.saturating_add(1), |event| event.sequence);
+    let video_trace_reset = sequence_reset || after.saturating_add(1) < oldest;
+    let video_publications = state.video_publications.iter()
+        .filter(|event| video_trace_reset || event.sequence > after)
+        .copied().collect();
+    PlaybackRefresh {
+        published: published.map(|p| (p.revision, p.preview)),
+        published_frame: published.and_then(|p| p.frame),
+        publication_count: state.publication_count,
+        video_publication_count: state.video_publication_count,
+        stats: state.published_stats,
+        video_publications,
+        video_trace_reset,
+        available: published.is_some(),
+        pending,
+        fallback: state.last_fallback.clone(),
+    }
+}
+
 /// A CPU composite as the canvas texture stores it (`display`'s encoding; as is without one).
 fn texture_buffer<'a>(
     display: Option<&photostore_engine::display_color::CanvasDisplay>,
@@ -1070,6 +1131,18 @@ pub struct Perf {
     pub native_presented_frame: usize,
     /// Whether the native presenter still has a newer canvas revision to publish.
     pub native_pending: bool,
+    /// Most recently installed native video composition's host-side wall time and GPU path stats.
+    pub native_composition_wall_ms: f64,
+    pub native_upload_pack_ms: f64,
+    pub native_render_passes: usize,
+    pub native_fused_chunks: usize,
+    pub native_buffer_source_chunks: usize,
+    /// Why the most recent native composition used its fallback path, if any.
+    pub native_composition_fallback: Option<String>,
+    /// Last 180 changed native video-frame publications, timestamped at callback installation.
+    pub native_video_publications: Vec<NativeVideoPublication>,
+    #[serde(skip)]
+    pub(crate) native_video_trace_cursor: u64,
     /// Last canvas refresh: CPU composite (ms).
     pub composite_ms: f64,
     /// Last canvas refresh: conversion + upload (ms).
@@ -2139,6 +2212,14 @@ fn publish_playback_callback(
     let prior_token = state.published;
     if result.token.frame.is_some() && prior_token.and_then(|token| token.frame) != result.token.frame {
         state.video_publication_count = state.video_publication_count.wrapping_add(1);
+        if let Some(frame) = result.token.frame {
+            if state.video_publications.len() == 180 { state.video_publications.pop_front(); }
+            state.video_publications.push_back(NativeVideoPublication {
+                sequence: state.video_publication_count,
+                at_ms: now_ms(),
+                frame,
+            });
+        }
     }
     let old = resources.docs.insert(result.token.document, textures);
     if let Some(old) = old {
@@ -2147,6 +2228,7 @@ fn publish_playback_callback(
         }
     }
     state.published = Some(result.token);
+    state.published_stats = result.stats;
     state.failed = None;
     state.last_fallback = result.fallback;
     state.publication_count = state.publication_count.wrapping_add(1);
