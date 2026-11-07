@@ -1,0 +1,78 @@
+{
+  "date": "2026-11-07",
+  "source_sha": "575913fc4de5bb27d5b7234629d7ed7ad90034f1",
+  "release": "v0.20.8",
+  "fixture": {
+    "sources": 8,
+    "resolution": [
+      3840,
+      2160
+    ],
+    "fps": 30,
+    "duration_seconds": 6,
+    "codec": "H.264 SDR BT.709",
+    "audio": false,
+    "generator": "FFmpeg testsrc2 with per-source box offsets, h264_videotoolbox at 12 Mbps"
+  },
+  "measurement": "Native renderer callback publications from an isolated background window. Brush and Space-pan events used the desktop control protocol.",
+  "phases": [
+    {
+      "phase": "idle",
+      "seconds": 0.9690897079999559,
+      "fps": 30.95688639797356,
+      "frontmostBeforeAndAfter": false,
+      "uiMs": 4.660959000000275,
+      "fallback": null,
+      "composeMs": 13.599791,
+      "packMs": 9.6535
+    },
+    {
+      "phase": "brush",
+      "seconds": 0.7464616249999381,
+      "fps": 29.47237910589419,
+      "frontmostBeforeAndAfter": false,
+      "uiMs": 4.481833000000279,
+      "fallback": null,
+      "composeMs": 12.327582999999999,
+      "packMs": 7.7875
+    },
+    {
+      "phase": "space-pan",
+      "seconds": 0.7502157500057365,
+      "fps": 29.32489753758406,
+      "frontmostBeforeAndAfter": false,
+      "uiMs": 4.884165999999823,
+      "fallback": null,
+      "composeMs": 10.360292,
+      "packMs": 7.91396
+    },
+    {
+      "phase": "idle-after",
+      "seconds": 0.9743990420029149,
+      "fps": 30.788207609824656,
+      "frontmostBeforeAndAfter": false,
+      "uiMs": 0.5990410000003976,
+      "fallback": null,
+      "composeMs": 16.031375,
+      "packMs": 12.855333
+    }
+  ],
+  "warm_callback_interval_ms": {
+    "samples": 106,
+    "p95": 47.43544849999989,
+    "max": 74.43212499999981
+  },
+  "drawing_layer_bounds_before": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "drawing_layer_bounds_after_save_and_reopen": [
+    892,
+    992,
+    383,
+    42
+  ],
+  "foreground_acceptance": "Pending physical display, pen and audio-device acceptance. The foreground window was not established and the sources contain no audio."
+}
