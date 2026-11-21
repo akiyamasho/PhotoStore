@@ -2459,7 +2459,7 @@ fn layer_thumb_fit(cell: Rect, w: u32, h: u32) -> (Rect, Rect) {
     crate::channels_panel::fit_thumb(cell, w, h)
 }
 
-fn draw_layer_thumb(app: &mut PhotoStoreApp, ctx: &egui::Context, ui: &egui::Ui, doc: &photostore_doc::Document, l: &Layer, rect: Rect, selected: bool) {
+pub(crate) fn draw_layer_thumb(app: &mut PhotoStoreApp, ctx: &egui::Context, ui: &egui::Ui, doc: &photostore_doc::Document, l: &Layer, rect: Rect, selected: bool) {
     let t = Tokens::get(ctx);
     let p = ui.painter();
     match &l.content {

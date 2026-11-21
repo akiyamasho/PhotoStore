@@ -70,8 +70,9 @@ pub(crate) fn modal(app: &mut PhotoStoreApp, ctx: &egui::Context) {
         return;
     }
     dialog.document = Some(st.doc.id);
-    let pages: Vec<_> = st.doc.layers.iter().rev().map(|l| (l.id, l.name.clone(), l.is_group())).collect();
-    if dialog.selected.is_none_or(|id| !pages.iter().any(|(candidate, _, _)| *candidate == id)) {
+    let doc = st.doc.clone();
+    let pages: Vec<_> = doc.layers.iter().rev().collect();
+    if dialog.selected.is_none_or(|id| !pages.iter().any(|page| page.id == id)) {
         dialog.selected = st.notebook_root();
     }
     let mut close = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
@@ -80,7 +81,7 @@ pub(crate) fn modal(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     let mut select = None;
     let mut move_direction = None;
     egui::Modal::new(egui::Id::new("notebook-pages")).show(ctx, |ui| {
-        ui.set_min_width(420.0);
+        ui.set_width(480.0);
         ui.heading(tl!("Pages"));
         ui.add_space(8.0);
         let response = ui.add(egui::TextEdit::singleline(&mut dialog.query).hint_text(tl!("Jump to page number or name")).desired_width(f32::INFINITY));
@@ -90,36 +91,40 @@ pub(crate) fn modal(app: &mut PhotoStoreApp, ctx: &egui::Context) {
         }
         let query = dialog.query.trim().to_lowercase();
         let ordinal = query.parse::<usize>().ok();
-        let matching: Vec<_> = pages
-            .iter()
-            .enumerate()
-            .filter(|(i, (_, name, _))| ordinal.map_or_else(|| name.to_lowercase().contains(&query), |number| i + 1 == number))
-            .collect();
-        let selected_match = dialog.selected.filter(|id| matching.iter().any(|(_, (candidate, _, _))| candidate == id));
+        let matching: Vec<_> =
+            pages.iter().enumerate().filter(|(i, page)| ordinal.map_or_else(|| page.name.to_lowercase().contains(&query), |number| i + 1 == number)).collect();
+
         ui.add_space(8.0);
         ui.horizontal_top(|ui| {
-            egui::ScrollArea::vertical().id_salt("notebook-pages-list").max_height(300.0).show(ui, |ui| {
-                ui.set_min_width(280.0);
-                for (i, (id, name, group)) in &matching {
-                    ui.horizontal(|ui| {
-                        let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
-                        crate::icons::paint(ui, rect, if *group { "folder" } else { "image" }, 16.0, ui.visuals().text_color());
-                        let row = ui.selectable_label(dialog.selected == Some(*id), format!("{}.  {}", i + 1, name));
-                        if row.clicked() {
-                            dialog.selected = Some(*id);
-                        }
-                        if row.double_clicked() {
-                            select = Some(*id);
-                            close = true;
-                        }
-                    });
-                }
+            ui.vertical(|ui| {
+                // ScrollArea inherits its parent's layout. Give the page list its own vertical
+                // column so adding pages never pushes the adjacent buttons off the dialog.
+                ui.set_width(350.0);
+                egui::ScrollArea::vertical().id_salt("notebook-pages-list").max_height(290.0).show_rows(ui, 34.0, matching.len(), |ui, range| {
+                    for (i, page) in &matching[range] {
+                        ui.horizontal(|ui| {
+                            let (rect, thumb) = ui.allocate_exact_size(egui::vec2(38.0, 28.0), egui::Sense::click());
+                            crate::panels::draw_layer_thumb(app, ctx, ui, &doc, page, rect, false);
+                            let label = format!("{}.  {}", i + 1, page.name);
+                            let row = ui.add_sized([ui.available_width(), 34.0], egui::Button::selectable(dialog.selected == Some(page.id), label).truncate());
+                            if row.clicked() || thumb.clicked() {
+                                dialog.selected = Some(page.id);
+                            }
+                            if row.double_clicked() || thumb.double_clicked() {
+                                select = Some(page.id);
+                                close = true;
+                            }
+                        });
+                    }
+                });
                 if matching.is_empty() {
                     ui.label(tl!("No matching pages"));
                 }
             });
+            ui.separator();
             ui.vertical(|ui| {
-                let index = selected_match.and_then(|id| pages.iter().position(|(candidate, _, _)| *candidate == id));
+                ui.set_width(104.0);
+                let index = matching.iter().find(|(_, page)| Some(page.id) == dialog.selected).map(|(i, _)| *i);
                 if ui.add_enabled(index.is_some_and(|i| i > 0), egui::Button::new(tl!("↑ Move up"))).clicked() {
                     move_direction = Some("up");
                 }
@@ -128,8 +133,7 @@ pub(crate) fn modal(app: &mut PhotoStoreApp, ctx: &egui::Context) {
                 }
             });
         });
-        let target =
-            dialog.selected.filter(|id| matching.iter().any(|(_, (candidate, _, _))| candidate == id)).or_else(|| matching.first().map(|(_, (id, _, _))| *id));
+        let target = dialog.selected.filter(|id| matching.iter().any(|(_, page)| page.id == *id)).or_else(|| matching.first().map(|(_, page)| page.id));
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             if ui.button(tl!("Close")).clicked() {

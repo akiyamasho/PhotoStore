@@ -10,10 +10,10 @@ PhotoStore is a Rust-native image editor maintained as a personal fork of PhotoC
 
 Download the macOS Apple Silicon package from [PhotoStore releases](https://github.com/akiyamasho/PhotoStore/releases). For a local install, use Rust stable 1.95+:
 
-PhotoStore 0.21.0 adds Notebook View for layered documents. Select **Notebook** in the Layers panel to draw on one page at a time. Stable-release checks are under **Help → Check for
+PhotoStore 0.21.1 includes Notebook View for layered documents. Select **Notebook** in the Layers panel to draw on one page at a time. Stable-release checks are under **Help → Check for
 Updates…**, using existing GitHub CLI (`gh`) authentication. The macOS app and CLI use the
 persistent local PhotoStore signing certificate. See [in-app updates](docs/app-updates.md) and
-the [0.21.0 release notes](docs/releases/0.21.0.md).
+the [0.21.1 release notes](docs/releases/0.21.1.md).
 
 ```sh
 CARGO_BUILD_JOBS=1 cargo install --path apps/photostore --bin photostore --locked
@@ -38,7 +38,7 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 | ⌘⇧X | Previous page |
 | ⌘⇧C | Next page |
 
-[Download PhotoStore 0.21.0 for Apple Silicon](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.21.0).
+[Download PhotoStore 0.21.1 for Apple Silicon](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.21.1).
 
 **File → Save** and **⌘S** also update eligible single-layer JPEG and PNG files in place. [Image save details](docs/releases/0.20.9.md).
 
