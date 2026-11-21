@@ -286,6 +286,29 @@ fn opaque_surface(s: &Surface, r: Rect) -> bool {
     })
 }
 
+/// Whether an exact single-layer document can be written implicitly without conversion or
+/// dropping animation, channels, recording, or transparency unsupported by the target format.
+pub fn can_save_implicit_flat(doc: &Document, format: Format) -> bool {
+    let caps = format.caps();
+    if !caps.write
+        || !caps.depths.contains(&csample(doc.depth))
+        || !matches!(doc.mode, ColorMode::Rgb | ColorMode::Grayscale | ColorMode::Cmyk)
+        || !doc.channels.is_empty()
+        || doc.timeline.is_some()
+        || doc.recording.is_some()
+        || !doc.media_assets.is_empty()
+    {
+        return false;
+    }
+    let [layer] = doc.layers.as_slice() else { return false };
+    if layer.video.is_some() || layer.opacity_animation.is_some() || layer.position_animation.is_some() || layer.transform_animation.is_some() {
+        return false;
+    }
+    let Some(surface) = single_layer(doc) else { return false };
+    (caps.alpha && caps.layouts.contains(&layout_for(doc.mode, true)))
+        || (caps.layouts.contains(&layout_for(doc.mode, false)) && opaque_surface(surface, doc.bounds()))
+}
+
 /// Flattens and encodes as `format`.
 pub fn export_flat(doc: &Document, format: Format, opts: &ExportOptions) -> Result<ExportResult, IoError> {
     use photostore_cms::{Builtin, Intent};

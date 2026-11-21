@@ -555,6 +555,16 @@ fn only_layered_files_save_in_place() {
 }
 
 #[test]
+fn flat_save_source_requires_matching_still_image_signature() {
+    let dir = tmp("flat-source");
+    let path = png(&dir, "source.png", 2, 2, "#ff0000");
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(flat_save_source("source.png", &bytes, &[]), Some(photostore_codecs::Format::Png));
+    assert_eq!(flat_save_source("source.jpg", &bytes, &[]), None, "a renamed PNG must not be overwritten as JPEG");
+    assert_eq!(flat_save_source("source.png", &bytes, &["decoder warning".into()]), None, "warned sources may contain dropped frames");
+}
+
+#[test]
 fn templates_open_untitled_without_their_path() {
     assert!(is_template("dir/card.PSDT") && !is_template("card.psd") && !is_template("psdt"));
     let dir = tmp("template");

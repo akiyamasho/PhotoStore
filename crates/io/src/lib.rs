@@ -39,6 +39,7 @@ mod channel_map;
 pub mod comps_map;
 pub mod effects_map;
 mod flat;
+pub use flat::can_save_implicit_flat;
 mod gradient_bake;
 pub mod linked;
 mod multichannel_map;

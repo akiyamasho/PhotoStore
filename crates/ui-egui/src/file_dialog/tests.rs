@@ -12,6 +12,7 @@ fn app() -> (PhotoStoreApp, Open, Rc<RefCell<Vec<String>>>) {
     let (open, written): (Open, Rc<RefCell<Vec<String>>>) = Default::default();
     let (held, w) = (open.clone(), written.clone());
     let services = Services {
+        import: Some(Box::new(|name, bytes, depth| photostore_io::import_with_svg_group_depth(name, bytes, depth).map(|r| (r.document, r.warnings)).map_err(|e| e.to_string()))),
         export: Some(Box::new(|_: &photostore_doc::Document, _: &str, _: &crate::ExportSettings| Ok((b"out".to_vec(), Vec::new())))),
         write: Some(Box::new(move |path: &str, _: &[u8]| {
             w.borrow_mut().push(path.to_string());
@@ -43,14 +44,47 @@ fn pdn_save_requests_a_native_copy_without_overwriting_the_source() {
 /// A real flat JPEG import, optionally edited to contain another layer. A filename without a
 /// path is the web/download case; desktop opens also retain their source location.
 fn jpeg_app(path: Option<&str>, layered: bool) -> (PhotoStoreApp, Open, Rc<RefCell<Vec<String>>>) {
+    flat_app(path, layered, "jpeg")
+}
+
+fn flat_app(path: Option<&str>, layered: bool, format: &str) -> (PhotoStoreApp, Open, Rc<RefCell<Vec<String>>>) {
     let (mut app, open, written) = app();
-    let bytes = photostore_io::export(&app.session.active().unwrap().doc, "My image.JPEG", &Default::default()).unwrap().bytes;
-    let doc = photostore_io::import("My image.JPEG", &bytes).unwrap().document;
-    app.session.add_document(doc, path.map(str::to_string));
+    let name = format!("My image.{format}");
+    let bytes = photostore_io::export(&app.session.active().unwrap().doc, &name, &Default::default()).unwrap().bytes;
+    match path {
+        Some(source) => app.open_file(source, &bytes).unwrap(),
+        None => app.open_bytes(&name, &bytes).unwrap(),
+    };
     if layered {
         app.run("layer.new.layer", json!({})).unwrap();
     }
     (app, open, written)
+}
+
+#[test]
+fn flat_source_png_and_jpeg_save_in_place() {
+    let ctx = egui::Context::default();
+    for (format, source) in [("png", "/pics/My image.PNG"), ("jpeg", "/pics/My image.JPEG")] {
+        let (mut app, open, _) = flat_app(Some(source), false, format);
+        let encoded = Rc::new(RefCell::new(Vec::<(String, Vec<u8>)>::new()));
+        let captured = encoded.clone();
+        app.services.export = Some(Box::new(|doc, path, _| photostore_io::export(doc, path, &Default::default()).map(|r| (r.bytes, r.warnings)).map_err(|e| e.to_string())));
+        app.services.write = Some(Box::new(move |path, bytes| {
+            captured.borrow_mut().push((path.to_string(), bytes.to_vec()));
+            Ok(())
+        }));
+        app.run("image.imageSize", json!({"width": 3, "height": 3, "resample": "nearest"})).unwrap();
+        let result = menus::invoke(&mut app, &ctx, "file.save", json!({})).unwrap();
+        assert_eq!(result["path"], source);
+        assert!(open.borrow().is_empty(), "{format} unexpectedly opened Save As");
+        assert!(!app.file_dialog_open(), "{format} unexpectedly opened Save As");
+        let output = encoded.borrow();
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0].0, source);
+        assert_eq!(photostore_codecs::detect(&output[0].1), Some(if format == "png" { photostore_codecs::Format::Png } else { photostore_codecs::Format::Jpeg }));
+        assert_eq!(app.session.active().unwrap().path.as_deref(), Some(source));
+        assert!(!app.session.active().unwrap().is_dirty());
+    }
 }
 
 #[test]

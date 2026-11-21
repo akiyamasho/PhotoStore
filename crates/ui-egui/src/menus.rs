@@ -303,12 +303,13 @@ pub(crate) fn invoke_unguarded(app: &mut PhotoStoreApp, ctx: &egui::Context, id:
             }
         }
         "file.save" => {
-            // Writes back only to a layered file; a flat one goes through Save As.
+            // Writes back to a native layered file or an eligible plain PNG/JPEG source;
+            // other flat files go through Save As.
             let path = params
                 .get("path")
                 .and_then(Value::as_str)
                 .map(str::to_string)
-                .or_else(|| app.session.active().and_then(|d| d.path.clone()).filter(|p| photostore_engine::file_cmds::saves_in_place(p)));
+                .or_else(|| app.session.active().and_then(photostore_engine::DocState::default_save_path));
             app.save_as(path)
         }
         "file.exit" => {

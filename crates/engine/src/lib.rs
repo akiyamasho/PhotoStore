@@ -201,6 +201,9 @@ pub struct DocState {
     /// Anchor of ⇧-click range selection (the last plainly or ⌘-clicked layer).
     pub layer_anchor: Option<LayerId>,
     pub path: Option<String>,
+    /// Confirmed still-image source format for implicit flat saves. None means the source bytes
+    /// were not safely identified (or the document was created by a non-file workflow).
+    pub flat_save_source: Option<photostore_codecs::Format>,
     /// An Affinity document (or its preview) must not acquire the native source as its Save path.
     pub source_read_only: bool,
     /// Increments on every change; UIs re-render when it moves.
@@ -242,6 +245,7 @@ impl DocState {
             selected_layers: active_layer.into_iter().collect(),
             layer_anchor: active_layer,
             path,
+            flat_save_source: None,
             source_read_only: false,
             revision: 1,
             content_revision: 1,
@@ -269,6 +273,41 @@ impl DocState {
     }
     pub fn is_dirty(&self) -> bool {
         self.revision != self.saved_revision
+    }
+    /// The path File › Save may write without opening Save As.
+    ///
+    /// Layered documents keep the existing extension-only policy. A flat source is eligible
+    /// only when it is a writable PNG/JPEG and its document is still a single plain raster
+    /// layer; otherwise saving it in place could silently discard editable data.
+    pub fn default_save_path(&self) -> Option<String> {
+        let path = self.path.as_ref()?;
+        if self.source_read_only {
+            return None;
+        }
+        if crate::file_cmds::saves_in_place(path) {
+            return Some(path.clone());
+        }
+        let format = crate::file_cmds::flat_save_format(path)?;
+        (self.flat_save_source == Some(format)
+            && self.is_plain_raster()
+            && photostore_io::can_save_implicit_flat(&self.doc, format))
+            .then(|| path.clone())
+    }
+
+    /// Whether the document is exactly one visible, unmasked normal raster layer.
+    pub fn is_plain_raster(&self) -> bool {
+        let [layer] = self.doc.layers.as_slice() else { return false };
+        matches!(layer.content, photostore_doc::LayerContent::Raster(_))
+            && layer.visible
+            && layer.opacity >= 1.0
+            && layer.fill_opacity >= 1.0
+            && layer.mask.is_none()
+            && layer.vector_mask.is_none()
+            && layer.effects.items.is_empty()
+            && layer.effects.psd_raw.is_none()
+            && matches!(layer.blend, photostore_color::BlendMode::Normal | photostore_color::BlendMode::PassThrough)
+            && photostore_compose::channel_weights(layer, self.doc.mode).is_none()
+            && !photostore_compose::blend_if_active(layer, self.doc.mode)
     }
     /// The targeted layers, as history stores them with each state.
     fn layer_target(&self) -> LayerTarget {

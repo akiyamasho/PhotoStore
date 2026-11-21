@@ -514,7 +514,7 @@ fn open_audio_document(name: &str, path: &str) -> Result<Document> {
 }
 
 enum OpenedContent {
-    Raster(photostore_io::ImportResult),
+    Raster(photostore_io::ImportResult, Option<photostore_codecs::Format>),
     Media(Document),
 }
 
@@ -574,20 +574,24 @@ impl Session {
                 ctx.check()?;
                 ctx.progress(0.02, "Decoding");
                 ctx.stage(0.02, 1.0, "Decoding", |ctl| photostore_io::import_with_svg_group_depth_and_interrupt(&name_w, &bytes, max_svg_group_depth, ctl))
-                    .map(OpenedContent::Raster)
+                    .map(|r| {
+                        let flat_source = crate::file_cmds::flat_save_source(&name_w, &bytes, &r.warnings);
+                        OpenedContent::Raster(r, flat_source)
+                    })
                     .map_err(|e| match e {
                         photostore_io::IoError::Cancelled => EngineError::Cancelled,
                         e => EngineError::Other(e.to_string()),
                     })
             },
             move |s, opened: OpenedContent| {
-                let (doc, source_read_only, warnings, is_media) = match opened {
-                    OpenedContent::Raster(r) => (r.document, r.source_read_only, r.warnings, false),
-                    OpenedContent::Media(doc) => (doc, true, Vec::<String>::new(), true),
+                let (doc, source_read_only, warnings, flat_source, is_media) = match opened {
+                    OpenedContent::Raster(r, flat_source) => (r.document, r.source_read_only, r.warnings, flat_source, false),
+                    OpenedContent::Media(doc) => (doc, true, Vec::<String>::new(), None, true),
                 };
                 let (index, color) = s.open_document(doc, None);
                 if let Some(st) = s.active_mut() {
                     st.source_read_only = source_read_only;
+                    st.flat_save_source = flat_source;
                 }
                 Ok(json!({"document": index, "name": name_a, "warnings": warnings, "color": color, "media": is_media}))
             },

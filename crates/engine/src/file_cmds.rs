@@ -136,10 +136,13 @@ impl crate::DocState {
     /// finish the write first and must not call this for a copy or export.
     pub fn saved_to(&mut self, path: String) {
         let name = file_name(&path);
+        let flat_save_source = flat_save_format(&name);
         if self.doc.name != name {
             Arc::make_mut(&mut self.doc).name = name;
         }
         self.path = Some(path);
+        self.flat_save_source = flat_save_source;
+        self.source_read_only = false;
         self.saved_revision = self.revision;
     }
 }
@@ -149,8 +152,27 @@ pub fn extension(path: &str) -> Option<String> {
     file_name(path).rsplit_once('.').filter(|(base, ext)| !base.is_empty() && !ext.is_empty()).map(|(_, ext)| ext.to_ascii_lowercase())
 }
 
-/// Whether a save without a new path may write back to `path`: only layered files (PSD, PSB,
-/// .pcraft). A flat file goes through Save As instead, so it is never flattened over the original.
+/// The flat formats eligible for implicit Save; unlike codec extension lookup this excludes
+/// aliases such as APNG, JPE, and JFIF whose source semantics are not identical here.
+pub fn flat_save_format(path: &str) -> Option<photostore_codecs::Format> {
+    match extension(path)?.as_str() {
+        "png" => Some(photostore_codecs::Format::Png),
+        "jpg" | "jpeg" => Some(photostore_codecs::Format::Jpeg),
+        _ => None,
+    }
+}
+
+/// Confirm a source as a still PNG/JPEG only when its bytes match the filename codec and the
+/// importer reported no dropped frames, truncation, or other fidelity warning.
+pub fn flat_save_source(name: &str, bytes: &[u8], warnings: &[String]) -> Option<photostore_codecs::Format> {
+    if !warnings.is_empty() {
+        return None;
+    }
+    let format = flat_save_format(name)?;
+    (photostore_codecs::detect(bytes) == Some(format)).then_some(format)
+}
+
+/// Layered formats that support writing back without a flat-image fidelity check.
 pub fn saves_in_place(path: &str) -> bool {
     extension(path).is_some_and(|ext| matches!(ext.as_str(), "psd" | "psb" | "pcraft" | "ora"))
 }
@@ -198,6 +220,10 @@ pub(crate) fn sanitize(name: &str) -> String {
 }
 
 pub(crate) fn import(name: &str, bytes: &[u8]) -> Result<Document> {
+    Ok(import_full(name, bytes)?.document)
+}
+
+fn import_full(name: &str, bytes: &[u8]) -> Result<photostore_io::ImportResult> {
     let r = photostore_io::import(name, bytes).map_err(|e| EngineError::Other(format!("{name}: {e}")))?;
     // Auxiliary imports return only a document and cannot surface the preview's fidelity warning.
     // Open has its own warning-preserving path; never silently place or process a thumbnail.
@@ -206,7 +232,7 @@ pub(crate) fn import(name: &str, bytes: &[u8]) -> Result<Document> {
             "{name}: only this Affinity file's embedded preview could be read; open it with File › Open to see the warning, or export PSD or PNG from Affinity before using it here"
         )));
     }
-    Ok(r.document)
+    Ok(r)
 }
 
 /// What a headless save writes beyond the format: JPEG quality and TIFF layers.
@@ -342,10 +368,11 @@ fn close_batch(s: &mut Session, targets: Vec<usize>, discard: Vec<photostore_doc
 fn revert(s: &mut Session) -> Result<Value> {
     let path = s.active().and_then(|d| d.path.clone()).ok_or(EngineError::Other("the document has never been saved".into()))?;
     let bytes = read_file(&path)?;
-    let fresh = import(&file_name(&path), &bytes)?;
+    let fresh = import_full(&file_name(&path), &bytes)?;
+    let flat_save_source = flat_save_source(&path, &bytes, &fresh.warnings);
     s.edit("Revert", |doc, active| {
         let (id, name) = (doc.id, doc.name.clone());
-        *doc = fresh;
+        *doc = fresh.document;
         // Keep the identity (colour state, views and caches are keyed by it) and the tab name.
         doc.id = id;
         doc.name = name;
@@ -353,6 +380,7 @@ fn revert(s: &mut Session) -> Result<Value> {
         Ok(())
     })?;
     let st = s.active_mut().ok_or(EngineError::NoDocument)?;
+    st.flat_save_source = flat_save_source;
     st.saved_revision = st.revision;
     Ok(json!({"path": path, "layers": st.doc.layers.len()}))
 }
@@ -393,6 +421,7 @@ pub fn open_bytes_as(s: &mut Session, name: &str, bytes: &[u8], as_ext: Option<&
     let (i, color) = s.open_document(doc, path.filter(|_| !r.source_read_only));
     if let Some(st) = s.active_mut() {
         st.source_read_only = r.source_read_only;
+        st.flat_save_source = flat_save_source(&decode_name, bytes, &r.warnings);
     }
     // Import notes (e.g. how a camera raw was developed, or that only its preview opened).
     Ok(json!({"document": i, "color": color, "warnings": r.warnings}))

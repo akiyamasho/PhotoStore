@@ -982,6 +982,7 @@ impl PhotoStoreApp {
         let (_, color) = self.session.open_document(doc, None);
         if let Some(st) = self.session.active_mut() {
             st.source_read_only = photostore_io::affinity::is_affinity(bytes);
+            st.flat_save_source = photostore_engine::file_cmds::flat_save_source(name, bytes, &warnings);
         }
         self.sync_views();
         self.ui.status = format!("Opened {name}");
@@ -1031,6 +1032,7 @@ impl PhotoStoreApp {
         self.session.add_document(doc, None);
         if let Some(st) = self.session.active_mut() {
             st.source_read_only = photostore_io::affinity::is_affinity(bytes);
+            st.flat_save_source = photostore_engine::file_cmds::flat_save_source(name, bytes, &warnings);
         }
         self.sync_views();
         self.ui.status = format!("Opened {name}");
@@ -1059,18 +1061,10 @@ impl PhotoStoreApp {
         // Other files keep their format only when it can retain their layers. A plain raster
         // (including an unlocked transparent PNG) can keep its flat format; editable contents,
         // masks and layer appearance settings need a layered format even with just one layer.
-        let plain_raster = matches!(st.doc.layers.as_slice(), [layer]
-            if matches!(layer.content, photostore_doc::LayerContent::Raster(_))
-                && layer.visible && layer.opacity >= 1.0 && layer.fill_opacity >= 1.0
-                && layer.mask.is_none() && layer.vector_mask.is_none()
-                && layer.effects.items.is_empty() && layer.effects.psd_raw.is_none()
-                && matches!(layer.blend, photostore_color::BlendMode::Normal | photostore_color::BlendMode::PassThrough)
-                && photostore_compose::channel_weights(layer, st.doc.mode).is_none()
-                && !photostore_compose::blend_if_active(layer, st.doc.mode));
         let ext = st.path.as_deref().and_then(|p| std::path::Path::new(p).extension()).map(|e| e.to_string_lossy().to_ascii_lowercase());
         let writable = ext.is_some_and(|e| {
             matches!(e.as_str(), photostore_format::EXTENSION | "psd" | "psb" | "tif" | "tiff" | "ora")
-                || (plain_raster && photostore_codecs::from_extension(&e).is_some_and(|f| f.caps().write))
+                || (st.is_plain_raster() && photostore_codecs::from_extension(&e).is_some_and(|f| f.caps().write))
         });
         let suggested = match &st.path {
             Some(p) if writable => p.clone(),
@@ -1156,10 +1150,10 @@ impl PhotoStoreApp {
     /// written and the export warnings (also shown to the user).
     pub fn save_automation(&mut self, path: Option<String>) -> Result<(String, Vec<String>), String> {
         let state = self.session.active().ok_or("no document")?;
-        // As File › Save: without `path` only a layered file is written back (#416).
+        // Apply the same implicit destination policy as File › Save.
         let target = path
-            .or_else(|| state.path.clone().filter(|p| photostore_engine::file_cmds::saves_in_place(p)))
-            .ok_or("pass `path`: a save without one writes back only to the document's own PSD, PSB or .pcraft file")?;
+            .or_else(|| state.default_save_path())
+            .ok_or("pass `path`: a save without one writes back only to the document's own layered file or eligible plain PNG/JPEG source")?;
         let export = self.services.export.as_ref().ok_or("no exporter configured")?;
         let (bytes, warnings) = export(&state.doc, &target, &ExportSettings::default())?;
         let write = self.services.automation_write.as_mut().ok_or("automation write authority is not configured")?;
