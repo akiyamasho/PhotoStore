@@ -112,3 +112,4 @@ Files copied into `corpus/` by hand (tiff, exr, raw) must be MIT, BSD or CC0.
 | `docs/design/2026-11-21/clear-timelapse/design.png` | Built-in GPT Image, synthetic interface concept | Project MIT or Apache-2.0 terms. [Prompt and provenance](docs/design/2026-11-21/clear-timelapse/prompt.md). |
 | `docs/design/2026-11-21/video-overwrite/design.png` | Built-in GPT Image, synthetic interface concept | Project MIT or Apache-2.0 terms. [Prompt and provenance](docs/design/2026-11-21/video-overwrite/prompt.md). |
 | `docs/design/2026-11-21/video-overwrite/confirmation.png` | Built-in GPT Image, synthetic export confirmation design | Project MIT or Apache-2.0 terms. [Prompt and provenance](docs/design/2026-11-21/video-overwrite/prompt.md). |
+| `docs/design/2026-11-21/video-canvas-crop/design.png` | Built-in GPT Image, synthetic linked-video crop design | Project MIT or Apache-2.0 terms. [Prompt and provenance](docs/design/2026-11-21/video-canvas-crop/prompt.md). |

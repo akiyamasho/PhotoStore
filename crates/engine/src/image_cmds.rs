@@ -2,6 +2,7 @@
 //! bit depth) conversions, Duplicate.
 
 use photostore_algo::resample::{Resample, crop_surface, resize_surface_in_canvas, translate_surface};
+use photostore_algo::transform::Homography;
 use photostore_color::{ColorMode, SampleType};
 use photostore_doc::{Document, Effect, Effects, FxPaint, Layer, LayerContent, Size};
 use photostore_geom::Rect;
@@ -18,6 +19,10 @@ fn has_doc(s: &Session) -> std::result::Result<(), String> {
 /// Applies `f` to every pixel surface of a layer tree: content (raster or
 /// cached text/shape/smart pixels), fill caches, and (if `masks`) masks.
 pub(crate) fn for_each_surface(layers: &mut [Layer], masks: bool, f: &mut dyn FnMut(&mut Surface, bool)) {
+    for_each_surface_impl(layers, masks, false, f);
+}
+
+fn for_each_surface_impl(layers: &mut [Layer], masks: bool, preserve_video: bool, f: &mut dyn FnMut(&mut Surface, bool)) {
     for l in layers {
         if masks && let Some(m) = &mut l.mask {
             f(&mut m.surface, true);
@@ -26,7 +31,7 @@ pub(crate) fn for_each_surface(layers: &mut [Layer], masks: bool, f: &mut dyn Fn
             f(&mut fc.surface, false);
         }
         match &mut l.content {
-            LayerContent::Raster(s) => f(s, false),
+            LayerContent::Raster(s) if !(preserve_video && l.video.is_some()) => f(s, false),
             LayerContent::Text(t) => {
                 if let Some(c) = &mut t.cache {
                     f(c, false)
@@ -42,7 +47,7 @@ pub(crate) fn for_each_surface(layers: &mut [Layer], masks: bool, f: &mut dyn Fn
                     f(c, false)
                 }
             }
-            LayerContent::Group(g) => for_each_surface(&mut g.children, masks, f),
+            LayerContent::Group(g) => for_each_surface_impl(&mut g.children, masks, preserve_video, f),
             _ => {}
         }
     }
@@ -198,6 +203,44 @@ fn translate_doc(doc: &mut Document, cmd: &str, dx: i32, dy: i32) -> Result<()> 
     if !ok {
         return Err(bad(cmd, format!("moving the document by ({dx}, {dy}) would push its pixels outside the 32-bit coordinate range")));
     }
+    // Playback reconstructs video previews from their frames. Move every resident frame when
+    // it has identity placement, preserving its paintable pixel model. Linked and transformed
+    // video keeps its source pixels and moves its shared placement instead. Timeline position
+    // stays independent: document-space translations commute with sampled translation.
+    fn move_video_sources(layers: &mut [Layer], dx: i32, dy: i32) -> Result<()> {
+        let shift = Homography([1.0, 0.0, f64::from(dx), 0.0, 1.0, f64::from(dy), 0.0, 0.0, 1.0]);
+        for layer in layers {
+            if let Some(video) = layer.video.as_mut() {
+                if video.movie_backing.is_none() && video.placement == Homography::IDENTITY.0 {
+                    for frame in &mut video.frames {
+                        let r = frame.content_bounds();
+                        if !r.is_empty() && (r.x0.checked_add(dx).is_none() || r.x1.checked_add(dx).is_none()
+                            || r.y0.checked_add(dy).is_none() || r.y1.checked_add(dy).is_none()) {
+                            return Err(EngineError::Other("moving video frames would exceed the 32-bit coordinate range".into()));
+                        }
+                        *frame = translate_surface(frame, dx, dy);
+                    }
+                } else {
+                    let placement = shift.mul(&Homography(video.placement));
+                    let (px, py) = video.applied_translation;
+                    let displayed = Homography([1.0, 0.0, f64::from(px), 0.0, 1.0, f64::from(py), 0.0, 0.0, 1.0]).mul(&placement);
+                    if video.frames.is_empty() {
+                        crate::transform_cmds::validate_video_placement(&displayed, Rect::EMPTY)?;
+                    } else {
+                        for frame in &video.frames {
+                            crate::transform_cmds::validate_video_placement(&displayed, frame.content_bounds())?;
+                        }
+                    }
+                    video.placement = placement.0;
+                }
+            }
+            if let Some(children) = layer.children_mut() {
+                move_video_sources(children, dx, dy)?;
+            }
+        }
+        Ok(())
+    }
+    move_video_sources(&mut doc.layers, dx, dy)?;
     for_each_surface(&mut doc.layers, true, &mut |surf, _| *surf = translate_surface(surf, dx, dy));
     for ch in doc.channels.iter_mut().chain(doc.quick_mask.as_mut()) {
         ch.surface = translate_surface(&ch.surface, dx, dy);
@@ -218,7 +261,8 @@ fn crop_doc(doc: &mut Document, cmd: &str, r: Rect, delete_pixels: bool) -> Resu
         return Err(bad(cmd, format!("the crop origin ({}, {}) can't be moved to (0, 0) within the 32-bit coordinate range", r.x0, r.y0)));
     };
     if delete_pixels {
-        for_each_surface(&mut doc.layers, false, &mut |surf, _| *surf = crop_surface(surf, r));
+        // Video frames retain their pixels; the new canvas clips their previews.
+        for_each_surface_impl(&mut doc.layers, false, true, &mut |surf, _| *surf = crop_surface(surf, r));
     }
     translate_doc(doc, cmd, dx, dy)?;
     doc.size = Size::new(r.width(), r.height());
@@ -374,7 +418,11 @@ fn crop_angle(p: &Value) -> Result<Option<f64>> {
 /// one undo step.
 fn rotated_crop(s: &mut Session, r: Rect, angle: f64, delete: bool) -> Result<Value> {
     const CMD: &str = "image.crop";
-    let size = s.active().ok_or(EngineError::NoDocument)?.doc.size;
+    let doc = &s.active().ok_or(EngineError::NoDocument)?.doc;
+    if doc.walk().iter().any(|(_, _, layer)| layer.video.is_some()) {
+        return Err(bad(CMD, "rotated crop is not yet supported with video layers; use an unrotated crop or rasterize the video"));
+    }
+    let size = doc.size;
     let (w, h) = (f64::from(r.width()), f64::from(r.height()));
     let (cx, cy) = (f64::from(r.x0) + w / 2.0, f64::from(r.y0) + h / 2.0);
     // Where the frame's centre lands: the rotation `image.rotation.arbitrary` applies, clockwise

@@ -848,3 +848,7 @@ The compact stack recognizer also permits exactly one NV12 source; its prior two
 ## 2026-11-21 — Notebook View of existing layer stacks
 
 A page is identified by its root layer ID. The Layers panel's top-to-bottom order is the notebook's reading order. Each open document owns its view mode, and the active editing layer determines the page. Rendering projects one root and its descendants, preserving their masks, visibility and locks. Navigation leaves document history and serialized data intact. Moving a page delegates to the existing undoable root-layer move. Saving and ordinary document export operate on the full layer tree. [Design](design/2026-11-21/notebook-view/prompt.md).
+
+## 2026-11-21 — Canvas crop with linked video
+
+A document crop clips video content to the canvas while retaining its frames. Canvas-origin changes translate resident frames or compose a translation into linked or transformed video placement, preserving playback alignment without changing position keyframes. Video content remains non-destructive even when cropped pixels are deleted from ordinary raster layers. Rotated crop with video layers is rejected before mutation until its animated placement can be transformed safely.
