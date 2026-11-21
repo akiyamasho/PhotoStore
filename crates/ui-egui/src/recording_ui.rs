@@ -13,6 +13,7 @@ use crate::{PhotoStoreApp, file_dialog::{FileDialogAnswer, FileDialogRequest}, s
 
 const EXPORT: &str = "recording.export";
 const TOGGLE: &str = "recording.toggle";
+const CLEAR_HISTORY: &str = "recording.clearHistory";
 
 #[derive(Clone)]
 struct ReplayState {
@@ -79,13 +80,18 @@ fn private_import(app: &mut PhotoStoreApp, photo: bool) -> Result<Value, String>
 }
 
 pub fn owns(fields: &Map<String, Value>) -> bool {
-    fields.get("__recording_export").and_then(Value::as_bool) == Some(true)
+    fields.get("__recording_clear_history").and_then(Value::as_bool) == Some(true)
+        || fields.get("__recording_export").and_then(Value::as_bool) == Some(true)
         || fields.get("__recording_purge").and_then(Value::as_bool) == Some(true)
         || fields.get("__recording_settings").and_then(Value::as_bool) == Some(true)
 }
 
 pub(crate) fn is_purge_dialog(fields: &Map<String, Value>) -> bool {
     fields.get("__recording_purge").and_then(Value::as_bool) == Some(true)
+}
+
+pub(crate) fn is_clear_history_dialog(fields: &Map<String, Value>) -> bool {
+    fields.get("__recording_clear_history").and_then(Value::as_bool) == Some(true)
 }
 
 pub(crate) fn cancel_purge(_app: &mut PhotoStoreApp, _fields: &Map<String, Value>) {}
@@ -102,6 +108,10 @@ pub fn body(_app: &mut PhotoStoreApp, ui: &mut egui::Ui, fields: &mut Map<String
         ui.weak("Recording storage is capped at 256 MiB.");
         let mut disabled = fields.get("disableRecording").and_then(Value::as_bool).unwrap_or(false);
         if ui.checkbox(&mut disabled, "Disable Time-lapse").changed() { fields.insert("disableRecording".into(), json!(disabled)); }
+        return;
+    }
+    if is_clear_history_dialog(fields) {
+        ui.label("This permanently deletes the recorded history for this document. The artwork and recording setting are unchanged.");
         return;
     }
     if fields.get("__recording_purge").and_then(Value::as_bool) == Some(true) {
@@ -125,8 +135,14 @@ pub fn body(_app: &mut PhotoStoreApp, ui: &mut egui::Ui, fields: &mut Map<String
         ui.add(egui::TextEdit::singleline(&mut path).desired_width(260.0));
     });
     fields.insert("path".into(), Value::String(path));
+    let scope = fields.get("path").and_then(Value::as_str).unwrap_or_default().trim().to_owned();
+    if fields.get("__overwriteScope").and_then(Value::as_str) != Some(scope.as_str()) {
+        fields.insert("overwrite".into(), json!(false));
+        fields.insert("__overwriteScope".into(), json!(scope));
+    }
+    ui.weak("Confirm replacement below, even if the save dialog asked to replace a file.");
     let mut overwrite = fields.get("overwrite").and_then(Value::as_bool).unwrap_or(false);
-    ui.checkbox(&mut overwrite, "Overwrite existing file");
+    ui.checkbox(&mut overwrite, "Replace existing file at this destination");
     fields.insert("overwrite".into(), json!(overwrite));
 }
 
@@ -134,6 +150,10 @@ pub fn confirm(app: &mut PhotoStoreApp, fields: &Map<String, Value>) -> Result<V
     if fields.get("__recording_settings").and_then(Value::as_bool) == Some(true) {
         let disabled = fields.get("disableRecording").and_then(Value::as_bool).unwrap_or(false);
         return app.run("prefs.set", json!({"path": "disableRecording", "value": disabled}));
+    }
+    if is_clear_history_dialog(fields) {
+        let doc = fields.get("__targetDoc").and_then(Value::as_u64).map(DocId).ok_or("recording dialog has no target document")?;
+        return app.with_document(doc, |app| app.run("recording.purge", json!({})));
     }
     if fields.get("__recording_purge").and_then(Value::as_bool) == Some(true) {
         // The generic dialog Cancel path leaves the recording untouched. Only OK reaches here.
@@ -149,7 +169,8 @@ pub fn confirm(app: &mut PhotoStoreApp, fields: &Map<String, Value>) -> Result<V
     if !matches!(mode, "full" | "30seconds") {
         return Err("unknown time-lapse export length".into());
     }
-    let overwrite = fields.get("overwrite").and_then(Value::as_bool).unwrap_or(false);
+    let overwrite = fields.get("overwrite").and_then(Value::as_bool).unwrap_or(false)
+        && fields.get("__overwriteScope").and_then(Value::as_str) == Some(path);
     app.with_document(doc, |app| app.run(EXPORT, json!({"path": path, "mode": mode, "overwrite": overwrite})))
 }
 
@@ -167,7 +188,7 @@ fn begin_replay(app: &mut PhotoStoreApp, ctx: &Context) -> Result<Value, String>
 
 pub fn invoke(app: &mut PhotoStoreApp, ctx: &Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if !params.as_object().is_none_or(|o| o.is_empty()) { return None; }
-    if !matches!(id, "recording.replay" | TOGGLE | EXPORT | "recording.privateFile" | "recording.privatePhoto" | "recording.settings" | "recording.setPrivate") { return None; }
+    if !matches!(id, "recording.replay" | TOGGLE | EXPORT | CLEAR_HISTORY | "recording.privateFile" | "recording.privatePhoto" | "recording.settings" | "recording.setPrivate") { return None; }
     Some(invoke_inner(app, ctx, id))
 }
 
@@ -193,6 +214,16 @@ fn invoke_inner(app: &mut PhotoStoreApp, ctx: &Context, id: &str) -> Result<Valu
             }
         }
         EXPORT => start_export(app),
+        CLEAR_HISTORY => {
+            let target = active_doc(app)?;
+            if frame_count(app, target) == 0 { return Err("this canvas has no recorded frames".into()); }
+            let mut fields = Map::new();
+            fields.insert("__recording_clear_history".into(), json!(true));
+            fields.insert("__targetDoc".into(), json!(target.0));
+            fields.insert("__command".into(), json!(CLEAR_HISTORY));
+            fields.insert("__label".into(), json!("Clear Time-lapse History?"));
+            Ok(json!({"dialog": app.ui.open_dialog(DialogKind::Command, fields)}))
+        }
         "recording.privateFile" => private_import(app, false),
         "recording.privatePhoto" => private_import(app, true),
         "recording.settings" => {

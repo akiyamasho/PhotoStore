@@ -78,8 +78,8 @@ fn hide_private(layers: &mut [Layer], hidden: bool) {
     }
 }
 
-fn fit_image(doc: &Document) -> Rgba8Image {
-    let (tw, th) = doc.recording.as_ref().map(|r| r.settings.resolution.dimensions()).unwrap_or(RecordingResolution::Hd1080.dimensions());
+fn fit_image(doc: &Document, resolution: RecordingResolution) -> Rgba8Image {
+    let (tw, th) = resolution.dimensions();
     let mut render_doc = doc.clone();
     render_doc.recording = None;
     hide_private(&mut render_doc.layers, false);
@@ -130,9 +130,8 @@ fn encode_image(img: &Rgba8Image, quality: RecordingQuality) -> Result<Vec<u8>> 
     Ok(encoded)
 }
 
-fn capture_encoded(doc: &Document) -> Result<Vec<u8>> {
-    let image = fit_image(doc);
-    let quality = doc.recording.as_ref().map(|r| r.settings.quality).unwrap_or_default();
+fn capture_encoded(doc: &Document, resolution: RecordingResolution, quality: RecordingQuality) -> Result<Vec<u8>> {
+    let image = fit_image(doc, resolution);
     encode_image(&image, quality)
 }
 
@@ -143,15 +142,16 @@ pub(crate) fn capture_edit(doc: &mut Document, before: &Document, action: &str, 
     if !allowed || !current.enabled || !changed { return; }
     let initial = current.frames.is_empty();
     let quality = current.settings.quality;
+    let resolution = current.settings.resolution;
     let before_view = root.map(|id| crate::notebook::project(before, id));
     let after_view = root.map(|id| crate::notebook::project(doc, id));
     let before = before_view.as_ref().unwrap_or(before);
     let after = after_view.as_ref().unwrap_or(doc);
-    let before_bytes = if initial { Some(capture_encoded(before)) } else { None };
-    let after_bytes = capture_encoded(after);
+    let before_bytes = if initial { Some(capture_encoded(before, resolution, quality)) } else { None };
+    let after_bytes = capture_encoded(after, resolution, quality);
     let mut encoded = Vec::new();
     if initial {
-        match before_bytes.unwrap_or_else(|| encode_image(&fit_image(before), quality)) { Ok(bytes) => encoded.push((bytes, "Initial".to_string())), Err(e) => { if let Some(r) = doc.recording.as_mut() { r.error = Some(e.to_string()); r.enabled = false; } return; } }
+        match before_bytes.unwrap_or_else(|| capture_encoded(before, resolution, quality)) { Ok(bytes) => encoded.push((bytes, "Initial".to_string())), Err(e) => { if let Some(r) = doc.recording.as_mut() { r.error = Some(e.to_string()); r.enabled = false; } return; } }
     }
     match after_bytes { Ok(bytes) => encoded.push((bytes, action.to_string())), Err(e) => { if let Some(r) = doc.recording.as_mut() { r.error = Some(e.to_string()); r.enabled = false; } return; } }
     let add_bytes: usize = encoded.iter().map(|(b, _)| b.len()).sum();

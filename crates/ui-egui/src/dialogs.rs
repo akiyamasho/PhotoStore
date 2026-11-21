@@ -257,6 +257,8 @@ pub fn show(app: &mut PhotoStoreApp, ctx: &egui::Context) {
                     } else {
                         let ok_label = if crate::generative_fill_ui::owns(&d.fields) {
                             "Generate"
+                        } else if crate::recording_ui::is_clear_history_dialog(&d.fields) {
+                            "Clear History"
                         } else if crate::recording_ui::is_purge_dialog(&d.fields) {
                             "Purge"
                         } else if d.kind == DialogKind::NewDocument {

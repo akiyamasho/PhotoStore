@@ -648,7 +648,7 @@ impl Session {
         let restrict = self.color_restrict;
         let recording_allowed = !self.prefs().disable_recording;
         let st = self.active_mut().ok_or(EngineError::NoDocument)?;
-        let before = st.doc.clone();
+        let mut before = st.doc.clone();
         // Selecting layers is not a step, so the state this edit leaves behind targets what was
         // selected just before it (#1356): undoing a stroke keeps the painted layer active.
         let prior = st.layer_target();
@@ -669,8 +669,11 @@ impl Session {
         video_cmds::canonicalize_edited_timeline(&before, &mut doc);
         // Recording is session/document state rather than an undoable canvas property.  Keep
         // the latest stream attached while the cloned document enters history.
-        let previous_recording = before.recording.clone();
         st.doc = Arc::new(doc);
+        // Recording is not undoable and edits cannot replace it. Move the original stream to the
+        // new document, leaving history without a reference so appending a frame does not clone
+        // the entire frame index on every edit. In-flight snapshots may still share it.
+        let previous_recording = Arc::make_mut(&mut before).recording.take();
         if let Some(current) = Arc::get_mut(&mut st.doc) {
             current.recording = previous_recording;
         }

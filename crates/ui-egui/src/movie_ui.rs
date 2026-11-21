@@ -156,8 +156,26 @@ pub fn body(ui: &mut egui::Ui, fields: &mut Map<String, Value>) {
         });
         fields.insert(key.into(), json!(value));
     }
+    let path = fields.get("path").and_then(Value::as_str).unwrap_or_default().trim().to_owned();
+    let format = fields.get("format").and_then(Value::as_str).unwrap_or("mp4").to_owned();
+    let output = normalized_path(&path, &format);
+    let scope = json!([output, format]);
+    if fields.get("__overwriteScope") != Some(&scope) {
+        fields.insert("overwrite".into(), json!(false));
+        fields.insert("__overwriteScope".into(), scope);
+    }
+    if format == "png" {
+        let output_path = Path::new(&output);
+        let stem = output_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let dir = output_path.parent().unwrap_or_else(|| Path::new(""));
+        ui.label(format!("Sequence output: {}/{}_<frame>.png", dir.display(), stem));
+        ui.weak("The save dialog cannot confirm replacement of numbered frames. Confirm below if they may be replaced.");
+    } else {
+        ui.label(format!("Actual output: {output}"));
+        ui.weak("Confirm replacement below, even if the save dialog asked to replace a file.");
+    }
     let mut overwrite = fields.get("overwrite").and_then(Value::as_bool).unwrap_or(false);
-    ui.checkbox(&mut overwrite, "Overwrite existing output");
+    ui.checkbox(&mut overwrite, if format == "png" { "Replace existing numbered frames at this destination" } else { "Replace existing file at this destination" });
     fields.insert("overwrite".into(), json!(overwrite));
 }
 
@@ -188,7 +206,9 @@ pub fn confirm(app: &mut PhotoStoreApp, fields: &Map<String, Value>) -> Result<V
                 return Err("movie range is outside the current timeline".into());
             }
         }
-        let mut params=json!({"path": path, "format": format, "start": start, "end": end, "fps": fps, "background":fields.get("background").cloned().unwrap_or(json!("black")),"overwrite": fields.get("overwrite").and_then(Value::as_bool).unwrap_or(false)});
+        let overwrite = fields.get("overwrite").and_then(Value::as_bool).unwrap_or(false)
+            && fields.get("__overwriteScope") == Some(&json!([path, format]));
+        let mut params=json!({"path": path, "format": format, "start": start, "end": end, "fps": fps, "background":fields.get("background").cloned().unwrap_or(json!("black")),"overwrite": overwrite});
         if let Some(rate)=fields.get("__projectRate").and_then(|v|serde_json::from_value::<photostore_doc::RationalRate>(v.clone()).ok()).filter(|rate|(rate.as_f64()-fps).abs()<1e-9) {
             if let Some(map)=params.as_object_mut(){map.remove("fps");map.insert("fpsNumerator".into(),json!(rate.numerator));map.insert("fpsDenominator".into(),json!(rate.denominator));}
         }

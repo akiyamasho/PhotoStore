@@ -88,6 +88,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("recording.replay", "Time-lapse Replay", &["Actions", "Video"], None),
     ("recording.toggle", "Time-lapse Recording", &["Actions", "Video"], None),
     ("recording.export", "Export Time-lapse Video…", &["Actions", "Video"], None),
+    ("recording.clearHistory", "Clear Time-lapse History…", &["Actions", "Video"], None),
     ("recording.settings", "Recording Settings…", &["Actions", "Video"], None),
     ("recording.setPrivate", "Private Time-lapse Layer", &["Layer"], None),
     ("recording.privateFile", "Insert Private File…", &["Actions", "Add"], None),
@@ -633,7 +634,7 @@ pub fn is_enabled(app: &PhotoStoreApp, id: &str) -> bool {
         return e;
     }
     match id {
-        "recording.replay" | "recording.export" => crate::recording_ui::has_frames(app),
+        "recording.replay" | "recording.export" | "recording.clearHistory" => crate::recording_ui::has_frames(app),
         "recording.settings" => app.session.active().is_some(),
         "recording.toggle" => app.session.active().is_some(),
         "recording.setPrivate" => app.session.active().and_then(|s| s.active_layer).is_some(),

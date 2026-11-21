@@ -2476,7 +2476,11 @@ fn render_video(s: &mut Session, p: &Value) -> Result<Value> {
                     if !overwrite_for_job && Path::new(&target).exists() {
                         return Err(EngineError::Other(format!("output already exists: {target}")));
                     }
-                    crate::file_cmds::write_file(&target, bytes)
+                    if overwrite_for_job {
+                        crate::file_cmds::write_file(&target, bytes)
+                    } else {
+                        write_export_without_overwrite(&target, bytes)
+                    }
                 },
                 move |done, total| {
                     ctx.progress(done as f32 / total.max(1) as f32, "Encoding image sequence");
@@ -2486,6 +2490,35 @@ fn render_video(s: &mut Session, p: &Value) -> Result<Value> {
         },
         |_s, result| Ok(result),
     )
+}
+
+// Publish a staged image without replacing an output that appeared after the existence check.
+// The reservation and final hard link both use create-new semantics in the destination folder.
+#[cfg(not(target_arch = "wasm32"))]
+fn write_export_without_overwrite(target: &str, bytes: &[u8]) -> Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let path = Path::new(target);
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    let mut reserved = None;
+    for _ in 0..100 {
+        let temp = parent.join(format!(".photostore-export-{}-{}.tmp", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&temp) {
+            Ok(_) => { reserved = Some(temp); break; }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(EngineError::Other(format!("cannot stage export {target}: {e}"))),
+        }
+    }
+    let temp = reserved.ok_or_else(|| EngineError::Other("could not create a unique export staging file".into()))?;
+    let result = photostore_format::atomic_write(&temp, bytes)
+        .and_then(|()| std::fs::hard_link(&temp, path));
+    let _ = std::fs::remove_file(&temp);
+    result.map_err(|e| EngineError::Other(format!("cannot write export {target}: {e}")))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write_export_without_overwrite(target: &str, bytes: &[u8]) -> Result<()> {
+    crate::file_cmds::write_file(target, bytes)
 }
 
 fn format_is_gif(p: &Value) -> bool {
