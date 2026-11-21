@@ -10,12 +10,11 @@ PhotoStore is a Rust-native image editor maintained as a personal fork of PhotoC
 
 Download the macOS Apple Silicon package from [PhotoStore releases](https://github.com/akiyamasho/PhotoStore/releases). For a local install, use Rust stable 1.95+:
 
-The 0.20.8 Apple Silicon macOS release source keeps Video Timeline previews on the background
-compositor while drawing, adds persisted per-row dB volume and visible clip duration handles,
-and reconciles timeline length while retaining explicitly added tail time. Stable-release checks
-are under **Help → Check for Updates…**, using existing GitHub CLI (`gh`) authentication.
-The app/CLI use the persistent local PhotoStore certificate, not Developer ID and not notarized.
-See [in-app updates](docs/app-updates.md) and the [0.20.8 delivery record](docs/releases/0.20.8.md).
+PhotoStore 0.20.9 saves edited single-layer JPEG and PNG files back to their original location
+when the format can preserve the document. Stable-release checks are under **Help → Check for
+Updates…**, using existing GitHub CLI (`gh`) authentication. The macOS app and CLI use the
+persistent local PhotoStore signing certificate. See [in-app updates](docs/app-updates.md) and
+the [0.20.9 release notes](docs/releases/0.20.9.md).
 
 ```sh
 CARGO_BUILD_JOBS=1 cargo install --path apps/photostore --bin photostore --locked
@@ -32,15 +31,11 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 
 ## Current release source
 
-PhotoStore 0.20.8 targets the native editor path: background live previews, callback-side texture
-publication, bounded larger Normal RGBA8 stacks, per-row gain through preview/export, clip-edge
-resizing, automatic content duration and explicit extra time. Original media and clip gains remain
-editable. [Download 0.20.8](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.8).
-Eligible opaque SDR H.264 previews now keep full-resolution NV12 planes through the bounded cache and GPU stack. **Performance acceptance remains open in [#23](https://github.com/akiyamasho/PhotoStore/issues/23):** the final inactive-window run still has live-brush publication gaps; both online displays were asleep and macOS did not activate the owned test app. The release is installed, but foreground CapCut-like smoothness is not claimed.
-See [delivery, measurements and limits](docs/releases/0.20.8.md). Prior
-[0.20.7 CLI evidence](docs/releases/0.20.7.md) remains historical and does not establish native
-window performance. Native evidence uses disposable fixtures and is distinct from OS pen input
-and subjective CapCut parity.
+**File → Save** and **⌘S** update eligible single-layer JPEG and PNG files in place.
+[Download 0.20.9](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.9).
+The [0.20.8 timeline release](docs/releases/0.20.8.md) describes the retained preview and clip
+editing workflows and their verification limits.
+
 The [0.20.4 layer/audio fixes](docs/releases/0.20.4.md) and prior layer/input workflows remain.
 Native display scanout, audio-device and pan/Cintiq acceptance remain manual. Measurements must
 identify resolution, source count, hardware, scope and cold/warm behavior; no blanket CapCut parity
