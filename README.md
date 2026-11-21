@@ -28,9 +28,11 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 ./target/release/photostore-cli --help
 ```
 
-## Current release source
+## Notebook View
 
 **Notebook View** treats each top-level PSD layer or group as a page, in the same top-to-bottom order as the Layers panel. A group and its children appear together. Choose **Pages…** to find a page by name or number, or move it up or down. Reordering changes the actual layer stack and supports Undo. Choose **Layers** to see the full composite again.
+
+![Notebook View showing the Cup study group as page two of four](docs/screenshots/0.21.1/notebook-view.webp)
 
 | Notebook shortcut on macOS | Action |
 | --- | --- |
@@ -38,7 +40,11 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 | ⌘⇧X | Previous page |
 | ⌘⇧C | Next page |
 
+![Pages dialog showing four pages with thumbnails, search and reorder controls](docs/screenshots/0.21.1/notebook-pages.webp)
+
 [Download PhotoStore 0.21.1 for Apple Silicon](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.21.1).
+
+## Earlier releases
 
 **File → Save** and **⌘S** also update eligible single-layer JPEG and PNG files in place. [Image save details](docs/releases/0.20.9.md).
 

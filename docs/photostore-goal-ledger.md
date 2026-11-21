@@ -590,3 +590,10 @@ only. The immutable tag `v0.16.0` points to exact source `a87fd1049844a41d456cbd
 - Full hashes, source/version readback, rollback paths and limits: [release receipt](releases/0.19.0.md).
 - Delivery comments were read back on all seven issues; #20, #24, #25, #26, #27 and #28 are closed.
   The complete paginated open non-PR inventory contains only #23.
+
+## 2026-11-21 — Notebook View
+
+- [Stable release v0.21.1](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.21.1) ships the app and CLI from `d33595b5549c89ce6aa05a9d330cb1ca9943b9ab`, including the corrected Pages dialog layout. [Issue #40](https://github.com/akiyamasho/PhotoStore/issues/40).
+- Installed the verified release at `/Applications/PhotoStore.app` and `/Users/computer/tools_bin/photostore-cli` by atomic replacement. The previous 0.21.0 app and CLI were retained as rollback copies.
+- SHA-256 of the Apple Silicon DMG is `232a7f17005b0d13618c94f50c9724f681a761fa6554452b34faf0c7395e9295`. SHA-256 of the CLI ZIP is `59ed09fdc90fce8b80a23a8895a9ae8f73630cf5f74654541175021246299d33`.
+- [Release captures and verification scope](screenshots/0.21.1/evidence.md).

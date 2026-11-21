@@ -108,3 +108,4 @@ Files copied into `corpus/` by hand (tiff, exr, raw) must be MIT, BSD or CC0.
 
 | `docs/design/2026-11-02/compact-video-preview/workflow.png` | OpenAI built-in GPT Image; original compact video preview/interface workflow concept | No input images, private artwork or known characters. Exact prompt and inspection in adjacent `prompt.md`; design reference, not a product capture or performance measurement. |
 | `docs/design/2026-11-21/notebook-view/design.png` | Built-in GPT Image, original editor concept and synthetic watercolor | Project MIT or Apache-2.0 terms. [Prompt and provenance](docs/design/2026-11-21/notebook-view/prompt.md). |
+| `docs/screenshots/0.21.1/notebook-{view,pages}.webp` | PhotoStore release UI with an original GPT Image watercolor in a disposable PSD | Project MIT or Apache-2.0 terms. [Capture details and exact artwork prompt](docs/screenshots/0.21.1/evidence.md). |
