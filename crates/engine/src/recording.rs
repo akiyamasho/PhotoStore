@@ -138,13 +138,17 @@ fn capture_encoded(doc: &Document) -> Result<Vec<u8>> {
 
 /// Capture one committed visual edit.  `same_coalesce` replaces the previous final frame so a
 /// drag journals one visual state per gesture, while the initial clean frame remains intact.
-pub(crate) fn capture_edit(doc: &mut Document, before: &Document, action: &str, changed: bool, same_coalesce: bool, allowed: bool) {
+pub(crate) fn capture_edit(doc: &mut Document, before: &Document, action: &str, changed: bool, same_coalesce: bool, allowed: bool, root: Option<photostore_doc::LayerId>) {
     let Some(current) = doc.recording.as_ref() else { return };
     if !allowed || !current.enabled || !changed { return; }
     let initial = current.frames.is_empty();
     let quality = current.settings.quality;
+    let before_view = root.map(|id| crate::notebook::project(before, id));
+    let after_view = root.map(|id| crate::notebook::project(doc, id));
+    let before = before_view.as_ref().unwrap_or(before);
+    let after = after_view.as_ref().unwrap_or(doc);
     let before_bytes = if initial { Some(capture_encoded(before)) } else { None };
-    let after_bytes = capture_encoded(doc);
+    let after_bytes = capture_encoded(after);
     let mut encoded = Vec::new();
     if initial {
         match before_bytes.unwrap_or_else(|| encode_image(&fit_image(before), quality)) { Ok(bytes) => encoded.push((bytes, "Initial".to_string())), Err(e) => { if let Some(r) = doc.recording.as_mut() { r.error = Some(e.to_string()); r.enabled = false; } return; } }

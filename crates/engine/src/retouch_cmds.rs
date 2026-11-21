@@ -116,8 +116,9 @@ fn run_stroke(
     p: &Value,
     f: impl FnOnce(&Document, &mut Surface, Option<&Surface>, bool) -> Result<Rect>,
 ) -> Result<Rect> {
+    let root = s.active().and_then(|st| st.notebook_root());
     let dmg = s.edit(label, |doc, _| {
-        let pre = doc.clone();
+        let pre = root.map_or_else(|| doc.clone(), |root| crate::notebook::project(doc, root));
         let (surf, lock) = crate::channel_cmds::target_surface(doc, id, p)?;
         // No prune: retouching only rewrites pixels inside the stroke, and scanning every tile of a
         // large layer would dominate the cost of a dab.
@@ -246,7 +247,9 @@ pub fn clone_preview(s: &Session, rect: Rect, map: &crate::presets::clone_source
     let id = d.active_layer.ok_or_else(|| bad("clone.preview", "no active layer"))?;
     let surf = d.doc.layer(id).and_then(|l| l.surface()).ok_or_else(|| bad("clone.preview", "no pixel surface"))?;
     let which = sample_layers(&json!({"sampleLayer": sample_layer}), "clone.preview")?;
-    let region = clone_sample(&d.doc, Some(id), surf, which, rect, map, "clone.preview")?;
+    let page = d.notebook_root().map(|root| crate::notebook::project(&d.doc, root));
+    let source = page.as_ref().unwrap_or(&d.doc);
+    let region = clone_sample(source, Some(id), surf, which, rect, map, "clone.preview")?;
     let px = region.data.chunks_exact(surf.format().channels()).map(|p| to_rgba(&surf.format(), p)).collect();
     Ok(photostore_compose::Buffer { rect, px })
 }
@@ -356,8 +359,9 @@ impl LiveRetouch {
             "paint.historyBrush" => LivePaint::History(history_source(s, id, p, cmd)?),
             other => return Err(bad(other, "live retouching strokes are the Clone Stamp, Healing Brush and History Brush")),
         };
-        let pre = s.active().ok_or(EngineError::NoDocument)?.doc.clone();
-        let mut doc = (*pre).clone();
+        let st = s.active().ok_or(EngineError::NoDocument)?;
+        let mut doc = (*st.doc).clone();
+        let pre = st.notebook_root().map_or_else(|| st.doc.clone(), |root| std::sync::Arc::new(crate::notebook::project(&st.doc, root)));
         let sel = doc.selection.clone();
         let (surf, lock) = crate::channel_cmds::target_surface(&mut doc, id, p)?;
         let pre_surf = surf.clone();

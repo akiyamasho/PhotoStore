@@ -233,7 +233,8 @@ pub fn specs() -> Vec<CommandSpec> {
             let size = size_param(CMD, p)?;
             let which = layers_param(CMD, p)?;
             let d = s.active().ok_or(EngineError::NoDocument)?;
-            Ok(json!(sample_color(&d.doc, d.active_layer, x, y, size, which)))
+            let page = d.notebook_root().map(|root| crate::notebook::project(&d.doc, root));
+            Ok(json!(sample_color(page.as_ref().unwrap_or(&d.doc), d.active_layer, x, y, size, which)))
         },
         journal: false,
     }]

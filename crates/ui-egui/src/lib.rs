@@ -108,6 +108,7 @@ pub mod move_ui;
 pub mod movie_ui;
 pub mod native_menu;
 pub mod new_doc_ui;
+mod notebook_ui;
 pub mod notices;
 mod numeric_expression;
 mod opacity_keys;
@@ -376,6 +377,7 @@ type InfoSampleKey = (i32, i32, u64, u32);
 pub struct PhotoStoreApp {
     pub session: Session,
     pub ui: UiState,
+    pub(crate) notebook_dialog: Option<notebook_ui::PagesDialog>,
     /// Transient Timeline transport clock and native preview process. Kept out of UiState so
     /// playback handles and caches never enter saved UI snapshots or clone operations.
     timeline_playback: timeline_playback::Runtime,
@@ -384,6 +386,7 @@ pub struct PhotoStoreApp {
     /// Canvas caches per (document, display): CPU textures hold monitor values; the GPU
     /// canvas state is shared (`canvas::GPU_OUTPUT`).
     canvases: HashMap<(DocId, u32), canvas::CanvasCache>,
+    notebook_projections: HashMap<DocId, canvas::NotebookProjection>,
     /// Navigator textures belong to open documents, not the lifetime of the egui context.
     navigator_textures: HashMap<DocId, canvas::NavigatorCache>,
     /// Display profile readings (#569).
@@ -593,10 +596,12 @@ impl PhotoStoreApp {
         let mut app = Self {
             session,
             ui: UiState::default(),
+            notebook_dialog: None,
             timeline_playback: timeline_playback::Runtime::default(),
             movie_preview_generation: photostore_engine::movie_cache::completion_generation(),
             services,
             canvases: HashMap::new(),
+            notebook_projections: HashMap::new(),
             navigator_textures: HashMap::new(),
             monitors: Default::default(),
             checker: None,
@@ -1469,6 +1474,7 @@ impl eframe::App for PhotoStoreApp {
         workspace_ui::windows(self, &ctx);
         palette::show(self, &ctx);
         dialogs::show(self, &ctx);
+        notebook_ui::modal(self, &ctx);
         layer_copy_ui::show(self, &ctx);
         recording_ui::windows(self, &ctx);
         jobs_ui::dialog(self, &ctx);

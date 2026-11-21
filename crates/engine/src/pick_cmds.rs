@@ -75,8 +75,10 @@ fn top_group(doc: &Document, id: LayerId) -> LayerId {
 fn pick(s: &mut Session, p: &Value) -> Result<Value> {
     let x = p.get("x").and_then(Value::as_f64).ok_or_else(|| EngineError::BadParams { cmd: "layer.pickAt".into(), msg: "missing `x`".into() })?.floor() as i32;
     let y = p.get("y").and_then(Value::as_f64).ok_or_else(|| EngineError::BadParams { cmd: "layer.pickAt".into(), msg: "missing `y`".into() })?.floor() as i32;
-    let doc = s.active().ok_or(EngineError::NoDocument)?.doc.clone();
-    let hits = layers_at(&doc, x, y);
+    let st = s.active().ok_or(EngineError::NoDocument)?;
+    let page = st.notebook_root().map(|root| crate::notebook::project(&st.doc, root));
+    let doc = page.as_ref().unwrap_or(&st.doc);
+    let hits = layers_at(doc, x, y);
     if p.get("list").and_then(Value::as_bool).unwrap_or(false) {
         let names: Vec<Value> = hits.iter().filter_map(|id| doc.layer(*id)).map(|l| json!({"layer": l.id.0, "name": l.name})).collect();
         return Ok(json!({ "layers": names }));
@@ -84,7 +86,7 @@ fn pick(s: &mut Session, p: &Value) -> Result<Value> {
     // Like Photoshop, Auto-Select clicks through a fully locked layer (its own Lock All or a
     // locked group's) to the layer under it (#1641). The right-click list above still shows it.
     let Some(&hit) = hits.iter().find(|id| !doc.effective_locks(**id).all) else { return Ok(json!({ "layer": null })) };
-    let target = if p.get("target").and_then(Value::as_str) == Some("group") { top_group(&doc, hit) } else { hit };
+    let target = if p.get("target").and_then(Value::as_str) == Some("group") { top_group(doc, hit) } else { hit };
     if p.get("select").and_then(Value::as_bool).unwrap_or(true) {
         let mode = p.get("mode").and_then(Value::as_str).unwrap_or("replace");
         // Like Photoshop, a plain click on one of several selected layers keeps them all

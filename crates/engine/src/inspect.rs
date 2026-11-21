@@ -35,6 +35,7 @@ pub fn document(d: &DocState) -> Value {
         "depth": doc.depth.bits(),
         "resolution": doc.resolution_dpi,
         "activeLayer": d.active_layer.map(|l| l.0),
+        "notebook": {"enabled": d.notebook, "root": d.notebook_root().map(|l| l.0)},
         "selectedLayers": selected.iter().map(|l| l.0).collect::<Vec<_>>(),
         "isolatedLayers": d.isolated_layers.iter().map(|l| l.0).collect::<Vec<_>>(),
         "hasSelection": doc.selection.is_some(),

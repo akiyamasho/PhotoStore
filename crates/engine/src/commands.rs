@@ -1221,6 +1221,13 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::print_cmds::specs());
     v.extend(crate::pick_cmds::specs());
     v.extend(crate::layer_nav_cmds::specs());
+    v.extend([
+        cmd!("view.notebook", "Notebook View", [], None, "{enabled?: bool}", has_doc, crate::notebook::toggle),
+        cmd!("notebook.select", "Open Notebook Page", [], None, "{layer: rootLayerId}", crate::notebook::enabled, crate::notebook::select),
+        cmd!("notebook.previous", "Previous Page", [], None, "{}", crate::notebook::enabled, |s, _| crate::notebook::step(s, 1)),
+        cmd!("notebook.next", "Next Page", [], None, "{}", crate::notebook::enabled, |s, _| crate::notebook::step(s, -1)),
+        cmd!("notebook.move", "Move Notebook Page", [], None, "{layer: rootLayerId, direction: up|down}", crate::notebook::enabled, crate::notebook::move_page),
+    ]);
     v.extend(crate::frame_cmds::specs());
     v.extend(crate::migrate_cmds::specs());
     v.extend(crate::trap_cmds::specs());

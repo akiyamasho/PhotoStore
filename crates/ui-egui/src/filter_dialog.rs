@@ -590,6 +590,7 @@ pub struct FilterPreviewKey {
     pub revision: u64,
     pub dialog: u64,
     pub active: Option<photostore_doc::LayerId>,
+    pub notebook_root: Option<photostore_doc::LayerId>,
     pub command: String,
     pub params: Value,
     pub k: u32,

@@ -613,7 +613,8 @@ pub fn shortcut_items(app: &PhotoStoreApp) -> Vec<(String, String, Vec<String>, 
             continue;
         }
         let default = default_shortcut(&it.id).or(it.shortcut.clone().filter(|_| !app.session.prefs().shortcuts.contains_key(&it.id)));
-        out.push((it.id, it.label, it.path, default));
+        let path = if it.id == "notebook.jump" { vec!["Notebook".into()] } else { it.path };
+        out.push((it.id, it.label, path, default));
     }
     // Commands without a menu item: the colour and fill keys (D, X, ⌥⌫…) sit under Tools, as
     // Photoshop lists its colour keys in the Tools shortcut set, after the rest; then the held
@@ -622,7 +623,7 @@ pub fn shortcut_items(app: &PhotoStoreApp) -> Vec<(String, String, Vec<String>, 
     let mut tools = Vec::new();
     let mut layer = Vec::new();
     for c in photostore_engine::command_specs() {
-        if seen.insert(c.id.to_string()) && (c.shortcut.is_some() || c.id.starts_with("timeline.") || c.id.starts_with("layer.smartObjects.")) {
+        if (c.shortcut.is_some() || c.id.starts_with("timeline.") || c.id.starts_with("layer.smartObjects.")) && seen.insert(c.id.to_string()) {
             let path = if c.id.starts_with("timeline.editor.key.") {
                 vec!["Keyframes".to_string()]
             } else if c.id.starts_with("timeline.editor.") {
@@ -675,11 +676,19 @@ pub fn shortcut_items(app: &PhotoStoreApp) -> Vec<(String, String, Vec<String>, 
             out.push(((*id).to_string(), (*label).to_string(), vec![group.to_string()], binding.map(str::to_string)));
         }
     }
+    for (id, label, binding) in crate::shortcuts::NOTEBOOK_SHORTCUTS {
+        if seen.insert((*id).to_string()) {
+            out.push(((*id).to_string(), (*label).to_string(), vec!["Notebook".into()], binding.map(str::to_string)));
+        }
+    }
     out
 }
 
 fn scoped_shortcut_pair(a: &str, b: &str) -> bool {
-    a.starts_with("timeline.editor.") != b.starts_with("timeline.editor.")
+    let scope = |id: &str| {
+        if id.starts_with("timeline.editor.") { 1 } else if id.starts_with("notebook.") { 2 } else { 0 }
+    };
+    scope(a) != scope(b)
 }
 
 /// Text of a key press for the shortcut editor (`Cmd+Shift+K`), `None` for bare modifiers.

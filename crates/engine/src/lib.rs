@@ -59,6 +59,7 @@ pub mod layer_mask_props_cmds;
 pub mod layer_menu_cmds;
 pub mod layer_multi_cmds;
 pub mod layer_nav_cmds;
+pub mod notebook;
 pub mod layer_style;
 pub mod lens_cmds;
 pub mod magnetic_cmds;
@@ -220,6 +221,8 @@ pub struct DocState {
     pub channel_view: channel_cmds::ChannelView,
     /// Select › Isolate Layers: the Layers panel lists only these layers (empty = off; view state).
     pub isolated_layers: Vec<LayerId>,
+    /// Present the active root as one page. Session view state, outside the document and history.
+    pub notebook: bool,
     /// Painting symmetry preset or sampled path (tool state, not document pixels).
     pub symmetry: Option<symmetry_cmds::PaintingSymmetry>,
     /// Layers panel: layers whose effects list is collapsed under their row (the fx triangle;
@@ -254,6 +257,7 @@ impl DocState {
             coalesce: None,
             channel_view: Default::default(),
             isolated_layers: Vec::new(),
+            notebook: false,
             symmetry: None,
             fx_collapsed: Vec::new(),
             show_only: None,
@@ -681,8 +685,9 @@ impl Session {
         let key = self.coalesce_request.clone();
         let st = self.active_mut().ok_or(EngineError::NoDocument)?;
         let same_coalesce = key.is_some() && st.coalesce == key && st.history.can_undo();
+        let page = st.notebook_root();
         if let Some(current) = Arc::get_mut(&mut st.doc) {
-            recording::capture_edit(current, &before, label, !unchanged, same_coalesce, recording_allowed);
+            recording::capture_edit(current, &before, label, !unchanged, same_coalesce, recording_allowed, page);
         }
         let layers = st.layer_target();
         if key.is_none() || st.coalesce != key || !st.history.can_undo() {

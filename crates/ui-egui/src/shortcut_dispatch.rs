@@ -61,8 +61,8 @@ pub fn bindings(app: &PhotoStoreApp) -> Vec<(String, KeyboardShortcut)> {
                 crate::menus::panel_alias(k) == Some(id) && crate::menu_catalog::CATALOG.iter().any(|c| c.3 == k.as_str() && c.2.is_some() && c.2 == sc)
             })
     };
-    let ui = crate::menus::UI_COMMANDS.iter().map(|(id, _, _, sc)| (*id, if aliased(id, *sc) { None } else { prefs.shortcut(id, *sc) }));
-    let engine = photostore_engine::command_specs().iter().filter(|c| !c.id.starts_with("timeline.editor.")).map(|c| (c.id, prefs.shortcut(c.id, c.shortcut)));
+    let ui = crate::menus::UI_COMMANDS.iter().filter(|(id, ..)| !id.starts_with("notebook.")).map(|(id, _, _, sc)| (*id, if aliased(id, *sc) { None } else { prefs.shortcut(id, *sc) }));
+    let engine = photostore_engine::command_specs().iter().filter(|c| !c.id.starts_with("timeline.editor.") && !c.id.starts_with("notebook.")).map(|c| (c.id, prefs.shortcut(c.id, c.shortcut)));
     let tools = crate::state::Tool::ALL.iter().map(|t| {
         let id = crate::shortcuts::tool_id(*t);
         (id, prefs.shortcut(id, photostore_engine::prefs::tool_default_shortcut(id)))
@@ -83,6 +83,7 @@ pub fn bindings(app: &PhotoStoreApp) -> Vec<(String, KeyboardShortcut)> {
             !sc.is_empty()
                 && !id.starts_with(crate::actions::SHORTCUT_PREFIX)
                 && !id.starts_with("timeline.editor.")
+                && !id.starts_with("notebook.")
                 && photostore_engine::commands::find(id).is_none()
                 && !crate::menus::UI_COMMANDS.iter().any(|c| c.0 == id.as_str())
                 && !crate::hold_keys::is_temporary(id)
@@ -90,7 +91,7 @@ pub fn bindings(app: &PhotoStoreApp) -> Vec<(String, KeyboardShortcut)> {
         .map(|(id, sc)| (id.as_str(), Some(sc.as_str())));
     // Photoshop's second shortcuts, kept while the command's main one is the default.
     let secondary = SECONDARY.iter().filter(|(id, _)| !prefs.shortcuts.contains_key(*id)).map(|&(id, sc)| (id, Some(sc)));
-    let alternate_storage = prefs.shortcut_alternates.iter().flat_map(|(id, keys)| keys.iter().map(move |sc| (id.as_str(), Some(sc.as_str()))));
+    let alternate_storage = prefs.shortcut_alternates.iter().filter(|(id, _)| !id.starts_with("notebook.") && !id.starts_with("timeline.editor.")).flat_map(|(id, keys)| keys.iter().map(move |sc| (id.as_str(), Some(sc.as_str()))));
     // A key the user assigned in Edit › Keyboard Shortcuts belongs to that command, ahead of any
     // default that still names it (#1272): OK clears the old owner's row, but that row can be
     // another id for the same item, or a default the dialog doesn't list.

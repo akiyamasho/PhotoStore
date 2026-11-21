@@ -85,6 +85,9 @@ pub fn effective_shortcuts(app: &PhotoStoreApp, id: &str, default: Option<&str>)
 
 /// Default (unmodified) shortcut of a command id.
 pub fn default_shortcut(id: &str) -> Option<String> {
+    if let Some((_, _, binding)) = NOTEBOOK_SHORTCUTS.iter().find(|(command, _, _)| *command == id) {
+        return (*binding).map(str::to_string);
+    }
     if let Some((_, _, binding)) = TIMELINE_SHORTCUTS.iter().find(|(command, _, _)| *command == id) {
         return (*binding).map(str::to_string);
     }
@@ -100,6 +103,13 @@ pub fn default_shortcut(id: &str) -> Option<String> {
         .or_else(|| photostore_engine::prefs::TEMPORARY_TOOLS.iter().find(|t| t.0 == id).map(|t| t.2))
         .map(str::to_string)
 }
+
+/// Notebook actions are available only while the active document is in Notebook view.
+pub const NOTEBOOK_SHORTCUTS: &[(&str, &str, Option<&str>)] = &[
+    ("notebook.jump", "Jump to page", Some("Cmd+K")),
+    ("notebook.previous", "Previous page", Some("Cmd+Shift+X")),
+    ("notebook.next", "Next page", Some("Cmd+Shift+C")),
+];
 
 /// Timeline-only keys stay out of the global Photoshop dispatcher. They are read while the active
 /// video timeline owns shortcut context; transport remains available across ordinary UI controls.
@@ -1163,7 +1173,7 @@ pub fn handle(app: &mut PhotoStoreApp, ctx: &egui::Context) {
     // Camera Raw is modal like Photoshop's filter dialog: no application shortcut (Save, Undo,
     // tools) runs beneath it, and it handles its own keys (Y, U, O, S). Unlike the other dialogs
     // below it covers the canvas, so canvas zoom keys are blocked too.
-    if app.camera_raw.is_some() {
+    if app.camera_raw.is_some() || app.notebook_dialog.is_some() {
         return;
     }
     // An open menu owns the keyboard (arrows, ↩, Esc), like a native menu.
@@ -1270,8 +1280,23 @@ pub fn handle(app: &mut PhotoStoreApp, ctx: &egui::Context) {
             return;
         }
     }
-    // Inline type editing owns navigation and value keys before the focused timeline can claim them.
+    // Inline type editing owns navigation and value keys before contextual shortcuts.
     let editing = crate::type_tool::handle_keys(app, ctx);
+    // Notebook view owns its page shortcuts before timeline and global commands. Text inputs,
+    // dialogs and editing modes have already had priority above.
+    if !editing && app.session.active().is_some_and(|st| st.notebook) && app.notebook_dialog.is_none() {
+        for (id, _, default) in NOTEBOOK_SHORTCUTS {
+            for raw in app.session.prefs().shortcuts_for(id, *default) {
+                if parse(&raw).is_some_and(|shortcut| consume(ctx, &shortcut)) {
+                    if let Err(error) = crate::menus::invoke(app, ctx, id, json!({})) {
+                        app.ui.status = error;
+                        app.ui.status_error = true;
+                    }
+                    return;
+                }
+            }
+        }
+    }
     // A timeline click activates its own keymap without changing the global Photoshop mapping.
     // Text fields, inline text, modal UI, menus, distortion modes and Free Transform have priority.
     if !editing && dispatch_timeline_shortcuts(app, ctx) {

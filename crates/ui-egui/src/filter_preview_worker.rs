@@ -116,6 +116,7 @@ mod tests {
             revision,
             dialog,
             active: None,
+            notebook_root: None,
             command: "image.mode.indexedColor".into(),
             params: json!({"colors": colors}),
             k: 1,

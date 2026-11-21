@@ -10,7 +10,7 @@ use crate::state::DialogKind;
 /// commands also usable through shortcuts. Camera Raw blocks menu commands entirely, and a pending
 /// crop blocks the commands Photoshop greys during one (`crop_ui::blocks`).
 pub(crate) fn modal_allows(app: &PhotoStoreApp, id: &str) -> bool {
-    if app.camera_raw.is_some() || crate::crop_ui::blocks(app, id) {
+    if app.camera_raw.is_some() || app.notebook_dialog.is_some() || crate::crop_ui::blocks(app, id) {
         return false;
     }
     (app.ui.dialogs.is_empty() && app.discard.is_none()) || crate::shortcuts::NAV_COMMANDS.contains(&id)
@@ -35,6 +35,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("edit.transform.distort", "Distort", &["Edit", "Transform"], None),
     ("edit.transform.perspective", "Perspective", &["Edit", "Transform"], None),
     ("select.selectAndMask", "Select and Mask…", &["Select"], Some("Cmd+Alt+R")),
+    ("view.notebook", "Notebook", &["View"], None),
+    ("notebook.jump", "Jump to Page…", &[], None),
     ("view.rulers", "Rulers", &["View"], Some("Cmd+Alt+Shift+R")),
     ("ui.layerCopy", "Copy Layer…", &["Layer"], if cfg!(target_os = "macos") { Some("Cmd+Ctrl+R") } else { None }),
     ("view.show.grid", "Grid", &["View", "Show"], Some("Cmd+'")),
@@ -164,6 +166,13 @@ pub(crate) fn invoke_unguarded(app: &mut PhotoStoreApp, ctx: &egui::Context, id:
     }
     if let Some(result) = crate::audio_ui::invoke(app, ctx, id, &params) {
         return result;
+    }
+    if id == "notebook.jump" {
+        if !app.session.active().is_some_and(|st| st.notebook) {
+            return Err("Notebook view is not active".into());
+        }
+        app.notebook_dialog = Some(Default::default());
+        return Ok(Value::Null);
     }
     if id == "ui.symmetryTransform" {
         return crate::symmetry_ui::begin(app).map(|_| Value::Null);
@@ -587,6 +596,9 @@ fn open_path(app: &mut PhotoStoreApp, path: &str) -> Result<Value, String> {
 }
 
 pub fn is_enabled(app: &PhotoStoreApp, id: &str) -> bool {
+    if id == "notebook.jump" {
+        return app.session.active().is_some_and(|st| st.notebook);
+    }
     if id == "ui.symmetryTransform" {
         return crate::symmetry_ui::can_transform(app);
     }
@@ -736,6 +748,7 @@ fn checked(app: &PhotoStoreApp, id: &str) -> Option<bool> {
     }
     let e = &app.ui.extras;
     match id {
+        "view.notebook" => return Some(app.session.active().is_some_and(|st| st.notebook)),
         "view.rulers" => return Some(e.rulers),
         "view.show.grid" => return Some(e.grid),
         "view.show.guides" => return Some(e.guides),

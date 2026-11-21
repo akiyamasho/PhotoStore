@@ -57,7 +57,7 @@ fn ensure_onion_skin(app: &mut PhotoStoreApp, painter: &egui::Painter, idx: usiz
     // document, so defer the overlay until that preview has ended instead of covering it with a
     // stale composite.
     let committed = app.session.documents()[idx].doc.clone();
-    let (shown, preview_key) = display_doc(app, idx);
+    let (shown, preview_key) = unprojected_display_doc(app, idx);
     if preview_key != 0 && !std::sync::Arc::ptr_eq(&shown, &committed) {
         app.onion_preview = None;
         return None;
@@ -66,6 +66,7 @@ fn ensure_onion_skin(app: &mut PhotoStoreApp, painter: &egui::Painter, idx: usiz
         app.onion_preview = None;
         return None;
     };
+    let root = st.notebook_root();
     let Some(timeline) = &st.doc.timeline else {
         app.onion_preview = None;
         return None;
@@ -93,7 +94,7 @@ fn ensure_onion_skin(app: &mut PhotoStoreApp, painter: &egui::Painter, idx: usiz
     // overlay self-contained and gives it the same color-management path as the canvas texture.
     let (display, display_key) = canvas_display(app, &st.doc, output);
     let key = format!(
-        "{}:{}:{}:{}x{}:{}:{:?}:{:?}:{}:{}",
+        "{}:{}:{}:{}x{}:{}:{:?}:{:?}:{}:{}:{:?}",
         st.doc.id.0,
         st.revision,
         current,
@@ -104,15 +105,18 @@ fn ensure_onion_skin(app: &mut PhotoStoreApp, painter: &egui::Painter, idx: usiz
         frames,
         display_key,
         app.session.color.main_display.unwrap_or(0),
+        root,
     );
     if app.onion_preview.as_ref().is_none_or(|cache| cache.key != key) {
+        let onion_doc = root.map(|root| photostore_engine::notebook::project(&st.doc, root));
+        let source_doc = onion_doc.as_ref().unwrap_or(&st.doc);
         let longest = st.doc.size.width.max(st.doc.size.height);
         let factor = longest.div_ceil(MAX_TEXTURE).max(1);
         // Onion previews have a stricter bound than the ordinary canvas cache: every buffer is at
         // most 1024 pixels on its long edge, and all ghosts share one flattened texture.
         let factor = factor.max(longest.div_ceil(1024).max(1));
         let (w, h) = ((st.doc.size.width / factor).max(1), (st.doc.size.height / factor).max(1));
-        let mut combined = render_onion_frame(&st.doc, current, w, h);
+        let mut combined = render_onion_frame(source_doc, current, w, h);
         // Composite farthest first so the nearest frame remains the strongest reference when
         // several snapshots overlap. The two sides retain their own nearest/farthest ramp.
         let before_count = frames.iter().filter(|(_, _, before)| *before).count();
@@ -121,7 +125,7 @@ fn ensure_onion_skin(app: &mut PhotoStoreApp, painter: &egui::Painter, idx: usiz
         for (frame, distance, before) in frames {
             let side_count = if before { before_count } else { after_count };
             let opacity = onion_opacity(settings.min_opacity, settings.max_opacity, distance, side_count);
-            let snapshot = render_onion_frame(&st.doc, frame, w, h);
+            let snapshot = render_onion_frame(source_doc, frame, w, h);
             composite_onion(&mut combined, &snapshot, settings.blend, opacity);
         }
         let image = display_image(display.as_deref(), &combined);
@@ -188,8 +192,8 @@ fn draw_clone_preview(app: &mut PhotoStoreApp, painter: &egui::Painter, xf: &Vie
     let Some(st) = app.session.active() else { return };
     let (display, display_key) = canvas_display(app, &st.doc, output);
     let key = format!(
-        "{:?}:{}:{:?}:{rect:?}:{map:?}:{}:{}:{}",
-        st.doc.id, st.revision, st.active_layer, app.ui.tool_options.clone_sample, display_key, overlay.invert
+        "{:?}:{}:{:?}:{rect:?}:{map:?}:{}:{}:{}:{:?}",
+        st.doc.id, st.revision, st.active_layer, app.ui.tool_options.clone_sample, display_key, overlay.invert, st.notebook_root()
     );
     if app.clone_preview.as_ref().is_none_or(|c| c.key != key) {
         let Ok(mut buf) = photostore_engine::retouch_cmds::clone_preview(&app.session, rect, &map, &app.ui.tool_options.clone_sample) else { return };
@@ -235,6 +239,36 @@ fn draw_clone_preview(app: &mut PhotoStoreApp, painter: &egui::Painter, xf: &Vie
         mesh.indices.extend_from_slice(&[0, i, i + 1]);
     }
     painter.add(egui::Shape::mesh(mesh));
+}
+
+pub(crate) struct NotebookProjection {
+    source: std::sync::Weak<Document>,
+    root: photostore_doc::LayerId,
+    projected: std::sync::Arc<Document>,
+}
+
+// A root-level temporary adjustment is clipped immediately above its target. It is
+// part of the visible preview, even though it is not a canonical notebook page.
+fn project_render(doc: &Document, root: photostore_doc::LayerId, preview: photostore_doc::LayerId) -> Document {
+    let mut projected = photostore_engine::notebook::project(doc, root);
+    if let Some(index) = doc.layers.iter().position(|layer| layer.id == root)
+        && let Some(layer) = doc.layers.get(index + 1).filter(|layer| layer.id == preview)
+    {
+        projected.layers.push(layer.clone());
+    }
+    projected
+}
+
+fn project_page(app: &mut PhotoStoreApp, doc: std::sync::Arc<Document>, root: photostore_doc::LayerId) -> std::sync::Arc<Document> {
+    let source = std::sync::Arc::downgrade(&doc);
+    if let Some(cache) = app.notebook_projections.get(&doc.id)
+        && cache.root == root && cache.source.ptr_eq(&source)
+    {
+        return cache.projected.clone();
+    }
+    let projected = std::sync::Arc::new(project_render(&doc, root, crate::adjust_preview::PREVIEW_LAYER));
+    app.notebook_projections.insert(doc.id, NotebookProjection { source, root, projected: projected.clone() });
+    projected
 }
 
 pub struct CanvasCache {
@@ -912,6 +946,19 @@ pub(crate) const GPU_OUTPUT: u32 = u32::MAX;
 
 /// The document to render: the committed one, or a clone with the live adjustment preview applied.
 pub(crate) fn display_doc(app: &mut PhotoStoreApp, idx: usize) -> (std::sync::Arc<Document>, u64) {
+    let (doc, key) = unprojected_display_doc(app, idx);
+    let root = app.session.documents().get(idx).and_then(|st| st.notebook_root());
+    if let Some(root) = root {
+        let projected = project_page(app, doc, root);
+        // Page identity is part of every canvas cache key, including transient previews.
+        let page_key = root.0.wrapping_mul(0x9e37_79b9_7f4a_7c15).rotate_left(17) ^ 0x6e6f_7465_626f_6f6b;
+        (projected, key ^ page_key)
+    } else {
+        (doc, key)
+    }
+}
+
+fn unprojected_display_doc(app: &mut PhotoStoreApp, idx: usize) -> (std::sync::Arc<Document>, u64) {
     if let Some(shown) = crate::type_panels_ui::color_picker::display_doc(app, idx) {
         return shown;
     }
@@ -1259,6 +1306,7 @@ fn ensure_gpu(app: &mut PhotoStoreApp, ctx: &egui::Context, idx: usize, visible:
     });
     #[cfg(not(target_arch = "wasm32"))]
     if app.session.active_index() == Some(idx)
+        && app.session.documents()[idx].notebook_root().is_none()
         && doc.timeline.as_ref().is_some_and(|t| t.mode == photostore_doc::TimelineMode::Video)
     {
         let same_budget = app.perf.gpu_budget_content == Some((id.0, content_revision));
@@ -1409,7 +1457,7 @@ fn ensure_filter_preview(app: &mut PhotoStoreApp, idx: usize, ctx: &egui::Contex
     // Filters whose features don't scale with a proxy preview at full resolution (#2063).
     let k = crate::filter_dialog::preview_factor(&cmd, &params, crate::proxy::preview_factor(&st.doc, crate::proxy::reduced_previews(app)));
     let request =
-        crate::filter_dialog::FilterPreviewKey { doc: st.doc.id, revision: st.revision, dialog: d.id, active: st.active_layer, command: cmd, params, k };
+        crate::filter_dialog::FilterPreviewKey { doc: st.doc.id, revision: st.revision, dialog: d.id, active: st.active_layer, notebook_root: st.notebook_root(), command: cmd, params, k };
     let key = request.doc.0 ^ (1u64 << 61);
     // Every filter's preview computes off the UI thread in the desktop app: Gaussian Blur at
     // 1000 px takes long enough to freeze the window. Once the slider settles, a preview still
@@ -1430,7 +1478,8 @@ fn ensure_filter_preview(app: &mut PhotoStoreApp, idx: usize, ctx: &egui::Contex
         }
         let fresh = app.filter_preview.as_ref().is_some_and(|p| p.key == request);
         if !fresh && !app.filter_preview_worker.busy() {
-            let doc = app.session.documents().get(idx)?.doc.clone();
+            let source = app.session.documents().get(idx)?.doc.clone();
+            let doc = request.notebook_root.map_or_else(|| source.clone(), |root| std::sync::Arc::new(photostore_engine::notebook::project(&source, root)));
             let task = request.clone();
             if let Err(error) = app.filter_preview_worker.start(request.clone(), ctx.clone(), move |cancel| {
                 let t0 = crate::gpu_canvas::now_ms();
@@ -1454,6 +1503,7 @@ fn ensure_filter_preview(app: &mut PhotoStoreApp, idx: usize, ctx: &egui::Contex
             || preview.key.revision != request.revision
             || preview.key.dialog != request.dialog
             || preview.key.active != request.active
+            || preview.key.notebook_root != request.notebook_root
             || preview.key.k != request.k
             || preview.key.command != request.command
         {
@@ -1466,7 +1516,8 @@ fn ensure_filter_preview(app: &mut PhotoStoreApp, idx: usize, ctx: &egui::Contex
     // computed inline, uploaded when a GPU texture exists, still inspectable without one.
     let _ = ctx;
     if app.filter_preview.as_ref().is_none_or(|p| p.key != request) {
-        let doc = app.session.documents().get(idx)?.doc.clone();
+        let source = app.session.documents().get(idx)?.doc.clone();
+        let doc = request.notebook_root.map_or_else(|| source.clone(), |root| std::sync::Arc::new(photostore_engine::notebook::project(&source, root)));
         let t0 = crate::gpu_canvas::now_ms();
         let result = crate::filter_dialog::preview_document(&doc, request.active, &request.command, &request.params, request.k).map(std::sync::Arc::new);
         if let Some(r) = &result {
@@ -1514,7 +1565,7 @@ fn publish_filter_preview(
 pub(crate) fn committed_filter_preview(app: &mut PhotoStoreApp, idx: usize) -> Option<Option<(u32, u64, [u32; 2])>> {
     let p = app.filter_preview.as_ref().filter(|p| p.committing)?;
     let st = app.session.documents().get(idx)?;
-    if st.doc.id != p.key.doc {
+    if st.doc.id != p.key.doc || st.notebook_root() != p.key.notebook_root {
         return None;
     }
     let size = p.result.as_ref().map(|r| [r.size.width, r.size.height]);
@@ -1552,13 +1603,16 @@ fn visible_doc_rect(xf: &ViewXform) -> DRect {
 /// area after the first frame. Returns (factor, gpu key, dimensions) to draw.
 fn ensure_adjust_proxy(app: &mut PhotoStoreApp, idx: usize, zoom: f32) -> Option<(u32, u64, [u32; 2])> {
     let frame = crate::adjust_preview::gpu_proxy(app, idx, zoom)?;
-    let key = frame.doc.id.0;
+    let root = app.session.documents().get(idx)?.notebook_root();
+    let key = root.map_or(frame.doc.id.0, |root| frame.doc.id.0 ^ root.0.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ frame.hash.rotate_left(23));
     let size = [frame.doc.size.width, frame.doc.size.height];
     let gpu = app.gpu.clone()?;
     if frame.stale || !gpu.has(key, size) {
         let doc = app.session.documents().get(idx)?.doc.clone();
         let (display, _) = canvas_display(app, &doc, None);
-        let r = gpu.refresh(key, &frame.doc, frame.damage, display.as_deref());
+        let projected = root.map(|root| project_render(&frame.doc, photostore_doc::LayerId(root.0 ^ (1 << 62)), photostore_doc::LayerId(crate::adjust_preview::PREVIEW_LAYER.0 ^ (1 << 62))));
+        let render = projected.as_ref().unwrap_or(&frame.doc);
+        let r = gpu.refresh(key, render, if gpu.has(key, size) { frame.damage } else { None }, display.as_deref());
         app.perf.record(if r.kind.starts_with("gpu") { "gpu-adjust-proxy" } else { "adjust-proxy" }, r.px, r.composite_ms, r.upload_ms);
         crate::adjust_preview::proxy_drawn(app, &frame);
     }
@@ -1584,7 +1638,8 @@ fn ensure_proxy_preview(app: &mut PhotoStoreApp, idx: usize) -> Option<(u32, u64
     }
     let proxy = app.proxy.as_ref()?.3.clone();
     let key = doc_id.0 ^ (1u64 << 62);
-    let hash = params.to_string().bytes().fold(k as u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
+    let root = app.session.documents().get(idx)?.notebook_root();
+    let hash = params.to_string().bytes().fold(k as u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64)) ^ root.map_or(0, |id| id.0.wrapping_mul(0x9e37_79b9_7f4a_7c15));
     if app.proxy_uploaded != Some((doc_id, hash)) {
         let l = proxy.layer(layer)?;
         let LayerContent::Adjustment(a) = &l.content else { return None };
@@ -1594,6 +1649,7 @@ fn ensure_proxy_preview(app: &mut PhotoStoreApp, idx: usize) -> Option<(u32, u64
         if let Some(lm) = p.layer_mut(layer) {
             lm.content = LayerContent::Adjustment(preview);
         }
+        if let Some(root) = root { p = photostore_engine::notebook::project(&p, root); }
         let t0 = crate::gpu_canvas::now_ms();
         let buf = photostore_compose::flatten(&p);
         let t1 = crate::gpu_canvas::now_ms();
@@ -1617,6 +1673,7 @@ fn texture_buffer<'a>(
 }
 
 pub(crate) fn retain_gpu_documents(app: &mut PhotoStoreApp) {
+    app.notebook_projections.retain(|id, _| app.session.documents().iter().any(|st| st.doc.id == *id));
     // Remove a closed adjustment owner's proxy before collecting its live GPU keys.
     crate::adjust_preview::retain_documents(app);
     if let Some(gpu) = &app.gpu {
@@ -1624,6 +1681,9 @@ pub(crate) fn retain_gpu_documents(app: &mut PhotoStoreApp) {
         // retaining only document ids freed the previews every frame (blank canvas while previewing).
         let mut live: Vec<u64> = app.session.documents().iter().flat_map(|st| [st.doc.id.0, st.doc.id.0 ^ (1u64 << 61), st.doc.id.0 ^ (1u64 << 62)]).collect();
         live.extend(crate::adjust_preview::gpu_keys(app));
+        if let Some(st) = app.session.active() && let Some(root) = st.notebook_root() {
+            live.extend(crate::adjust_preview::gpu_page_key(app, root));
+        }
         gpu.retain(&live);
     }
     // Upload markers must not outlive the resources they describe: native reopen can reuse
@@ -2477,7 +2537,10 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
         false
     };
     let rect = if primary { crate::rulers::content_rect(app, rect) } else { rect };
-    let doc = app.session.documents()[idx].doc.clone();
+    let st = &app.session.documents()[idx];
+    let root = st.notebook_root();
+    let doc = st.doc.clone();
+    let doc = if let Some(root) = root { project_page(app, doc, root) } else { doc };
     let size = [doc.size.width, doc.size.height];
     if view.doc_size != size {
         // Like Photoshop: keep the zoom level, re-centre the resized document.
@@ -2527,7 +2590,7 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
     }
     // Resolve navigation against the previous camera, then draw this frame at the new camera.
     // Under an open dialog the canvas widget is inert, but the image still pans and zooms.
-    let under_dialog = !app.ui.dialogs.is_empty();
+    let under_dialog = !app.ui.dialogs.is_empty() || app.notebook_dialog.is_some();
     let free_hover = under_dialog && crate::dialogs::free_pointer_over(&ctx, rect).is_some();
     // Navigation (wheel_nav.rs): scroll pans (⇧ or ⌘/Ctrl sideways); pinch and ⌥-scroll zoom around the pointer.
     let wheel = crate::wheel_nav::read(&ctx, app.session.prefs().general.zoom_with_scroll_wheel);
@@ -2787,7 +2850,7 @@ pub fn canvas_view(app: &mut PhotoStoreApp, ui: &mut egui::Ui, idx: usize, rect:
                 }
             }
         }
-        if primary {
+        if primary && app.session.documents()[idx].notebook_root().is_none() {
             crate::artboard_ui::draw_frames(app, &painter, &xf);
         }
     }
@@ -4736,6 +4799,7 @@ mod tests {
             revision: st.revision,
             dialog: d.id,
             active: st.active_layer,
+            notebook_root: None,
             command: "filter.blur.gaussianBlur".into(),
             params: json!({"radius": 999.0}),
             k: 1,
@@ -4783,6 +4847,7 @@ mod tests {
                 revision: st.revision,
                 dialog: d.id,
                 active: st.active_layer,
+                notebook_root: None,
                 command: "image.mode.indexedColor".into(),
                 params: app.with_mask_target("image.mode.indexedColor", crate::filter_dialog::params_of(&d.fields)),
                 k: 1,

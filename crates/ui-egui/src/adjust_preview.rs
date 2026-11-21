@@ -380,7 +380,7 @@ pub struct ProxyFrame {
     pub damage: Option<Rect>,
     /// False when the texture already shows this preview.
     pub stale: bool,
-    hash: u64,
+    pub hash: u64,
 }
 
 /// The zoomed-out preview for document `idx` at `zoom`, when the dialog previews through the layer
@@ -442,6 +442,13 @@ pub(crate) fn retain_documents(app: &mut PhotoStoreApp) {
 pub fn gpu_keys(app: &PhotoStoreApp) -> Option<u64> {
     let p = app.adjust_preview.as_ref().filter(|p| p.hash != 0)?;
     p.proxy.as_ref().map(|g| g.base.id.0)
+}
+
+/// Notebook proxies use distinct textures for the page and settings they contain.
+pub fn gpu_page_key(app: &PhotoStoreApp, root: LayerId) -> Option<u64> {
+    let p = app.adjust_preview.as_ref().filter(|p| p.hash != 0)?;
+    let base = p.proxy.as_ref()?.base.id.0;
+    Some(base ^ root.0.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ p.hash.rotate_left(23))
 }
 
 #[cfg(test)]

@@ -10,11 +10,10 @@ PhotoStore is a Rust-native image editor maintained as a personal fork of PhotoC
 
 Download the macOS Apple Silicon package from [PhotoStore releases](https://github.com/akiyamasho/PhotoStore/releases). For a local install, use Rust stable 1.95+:
 
-PhotoStore 0.20.9 saves edited single-layer JPEG and PNG files back to their original location
-when the format can preserve the document. Stable-release checks are under **Help → Check for
+PhotoStore 0.21.0 adds Notebook View for layered documents. Select **Notebook** in the Layers panel to draw on one page at a time. Stable-release checks are under **Help → Check for
 Updates…**, using existing GitHub CLI (`gh`) authentication. The macOS app and CLI use the
 persistent local PhotoStore signing certificate. See [in-app updates](docs/app-updates.md) and
-the [0.20.9 release notes](docs/releases/0.20.9.md).
+the [0.21.0 release notes](docs/releases/0.21.0.md).
 
 ```sh
 CARGO_BUILD_JOBS=1 cargo install --path apps/photostore --bin photostore --locked
@@ -31,8 +30,18 @@ CARGO_BUILD_JOBS=1 cargo build --release -p photostore -p photostore-cli
 
 ## Current release source
 
-**File → Save** and **⌘S** update eligible single-layer JPEG and PNG files in place.
-[Download 0.20.9](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.9).
+**Notebook View** treats each top-level PSD layer or group as a page, in the same top-to-bottom order as the Layers panel. A group and its children appear together. Choose **Pages…** to find a page by name or number, or move it up or down. Reordering changes the actual layer stack and supports Undo. Choose **Layers** to see the full composite again.
+
+| Notebook shortcut on macOS | Action |
+| --- | --- |
+| ⌘K | Open Pages and focus page search |
+| ⌘⇧X | Previous page |
+| ⌘⇧C | Next page |
+
+[Download PhotoStore 0.21.0 for Apple Silicon](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.21.0).
+
+**File → Save** and **⌘S** also update eligible single-layer JPEG and PNG files in place. [Image save details](docs/releases/0.20.9.md).
+
 The [0.20.8 timeline release](docs/releases/0.20.8.md) describes the retained preview and clip
 editing workflows and their verification limits.
 

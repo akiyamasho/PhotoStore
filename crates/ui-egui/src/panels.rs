@@ -1515,7 +1515,14 @@ fn dock_body(app: &mut PhotoStoreApp, ui: &mut egui::Ui, group: crate::dock::Gro
         (Group::History, 0) => history(app, ui),
         (Group::History, 1) => crate::actions::panel(app, ui),
         (Group::History, _) => crate::comps_ui::panel(app, ui),
-        (Group::Layers, 0) => layers(app, ui),
+        (Group::Layers, 0) => {
+            crate::notebook_ui::mode_switch(app, ui);
+            if app.session.active().is_some_and(|st| st.notebook) {
+                crate::notebook_ui::panel(app, ui);
+            } else {
+                layers(app, ui);
+            }
+        },
         (Group::Layers, 1) => channels(app, ui),
         (Group::Layers, _) => crate::vector_ui::paths_panel(app, ui),
     }
