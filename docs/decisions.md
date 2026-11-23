@@ -855,4 +855,8 @@ A document crop clips video content to the canvas while retaining its frames. Ca
 
 ## 2026-11-23 — Move shortcut in the video timeline
 
-Enable / Disable Clip has no default shortcut. The configured Move shortcut remains available after a timeline selection. Explicit timeline shortcut assignments still apply when the timeline owns the keyboard. [Interaction design](design/2026-11-23/timeline-editing/prompt.md)
+Enable / Disable Clip has no default shortcut. The configured Move shortcut remains available after a timeline selection. In 0.21.4, other timeline assignments had priority when the timeline owned the keyboard. [Interaction design](design/2026-11-23/timeline-editing/prompt.md)
+
+## 2026-11-23 — Tool shortcuts with a selected clip
+
+Configured tool shortcuts take priority over conflicting video timeline bindings. A clip selection keeps its editing context while the user switches canvas tools. The same tool resolver handles primary shortcuts, alternates and grouped tools. Select and Razor have named buttons, and the shortcut reference identifies the tool assigned to each shared key. [Interaction design](design/2026-11-23/timeline-tool-priority/prompt.md)

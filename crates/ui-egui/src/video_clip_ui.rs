@@ -2150,7 +2150,7 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                     action = Some(("timeline.nextFrame", json!({"document":doc.0})));
                 }
                 ui.separator();
-                if crate::icons::button(ui, "scan-line", 20.0, snap, "Snapping (N)").clicked() {
+                if crate::icons::button(ui, "scan-line", 20.0, snap, "Snapping").clicked() {
                     snap = !snap;
                     action = Some(("timeline.editor.setModes", json!({"document":doc.0,"snapping":snap})));
                 }
@@ -2164,17 +2164,17 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                             action = Some(("timeline.nextFrame", json!({"document":doc.0})));
                             ui.close();
                         }
-                        if ui.selectable_label(!razor_mode, "A · Select").clicked() { razor_mode = false; }
-                        if ui.selectable_label(razor_mode, "B · Razor").clicked() { razor_mode = true; }
+                        if ui.selectable_label(!razor_mode, tl!("Select")).clicked() { razor_mode = false; }
+                        if ui.selectable_label(razor_mode, tl!("Razor")).clicked() { razor_mode = true; }
                         if selected_clip && ui.button(tl!("Split selected clip (⌘B)")).clicked() {
                             action = Some(("timeline.editor.split", json!({"document":doc.0,"layers":selected_visual.iter().map(|layer|layer.0).collect::<Vec<_>>(),"frame":frame})));
                             ui.close();
                         }
-                        if ui.button(tl!("Main track magnet (P)")).clicked() {
+                        if ui.button(tl!("Main track magnet")).clicked() {
                             action = Some(("timeline.editor.setModes", json!({"document":doc.0,"mainTrackMagnet":!timeline.main_track_magnet})));
                             ui.close();
                         }
-                        if ui.button(tl!("Add marker (M)")).clicked() {
+                        if ui.button(tl!("Add marker")).clicked() {
                             action = Some(("timeline.editor.marker.add", json!({"document":doc.0,"frame":frame})));
                             ui.close();
                         }
@@ -2187,15 +2187,15 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                         }
                     });
                 } else {
-                    if ui.selectable_label(!razor_mode, "A").on_hover_text("Select mode (A)").clicked() { razor_mode = false; }
-                    if ui.selectable_label(razor_mode, "B").on_hover_text("Razor mode (B)").clicked() { razor_mode = true; }
+                    if ui.selectable_label(!razor_mode, tl!("Select")).clicked() { razor_mode = false; }
+                    if ui.selectable_label(razor_mode, tl!("Razor")).clicked() { razor_mode = true; }
                     if selected_clip && crate::icons::button(ui, "scissors", 20.0, false, "Split selected clip (⌘B)").clicked() {
                         action = Some(("timeline.editor.split", json!({"document":doc.0,"layers":selected_visual.iter().map(|layer|layer.0).collect::<Vec<_>>(),"frame":frame})));
                     }
-                    if crate::icons::button(ui, "lasso-magnetic", 20.0, timeline.main_track_magnet, "Main track magnet (P)").clicked() {
+                    if crate::icons::button(ui, "lasso-magnetic", 20.0, timeline.main_track_magnet, "Main track magnet").clicked() {
                         action = Some(("timeline.editor.setModes", json!({"document":doc.0,"mainTrackMagnet":!timeline.main_track_magnet})));
                     }
-                    if crate::icons::button(ui, "clock", 20.0, false, "Add marker (M)").clicked() {
+                    if crate::icons::button(ui, "clock", 20.0, false, "Add marker").clicked() {
                         action = Some(("timeline.editor.marker.add", json!({"document":doc.0,"frame":frame})));
                     }
                     let keypane_id = Id::new(("timeline-key-pane", doc.0));

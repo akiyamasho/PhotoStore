@@ -140,6 +140,7 @@ pub fn toolbar(app: &mut PhotoStoreApp, ui: &mut egui::Ui) {
                                 let shown_keys = keys.iter().map(|k| crate::shortcuts::pretty(k)).collect::<Vec<_>>().join(" / ");
                                 let tip = if shown_keys.is_empty() { tl!(tool.label()).to_string() } else { format!("{}  ({shown_keys})", tl!(tool.label())) };
                                 let resp = icons::button(ui, icons::tool_icon(tool), bx, sel, &tip);
+                                resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), sel, tl!(tool.label())));
                                 if slot.len() > 1 {
                                     paint_toolbar_flyout_indicator(ui, &t, &resp);
                                 }
@@ -3534,7 +3535,7 @@ mod color_tests {
         h
     }
 
-    fn click(h: &mut egui_kittest::Harness<'_, PhotoStoreApp>, p: egui::Pos2) {
+    pub(super) fn click(h: &mut egui_kittest::Harness<'_, PhotoStoreApp>, p: egui::Pos2) {
         h.hover_at(p);
         h.run_steps(1);
         for pressed in [true, false] {
@@ -4009,7 +4010,7 @@ mod toolbar_tests {
         assert_eq!(left(&h), single);
     }
 
-    fn click(h: &mut egui_kittest::Harness<'_, PhotoStoreApp>, p: egui::Pos2) {
+    pub(super) fn click(h: &mut egui_kittest::Harness<'_, PhotoStoreApp>, p: egui::Pos2) {
         h.hover_at(p);
         h.run_steps(1);
         for pressed in [true, false] {
@@ -4097,6 +4098,36 @@ mod embedding_tests {
 
     fn drawn(h: &egui_kittest::Harness<'_, PhotoStoreApp>, panel: &str) -> bool {
         egui::containers::panel::PanelState::load(&h.ctx, egui::Id::new(panel)).is_some()
+    }
+
+    #[test]
+    fn timeline_brush_switches_by_key_and_toolbar_with_a_selected_clip() {
+        let mut h = whole_app(true, true);
+        let app = h.state_mut();
+        app.run("file.new", json!({"width":64,"height":64})).unwrap();
+        app.run("timeline.create", json!({"duration":30,"fps":30})).unwrap();
+        let layer = app.session.active().unwrap().doc.layers[0].id;
+        app.run("timeline.setLayerRange", json!({"layer":layer.0,"start":0,"end":30})).unwrap();
+        app.run("timeline.editor.select", json!({"layers":[]})).unwrap();
+        app.ui.timeline.open = true;
+        app.ui.tool = Tool::Move;
+        h.run_steps(3);
+        let doc = h.state().session.active().unwrap().doc.id.0;
+        let clip = h.ctx.read_response(egui::Id::new(("timeline-range-clip", doc, layer.0))).expect("rendered timeline clip");
+        super::toolbar_tests::click(&mut h, clip.interact_rect.center());
+        assert_eq!(h.state().session.active().unwrap().selected_layers, [layer]);
+        assert_eq!(h.ctx.data_mut(|d| d.get_persisted::<u64>(egui::Id::new("timeline-scoped-context"))), Some(doc));
+        h.key_press(egui::Key::B);
+        h.run_steps(2);
+        assert_eq!(h.state().ui.tool, Tool::Brush);
+        h.get_by_label("Move Tool").click();
+        h.run_steps(2);
+        assert_eq!(h.state().ui.tool, Tool::Move);
+        h.get_by_label("Brush Tool").click();
+        h.run_steps(2);
+        assert_eq!(h.state().ui.tool, Tool::Brush);
+        assert!(h.state().ui.timeline.open);
+        assert_eq!(h.state().session.active().unwrap().selected_layers, [layer]);
     }
 
     /// An app that embeds the UI can hide the icon rail and the menu bar; both are on by default.

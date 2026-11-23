@@ -1,6 +1,6 @@
 # Timeline workspace
 
-In 0.21.4, pressing **V** uses your configured tool shortcut even after selecting a clip in the video timeline. **Enable / Disable Clip** starts unbound. To assign it a key, open **Edit → Keyboard Shortcuts**. The CapCut reference lists that application's observed bindings. PhotoStore's current bindings appear in the first section of **Timeline shortcut reference**.
+With the video timeline open, press **B** for Brush, **V** for Move, or any other configured tool shortcut, even immediately after selecting a clip. When a tool and a timeline action share a key, the tool takes priority. Click **Select** or **Razor** in the timeline to change clip editing mode. **Enable / Disable Clip** starts unbound. Assign free keys in **Edit → Keyboard Shortcuts**. The **Timeline shortcut reference** shows which tool uses a shared key.
 
 Escape clears a timeline selection when the timeline owns the keyboard. After clicking the canvas, Escape follows the active canvas operation. Video timeline zoom extends to 16×, and the ruler and tracks follow the transport playhead during playback.
 

@@ -3437,3 +3437,9 @@ fontWeight	Italic	斜体
 	↓ Move down	↓ 下へ移動
 	Open page	ページを開く
 	Jump to Page…	ページに移動…
+
+	Razor	分割ツール
+	Snapping	スナップ
+	Main track magnet	メイントラックのマグネット
+	Add marker	マーカーを追加
+	Tool shortcuts take priority after you click the timeline. To use a timeline action on a shared key, assign it a free shortcut. Text fields keep their editing keys.	タイムラインをクリックした後も、ツールのショートカットが優先されます。同じキーを使うタイムライン操作には、空いているキーを割り当ててください。テキスト入力中は編集用のキーが使えます。

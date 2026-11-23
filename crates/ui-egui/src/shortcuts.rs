@@ -346,6 +346,28 @@ fn dispatch_timeline_shortcuts(app: &mut PhotoStoreApp, ctx: &egui::Context) -> 
     if focus == Focus::Text {
         return false;
     }
+    // Resolve effective tool bindings before timeline bindings, consuming each matching
+    // press so one gesture cannot also execute a timeline command. Resolve again after
+    // each press because grouped-tool cycling depends on the current tool.
+    if scoped && focus == Focus::None && app.ui.transform.is_none() {
+        let mut tool_dispatched = false;
+        loop {
+            let next = ctx.input_mut(|input| {
+                let (at, id) = input.events.iter().enumerate().find_map(|(at, event)| {
+                    let egui::Event::Key { key, pressed: true, repeat, modifiers, .. } = event else { return None };
+                    crate::shortcut_dispatch::tool_for_key(app, *key, *modifiers, *repeat, focus).map(|tool| (at, tool_id(tool)))
+                })?;
+                input.events.remove(at);
+                Some(id)
+            });
+            let Some(id) = next else { break };
+            crate::shortcut_dispatch::dispatch(app, ctx, id);
+            tool_dispatched = true;
+        }
+        if tool_dispatched && !ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))) {
+            return true;
+        }
+    }
     if scoped && focus == Focus::None && ctx.input(|input| input.key_pressed(Key::Escape))
         && let Some(session) = app.session.active()
     {
@@ -394,6 +416,11 @@ fn dispatch_timeline_shortcuts(app: &mut PhotoStoreApp, ctx: &egui::Context) -> 
                     input.events.retain(|event| {
                         let egui::Event::Key { key, pressed: true, repeat, modifiers, .. } = event else { return true };
                         if key_matches(&shortcut, *key, *modifiers) {
+                            // Transport is also available outside timeline focus. Keep a tool
+                            // assignment available to the regular dispatcher there.
+                            if (!scoped || focus != Focus::None) && crate::shortcut_dispatch::tool_for_key(app, *key, *modifiers, *repeat, focus).is_some() {
+                                return true;
+                            }
                             first_press |= !*repeat;
                             false
                         } else {
@@ -943,6 +970,7 @@ fn dispatch_timeline_shortcuts(app: &mut PhotoStoreApp, ctx: &egui::Context) -> 
             return true;
         }
     }
+    // Leave unrelated presses in the same input batch to the normal canvas dispatcher.
     false
 }
 
@@ -1462,6 +1490,64 @@ mod tests {
     }
 
     #[test]
+    fn timeline_tool_collisions_preserve_clip_and_history() {
+        use crate::state::Tool;
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
+        app.run("file.new", json!({"width":64,"height":64})).unwrap();
+        app.run("timeline.create", json!({"duration":30,"fps":30.0})).unwrap();
+        let doc = app.session.active().unwrap().doc.id.0;
+        let layer = app.session.active().unwrap().doc.layers[0].id.0;
+        app.run("timeline.setLayerRange", json!({"layer":layer,"start":0,"end":30})).unwrap();
+        app.run("timeline.editor.select", json!({"document":doc,"layers":[layer]})).unwrap();
+        app.ui.timeline.open = true;
+        let ctx = egui::Context::default();
+        ctx.data_mut(|data| data.insert_persisted(egui::Id::new("timeline-scoped-context"), doc));
+        let history = app.session.active().unwrap().history.past_len();
+        let selection = app.session.active().unwrap().selected_layers.clone();
+        for (key, expected) in [(Key::B, Tool::Brush), (Key::M, Tool::RectMarquee), (Key::W, Tool::MagicWand)] {
+            app.ui.tool = Tool::Move;
+            timeline_press(&mut app, &ctx, key);
+            assert_eq!(app.ui.tool, expected);
+            assert_eq!(app.session.active().unwrap().selected_layers, selection);
+            assert_eq!(app.session.active().unwrap().history.past_len(), history);
+            assert_eq!(app.session.active().unwrap().doc.timeline.as_ref().unwrap().current, 0);
+        }
+        assert!(!ctx.data_mut(|data| data.get_persisted::<bool>(egui::Id::new(("timeline-razor-mode", doc)))).unwrap_or(false));
+        app.session.prefs.edit(|p| {
+            p.shortcuts.insert("tools.tool.brush".into(), "F11".into());
+            p.shortcut_alternates.insert("tools.tool.brush".into(), vec!["F12".into()]);
+            p.shortcuts.insert("timeline.editor.enableClip".into(), "F12".into());
+            p.tools.use_shift_key_for_tool_switch = true;
+        });
+        app.ui.tool = Tool::Move;
+        timeline_press(&mut app, &ctx, Key::F12);
+        assert_eq!(app.ui.tool, Tool::Brush);
+        assert!(app.session.active().unwrap().doc.timeline.as_ref().unwrap().layer_ranges.iter().find(|r| r.layer.0 == layer).unwrap().enabled);
+        // Restore Brush to its default group and submit two presses in one input batch.
+        app.session.prefs.edit(|p| { p.shortcuts.remove("tools.tool.brush"); });
+        app.ui.tool = Tool::Brush;
+        let shift = Modifiers { shift: true, ..Modifiers::NONE };
+        ctx.begin_pass(egui::RawInput { events: vec![
+            egui::Event::Key { key:Key::B, physical_key:None, pressed:true, repeat:false, modifiers:shift },
+            egui::Event::Key { key:Key::B, physical_key:None, pressed:false, repeat:false, modifiers:shift },
+            egui::Event::Key { key:Key::B, physical_key:None, pressed:true, repeat:false, modifiers:shift },
+        ], ..Default::default() });
+        handle(&mut app, &ctx);
+        ctx.end_pass().textures_delta.clear();
+        assert_eq!(app.ui.tool, Tool::MixerBrush);
+        // Play/Pause also works from the canvas, where it must respect tool bindings.
+        ctx.data_mut(|data| data.remove::<u64>(egui::Id::new("timeline-scoped-context")));
+        app.session.prefs.edit(|p| p.shortcuts.insert("timeline.editor.playPause".into(), "B".into()));
+        app.ui.tool = Tool::Move;
+        timeline_press(&mut app, &ctx, Key::B);
+        assert_eq!(app.ui.tool, Tool::Brush);
+        assert!(!app.ui.timeline.playing);
+        assert_eq!(app.session.active().unwrap().selected_layers, selection);
+        assert_eq!(app.session.active().unwrap().history.past_len(), history);
+        assert!(!ctx.data(|data| data.get_temp::<bool>(egui::Id::new(("timeline-speed-panel-focus", doc)))).unwrap_or(false));
+    }
+
+    #[test]
     fn timeline_move_binding_and_explicit_clip_toggle() {
         let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
         app.run("file.new", json!({"width":64,"height":64})).unwrap();
@@ -1492,9 +1578,12 @@ mod tests {
 
         app.session.prefs.edit(|p| p.shortcuts.insert("timeline.editor.enableClip".into(), "E".into()));
         timeline_press(&mut app, &ctx, Key::E);
+        assert!(app.session.active().unwrap().doc.timeline.as_ref().unwrap().layer_ranges.is_empty(), "tool wins the duplicate E binding");
+        app.session.prefs.edit(|p| p.shortcuts.insert("timeline.editor.enableClip".into(), "F12".into()));
+        timeline_press(&mut app, &ctx, Key::F12);
         let range = app.session.active().unwrap().doc.timeline.as_ref().unwrap().layer_ranges.iter().find(|r| r.layer.0 == layer).unwrap();
         assert!(!range.enabled, "the first explicit toggle disables an implicitly enabled clip");
-        timeline_press(&mut app, &ctx, Key::E);
+        timeline_press(&mut app, &ctx, Key::F12);
         assert!(app.session.active().unwrap().doc.timeline.as_ref().unwrap().layer_ranges.iter().find(|r| r.layer.0 == layer).unwrap().enabled);
     }
 
@@ -1535,8 +1624,8 @@ mod tests {
         assert_eq!(app.ui.tool, crate::state::Tool::Move);
         assert!(!app.session.active().unwrap().doc.timeline.as_ref().unwrap().audio_tracks[0].clips[0].muted);
         assert_eq!(app.session.active().unwrap().history.past_len(), history);
-        app.session.prefs.edit(|p| p.shortcuts.insert("timeline.editor.enableClip".into(), "E".into()));
-        timeline_press(&mut app, &ctx, Key::E);
+        app.session.prefs.edit(|p| p.shortcuts.insert("timeline.editor.enableClip".into(), "F12".into()));
+        timeline_press(&mut app, &ctx, Key::F12);
         assert!(app.session.active().unwrap().doc.timeline.as_ref().unwrap().audio_tracks[0].clips[0].muted);
     }
 

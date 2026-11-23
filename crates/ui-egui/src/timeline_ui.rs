@@ -1039,7 +1039,7 @@ fn timeline_shortcut_help(app: &mut PhotoStoreApp, parent: &mut Ui) {
             }
         });
         ui.label(
-            RichText::new("These bindings apply after you interact with the timeline workspace. Text entry and modal controls keep their own keys.")
+            RichText::new(tl!("Tool shortcuts take priority after you click the timeline. To use a timeline action on a shared key, assign it a free shortcut. Text fields keep their editing keys."))
                 .small()
                 .color(Tokens::get(ui.ctx()).text_dim),
         );
@@ -1049,7 +1049,16 @@ fn timeline_shortcut_help(app: &mut PhotoStoreApp, parent: &mut Ui) {
                 if !query.is_empty() && !label.to_lowercase().contains(&query.to_lowercase()) && !id.to_lowercase().contains(&query.to_lowercase()) {
                     continue;
                 }
-                let shortcut = app.session.prefs().shortcuts_for(id, binding.map(str::to_string).as_deref()).into_iter().collect::<Vec<_>>().join(" · ");
+                let shortcut = app.session.prefs().shortcuts_for(id, *binding).into_iter().map(|raw| {
+                    let tool = crate::shortcuts::parse(&raw).and_then(|key| {
+                        crate::shortcut_dispatch::tool_for_key(app, key.logical_key, key.modifiers, false, crate::shortcut_dispatch::Focus::None)
+                    });
+                    let key = crate::shortcuts::pretty(&raw);
+                    match tool {
+                        Some(tool) => format!("{key} → {}", tl!(tool.label())),
+                        None => key,
+                    }
+                }).collect::<Vec<_>>().join(" · ");
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(*label).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

@@ -235,7 +235,7 @@ pub fn dispatch_pressed(app: &mut PhotoStoreApp, ctx: &egui::Context, focus: Foc
                     .as_deref()
                     .filter(|id| !photostore_engine::prefs::is_tool_shortcut_id(id))
                     .map(str::to_owned)
-                    .or_else(|| tool_event_id(app, *key, *modifiers, *repeat, focus))
+                    .or_else(|| tool_for_key(app, *key, *modifiers, *repeat, focus).map(|tool| crate::shortcuts::tool_id(tool).to_owned()))
                     .or(generic)?;
                 Some((at, (id, *key == Key::Tab)))
             })?;
@@ -262,7 +262,7 @@ pub fn dispatch_pressed(app: &mut PhotoStoreApp, ctx: &egui::Context, focus: Foc
 /// Resolve a tool key from the actual effective bindings. Shared default keys are intentional:
 /// plain input keeps the current bound member, or selects the first bound member; Shift cycles
 /// bound peers when configured.
-fn tool_event_id(app: &PhotoStoreApp, key: Key, mods: egui::Modifiers, repeat: bool, focus: Focus) -> Option<String> {
+pub(crate) fn tool_for_key(app: &PhotoStoreApp, key: Key, mods: egui::Modifiers, repeat: bool, focus: Focus) -> Option<crate::state::Tool> {
     let prefs = app.session.prefs();
     let mut peers = Vec::new();
     let mut shifted_exact = false;
@@ -298,22 +298,22 @@ fn tool_event_id(app: &PhotoStoreApp, key: Key, mods: egui::Modifiers, repeat: b
         }
         if peers.len() > 1 && !repeat && prefs.tools.use_shift_key_for_tool_switch {
             if let Some(current) = peers.iter().position(|tool| *tool == app.ui.tool) {
-                return Some(crate::shortcuts::tool_id(peers[(current + 1) % peers.len()]).into());
+                return Some(peers[(current + 1) % peers.len()]);
             }
         }
     }
     let first = *peers.first()?;
     if peers.len() > 1 && mods.shift && shifted_exact {
         let selected = peers.iter().position(|tool| *tool == app.ui.tool).map_or(first, |i| peers[i]);
-        return Some(crate::shortcuts::tool_id(selected).into());
+        return Some(selected);
     }
     if peers.len() > 1 && !mods.shift && !prefs.tools.use_shift_key_for_tool_switch && !repeat {
         if let Some(current) = peers.iter().position(|tool| *tool == app.ui.tool) {
-            return Some(crate::shortcuts::tool_id(peers[(current + 1) % peers.len()]).into());
+            return Some(peers[(current + 1) % peers.len()]);
         }
     }
     let selected = peers.iter().position(|tool| *tool == app.ui.tool).map_or(first, |i| peers[i]);
-    Some(crate::shortcuts::tool_id(selected).into())
+    Some(selected)
 }
 
 /// Clear's key (Delete / Backspace) with nothing selected deletes the selected layers, of any
