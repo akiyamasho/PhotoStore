@@ -127,6 +127,7 @@ def main():
                 capture_output=True, text=True, timeout=12, check=True,
             )
             result["window_activation"] = activation.stdout.strip()
+            call("ui.focus")
         open_start = time.monotonic()
         opened, elapsed = call("app.open", {"path": str(project)})
         result["open_call_ms"] = elapsed
@@ -264,7 +265,10 @@ def main():
                 raise TimeoutError(f"frame {frame} decoded but no new Metal publication was observed within 30 seconds")
         call("engine.execute", {"command": "timeline.setFrame", "params": {"frame": 0}})
         present(0)
-        baseline = inspect()["perf"]["timings"].get("nativeVideoPublications", [])
+        if a.activate:
+            call("ui.focus")
+        before_play = inspect()["perf"]["timings"]
+        baseline = before_play.get("nativeVideoPublications", [])
         last_preplay = max((x["atMs"] for x in baseline), default=-1)
         call("engine.execute", {"command": "timeline.playPause"})
         start = time.monotonic()
@@ -288,6 +292,7 @@ def main():
                 if item["atMs"] > last_preplay:
                     trace[(item["atMs"], item["frame"])] = item
             time.sleep(0.1)
+        play_elapsed = time.monotonic() - start
         call("engine.execute", {"command": "timeline.playPause"})
         v = inspect()
         for item in v["perf"]["timings"].get("nativeVideoPublications", []):
@@ -303,6 +308,8 @@ def main():
         result["playback_wall_s"] = time.monotonic() - start
         result["playback"] = {
             "publications": publications,
+            "whole_window_fps": (v["perf"]["timings"]["nativeVideoFrames"] - before_play["nativeVideoFrames"]) / play_elapsed,
+            "measurement_seconds": play_elapsed,
             "distinct_frame_indices": len(set(x["frame"] for x in publications)),
             "progressed": len(set(x["frame"] for x in publications)) > 1,
             "observed_publications_per_second": (len(publications) - 1)
@@ -337,6 +344,8 @@ def main():
                     "verified": str(actual).lower() == tool,
                 }
             )
+        if a.activate:
+            call("ui.focus")
         result["tool_shortcuts"] = []
         for key, target in (("B", "brush"), ("V", "move")):
             started = time.monotonic()
