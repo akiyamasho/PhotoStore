@@ -145,6 +145,32 @@ fn check(g: &mut Gpu, doc: &Document, what: &str) {
     diff_rect(g, doc, doc.bounds(), what).unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A compact video frame has exact pixel bounds even though its raster projection
+/// supplies whole tiles. A blended overlay takes the normal editor through texture uploads.
+#[test]
+fn video_edge_tiles_with_blended_overlay() {
+    use photostore_raster::{Nv12Frame, Nv12Matrix, Surface};
+    let Some(mut g) = gpu() else { return };
+    let (w, h) = (896usize, 770usize);
+    let mut planes = vec![128; w * h * 3 / 2];
+    for (i, y) in planes[..w * h].iter_mut().enumerate() {
+        *y = (16 + (i % w + 3 * (i / w)) % 220) as u8;
+    }
+    let frame = Nv12Frame::new(w as u32, h as u32, planes, Nv12Matrix::Bt709, None).unwrap();
+    let video = Surface::from_nv12(std::sync::Arc::new(frame));
+    let mut doc = Document::new("Video edge tiles", Size::new(960, 820), ColorMode::Rgb, SampleType::U8);
+    doc.layers.push(Layer::new("Frame", LayerContent::Raster(video.clone())));
+    let mut overlay = Layer::raster("Brush stroke", PixelFormat::RGBA8);
+    overlay.surface_mut().unwrap().fill_rect(Rect::new(760, 710, 945, 810), &[0.9, 0.2, 0.3, 0.6]);
+    overlay.blend = BlendMode::Multiply;
+    doc.layers.push(overlay);
+    check(&mut g, &doc, "896-pixel frame with right and bottom partial tiles");
+    *doc.layers[0].surface_mut().unwrap() = video.translated(37, 19, video.tile_bounds());
+    check(&mut g, &doc, "placed frame with partial tiles on all four sides");
+    let adapter = g.device.adapter_info();
+    eprintln!("Verified compact video edge pixels on {} ({:?})", adapter.name, adapter.backend);
+}
+
 #[test]
 fn first_frame_renders() {
     // Regression: the first submission after device creation is dropped on some drivers

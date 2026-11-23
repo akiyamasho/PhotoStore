@@ -1931,19 +1931,31 @@ fn write_dense_direct_page(
     Some(length)
 }
 
+/// Source origin in the tile, destination origin in the resident texture, and shared extent.
+fn tile_transfer(region: Rect, c: TileCoord) -> Option<(wgpu::Origin3d, wgpu::Origin3d, wgpu::Extent3d)> {
+    let tile = c.rect();
+    let overlap = tile.intersect(&region);
+    if overlap.is_empty() { return None; }
+    let src = wgpu::Origin3d { x: (overlap.x0 - tile.x0) as u32, y: (overlap.y0 - tile.y0) as u32, z: 0 };
+    let dst = wgpu::Origin3d { x: (overlap.x0 - region.x0) as u32, y: (overlap.y0 - region.y0) as u32, z: 0 };
+    let extent = wgpu::Extent3d { width: overlap.width(), height: overlap.height(), depth_or_array_layers: 1 };
+    Some((src, dst, extent))
+}
+
 fn write_tile(queue: &wgpu::Queue, r: &Resident, c: TileCoord, bytes: &[u8]) {
-    let tr = c.rect();
+    let Some((src, dst, extent)) = tile_transfer(r.region, c) else { return };
     let bpp = r.kind.bytes_per_pixel() as u32;
+    let offset = (src.y as u64 * TILE_SIZE as u64 + src.x as u64) * bpp as u64;
     queue.write_texture(
         wgpu::TexelCopyTextureInfo {
             texture: &r.texture,
             mip_level: 0,
-            origin: wgpu::Origin3d { x: (tr.x0 - r.region.x0) as u32, y: (tr.y0 - r.region.y0) as u32, z: 0 },
+            origin: dst,
             aspect: wgpu::TextureAspect::All,
         },
         bytes,
-        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(TILE_SIZE as u32 * bpp), rows_per_image: Some(TILE_SIZE as u32) },
-        wgpu::Extent3d { width: TILE_SIZE as u32, height: TILE_SIZE as u32, depth_or_array_layers: 1 },
+        wgpu::TexelCopyBufferLayout { offset, bytes_per_row: Some(TILE_SIZE as u32 * bpp), rows_per_image: Some(TILE_SIZE as u32) },
+        extent,
     );
 }
 
@@ -1987,16 +1999,11 @@ fn put_tiles(device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::Com
         extent,
     );
     for c in cs {
-        let tr = c.rect();
+        let Some((src, dst, copy_extent)) = tile_transfer(r.region, *c) else { continue };
         encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo { texture: &scratch, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-            wgpu::TexelCopyTextureInfo {
-                texture: &r.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d { x: (tr.x0 - r.region.x0) as u32, y: (tr.y0 - r.region.y0) as u32, z: 0 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            extent,
+            wgpu::TexelCopyTextureInfo { texture: &scratch, mip_level: 0, origin: src, aspect: wgpu::TextureAspect::All },
+            wgpu::TexelCopyTextureInfo { texture: &r.texture, mip_level: 0, origin: dst, aspect: wgpu::TextureAspect::All },
+            copy_extent,
         );
     }
     bytes.len() as u64
