@@ -6,6 +6,9 @@
 use crate::PhotoStoreApp;
 use crate::theme::Tokens;
 
+pub(crate) const VIDEO_TIMELINE_MIN_ZOOM: f32 = 0.25;
+pub(crate) const VIDEO_TIMELINE_MAX_ZOOM: f32 = 16.0;
+
 #[derive(Clone)]
 struct TrackViewRow {
     id:Option<u64>, name:String, layers:Vec<LayerId>, locked:bool, muted:bool, height:f32,
@@ -2057,13 +2060,41 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
     let frame = timeline.current.min(duration - 1);
     let display_frame = app.timeline_playback.display_frame(timeline).min(duration - 1);
     let mut zoom = app.ui.timeline.zoom;
-    if !zoom.is_finite() || zoom < 0.25 || zoom > 16.0 {
+    if !zoom.is_finite() || zoom < VIDEO_TIMELINE_MIN_ZOOM || zoom > VIDEO_TIMELINE_MAX_ZOOM {
         zoom = 1.0;
     }
     let mut snap = timeline.snapping;
     let scroll_id = Id::new(("timeline-time-offset", doc.0));
     let mut scroll_x = ctx.data(|d| d.get_temp::<f32>(scroll_id)).unwrap_or(0.0).max(0.0);
-    let mut ruler_geometry: Option<(f32, f32)> = None;
+    let gesture_id = Id::new(("timeline-wheel-gesture", doc.0));
+    let (notch, zoom_speed) = ctx.options(|o| (o.input_options.line_scroll_speed, o.input_options.scroll_zoom_speed));
+    let (wheel, latest_modifier, command_points) = ctx.input(|i| {
+        let mut latest = None;
+        let mut command_points = 0.0;
+        for event in &i.events {
+            if let egui::Event::MouseWheel { unit, delta, modifiers, .. } = event {
+                latest = Some(*modifiers);
+                if modifiers.command || modifiers.mac_cmd {
+                    let scale = match unit {
+                        egui::MouseWheelUnit::Point => 1.0,
+                        egui::MouseWheelUnit::Line => notch,
+                        egui::MouseWheelUnit::Page => i.content_rect().height(),
+                    };
+                    command_points += (delta.x + delta.y) * scale;
+                }
+            }
+        }
+        (i.smooth_scroll_delta, latest, command_points)
+    });
+    // Keep the wheel gesture's modifier for egui's smoothed tail after key release.
+    let wheel_modifiers = if let Some(modifiers) = latest_modifier {
+        ctx.data_mut(|d| d.insert_temp(gesture_id, modifiers));
+        modifiers
+    } else if wheel != egui::Vec2::ZERO {
+        ctx.data(|d| d.get_temp::<egui::Modifiers>(gesture_id)).unwrap_or_default()
+    } else {
+        egui::Modifiers::NONE
+    };
     let razor_id = Id::new(("timeline-razor-mode", doc.0));
     let mut razor_mode = ctx.data_mut(|d| d.get_persisted::<bool>(razor_id)).unwrap_or(false);
 
@@ -2194,11 +2225,11 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                             ui.close();
                         }
                         if ui.button(tl!("Zoom in")).clicked() {
-                            zoom = (zoom * 1.25).clamp(0.25, 16.0);
+                            zoom = (zoom * 1.25).clamp(VIDEO_TIMELINE_MIN_ZOOM, VIDEO_TIMELINE_MAX_ZOOM);
                             ui.close();
                         }
                         if ui.button(tl!("Zoom out")).clicked() {
-                            zoom = (zoom / 1.25).clamp(0.25, 16.0);
+                            zoom = (zoom / 1.25).clamp(VIDEO_TIMELINE_MIN_ZOOM, VIDEO_TIMELINE_MAX_ZOOM);
                             ui.close();
                         }
                         ui.separator();
@@ -2318,9 +2349,9 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
 
             // Fixed time ruler; lane widths use the same duration and zoom geometry below.
             let gutter = if app.ui.timeline.gutter_width.is_finite(){app.ui.timeline.gutter_width.clamp(100.0,320.0)}else{180.0};
-            let lane_width = ((ui.available_width() - gutter).max(200.0) * zoom).max(240.0);
-            ruler_geometry = Some((lane_width, gutter));
-            ui.horizontal(|ui| {
+            let base_width = (ui.available_width() - gutter).max(200.0);
+            let lane_width = (base_width * zoom).max(240.0);
+            let viewport = ui.horizontal(|ui| {
                 let (g, _) = ui.allocate_exact_size(vec2(gutter, TIMELINE_RULER_HEIGHT), Sense::hover());
                 ui.painter_at(g).rect_filled(g, 0.0, tokens.card);
                 let resize=ui.interact(Rect::from_min_max(pos2(g.right()-6.0,g.top()),g.right_bottom()),Id::new(("timeline-gutter-resize",doc.0)),Sense::drag());
@@ -2375,7 +2406,7 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                             p.line_segment([pos2(mx, ruler.top()), pos2(mx, ruler.bottom())], egui::Stroke::new(1.0, color));
                             p.text(pos2(mx + 2.0, ruler.top() + 2.0), egui::Align2::LEFT_TOP, &marker.label, egui::FontId::proportional(9.5), color);
                         }
-                        let x = ruler.left() + ruler.width() * frame as f32 / duration as f32;
+                        let x = ruler.left() + ruler.width() * display_frame as f32 / duration as f32;
                         p.line_segment([pos2(x, ruler.top()), pos2(x, ruler.bottom())], egui::Stroke::new(2.0, tokens.accent));
                         if (response.clicked() || response.dragged())
                             && let Some(pos) = response.interact_pointer_pos()
@@ -2385,9 +2416,35 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                         }
                         (ruler, response)
                     });
-                scroll_x = ruler_output.state.offset.x.max(0.0);
-                ctx.data_mut(|d| d.insert_temp(scroll_id, scroll_x));
-            });
+                scroll_x = ruler_output.state.offset.x;
+                ruler_output.inner_rect
+            }).inner;
+            #[cfg(test)]
+            ctx.data_mut(|d| d.insert_temp(Id::new(("timeline-test-geometry", doc.0)), (lane_width, base_width, viewport)));
+
+            let time_area = Rect::from_min_max(viewport.min, pos2(viewport.right(), ui.max_rect().bottom()));
+            let max_offset = (lane_width - viewport.width()).max(0.0);
+            let mut next_offset = scroll_x.clamp(0.0, max_offset);
+            if ui.rect_contains_pointer(time_area) && let Some(pointer) = ui.input(|i| i.pointer.latest_pos()) {
+                if wheel_modifiers.command || wheel_modifiers.mac_cmd {
+                    ui.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+                    let relative = pointer.x - viewport.left();
+                    let time = (next_offset + relative) / lane_width;
+                    let factor = (zoom_speed * command_points).exp();
+                    if factor.is_finite() {
+                        zoom = (zoom * factor).clamp(VIDEO_TIMELINE_MIN_ZOOM, VIDEO_TIMELINE_MAX_ZOOM);
+                    }
+                    let new_width = (base_width * zoom).max(240.0);
+                    next_offset = (time * new_width - relative).clamp(0.0, (new_width - viewport.width()).max(0.0));
+                } else if wheel_modifiers.alt {
+                    ui.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+                    next_offset = (next_offset - wheel.y).clamp(0.0, max_offset);
+                } else {
+                    // Horizontal input moves time. The vertical track list gets the other axis.
+                    ui.input_mut(|i| i.smooth_scroll_delta.x = 0.0);
+                    next_offset = (next_offset - wheel.x).clamp(0.0, max_offset);
+                }
+            }
 
             egui::ScrollArea::vertical().id_salt(("timeline-track-scroll", doc.0)).auto_shrink([false, false]).show(ui, |ui| {
                 let marquee_id = Id::new(("timeline-clip-marquee", doc.0));
@@ -2713,7 +2770,7 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                                         });
                                     }
                                 }
-                                let x = lane.left() + lane.width() * frame as f32 / duration as f32;
+                                let x = lane.left() + lane.width() * display_frame as f32 / duration as f32;
                                 painter.line_segment([pos2(x, lane.top()), pos2(x, lane.bottom())], egui::Stroke::new(1.5, tokens.accent));
                                 crate::audio_ui::paint_owned_in_row(app, ui, timeline, lane, &view.audio_by_owner, layers);
                                 if let Some(drag) = ui.ctx().data(|data| data.get_temp::<MarqueeDrag>(marquee_id)) {
@@ -2753,6 +2810,7 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
                     draw_keyframe_pane(app, ui, &document, timeline, gutter, lane_width, scroll_x);
                 }
             });
+            scroll_x = next_offset;
         });
     parent.ctx().data_mut(|data| data.insert_temp(Id::new("timeline-media-drop-target"), panel_response.response.rect));
     if parent.ctx().input(|i| i.pointer.any_pressed()) {
@@ -2768,27 +2826,6 @@ pub fn workspace(app: &mut PhotoStoreApp, parent: &mut Ui, timeline: &Timeline) 
     }
     if close {
         parent.ctx().data_mut(|d| d.remove::<u64>(Id::new("timeline-scoped-context")));
-    }
-    if let Some((lane_width, gutter)) = ruler_geometry
-        && let Some(pointer) = parent.ctx().input(|i| i.pointer.latest_pos())
-        && panel_response.response.rect.contains(pointer)
-    {
-        let (wheel, modifiers) = parent.ctx().input(|i| (i.smooth_scroll_delta, i.modifiers));
-        let lane_origin = panel_response.response.rect.left() + 8.0 + gutter;
-        let viewport_width = (panel_response.response.rect.width() - 16.0 - gutter).max(80.0);
-        if modifiers.command || modifiers.mac_cmd {
-            let old_width = lane_width.max(1.0);
-            let relative = (pointer.x - lane_origin).clamp(0.0, viewport_width);
-            let time = (scroll_x + relative) / old_width;
-            let factor = (wheel.y * 0.002).exp();
-            zoom = (zoom * factor).clamp(0.25, 16.0);
-            let new_width = ((viewport_width.max(200.0) * zoom).max(240.0)).max(viewport_width);
-            scroll_x = (time * new_width - relative).clamp(0.0, (new_width - viewport_width).max(0.0));
-        } else if modifiers.alt {
-            scroll_x = (scroll_x - wheel.y).clamp(0.0, (lane_width - viewport_width).max(0.0));
-        } else if wheel.x.abs() > 0.0 {
-            scroll_x = (scroll_x + wheel.x).clamp(0.0, (lane_width - viewport_width).max(0.0));
-        }
     }
     parent.ctx().data_mut(|d| d.insert_temp(scroll_id, scroll_x.max(0.0)));
     app.ui.timeline.zoom = zoom;
@@ -3305,5 +3342,65 @@ pub fn inspector(app: &mut PhotoStoreApp, ui: &mut Ui, document: &photostore_doc
             app.ui.status = error;
             app.ui.status_error = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod timeline_navigation_tests {
+    use super::*;
+
+    #[test]
+    fn timeline_video_zoom_survives_renders_and_command_wheel() {
+        let ctx = egui::Context::default();
+        PhotoStoreApp::setup_context(&ctx, crate::theme::ThemeKind::ALL[0]);
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 64, "height": 48})).unwrap();
+        let mut timeline = Timeline::new(240, 24.0);
+        timeline.mode = TimelineMode::Video;
+        std::sync::Arc::make_mut(&mut app.session.active_mut().unwrap().doc).timeline = Some(timeline);
+        app.ui.timeline.open = true;
+        let history = app.session.active().unwrap().history.past_len();
+        let render = |app: &mut PhotoStoreApp, mut events: Vec<egui::Event>, modifiers: egui::Modifiers| {
+            events.insert(0, egui::Event::ModifiersChanged(modifiers));
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 800.0))),
+                events,
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| crate::timeline_ui::windows(app, ui)).textures_delta.clear();
+        };
+        for zoom in [12.0, 16.0] {
+            app.ui.timeline.zoom = zoom;
+            render(&mut app, vec![], egui::Modifiers::NONE);
+            render(&mut app, vec![], egui::Modifiers::NONE);
+            assert_eq!(app.ui.timeline.zoom, zoom);
+        }
+        app.ui.timeline.zoom = 12.0;
+        let doc = app.session.active().unwrap().doc.id.0;
+        let offset_id = Id::new(("timeline-time-offset", doc));
+        let geometry_id = Id::new(("timeline-test-geometry", doc));
+        ctx.data_mut(|d| d.insert_temp(offset_id, 500.0_f32));
+        render(&mut app, vec![], egui::Modifiers::NONE);
+        let before_pan = ctx.data(|d| d.get_temp::<f32>(offset_id)).unwrap();
+        let pointer = pos2(600.0, 650.0);
+        render(&mut app, vec![
+            egui::Event::PointerMoved(pointer),
+            egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: vec2(-4.0, 0.0), phase: egui::TouchPhase::Move, modifiers: egui::Modifiers::NONE },
+        ], egui::Modifiers::NONE);
+        let before_zoom = ctx.data(|d| d.get_temp::<f32>(offset_id)).unwrap();
+        assert!(before_zoom > before_pan, "negative content movement must pan toward later time");
+        let (old_width, _, viewport) = ctx.data(|d| d.get_temp::<(f32, f32, Rect)>(geometry_id)).unwrap();
+        let relative = (pointer.x - viewport.left()).clamp(0.0, viewport.width());
+        let anchored_time = (before_zoom + relative) / old_width;
+        let modifiers = egui::Modifiers { command: true, mac_cmd: true, ..Default::default() };
+        render(&mut app, vec![
+            egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: vec2(0.0, 4.0), phase: egui::TouchPhase::Move, modifiers },
+        ], modifiers);
+        assert!(app.ui.timeline.zoom > 12.0 && app.ui.timeline.zoom <= 16.0);
+        let after_zoom = ctx.data(|d| d.get_temp::<f32>(offset_id)).unwrap();
+        let (_, base_width, _) = ctx.data(|d| d.get_temp::<(f32, f32, Rect)>(geometry_id)).unwrap();
+        let new_width = (base_width * app.ui.timeline.zoom).max(240.0);
+        assert!(((after_zoom + relative) / new_width - anchored_time).abs() < 0.0001);
+        assert_eq!(app.session.active().unwrap().history.past_len(), history);
     }
 }

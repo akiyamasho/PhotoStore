@@ -592,12 +592,13 @@ pub fn windows(app: &mut PhotoStoreApp, parent: &mut Ui) {
         parent.ctx().data_mut(|data| data.remove::<u64>(egui::Id::new("timeline-scoped-context")));
         return;
     }
-    if !app.ui.timeline.zoom.is_finite() || !(0.25..=8.0).contains(&app.ui.timeline.zoom) {
-        app.ui.timeline.zoom = 1.0;
-    }
     let ctx = parent.ctx().clone();
     let doc_snapshot = app.session.active().map(|d| (d.doc.clone(), d.active_layer));
     let tl = doc_snapshot.as_ref().and_then(|(doc, _)| doc.timeline.as_ref());
+    let max_zoom = if tl.is_some_and(|timeline| matches!(timeline.mode, photostore_doc::TimelineMode::Video)) { crate::video_clip_ui::VIDEO_TIMELINE_MAX_ZOOM } else { 8.0 };
+    if !app.ui.timeline.zoom.is_finite() || !(0.25..=max_zoom).contains(&app.ui.timeline.zoom) {
+        app.ui.timeline.zoom = 1.0;
+    }
     if let Some(timeline) = tl.filter(|timeline| matches!(timeline.mode, photostore_doc::TimelineMode::Video)) {
         crate::video_clip_ui::workspace(app, parent, timeline);
         timeline_shortcut_help(app, parent);

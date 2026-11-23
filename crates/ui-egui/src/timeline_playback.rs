@@ -743,3 +743,48 @@ pub(crate) fn tick(app: &mut PhotoStoreApp, ctx: &Context) {
     runtime.tick(app, ctx);
     app.timeline_playback = runtime;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeline_ruler_and_visual_row_follow_the_clock_during_decode_lag() {
+        let ctx = Context::default();
+        PhotoStoreApp::setup_context(&ctx, crate::theme::ThemeKind::ALL[0]);
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
+        app.run("file.new", json!({"width":64,"height":48})).unwrap();
+        app.run("timeline.create", json!({"duration":120,"fps":24})).unwrap();
+        let render_playheads = |app: &mut PhotoStoreApp| {
+            let doc = app.session.active().unwrap().doc.clone();
+            let timeline = doc.timeline.as_ref().unwrap();
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 800.0))),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(raw, |ui| crate::video_clip_ui::workspace(app, ui, timeline));
+            output.textures_delta.clear();
+            let accent = crate::theme::Tokens::get(&ctx).accent;
+            let playhead = |width| {
+                output.shapes.iter().find_map(|item| match &item.shape {
+                    egui::Shape::LineSegment { points: [top, bottom], stroke }
+                        if stroke.color == accent && stroke.width == width && top.x == bottom.x && bottom.y - top.y >= 24.0 =>
+                    {
+                        Some(top.x)
+                    }
+                    _ => None,
+                }).expect("visible playhead")
+            };
+            [playhead(2.0), playhead(1.5)]
+        };
+        let _ = render_playheads(&mut app);
+        let start = render_playheads(&mut app);
+        app.timeline_playback.clock_frame = Some(60);
+        let playing = render_playheads(&mut app);
+        assert!(playing[0] > start[0] && playing[1] > start[1]);
+        assert_eq!(app.session.active().unwrap().doc.timeline.as_ref().unwrap().current, 0);
+        app.timeline_playback.stop();
+        app.run("timeline.setFrame", json!({"frame":60})).unwrap();
+        assert_eq!(playing, render_playheads(&mut app));
+    }
+}

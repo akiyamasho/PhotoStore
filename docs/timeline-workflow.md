@@ -1,5 +1,9 @@
 # Timeline workspace
 
+In 0.21.4, pressing **V** uses your configured tool shortcut even after selecting a clip in the video timeline. **Enable / Disable Clip** starts unbound. To assign it a key, open **Edit → Keyboard Shortcuts**. The CapCut reference lists that application's observed bindings. PhotoStore's current bindings appear in the first section of **Timeline shortcut reference**.
+
+Escape clears a timeline selection when the timeline owns the keyboard. After clicking the canvas, Escape follows the active canvas operation. Video timeline zoom extends to 16×, and the ruler and tracks follow the transport playhead during playback.
+
 > **Current delivery — 2026-11-02:** Stable [v0.20.7](https://github.com/akiyamasho/PhotoStore/releases/tag/v0.20.7), exact binary source `7c17226b4e0989a55a32c963ae4f39b63afd1054`, is published and installed as the normal app/CLI. This delivers stable preview toolbar geometry, background paused refresh/completion wakeup, hidden-media readiness, bounded decoder ownership/buffer reuse, eligible placed-size video preview and pan/pen event routing fixes. [Release/evidence](releases/0.20.7.md). Native scanout/input/audio acceptance is manual; historical statuses below describe earlier releases, not the current delivery.
 
 Issue #23 was reopened on 2026-10-27 after the prior timeline UI was rejected. This page records

@@ -852,3 +852,7 @@ A page is identified by its root layer ID. The Layers panel's top-to-bottom orde
 ## 2026-11-21 — Canvas crop with linked video
 
 A document crop clips video content to the canvas while retaining its frames. Canvas-origin changes translate resident frames or compose a translation into linked or transformed video placement, preserving playback alignment without changing position keyframes. Video content remains non-destructive even when cropped pixels are deleted from ordinary raster layers. Rotated crop with video layers is rejected before mutation until its animated placement can be transformed safely.
+
+## 2026-11-23 — Move shortcut in the video timeline
+
+Enable / Disable Clip has no default shortcut. The configured Move shortcut remains available after a timeline selection. Explicit timeline shortcut assignments still apply when the timeline owns the keyboard. [Interaction design](design/2026-11-23/timeline-editing/prompt.md)

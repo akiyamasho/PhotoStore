@@ -143,7 +143,7 @@ pub const TIMELINE_SHORTCUTS: &[(&str, &str, Option<&str>)] = &[
     ("timeline.editor.snapping", "Snapping", Some("N")),
     ("timeline.editor.linkedSelection", "Linked selection", Some("Shift+Backtick")),
     ("timeline.editor.previewSkimming", "Preview skimming", Some("S")),
-    ("timeline.editor.enableClip", "Enable / Disable clip", Some("V")),
+    ("timeline.editor.enableClip", "Enable / Disable clip", None),
     ("timeline.editor.markerAdd", "Add marker", Some("M")),
     ("timeline.editor.markerNext", "Next marker", Some("Shift+M")),
     ("timeline.editor.markerPrevious", "Previous marker", Some("Alt+Shift+M")),
@@ -234,7 +234,7 @@ pub fn capcut_reference_mapping(action: &str, binding: &str) -> String {
         "Zoom in/Zoom out" => "Cmd+wheel anchored timeline zoom",
         "Up/Down" => "Vertical timeline scroll",
         "Left/Right" => "Alt+wheel horizontal timeline pan",
-        "Activate/Deactivate clip" => "Enable or disable selected clip · V",
+        "Activate/Deactivate clip" => "Enable or disable selected clip · PhotoStore default unbound (CapCut reference: V)",
         "Extract/Restore audio" => "Extract or remove linked source audio · Ctrl+Shift+S",
         "Add marker" => "Timeline marker · M",
         "Add marker with new color" => "Colored timeline marker · Alt+M",
@@ -318,12 +318,8 @@ fn dispatch_timeline_shortcuts(app: &mut PhotoStoreApp, ctx: &egui::Context) -> 
     if !active_video_timeline {
         return false;
     }
-    let scoped = scoped_timeline_context(app, ctx);
     let viewport = ctx.viewport_id();
     let space_context_id = egui::Id::new(("canvas-space-context", viewport));
-    let canvas_focus_id = egui::Id::new(("canvas-space-focus-id", viewport));
-    let focus = Focus::of(ctx);
-    let active_doc = app.session.active().map(|session| session.doc.id.0);
     if ctx.input(|input| input.pointer.any_pressed()) {
         let outside_canvas = app.drop_canvas_rect.is_none_or(|rect| {
             ctx.input(|input| input.pointer.press_origin()).is_none_or(|point| !rect.contains(point))
@@ -332,6 +328,15 @@ fn dispatch_timeline_shortcuts(app: &mut PhotoStoreApp, ctx: &egui::Context) -> 
             ctx.data_mut(|data| data.remove::<u64>(space_context_id));
         }
     }
+    // Keep pointer ownership bookkeeping above even on idle playback frames. Clipboard input
+    // is normalized to key events before this dispatcher; repeats must still be consumed.
+    if !ctx.input(|input| input.events.iter().any(|event| matches!(event, egui::Event::Key { pressed: true, .. }))) {
+        return false;
+    }
+    let scoped = scoped_timeline_context(app, ctx);
+    let focus = Focus::of(ctx);
+    let active_doc = app.session.active().map(|session| session.doc.id.0);
+    let canvas_focus_id = egui::Id::new(("canvas-space-focus-id", viewport));
     let space_canvas_context = ctx.data(|data| data.get_temp::<u64>(space_context_id));
     let focus_id = ctx.data(|data| data.get_temp::<egui::Id>(canvas_focus_id));
     let canvas_has_focus = space_canvas_context.is_some()
@@ -341,13 +346,16 @@ fn dispatch_timeline_shortcuts(app: &mut PhotoStoreApp, ctx: &egui::Context) -> 
     if focus == Focus::Text {
         return false;
     }
-    if let Some((doc, selected_layers)) = app.session.active().map(|session| (session.doc.id, session.selected_layers.clone())) {
+    if scoped && focus == Focus::None && ctx.input(|input| input.key_pressed(Key::Escape))
+        && let Some(session) = app.session.active()
+    {
+        let doc = session.doc.id;
         let keypane_id = egui::Id::new(("timeline-key-pane", doc.0));
         let keypane_open = ctx.data_mut(|data| data.get_persisted::<bool>(keypane_id)).unwrap_or(false);
         let key_selection = !crate::video_clip_ui::selected_keys(ctx, doc.0).is_empty()
             || ctx.data(|data| data.get_temp::<crate::video_clip_ui::KeyIdentity>(egui::Id::new(("timeline-selected-key", doc.0)))).is_some();
         let audio_selection = crate::audio_ui::selected_clip_ids(ctx, doc);
-        let has_clip_selection = !selected_layers.is_empty() || !audio_selection.is_empty();
+        let has_clip_selection = !session.selected_layers.is_empty() || !audio_selection.is_empty();
         if (key_selection || has_clip_selection || keypane_open) && consume(ctx, &KeyboardShortcut::new(Modifiers::NONE, Key::Escape)) {
             if key_selection {
                 crate::video_clip_ui::clear_key_selection(ctx, doc.0);
@@ -610,7 +618,7 @@ fn dispatch_timeline_shortcuts(app: &mut PhotoStoreApp, ctx: &egui::Context) -> 
                         command = Some("timeline.editor.enableClip");
                         params["layers"] = serde_json::json!([layer]);
                         params["enabled"] = serde_json::json!(
-                            !document.timeline.as_ref().and_then(|t| t.layer_ranges.iter().find(|r| r.layer.0 == layer)).is_some_and(|r| r.enabled)
+                            !document.timeline.as_ref().and_then(|t| t.layer_ranges.iter().find(|r| r.layer.0 == layer)).is_none_or(|r| r.enabled)
                         );
                     }
                 }
@@ -658,10 +666,10 @@ fn dispatch_timeline_shortcuts(app: &mut PhotoStoreApp, ctx: &egui::Context) -> 
                     });
                 }
                 "timeline.editor.zoomIn" | "timeline.editor.zoomInEquals" => {
-                    app.ui.timeline.zoom = (app.ui.timeline.zoom * 1.25).clamp(0.25, 16.0);
+                    app.ui.timeline.zoom = (app.ui.timeline.zoom * 1.25).clamp(crate::video_clip_ui::VIDEO_TIMELINE_MIN_ZOOM, crate::video_clip_ui::VIDEO_TIMELINE_MAX_ZOOM);
                 }
                 "timeline.editor.zoomOut" => {
-                    app.ui.timeline.zoom = (app.ui.timeline.zoom / 1.25).clamp(0.25, 16.0);
+                    app.ui.timeline.zoom = (app.ui.timeline.zoom / 1.25).clamp(crate::video_clip_ui::VIDEO_TIMELINE_MIN_ZOOM, crate::video_clip_ui::VIDEO_TIMELINE_MAX_ZOOM);
                 }
                 "timeline.editor.zoomFit" => {
                     app.ui.timeline.zoom = 1.0;
@@ -1440,6 +1448,116 @@ mod tests {
         let timeline = app.session.active().unwrap().doc.timeline.as_ref().unwrap();
         assert!(timeline.layer_ranges.iter().any(|range| range.layer.0 == layer), "deleting a selected clip must leave the other clip intact");
         assert!(!timeline.layer_ranges.iter().any(|range| range.layer.0 == second), "Backspace must alias Delete in timeline context");
+    }
+
+    fn timeline_press(app: &mut PhotoStoreApp, ctx: &egui::Context, key: Key) {
+        ctx.begin_pass(egui::RawInput {
+            events: [true, false].map(|pressed| egui::Event::Key {
+                key, physical_key: None, pressed, repeat: false, modifiers: Modifiers::NONE,
+            }).into(),
+            ..Default::default()
+        });
+        handle(app, ctx);
+        ctx.end_pass().textures_delta.clear();
+    }
+
+    #[test]
+    fn timeline_move_binding_and_explicit_clip_toggle() {
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
+        app.run("file.new", json!({"width":64,"height":64})).unwrap();
+        app.run("timeline.create", json!({"duration":30,"fps":30.0})).unwrap();
+        let doc = app.session.active().unwrap().doc.id.0;
+        let layer = app.session.active().unwrap().doc.layers[0].id.0;
+        app.run("timeline.editor.select", json!({"document":doc,"layers":[layer]})).unwrap();
+        // An absent authored range represents an implicitly enabled clip.
+        std::sync::Arc::make_mut(&mut app.session.active_mut().unwrap().doc).timeline.as_mut().unwrap().layer_ranges.clear();
+        app.ui.timeline.open = true;
+        app.ui.tool = crate::state::Tool::Brush;
+        let ctx = egui::Context::default();
+        ctx.data_mut(|data| data.insert_persisted(egui::Id::new("timeline-scoped-context"), doc));
+        let history = app.session.active().unwrap().history.past_len();
+        timeline_press(&mut app, &ctx, Key::V);
+        assert_eq!(app.ui.tool, crate::state::Tool::Move);
+        assert_eq!(app.session.active().unwrap().history.past_len(), history);
+        assert!(app.session.active().unwrap().doc.timeline.as_ref().unwrap().layer_ranges.is_empty());
+
+        app.session.prefs.edit(|p| {
+            p.shortcuts.insert("tools.tool.move".into(), "E".into());
+            p.shortcuts.insert("tools.tool.eraser".into(), String::new());
+        });
+        app.ui.tool = crate::state::Tool::Brush;
+        timeline_press(&mut app, &ctx, Key::E);
+        assert_eq!(app.ui.tool, crate::state::Tool::Move, "the configured Move binding remains effective");
+        assert_eq!(app.session.active().unwrap().history.past_len(), history);
+
+        app.session.prefs.edit(|p| p.shortcuts.insert("timeline.editor.enableClip".into(), "E".into()));
+        timeline_press(&mut app, &ctx, Key::E);
+        let range = app.session.active().unwrap().doc.timeline.as_ref().unwrap().layer_ranges.iter().find(|r| r.layer.0 == layer).unwrap();
+        assert!(!range.enabled, "the first explicit toggle disables an implicitly enabled clip");
+        timeline_press(&mut app, &ctx, Key::E);
+        assert!(app.session.active().unwrap().doc.timeline.as_ref().unwrap().layer_ranges.iter().find(|r| r.layer.0 == layer).unwrap().enabled);
+    }
+
+    #[test]
+    fn timeline_v_preserves_audio_and_text_focus() {
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
+        app.run("file.new", json!({"width":64,"height":64})).unwrap();
+        app.run("timeline.create", json!({"duration":30,"fps":30.0})).unwrap();
+        app.ui.timeline.open = true;
+        let doc = app.session.active().unwrap().doc.id.0;
+        let clip: photostore_doc::AudioClip = serde_json::from_value(json!({
+            "id":1,"name":"Audio","path":"synthetic.wav","start_seconds":0.0,
+            "trim_in_seconds":0.0,"duration_seconds":1.0,"source_duration_seconds":1.0
+        })).unwrap();
+        let track = photostore_doc::AudioTrack { id:1, name:"Audio".into(), owner_layer:None, muted:false, volume:1.0, clips:vec![clip] };
+        std::sync::Arc::make_mut(&mut app.session.active_mut().unwrap().doc).timeline.as_mut().unwrap().audio_tracks.push(track);
+        let widget = egui::Id::new("timeline-v-text-focus");
+        let harness = egui_kittest::Harness::builder().with_size(egui::vec2(300.0, 200.0)).build_ui_state(
+            |ui, text: &mut String| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    ui.add(egui::TextEdit::singleline(text).id(widget)).request_focus();
+                });
+            },
+            String::new(),
+        );
+        let ctx = harness.ctx.clone();
+        ctx.data_mut(|data| {
+            data.insert_persisted(egui::Id::new("timeline-scoped-context"), doc);
+            data.insert_temp(egui::Id::new(("audio-selected", doc)), 1_u64);
+        });
+        app.ui.tool = crate::state::Tool::Brush;
+        let history = app.session.active().unwrap().history.past_len();
+        timeline_press(&mut app, &ctx, Key::V);
+        assert_eq!(app.ui.tool, crate::state::Tool::Brush, "text focus owns V");
+        assert!(!app.session.active().unwrap().doc.timeline.as_ref().unwrap().audio_tracks[0].clips[0].muted);
+        ctx.memory_mut(|memory| memory.surrender_focus(widget));
+        timeline_press(&mut app, &ctx, Key::V);
+        assert_eq!(app.ui.tool, crate::state::Tool::Move);
+        assert!(!app.session.active().unwrap().doc.timeline.as_ref().unwrap().audio_tracks[0].clips[0].muted);
+        assert_eq!(app.session.active().unwrap().history.past_len(), history);
+        app.session.prefs.edit(|p| p.shortcuts.insert("timeline.editor.enableClip".into(), "E".into()));
+        timeline_press(&mut app, &ctx, Key::E);
+        assert!(app.session.active().unwrap().doc.timeline.as_ref().unwrap().audio_tracks[0].clips[0].muted);
+    }
+
+    #[test]
+    fn timeline_escape_requires_owner_and_idle_keeps_selection() {
+        let mut app = PhotoStoreApp::new(photostore_engine::Session::new(), Default::default());
+        app.run("file.new", json!({"width":64,"height":64})).unwrap();
+        app.run("timeline.create", json!({"duration":30,"fps":30.0})).unwrap();
+        let doc = app.session.active().unwrap().doc.id.0;
+        let layer = app.session.active().unwrap().doc.layers[0].id.0;
+        app.run("timeline.editor.select", json!({"document":doc,"layers":[layer]})).unwrap();
+        app.ui.timeline.open = true;
+        let ctx = egui::Context::default();
+        ctx.begin_pass(egui::RawInput::default());
+        assert!(!dispatch_timeline_shortcuts(&mut app, &ctx));
+        ctx.end_pass().textures_delta.clear();
+        timeline_press(&mut app, &ctx, Key::Escape);
+        assert!(!app.session.active().unwrap().selected_layers.is_empty());
+        ctx.data_mut(|data| data.insert_persisted(egui::Id::new("timeline-scoped-context"), doc));
+        timeline_press(&mut app, &ctx, Key::Escape);
+        assert!(app.session.active().unwrap().selected_layers.is_empty());
     }
 
     #[test]
