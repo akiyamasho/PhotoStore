@@ -167,6 +167,8 @@ pub enum EngineError {
     NoLayer(LayerId),
     #[error("{0}")]
     Other(String),
+    #[error("linked movie source frame is still loading")]
+    MovieFramePending,
     /// A background job was cancelled (see [`jobs`]); nothing changed.
     #[error("cancelled")]
     Cancelled,

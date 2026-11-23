@@ -180,6 +180,53 @@ fn first_frame_renders() {
 }
 
 #[test]
+fn many_sparse_layers_across_cells_and_edits_generic() {
+    let Some(mut g) = gpu() else { return };
+    let mut doc = base_doc(768, 512);
+    // Mixed blend modes use the generic renderer. Spread the small clipped
+    // layers over several pages, including overlapping layers.
+    for i in 0..70 {
+        let x = (i % 6) * 128 + 9;
+        let y = ((i / 6) % 4) * 128 + 11;
+        let rect = Rect::from_xywh(x, y, 29, 23);
+        let mut layer = noise_layer("sparse", PixelFormat::RGBA8, rect, i as u32 + 20, 0.2);
+        if i % 3 == 0 { layer.blend = BlendMode::Multiply; }
+        doc.layers.push(layer);
+    }
+    check(&mut g, &doc, "sparse layers across cells");
+    doc.layers[15].surface_mut().unwrap().fill_rect(Rect::from_xywh(150, 140, 12, 10), &[0.8, 0.1, 0.4, 0.7]);
+    check(&mut g, &doc, "sparse layer after edit");
+}
+
+#[test]
+fn many_sparse_layers_across_cells_and_edits_normal_stream() {
+    let Some(mut g) = gpu() else { return };
+    let mut doc = base_doc(768, 512);
+    for i in 0..70 {
+        let x = (i % 3) * 256 + 20 + (i % 4) * 8;
+        let y = ((i / 3) % 2) * 256 + 20 + (i % 5) * 7;
+        doc.layers.push(noise_layer("normal", PixelFormat::RGBA8, Rect::from_xywh(x, y, 24, 24), i as u32 + 100, 0.2));
+    }
+    let rect = doc.bounds();
+    assert!(g.paged.can_stream(&doc, rect));
+    let cpu = photostore_compose::render(&doc, rect);
+    let (out, stats) = photostore_gpu::render_to_vec_stats(&mut g.paged, &g.device, &g.queue, &doc, rect).unwrap();
+    assert!(stats.fused_chunks > 0, "deep stack should use streamed chunks: {stats:?}");
+    assert!(worst_diff(&cpu.px, &out).0 <= TOL);
+    let (_, unchanged) = photostore_gpu::render_to_vec_stats(&mut g.paged, &g.device, &g.queue, &doc, rect).unwrap();
+    assert_eq!(unchanged.tiles_uploaded, 0, "unchanged resident layers should not upload again: {unchanged:?}");
+    doc.layers[10].surface_mut().unwrap().fill_rect(Rect::from_xywh(30, 30, 8, 8), &[0.4, 0.2, 0.9, 0.5]);
+    let cpu = photostore_compose::render(&doc, rect);
+    let (out, _) = photostore_gpu::render_to_vec_stats(&mut g.paged, &g.device, &g.queue, &doc, rect).unwrap();
+    assert!(worst_diff(&cpu.px, &out).0 <= TOL);
+    g.paged.set_memory_budget(1);
+    assert!(!g.paged.can_stream(&doc, rect));
+    let (out, stats) = photostore_gpu::render_to_vec_stats(&mut g.paged, &g.device, &g.queue, &doc, rect).unwrap();
+    assert_eq!(stats.fused_chunks, 0, "unadmitted deep cells use the generic renderer");
+    assert!(worst_diff(&cpu.px, &out).0 <= TOL);
+}
+
+#[test]
 fn blend_modes() {
     let Some(mut g) = gpu() else { return };
     for mode in BlendMode::layer_modes() {

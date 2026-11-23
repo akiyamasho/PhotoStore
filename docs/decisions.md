@@ -860,3 +860,9 @@ Enable / Disable Clip has no default shortcut. The configured Move shortcut rema
 ## 2026-11-23 — Tool shortcuts with a selected clip
 
 Configured tool shortcuts take priority over conflicting video timeline bindings. A clip selection keeps its editing context while the user switches canvas tools. The same tool resolver handles primary shortcuts, alternates and grouped tools. Select and Razor have named buttons, and the shortcut reference identifies the tool assigned to each shared key. [Interaction design](design/2026-11-23/timeline-tool-priority/prompt.md)
+
+## 2026-11-23 — Large mixed-media projects
+
+Native project loading indexes archive entries and shares verified same-format tile storage within one load. Every logical reference still counts toward the format's existing limit. Decoded Smart Object sources use the existing media allowance and account for shared resident pixel allocations. Timed composite reuse excludes transitive linked movies. A frame with a pending linked movie can request other visible siblings before it yields.
+
+For eligible Normal stacks above 64 sources, the GPU compositor evaluates the existing upload limits per rendering cell after removing source-over operations clipped outside that cell. Supported stacks extend to 256 sources. Static raster batches reuse resident textures and batches with compact video retain direct uploads when supported. A cell that exceeds the streaming allowance can use the general GPU renderer.

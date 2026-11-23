@@ -482,11 +482,7 @@ pub fn source_time_for_layer(doc: &Document, layer: &Layer, timeline_frame: usiz
 
 /// Whether all linked movie layers currently sampled in this document have a decoded frame ready.
 /// This is used by Smart Object rendering to avoid caching a last-valid placeholder for a new time.
-pub(crate) fn linked_frames_ready(doc: &Document) -> bool {
-    linked_frame_status(doc).unwrap_or(false)
-}
-
-fn linked_frame_status(doc: &Document) -> Result<bool> {
+pub(crate) fn linked_frame_status(doc: &Document) -> Result<bool> {
     let cur = doc.timeline.as_ref().map_or(0, |t| t.current);
     let fps = doc.timeline.as_ref().map_or(30.0, |t| t.project_rate().as_f64());
     let ranges = doc.timeline.as_ref().map(|t| t.layer_ranges.as_slice()).unwrap_or(&[]);
@@ -597,13 +593,16 @@ pub(crate) fn sync_for_presentation(doc: &mut Document) -> Result<bool> {
     sync_plain_impl(doc,true,true);
     if !linked_frame_status(doc)? { return Ok(false); }
     let ids = visible_smart_layer_ids(doc);
+    let mut loading = false;
     for id in ids {
         if let Err(error) = crate::smart_cmds::refresh_animated(doc, id) {
-            if error.to_string().contains("still loading") { return Ok(false); }
+            // Queue every visible sibling before yielding, so independent nested movie
+            // decodes do not have to complete one after another across presentation polls.
+            if matches!(error, EngineError::MovieFramePending) { loading = true; continue; }
             return Err(error);
         }
     }
-    Ok(true)
+    Ok(!loading)
 }
 
 fn validate_resident_video_placements(doc: &Document) -> Result<()> {

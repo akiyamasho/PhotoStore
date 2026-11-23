@@ -26,6 +26,11 @@ pub struct Tile {
 }
 
 impl Tile {
+    /// Construct a tile from native-endian storage, rejecting an incorrect size.
+    pub fn from_bytes(format: PixelFormat, data: Vec<u8>) -> Option<Self> {
+        let expected = (TILE_SIZE as usize) * (TILE_SIZE as usize) * format.bytes_per_pixel();
+        (data.len() == expected).then(|| Tile { data: data.into_boxed_slice() })
+    }
     fn filled(format: &PixelFormat, pixel: &[u8]) -> Self {
         let n = (TILE_SIZE * TILE_SIZE) as usize;
         let mut data = vec![0u8; n * format.bytes_per_pixel()];
@@ -206,6 +211,15 @@ impl Surface {
         let dp = self.default_pixel.clone();
         let arc = self.tiles.entry(c).or_insert_with(|| Arc::new(Tile::filled(&fmt, &dp)));
         Arc::make_mut(arc)
+    }
+
+    /// Install shared tile storage when its size matches this surface's format.
+    pub fn set_shared_tile(&mut self, c: TileCoord, tile: Arc<Tile>) -> bool {
+        let expected = (TILE_SIZE as usize) * (TILE_SIZE as usize) * self.format.bytes_per_pixel();
+        if tile.bytes().len() != expected { return false; }
+        self.materialize();
+        self.tiles.insert(c, tile);
+        true
     }
 
     /// Coarse bounds: union of allocated tile rects.
@@ -587,6 +601,19 @@ impl Surface {
         for tc in r.tiles() {
             let tr = tc.rect().intersect(&r);
             let t = self.tile_mut(tc);
+            // Convert contiguous rows without repeating format dispatch and coordinate
+            // arithmetic per sample when writing ordinary 8-bit preview composites.
+            if sample == SampleType::U8 {
+                let count = tr.width() as usize * n;
+                for y in tr.y0..tr.y1 {
+                    let src = ((y - r.y0) as usize * w + (tr.x0 - r.x0) as usize) * n;
+                    let dst = ((y - tc.ty * TILE_SIZE) as usize * TILE_SIZE as usize + (tr.x0 - tc.tx * TILE_SIZE) as usize) * n;
+                    for (out, value) in t.data[dst..dst + count].iter_mut().zip(&data[src..src + count]) {
+                        *out = (value.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+                    }
+                }
+                continue;
+            }
             for y in tr.y0..tr.y1 {
                 for x in tr.x0..tr.x1 {
                     let o = (((y - r.y0) as usize) * w + (x - r.x0) as usize) * n;

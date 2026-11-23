@@ -18,10 +18,31 @@ pub(crate) struct Source {
     pub clip: Option<Rect>,
 }
 
-/// A recognized output stack in bottom-to-top order, with at most 64 source passes.
+/// A recognized output stack in bottom-to-top order.
 #[derive(Clone, Debug)]
 pub(crate) struct Stack {
     pub sources: Vec<Source>,
+}
+
+// Bound planner recognition and its slot-value cloning independently of the upload budgets.
+pub(crate) const MAX_STACK_SOURCES: usize = 256;
+pub(crate) const LEGACY_STACK_SOURCES: usize = 64;
+
+pub(crate) fn cell_sources(stack: &Stack, chunks: &[Rect]) -> Vec<Source> {
+    stack.sources.iter().copied().filter(|source| {
+        source.clip.is_none_or(|clip| chunks.iter().any(|chunk| !clip.intersect(chunk).is_empty()))
+    }).collect()
+}
+
+pub(crate) fn admitted(sources: &[Source], plan: &Plan<'_>, page: u32, resident_budget: u64, memory_budget: u64) -> bool {
+    let pixels = u64::from(page).saturating_mul(u64::from(page));
+    let upload = |source: &Source| {
+        let nv12 = plan.passes[source.pass].tex.as_ref().is_some_and(|t| t.surface.get().nv12_view().is_some());
+        pixels.saturating_mul(if nv12 { 2 } else { 4 })
+    };
+    let batch = sources.chunks(7).map(|s| s.iter().fold(0u64, |n, s| n.saturating_add(upload(s)))).max().unwrap_or(0);
+    let total = sources.iter().fold(0u64, |n, s| n.saturating_add(upload(s)));
+    batch <= resident_budget && total <= memory_budget / 4 && total <= crate::FLUSH_BYTES
 }
 
 #[derive(Clone, Debug)]
@@ -80,7 +101,7 @@ pub(crate) fn recognize(plan: &Plan<'_>) -> Option<Stack> {
                 if p.clip != layer.clip { return None; }
                 layer.opacity = p.opacity;
                 stack.push(layer);
-                if stack.len() > 64 { return None; }
+                if stack.len() > MAX_STACK_SOURCES { return None; }
                 SlotValue::Stack(stack)
             }
             Kernel::CopyFull => {
@@ -104,7 +125,7 @@ pub(crate) fn recognize(plan: &Plan<'_>) -> Option<Stack> {
         values.insert(p.dst, out);
     }
     let SlotValue::Stack(sources) = values.get(&plan.root)? else { return None; };
-    if sources.is_empty() || sources.len() > 64 { return None; }
+    if sources.is_empty() || sources.len() > MAX_STACK_SOURCES { return None; }
     if sources.len() == 1 && !plan.passes[sources[0].pass].tex.as_ref().is_some_and(|texture|texture.surface.get().nv12_view().is_some()) { return None; }
     Some(Stack { sources: sources.clone() })
 }
@@ -219,18 +240,15 @@ impl crate::Compositor {
         sink: &mut dyn FnMut(&mut wgpu::CommandEncoder, crate::ChunkOut<'_>),
     ) -> Result<bool, crate::Unsupported> {
         if self.acc_format != wgpu::TextureFormat::Rgba32Float { return Ok(false); }
-        let Some(stack) = recognize(plan) else { return Ok(false); };
+        let Some(mut stack) = recognize(plan) else { return Ok(false); };
+        let deep = stack.sources.len() > LEGACY_STACK_SOURCES;
+        if deep { stack.sources = cell_sources(&stack, chunks); }
+        if stack.sources.is_empty() { return Ok(false); }
         let has_nv12 = stack.sources.iter().any(|source| plan.passes[source.pass].tex.as_ref().is_some_and(|t| t.surface.get().nv12_view().is_some()));
         let has_clipped_source = stack.sources.iter().any(|source| source.clip.is_some());
         if stack.sources.len() < 2 && !has_nv12 || (!has_nv12 && stack.sources.len() <= 8 && !has_clipped_source) { return Ok(false); }
-        let page_pixels=u64::from(self.page).saturating_mul(u64::from(self.page));
-        let source_upload=|source:&Source| {
-            let nv12=plan.passes[source.pass].tex.as_ref().is_some_and(|t|t.surface.get().nv12_view().is_some());
-            page_pixels.saturating_mul(if nv12 { 2 } else { 4 })
-        };
-        let max_batch_bytes=stack.sources.chunks(7).map(|sources|sources.iter().fold(0u64,|n,s|n.saturating_add(source_upload(s)))).max().unwrap_or(0);
-        let full_cell_upload=stack.sources.iter().fold(0u64,|n,s|n.saturating_add(source_upload(s)));
-        if max_batch_bytes > self.resident_budget || full_cell_upload > self.memory_budget() / 4 || full_cell_upload > crate::FLUSH_BYTES {
+        if !admitted(&stack.sources, plan, self.page, self.resident_budget, self.memory_budget()) {
+            if deep { return Ok(false); }
             return Err(crate::Unsupported("bounded Normal stack cell uploads exceed the streaming allowance".into()));
         }
         if self.normal_stream_disabled { return Err(crate::Unsupported("bounded Normal stack pipeline is unavailable".into())); }
@@ -256,7 +274,8 @@ impl crate::Compositor {
         let batch_count = stack.sources.len().div_ceil(7);
         let mut direct_batches = Vec::with_capacity(batch_count);
         for sources in stack.sources.chunks(7) {
-            direct_batches.push(self.prepare_stream_buffer_batch(device, encoder, plan, fr, cell, sources, stats)?);
+            let has_video = sources.iter().any(|source| plan.passes[source.pass].tex.as_ref().is_some_and(|t| t.surface.get().nv12_view().is_some()));
+            direct_batches.push(if deep && !has_video { None } else { self.prepare_stream_buffer_batch(device, encoder, plan, fr, cell, sources, stats)? });
         }
         for chunk in chunks {
             for batch_index in 0..batch_count {

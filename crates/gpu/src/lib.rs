@@ -750,25 +750,21 @@ impl Compositor {
         if self.acc_format != wgpu::TextureFormat::Rgba32Float || self.normal_stream_disabled || self.normal_stack_disabled || region.intersect(&doc.bounds()).is_empty() { return false; }
         let Ok(plan) = plan(doc) else { return false; };
         let Some(stack) = normal_stack::recognize(&plan) else { return false; };
-        let has_nv12 = stack.sources.iter().any(|source| plan.passes[source.pass].tex.as_ref().is_some_and(|t| t.surface.get().nv12_view().is_some()));
         let mut regular_page = TILE_SIZE as u32;
         while regular_page * 2 <= self.max_dim.min(PAGE) { regular_page *= 2; }
         // `render` uses pooled uploads for this exact recognized stack on native platforms,
         // which limits transfer cells to CHUNK. Predict that page before the first render too.
         let page = if cfg!(not(target_arch = "wasm32")) { regular_page.min(CHUNK) } else { regular_page };
-        let page_pixels=u64::from(page).saturating_mul(u64::from(page));
-        let max_batch_bytes = stack.sources.chunks(7).map(|sources|sources.iter().fold(0u64,|sum,source| {
-            let is_nv12=plan.passes[source.pass].tex.as_ref().is_some_and(|t|t.surface.get().nv12_view().is_some());
-            sum.saturating_add(page_pixels.saturating_mul(if is_nv12 { 2 } else { 4 }))
-        })).max().unwrap_or(0);
-        let cell_upload_bytes = stack.sources.iter().fold(0u64,|sum,source| {
-            let is_nv12=plan.passes[source.pass].tex.as_ref().is_some_and(|t|t.surface.get().nv12_view().is_some());
-            sum.saturating_add(page_pixels.saturating_mul(if is_nv12 { 2 } else { 4 }))
-        });
-        (if has_nv12 { (1..=64).contains(&stack.sources.len()) } else { (2..=64).contains(&stack.sources.len()) })
-            && max_batch_bytes <= self.resident_budget
-            && cell_upload_bytes <= self.memory_budget() / 4
-            && cell_upload_bytes <= FLUSH_BYTES
+        if stack.sources.len() > normal_stack::LEGACY_STACK_SOURCES {
+            // The UI may use this capability to bypass its whole-document residency guard.
+            // Every cell must fit the same conservative staging limits as execution.
+            return grid_rects(region.intersect(&doc.bounds()), page).iter().all(|part| {
+                let chunks = grid_rects(*part, CHUNK.min(page));
+                let sources = normal_stack::cell_sources(&stack, &chunks);
+                normal_stack::admitted(&sources, &plan, page, self.resident_budget, self.memory_budget())
+            });
+        }
+        normal_stack::admitted(&stack.sources, &plan, page, self.resident_budget, self.memory_budget())
     }
 
     /// The document area the view shows (`None`: unknown). Full refreshes draw its cells last.
@@ -1174,6 +1170,7 @@ impl Compositor {
         paged: &[bool],
         cell: Cell,
         fr: &FrameRes,
+        active: &[bool],
         stats: &mut Stats,
     ) -> Bound {
         let cr = cell_rect(cell, self.page);
@@ -1181,6 +1178,11 @@ impl Compositor {
         let mut keys: Vec<ResKey> = Vec::new();
         let mut maps = Vec::with_capacity(plan.passes.len());
         for (i, p) in plan.passes.iter().enumerate() {
+            if !active[i] {
+                views.push((None, None));
+                maps.push(None);
+                continue;
+            }
             let (ta, ma) = fr.areas.get(i).copied().unwrap_or((Rect::EMPTY, Rect::EMPTY));
             let tex =
                 p.tex.as_ref().and_then(|t| self.sync(device, queue, encoder, doc, (t.layer, t.role, cell), t.surface.get(), ta.intersect(&cr), stats)).map(
@@ -1259,7 +1261,12 @@ impl Compositor {
             return Ok(());
         }
 
-        let bound = self.bind_cell(device, queue, encoder, doc, plan, paged, cell, fr, stats);
+        // A clipped pass outside every chunk cannot draw or copy anything in this cell.
+        // Preserve pass indices, since the planner and fused paths address them directly.
+        let active: Vec<bool> = plan.passes.iter().map(|p| {
+            p.clip.is_none_or(|clip| chunks.iter().any(|chunk| !clip.intersect(chunk).is_empty()))
+        }).collect();
+        let bound = self.bind_cell(device, queue, encoder, doc, plan, paged, cell, fr, &active, stats);
         if !self.upload_jobs.is_empty() {
             let started = std::time::Instant::now();
             let result = page_upload::pack(std::mem::take(&mut self.upload_jobs));
@@ -1282,6 +1289,7 @@ impl Compositor {
             data[i * STRIDE as usize..][..w.len()].copy_from_slice(&w);
         }
         for (i, p) in plan.passes.iter().enumerate() {
+            if !active[i] { continue; }
             let (tex, mask) = bound.views[i];
             let map = bound.maps[i].as_ref().map(|(_, r)| *r);
             let w = op_words(p, tex.map(|t| t.1), mask.map(|m| m.1), map);
@@ -1302,7 +1310,7 @@ impl Compositor {
         let resident_views: Vec<&wgpu::TextureView> = bound.keys.iter().map(|k| self.residents.get(k).map_or(dummy, |r| &r.view)).collect();
         let mut bg1 = Vec::with_capacity(plan.passes.len());
         for (i, p) in plan.passes.iter().enumerate() {
-            if p.kernel.entry().is_none() {
+            if !active[i] || p.kernel.entry().is_none() {
                 bg1.push(None);
                 continue;
             }

@@ -241,6 +241,12 @@ pub fn flatten_to_surface(doc: &Document, fmt: photostore_color::PixelFormat, ba
             Some(bg) => band.over_background(bg),
             None => band,
         };
+        // The compositor already produces straight RGBA floats. Keep its rows in
+        // place when the destination uses the same channels.
+        if fmt.mode == photostore_color::ColorMode::Rgb && fmt.alpha {
+            s.write_region(band.rect, band.px.as_flattened());
+            return Ok(());
+        }
         data.clear();
         data.resize(band.px.len() * n, 0.0);
         for (p, out) in band.px.iter().zip(data.chunks_exact_mut(n)) {

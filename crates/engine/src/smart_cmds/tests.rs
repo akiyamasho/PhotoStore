@@ -1288,3 +1288,34 @@ fn smart_clip_split_trim_and_move_keep_the_nested_source_clock() {
     let moved_time = layer_source_time(&s.active().unwrap().doc, right, None).unwrap();
     assert!((moved_time - original_time).abs() < 1e-9, "moving a clip changed nested source time: {moved_time} != {original_time}");
 }
+
+#[test]
+fn decoded_sources_survive_more_than_eight_distinct_animated_contents() {
+    let mut s = session(8);
+    set_timeline(&mut s, Timeline::new(2, 24.0));
+    let mut sources = Vec::new();
+    for index in 0..12 {
+        let mut doc = (*s.active().unwrap().doc).clone();
+        doc.name = format!("animated source {index}");
+        sources.push(encode_source(&doc).unwrap());
+    }
+    let first: Vec<_> = sources.iter().map(|bytes| decode_cached("source.pcraft", bytes).unwrap()).collect();
+    for (bytes, original) in sources.iter().zip(&first) {
+        let cached = decode_cached("source.pcraft", bytes).unwrap();
+        assert!(Arc::ptr_eq(original, &cached), "unchanged contents were decoded again");
+        assert_eq!(cached.name, original.name);
+    }
+    let fmt = first[0].pixel_format();
+    let original_pixels = source_image_at_time("source.pcraft", &sources[0], fmt, Some(0.0)).unwrap().surface.read_region(Rect::new(0, 0, 1, 1));
+    let mut edited = (*first[0]).clone();
+    edited.name = "edited contents".into();
+    let layer = edited.layers.iter_mut().find_map(|layer| layer.surface_mut()).unwrap();
+    layer.write_region(Rect::new(0, 0, 1, 1), &solid_pixels(&fmt, [1.0, 0.0, 0.0, 1.0], 1));
+    let edited_bytes = encode_source(&edited).unwrap();
+    let changed = decode_cached("source.pcraft", &edited_bytes).unwrap();
+    assert_eq!(changed.name, "edited contents");
+    assert!(!Arc::ptr_eq(&first[0], &changed));
+    let changed_pixels = source_image_at_time("source.pcraft", &edited_bytes, fmt, Some(0.0)).unwrap().surface.read_region(Rect::new(0, 0, 1, 1));
+    assert_ne!(original_pixels, changed_pixels);
+    assert_eq!(decode_cached("source.pcraft", &sources[0]).unwrap().name, "animated source 0");
+}

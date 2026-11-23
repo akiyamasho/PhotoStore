@@ -39,7 +39,7 @@ pub fn document(d: &DocState) -> Value {
         "selectedLayers": selected.iter().map(|l| l.0).collect::<Vec<_>>(),
         "isolatedLayers": d.isolated_layers.iter().map(|l| l.0).collect::<Vec<_>>(),
         "hasSelection": doc.selection.is_some(),
-        "selectionBounds": doc.selection.as_ref().map(|s| { let r = s.content_bounds(); [r.x0, r.y0, r.width() as i32, r.height() as i32] }),
+        "selectionBounds": doc.selection.as_ref().map(|s| { let r = photostore_compose::bounds::content_bounds(s); [r.x0, r.y0, r.width() as i32, r.height() as i32] }),
         "layers": doc.layers.iter().rev().map(|l| layer_sel(l, &selected)).collect::<Vec<_>>(),
         "history": d.history.entries(),
         "canUndo": d.history.can_undo(),
@@ -77,7 +77,7 @@ pub fn layer(l: &Layer) -> Value {
 /// [`layer`] with a `selected` flag on every node (Layers panel multi-selection).
 fn layer_sel(l: &Layer, selected: &[photostore_doc::LayerId]) -> Value {
     let bounds = l.surface().map(|s| {
-        let r = s.content_bounds();
+        let r = photostore_compose::bounds::content_bounds(s);
         [r.x0, r.y0, r.width() as i32, r.height() as i32]
     });
     let mut v = json!({

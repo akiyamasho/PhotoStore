@@ -60,17 +60,24 @@ pub(crate) trait Source {
 
 pub(crate) struct ZipSource<'a> {
     zip: ZipReader<'a>,
+    index: HashMap<String, usize>,
 }
 
 impl<'a> ZipSource<'a> {
     pub fn new(bytes: &'a [u8]) -> Result<Self> {
-        Ok(ZipSource { zip: ZipReader::new(bytes)? })
+        let zip = ZipReader::new(bytes)?;
+        let mut index = HashMap::new();
+        for (i, entry) in zip.entries.iter().enumerate() {
+            index.entry(entry.name.clone()).or_insert(i);
+        }
+        Ok(ZipSource { zip, index })
     }
 }
 
 impl Source for ZipSource<'_> {
     fn get(&self, path: &str, max: usize) -> Result<Vec<u8>> {
-        self.zip.read_by_name(path, max)
+        let i = self.index.get(path).ok_or_else(|| FormatError::corrupt(format!("missing `{path}`")))?;
+        self.zip.read(&self.zip.entries[*i], max)
     }
 }
 
@@ -179,6 +186,7 @@ struct LoadFetch<'a> {
     opts: LoadOptions,
     total: u64,
     blobs: HashMap<String, Arc<Vec<u8>>>,
+    tiles: HashMap<(PixelFormat, String), Weak<Tile>>,
 }
 
 impl LoadFetch<'_> {
@@ -192,18 +200,26 @@ impl LoadFetch<'_> {
 }
 
 impl Fetch for LoadFetch<'_> {
-    fn tile(&mut self, hash: &str, len: usize) -> Result<Vec<u8>> {
+    fn tile(&mut self, hash: &str, format: PixelFormat) -> Result<Arc<Tile>> {
         if !is_valid_hash(hash) {
             return Err(FormatError::corrupt(format!("invalid tile hash `{hash}`")));
         }
+        let len = convert::tile_len(&format);
         self.account(len)?;
+        let key = (format, hash.to_owned());
+        if let Some(tile) = self.tiles.get(&key).and_then(Weak::upgrade) {
+            return Ok(tile);
+        }
         let path = tile_path(hash);
         let z = self.src.get(&path, len + len / 8 + 4096)?;
-        let data = decompress(&z, len, &path)?;
+        let mut data = decompress(&z, len, &path)?;
         if hash_bytes(&data) != hash {
             return Err(FormatError::corrupt(format!("{path}: content does not match its hash")));
         }
-        Ok(data)
+        swap_to_le(&mut data, format.sample);
+        let tile = Arc::new(Tile::from_bytes(format, data).ok_or_else(|| FormatError::corrupt("tile has wrong size for its format"))?);
+        self.tiles.insert(key, Arc::downgrade(&tile));
+        Ok(tile)
     }
 
     fn blob(&mut self, hash: &str) -> Result<Arc<Vec<u8>>> {
@@ -244,7 +260,7 @@ impl Fetch for LoadFetch<'_> {
 
 pub(crate) fn load(src: &dyn Source, opts: &LoadOptions) -> Result<Document> {
     let m = read_manifest(src, opts)?;
-    let mut fetch = LoadFetch { src, opts: *opts, total: 0, blobs: HashMap::new() };
+    let mut fetch = LoadFetch { src, opts: *opts, total: 0, blobs: HashMap::new(), tiles: HashMap::new() };
     let mut loader = Loader {
         fetch: &mut fetch,
         preserve_ids: opts.preserve_ids,
@@ -253,6 +269,57 @@ pub(crate) fn load(src: &dyn Source, opts: &LoadOptions) -> Result<Document> {
         legacy_linked_contents: HashMap::new(),
     };
     loader.document(&m.document)
+}
+
+#[cfg(test)]
+mod tile_cache_tests {
+    use super::*;
+    use photostore_geom::TileCoord;
+    use photostore_raster::Surface;
+    use std::cell::Cell;
+
+    struct TileSource { data: Vec<u8>, reads: Cell<usize> }
+    impl Source for TileSource {
+        fn get(&self, _path: &str, _max: usize) -> Result<Vec<u8>> {
+            self.reads.set(self.reads.get() + 1);
+            Ok(self.data.clone())
+        }
+    }
+
+    #[test]
+    fn repeated_verified_tiles_share_storage_and_account_each_reference() {
+        let format = PixelFormat::RGBA8;
+        let raw = vec![7; convert::tile_len(&format)];
+        let hash = hash_bytes(&raw);
+        let source = TileSource { data: compress(&raw), reads: Cell::new(0) };
+        let mut opts = LoadOptions::default();
+        opts.max_total_bytes = (raw.len() * 2) as u64;
+        let mut fetch = LoadFetch { src: &source, opts, total: 0, blobs: HashMap::new(), tiles: HashMap::new() };
+        let a = fetch.tile(&hash, format).unwrap();
+        let b = fetch.tile(&hash, format).unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+        assert_eq!(source.reads.get(), 1);
+        assert!(matches!(fetch.tile(&hash, format), Err(FormatError::LimitExceeded(_))));
+
+        let mut surface = Surface::new(format);
+        let c = TileCoord::new(0, 0);
+        assert!(surface.set_shared_tile(c, a));
+        surface.tile_mut(c).bytes_mut()[0] = 1;
+        assert_eq!(b.bytes()[0], 7);
+    }
+
+    #[test]
+    fn cache_does_not_bypass_format_length_or_hash_validation() {
+        let format = PixelFormat::RGBA8;
+        let raw = vec![7; convert::tile_len(&format)];
+        let hash = hash_bytes(&raw);
+        let source = TileSource { data: compress(&raw), reads: Cell::new(0) };
+        let mut fetch = LoadFetch { src: &source, opts: LoadOptions::default(), total: 0, blobs: HashMap::new(), tiles: HashMap::new() };
+        let _tile = fetch.tile(&hash, format).unwrap();
+        assert!(fetch.tile(&hash, PixelFormat::GRAY8).is_err());
+        assert!(fetch.tile("bad", format).is_err());
+        assert_eq!(source.reads.get(), 2);
+    }
 }
 
 // ---------------------------------------------------------------------------

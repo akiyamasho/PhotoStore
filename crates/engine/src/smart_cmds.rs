@@ -146,7 +146,6 @@ struct DecodedEntry {
     _budget: crate::media_budget::Reservation,
 }
 static DECODE_CACHE: Mutex<Vec<DecodedEntry>> = Mutex::new(Vec::new());
-const DECODE_ENTRIES: usize = 8;
 fn decoded_cache_limit()->usize {crate::media_budget::retained_limit_bytes()}
 
 fn cache_key(bytes: &[u8], fmt: PixelFormat) -> CacheKey {
@@ -154,23 +153,40 @@ fn cache_key(bytes: &[u8], fmt: PixelFormat) -> CacheKey {
 }
 
 fn decoded_size(doc: &Document, source_bytes: usize) -> usize {
-    let mut total = source_bytes;
+    // The source length approximates ancillary decoded metadata. Add measured
+    // pixel allocations once, even when layers or video frames share COW tiles.
+    let mut total = source_bytes.saturating_add(std::mem::size_of::<Document>());
+    let mut allocations = std::collections::HashSet::new();
+    let mut surface_size = |surface: &Surface| {
+        surface.resident_allocations().into_iter()
+            .filter(|(id, _)| allocations.insert(*id))
+            .fold(0usize, |total, (_, bytes)| total.saturating_add(bytes))
+    };
+    if let Some(timeline) = &doc.timeline {
+        total = total.saturating_add(timeline.property_frames.retained_bytes()).saturating_add(timeline.frame_states.retained_bytes());
+    }
+    for pattern in &doc.patterns { total = total.saturating_add(surface_size(&pattern.surface)); }
+    total = total.saturating_add(doc.metadata.xmp.as_ref().map_or(0, String::len));
+    total = total.saturating_add(doc.metadata.exif.as_ref().map_or(0, |v| v.len()));
+    for (key, value) in &doc.metadata.text { total = total.saturating_add(key.len()).saturating_add(value.len()); }
+    for (_, name, data) in &doc.metadata.psd_resources { total = total.saturating_add(name.len()).saturating_add(data.len()); }
+    for (_, _, data) in &doc.metadata.psd_global_blocks { total = total.saturating_add(data.len()); }
+    if let Some(profile) = &doc.icc_profile { total = total.saturating_add(profile.len()); }
+    if let Some(selection) = &doc.selection { total = total.saturating_add(surface_size(selection)); }
+    for channel in &doc.channels { total = total.saturating_add(surface_size(&channel.surface)); }
+    if let Some(channel) = &doc.quick_mask { total = total.saturating_add(surface_size(&channel.surface)); }
     for (_, _, layer) in doc.walk() {
-        if let Some(surface) = layer.surface() {
-            let b = surface.content_bounds();
-            total = total.saturating_add(b.width().max(0) as usize * b.height().max(0) as usize * surface.format().channels() * 4);
+        total = total.saturating_add(std::mem::size_of::<Layer>()).saturating_add(layer.name.len());
+        if let Some(surface) = layer.surface() { total = total.saturating_add(surface_size(surface)); }
+        if let Some(mask) = &layer.mask { total = total.saturating_add(surface_size(&mask.surface)); }
+        for (_, data) in &layer.psd_blocks { total = total.saturating_add(data.len()); }
+        if let LayerContent::Smart(smart) = &layer.content {
+            if let SmartSource::Embedded { bytes, .. } = &smart.source { total = total.saturating_add(bytes.len()); }
+            if let Some(mask) = &smart.filter_mask { total = total.saturating_add(surface_size(&mask.surface)); }
+            if let Some(raw) = &smart.psd_raw { total = total.saturating_add(raw.len()); }
         }
         if let Some(video) = &layer.video {
-            total = total.saturating_add(
-                video
-                    .frames
-                    .iter()
-                    .map(|f| {
-                        let b = f.content_bounds();
-                        b.width().max(0) as usize * b.height().max(0) as usize * f.format().channels() * 4
-                    })
-                    .sum(),
-            );
+            for frame in &video.frames { total = total.saturating_add(surface_size(frame)); }
         }
     }
     total
@@ -188,7 +204,14 @@ fn decode_cached(file_name: &str, bytes: &[u8]) -> Result<Arc<Document>> {
     }
     let doc = decode_source(file_name, bytes)?;
     if let Ok(mut c) = DECODE_CACHE.lock() {
-        c.retain(|e| e.key != key);
+        // A second presentation worker may have decoded the same source outside
+        // the lock. Reuse its entry and reservation if it won the race.
+        if let Some(i) = c.iter().position(|entry| entry.key == key) {
+            let entry = c.remove(i);
+            let cached = entry.doc.clone();
+            c.push(entry);
+            return Ok(cached);
+        }
         let size = decoded_size(&doc, bytes.len());
         if size > decoded_cache_limit() {
             return Ok(Arc::new(doc));
@@ -200,7 +223,7 @@ fn decode_cached(file_name: &str, bytes: &[u8]) -> Result<Arc<Document>> {
         };
         let Some(budget)=budget else {return Ok(doc)};
         c.push(DecodedEntry { key, doc: doc.clone(), bytes: size, _budget:budget });
-        while c.len() > DECODE_ENTRIES || c.iter().map(|e| e.bytes).sum::<usize>() > decoded_cache_limit() {
+        while c.iter().map(|e| e.bytes).sum::<usize>() > decoded_cache_limit() {
             c.remove(0);
         }
         return Ok(doc);
@@ -208,8 +231,6 @@ fn decode_cached(file_name: &str, bytes: &[u8]) -> Result<Arc<Document>> {
     Ok(Arc::new(doc))
 }
 
-/// Detect linked movies at any depth in embedded or linked Smart Object contents. The content
-/// hash prevents cycles and repeated decoding; depth matches the Smart Object render limit.
 fn has_linked_movie_dependency(doc: &Document, depth: usize, visited: &mut std::collections::HashSet<[u8; 32]>) -> Result<bool> {
     if depth >= 16 {
         return Err(other("smart object nesting exceeds the safe render depth (16)"));
@@ -450,14 +471,13 @@ fn source_image_at_time_inner(file_name: &str, bytes: &[u8], fmt: PixelFormat, t
         let mut doc = (*cached_doc).clone();
         if has_linked_movie {
             crate::video_cmds::sync_plain_for_nested(&mut doc);
-            if !crate::video_cmds::linked_frames_ready(&doc) {
-                return Err(other("linked movie source frame is unavailable or still loading"));
+            if !crate::video_cmds::linked_frame_status(&doc)? {
+                return Err(EngineError::MovieFramePending);
             }
             let local_time = document_time(&doc).unwrap_or(0.0);
             refresh_document_animated(&mut doc, local_time, depth.saturating_add(1))?;
         }
-        let buf = photostore_compose::flatten(&doc);
-        let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds: doc.bounds() };
+        let img = SourceImage { surface: Arc::new(photostore_compose::flatten_to_surface(&doc, fmt, None)), bounds: doc.bounds() };
         if !has_linked_movie {
             cache_put(key, img.clone());
         }
@@ -475,14 +495,13 @@ fn source_image_at_time_inner(file_name: &str, bytes: &[u8], fmt: PixelFormat, t
         let mut doc = (*cached_doc).clone();
         if has_linked_movie {
             crate::video_cmds::sync_plain_for_nested(&mut doc);
-            if !crate::video_cmds::linked_frames_ready(&doc) {
-                return Err(other("linked movie source frame is unavailable or still loading"));
+            if !crate::video_cmds::linked_frame_status(&doc)? {
+                return Err(EngineError::MovieFramePending);
             }
             let local_time = document_time(&doc).unwrap_or(0.0);
             refresh_document_animated(&mut doc, local_time, depth.saturating_add(1))?;
         }
-        let buf = photostore_compose::flatten(&doc);
-        let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds: doc.bounds() };
+        let img = SourceImage { surface: Arc::new(photostore_compose::flatten_to_surface(&doc, fmt, None)), bounds: doc.bounds() };
         if !has_linked_movie {
             cache_put(key, img.clone());
         }
@@ -492,23 +511,24 @@ fn source_image_at_time_inner(file_name: &str, bytes: &[u8], fmt: PixelFormat, t
         return Err(other("animated smart object rendering requires a finite timeline time"));
     };
     let frame = timeline_frame_at_time(&cached_doc, time);
+    // A cached composite for a self-contained child needs no playhead sync or document
+    // clone. Linked movies are excluded because their contents can change.
+    let has_linked_movie = has_linked_movie_dependency(&cached_doc, depth, &mut std::collections::HashSet::new())?;
+    let key = timed_cache_key(bytes, fmt, frame);
+    if !has_linked_movie && let Some(img) = cache_get(&key) {
+        return Ok(img);
+    }
     let mut doc = (*cached_doc).clone();
     if let Some(t) = &mut doc.timeline {
         t.current = frame;
     }
     crate::video_cmds::sync_plain_for_nested(&mut doc);
-    if !crate::video_cmds::linked_frames_ready(&doc) {
-        return Err(other("linked movie source frame is unavailable or still loading"));
-    }
-    let has_linked_movie = has_linked_movie_dependency(&doc, depth, &mut std::collections::HashSet::new())?;
-    let key = timed_cache_key(bytes, fmt, frame);
-    if !has_linked_movie && let Some(img) = cache_get(&key) {
-        return Ok(img);
+    if !crate::video_cmds::linked_frame_status(&doc)? {
+        return Err(EngineError::MovieFramePending);
     }
     let local_time = document_time(&doc).unwrap_or(time);
     refresh_document_animated(&mut doc, local_time, depth.saturating_add(1))?;
-    let buf = photostore_compose::flatten(&doc);
-    let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds: doc.bounds() };
+    let img = SourceImage { surface: Arc::new(photostore_compose::flatten_to_surface(&doc, fmt, None)), bounds: doc.bounds() };
     if !has_linked_movie {
         cache_put(key, img.clone());
     }
@@ -740,15 +760,22 @@ fn refresh_document_animated(doc: &mut Document, time: f64, depth: usize) -> Res
         return Err(other("smart object nesting exceeds the safe render depth (16)"));
     }
     let ids: Vec<_> = doc.walk().into_iter().filter_map(|(_, _, l)| matches!(l.content, LayerContent::Smart(_)).then_some(l.id)).collect();
+    let mut loading = false;
     for id in ids {
         if let Some(mut l) = doc.layer(id).cloned() {
-            if refresh_layer_at_time(doc, &mut l, Some(time), depth)? {
-                if let Some(dst) = doc.layer_mut(id) {
-                    dst.content = l.content;
+            match refresh_layer_at_time(doc, &mut l, Some(time), depth) {
+                Ok(true) => {
+                    if let Some(dst) = doc.layer_mut(id) {
+                        dst.content = l.content;
+                    }
                 }
+                Ok(false) => {}
+                Err(EngineError::MovieFramePending) => loading = true,
+                Err(error) => return Err(error),
             }
         }
     }
+    if loading { return Err(EngineError::MovieFramePending); }
     Ok(())
 }
 

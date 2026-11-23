@@ -323,6 +323,9 @@ fn resize_with_budget(s: &Surface, sx: f64, sy: f64, filter: Resample, edge: Opt
 
 /// Moves a surface by whole pixels (default pixel kept).
 pub fn translate_surface(s: &Surface, dx: i32, dy: i32) -> Surface {
+    if dx == 0 && dy == 0 {
+        return s.clone();
+    }
     s.translated(dx, dy, s.content_bounds())
 }
 

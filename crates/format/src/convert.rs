@@ -652,8 +652,8 @@ pub(crate) trait Sink {
 }
 
 pub(crate) trait Fetch {
-    /// Canonical (little-endian) tile bytes of the given expected length.
-    fn tile(&mut self, hash: &str, len: usize) -> Result<Vec<u8>>;
+    /// Verified native-endian tile, accounting for every reference.
+    fn tile(&mut self, hash: &str, format: PixelFormat) -> Result<Arc<Tile>>;
     fn blob(&mut self, hash: &str) -> Result<Arc<Vec<u8>>>;
     /// Blob with an additional caller-derived decoded-size bound.
     fn blob_limited(&mut self, hash: &str, max_bytes: usize) -> Result<Arc<Vec<u8>>>;
@@ -1033,7 +1033,6 @@ impl Loader<'_> {
         }
         swap_to_le(&mut dp, f.sample);
         let mut s = Surface::with_default(f, &decode_pixel(&f, &dp));
-        let len = tile_len(&f);
         // Both edges of a tile's rectangle must fit in i32 (`TileCoord::rect` multiplies by the
         // tile size): -8388608 ..= 8388606. A damaged manifest can name any index (#938).
         let fits = |i: i32| i.checked_mul(TILE_SIZE).is_some() && i.checked_add(1).and_then(|e| e.checked_mul(TILE_SIZE)).is_some();
@@ -1045,9 +1044,10 @@ impl Loader<'_> {
             if s.tile(c).is_some() {
                 return Err(FormatError::corrupt(format!("duplicate tile ({}, {})", t.tx, t.ty)));
             }
-            let mut bytes = self.fetch.tile(&t.hash, len)?;
-            swap_to_le(&mut bytes, f.sample);
-            s.tile_mut(c).bytes_mut().copy_from_slice(&bytes);
+            let tile = self.fetch.tile(&t.hash, f)?;
+            if !s.set_shared_tile(c, tile) {
+                return Err(FormatError::corrupt("tile has wrong size for its format"));
+            }
         }
         Ok(s)
     }

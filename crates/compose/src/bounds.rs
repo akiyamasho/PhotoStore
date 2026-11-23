@@ -38,6 +38,10 @@ fn scan(t: &Tile, dp: &[u8]) -> Option<(u16, u16, u16, u16)> {
 
 /// `Surface::content_bounds`, cached per tile.
 pub fn content_bounds(s: &Surface) -> Rect {
+    // An opaque compact movie frame already has exact bounds without projecting its planes.
+    if s.nv12_view().is_some() {
+        return s.content_bounds();
+    }
     if s.tile_count() == 0 {
         return Rect::EMPTY;
     }
