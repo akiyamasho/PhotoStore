@@ -1,0 +1,368 @@
+{
+  "date": "2026-11-23",
+  "adapter": "Apple M1 Max",
+  "backend": "Metal",
+  "before_sha": "bb438f969f344fe156265a96c8801eeee3b28c39",
+  "after_sha": "eaf971ba88df6854e3a58884217282aec60c0c0b",
+  "canvas": [
+    3840,
+    2160
+  ],
+  "project_fps": 30,
+  "units": {
+    "fps": "native changed-frame publications per second over full playback interval",
+    "seek": "milliseconds from timeline.setFrame to observation of newly published exact frame; nearest rank quantiles",
+    "rss_gib": "largest process RSS sample across UI and playback samples, GiB",
+    "graphics": "resident IOAccelerator (graphics) in macOS vmmap at first warm frame",
+    "cpu": "median ps process CPU percent during playback; 100 percent equals one core",
+    "observed_gpu_frames": "retained per-frame timestamps, capped at 180; whole-interval fps uses independent lifetime counter"
+  },
+  "measurement": {
+    "repetitions": 1,
+    "seek_fractions": [
+      0.05,
+      0.8,
+      0.2,
+      0.95,
+      0.4,
+      0.65,
+      0.1,
+      0.5,
+      0.9,
+      0.3
+    ],
+    "order": "0.21.6, then 0.21.7 for each fixture",
+    "play_seconds": {
+      "heavy": 8,
+      "dense": 8,
+      "long": 30
+    },
+    "settings": "Fresh disposable app profiles; same files; activated test windows; no compiler or UI inspection during playback. Process sampling at approximately 1 second intervals. OS disk cache was not flushed."
+  },
+  "results": {
+    "heavy": {
+      "before": {
+        "open_s": 3.4229795000283048,
+        "read_s": 0.3767205000622198,
+        "seek": {
+          "0.5": 636.9364170823246,
+          "0.95": 768.683208967559,
+          "1": 768.683208967559
+        },
+        "fps": 2.9955548773963154,
+        "active_cadence": 3.1312953322713604,
+        "rss_gib": 1.0492706298828125,
+        "graphics": "819.3M",
+        "iosurface": "40.2M",
+        "cpu": 170.65,
+        "observed_gpu_frames": 24,
+        "seek_count": 10,
+        "tool_keys": [
+          {
+            "key": "B",
+            "actual": "brush",
+            "verified": true,
+            "observed_ms": 127.91016604751348
+          },
+          {
+            "key": "V",
+            "actual": "move",
+            "verified": true,
+            "observed_ms": 123.73170803766698
+          }
+        ],
+        "gpu_fallback": null,
+        "native_fallback": null,
+        "stream_chunks": 0,
+        "composition_ms": 50.008458,
+        "duration_frames": 60,
+        "tool_set_ms": {
+          "0.5": 0.5571249639615417,
+          "0.95": 0.5825000116601586,
+          "1": 0.5825000116601586
+        },
+        "seek_series": [
+          757.6,
+          636.9,
+          621.9,
+          631.6,
+          619.9,
+          617.9,
+          764.7,
+          749.2,
+          758.7,
+          768.7
+        ]
+      },
+      "after": {
+        "open_s": 2.916007166961208,
+        "read_s": 0.2466954169794917,
+        "seek": {
+          "0.5": 407.5223340187222,
+          "0.95": 459.8677500616759,
+          "1": 459.8677500616759
+        },
+        "fps": 10.730384632893118,
+        "active_cadence": 10.781739423663243,
+        "rss_gib": 0.959991455078125,
+        "graphics": "199.2M",
+        "iosurface": "40.2M",
+        "cpu": 217.0,
+        "observed_gpu_frames": 86,
+        "seek_count": 10,
+        "tool_keys": [
+          {
+            "key": "B",
+            "actual": "brush",
+            "verified": true,
+            "observed_ms": 81.15312503650784
+          },
+          {
+            "key": "V",
+            "actual": "move",
+            "verified": true,
+            "observed_ms": 72.95716705266386
+          }
+        ],
+        "gpu_fallback": null,
+        "native_fallback": null,
+        "stream_chunks": 12,
+        "composition_ms": 18.683667,
+        "duration_frames": 60,
+        "tool_set_ms": {
+          "0.5": 0.5421249661594629,
+          "0.95": 1.565875019878149,
+          "1": 1.565875019878149
+        },
+        "seek_series": [
+          260.0,
+          353.4,
+          438.6,
+          407.5,
+          433.4,
+          417.9,
+          285.7,
+          320.2,
+          459.9,
+          435.1
+        ]
+      }
+    },
+    "dense": {
+      "before": {
+        "open_s": 3.7416645410703495,
+        "read_s": 2.113625584053807,
+        "seek": {
+          "0.5": 748.2819999568164,
+          "0.95": 892.6097080111504,
+          "1": 892.6097080111504
+        },
+        "fps": 2.9953649382216803,
+        "active_cadence": 3.118598628017443,
+        "rss_gib": 1.798553466796875,
+        "graphics": "1.5G",
+        "iosurface": "40.2M",
+        "cpu": 185.35,
+        "observed_gpu_frames": 24,
+        "seek_count": 10,
+        "tool_keys": [
+          {
+            "key": "B",
+            "actual": "brush",
+            "verified": true,
+            "observed_ms": 218.23554206639528
+          },
+          {
+            "key": "V",
+            "actual": "move",
+            "verified": true,
+            "observed_ms": 206.70987491030246
+          }
+        ],
+        "gpu_fallback": null,
+        "native_fallback": null,
+        "stream_chunks": 0,
+        "composition_ms": 73.936584,
+        "duration_frames": 60,
+        "tool_set_ms": {
+          "0.5": 0.5942500429227948,
+          "0.95": 0.6765419384464622,
+          "1": 0.6765419384464622
+        },
+        "seek_series": [
+          892.6,
+          748.3,
+          734.5,
+          714.5,
+          708.8,
+          715.6,
+          835.9,
+          838.4,
+          848.7,
+          892.0
+        ]
+      },
+      "after": {
+        "open_s": 2.975108249927871,
+        "read_s": 2.030820667045191,
+        "seek": {
+          "0.5": 405.22258391138166,
+          "0.95": 498.9428749540821,
+          "1": 498.9428749540821
+        },
+        "fps": 10.485297428102172,
+        "active_cadence": 10.628873295890676,
+        "rss_gib": 1.6681060791015625,
+        "graphics": "412.4M",
+        "iosurface": "40.2M",
+        "cpu": 226.14999999999998,
+        "observed_gpu_frames": 84,
+        "seek_count": 10,
+        "tool_keys": [
+          {
+            "key": "B",
+            "actual": "brush",
+            "verified": true,
+            "observed_ms": 94.23454198986292
+          },
+          {
+            "key": "V",
+            "actual": "move",
+            "verified": true,
+            "observed_ms": 83.58754101209342
+          }
+        ],
+        "gpu_fallback": null,
+        "native_fallback": null,
+        "stream_chunks": 12,
+        "composition_ms": 20.872458,
+        "duration_frames": 60,
+        "tool_set_ms": {
+          "0.5": 0.5954999942332506,
+          "0.95": 3.43000004068017,
+          "1": 3.43000004068017
+        },
+        "seek_series": [
+          277.2,
+          349.8,
+          418.8,
+          412.9,
+          434.0,
+          405.2,
+          288.2,
+          373.9,
+          419.0,
+          498.9
+        ]
+      }
+    },
+    "long": {
+      "before": {
+        "open_s": 1.392547333962284,
+        "read_s": 0.33626279106829315,
+        "seek": {
+          "0.5": 920.4727500909939,
+          "0.95": 1222.818832960911,
+          "1": 1222.818832960911
+        },
+        "fps": 3.0987447285733967,
+        "active_cadence": 3.135871300150785,
+        "rss_gib": 2.6655426025390625,
+        "graphics": "654.6M",
+        "iosurface": "40.2M",
+        "cpu": 172.55,
+        "observed_gpu_frames": 93,
+        "seek_count": 10,
+        "tool_keys": [
+          {
+            "key": "B",
+            "actual": "brush",
+            "verified": true,
+            "observed_ms": 135.32329199369997
+          },
+          {
+            "key": "V",
+            "actual": "move",
+            "verified": true,
+            "observed_ms": 126.19491701480001
+          }
+        ],
+        "gpu_fallback": null,
+        "native_fallback": null,
+        "stream_chunks": 0,
+        "composition_ms": 59.54375,
+        "duration_frames": 1800,
+        "tool_set_ms": {
+          "0.5": 0.5865410203114152,
+          "0.95": 0.6850829813629389,
+          "1": 0.6850829813629389
+        },
+        "seek_series": [
+          718.2,
+          855.0,
+          964.4,
+          899.6,
+          1222.8,
+          1140.4,
+          1181.0,
+          1077.2,
+          920.5,
+          818.3
+        ]
+      },
+      "after": {
+        "open_s": 1.129955458920449,
+        "read_s": 0.273797083995305,
+        "seek": {
+          "0.5": 975.8675830671564,
+          "0.95": 1321.1144170491025,
+          "1": 1321.1144170491025
+        },
+        "fps": 10.395924754161609,
+        "active_cadence": 10.416964487948107,
+        "rss_gib": 2.836029052734375,
+        "graphics": "176.1M",
+        "iosurface": "40.2M",
+        "cpu": 220.55,
+        "observed_gpu_frames": 180,
+        "seek_count": 10,
+        "tool_keys": [
+          {
+            "key": "B",
+            "actual": "brush",
+            "verified": true,
+            "observed_ms": 85.07516607642174
+          },
+          {
+            "key": "V",
+            "actual": "move",
+            "verified": true,
+            "observed_ms": 76.87320897821337
+          }
+        ],
+        "gpu_fallback": null,
+        "native_fallback": null,
+        "stream_chunks": 12,
+        "composition_ms": 25.795375,
+        "duration_frames": 1800,
+        "tool_set_ms": {
+          "0.5": 0.5560410209000111,
+          "0.95": 1.0660840198397636,
+          "1": 1.0660840198397636
+        },
+        "seek_series": [
+          436.7,
+          841.1,
+          1064.2,
+          975.9,
+          1321.1,
+          1266.1,
+          1097.3,
+          1060.1,
+          920.8,
+          746.6
+        ]
+      }
+    }
+  }
+}
